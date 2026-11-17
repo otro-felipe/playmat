@@ -247,10 +247,17 @@ export class GameSeat {
           const choice = plannedChoice(state, decision, step);
           if (!choice) throw new ToolError('illegal_choice', 'The planned choice is unavailable in the current decision.');
           if (step.expectCast) {
-            const card = state.ownHand?.find((entry) => entry.id === choice.card?.id);
+            // The engine's visible legal choice can cast from exile/graveyard too
+            // (for example Wrenn's Resolve or flashback). Never infer permission
+            // from the zone alone, or treat a battlefield activation as a cast.
+            const castableZones = [
+              ...(state.ownHand ?? []),
+              ...(state.players ?? []).flatMap((player) => [...(player.exile ?? []), ...(player.graveyard ?? [])]),
+            ];
+            const card = castableZones.find((entry) => entry.id === choice.card?.id);
             const playerId = state.players?.find((player) => player.yourSeat)?.id;
-            if (decision.kind !== 'priority' || !card?.cardId || !playerId || card.types.includes('LAND')) {
-              throw new ToolError('bad_cast_expectation', 'Expect a cast only for a spell in your hand during priority.');
+            if (decision.kind !== 'priority' || !card?.cardId || !playerId || card.faceDown || !Array.isArray(card.types) || card.types.includes('LAND')) {
+              throw new ToolError('bad_cast_expectation', 'Expect a cast only for a visible legal spell from hand, exile or graveyard during priority; not a mode, target or activated ability.');
             }
             pendingCast = { cardId: card.cardId, name: card.name, playerId };
           }
