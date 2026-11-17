@@ -14,8 +14,10 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
       await page.goto('/e2e/fixtures/mana-payment.html?scenario=priority');
       await page.evaluate(() => {
         const { session } = (window as unknown as { paymentFixture: { session: GameSession } }).paymentFixture;
+        const sampledAt = Date.now();
         session.store.setState((state) => ({ view: {
           ...state.view,
+          responseIdle: { status: 'running', sampledAtEpochMs: sampledAt, deadlineEpochMs: sampledAt + 900_000, remainingMillis: 900_000, timeoutSeconds: 900 },
           players: state.view!.players!.map((player) => player.playerId === 'them' ? { ...player, name: 'Doge', battlefield: { bear: { id: 'bear', name: 'Runeclaw Bear', cardTypes: ['CREATURE'], power: '2', toughness: '2' } } } : player),
           stack: {
             fork: { id: 'fork', name: 'Electrolyze', cardTypes: ['INSTANT'], targets: ['them', 'bear'], rules: ['Electrolyze deals 2 damage divided as you choose among one or two targets.'] },
@@ -30,6 +32,15 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
       await expect(page.getByText(/^Targets:/)).toHaveCount(0);
       const burst = page.locator('[data-stack-source="burst"][data-stack-target="them"]');
       const top = page.locator('[data-stack-source="fork"][data-stack-target="them"]');
+      const expectNoticeClearOfTools = async () => {
+        await expect(page.getByRole('timer')).toHaveText(/Decision idle: (15:00|14:[0-5]\d)/);
+        for (const control of [page.getByRole('button', { name: 'Game menu', exact: true }), page.getByRole('button', { name: /emote|gestos/i })]) {
+          await expect.poll(async () => {
+            const [notice, button] = await Promise.all([page.getByRole('timer').boundingBox(), control.boundingBox()]);
+            return !!notice && !!button && (notice.x + notice.width <= button.x || button.x + button.width <= notice.x || notice.y + notice.height <= button.y || button.y + button.height <= notice.y);
+          }).toBe(true);
+        }
+      };
       const expectEndpointAtDoge = async () => {
         await expect.poll(async () => {
           const [endpoint, target] = await Promise.all([burst.locator('circle').last().boundingBox(), page.locator('[data-object-id="them"]').boundingBox()]);
@@ -46,6 +57,9 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
       expect(strokes[1].dash).toBe('none');
       expect(strokes[0].d).not.toBe(strokes[1].d);
       expect(parseFloat(strokes[1].width)).toBeGreaterThan(parseFloat(strokes[0].width));
+      await expectNoticeClearOfTools();
+      await page.evaluate(async () => { await document.fonts.ready; });
+      await page.screenshot({ path: test.info().outputPath(`stack-targets-${viewport.width}x${viewport.height}-unfocused.png`) });
       const item = page.getByRole('listitem', { name: 'Burst Lightning, targets: Doge' });
       await item.focus();
       await expect(burst).toHaveAttribute('data-emphasis', 'focused');
@@ -58,10 +72,12 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
         await expect(arrows).toHaveCount(4);
         await expect.poll(() => burst.locator('path').last().getAttribute('d')).not.toBe(portraitPath);
         await expectEndpointAtDoge();
+        await expectNoticeClearOfTools();
         await page.screenshot({ path: test.info().outputPath('stack-targets-rotated-landscape.png') });
         await page.setViewportSize(viewport);
         await expect(arrows).toHaveCount(4);
         await expectEndpointAtDoge();
+        await expectNoticeClearOfTools();
         await page.screenshot({ path: test.info().outputPath('stack-targets-rotated-back-portrait.png') });
       }
       await page.getByRole('button', { name: 'Pass', exact: true }).click();
