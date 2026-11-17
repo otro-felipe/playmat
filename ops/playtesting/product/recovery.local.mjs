@@ -195,7 +195,8 @@ try {
     while (Date.now() < end && !(inactiveConcede && gameEnded)) {
       const state = await states(); polls++
       const observed = state[idleIndex]
-      if (observed.status === 'active' && observed.decision?.id === saved.decision.id) {
+      // Replaying an engine prompt may allocate a fresh local decision ID; its underlying deadline must not move.
+      if (observed.status === 'active' && observed.gameId === saved.gameId && observed.timing?.inactivity.status === 'running') {
         assert.equal(observed.timing.inactivity.deadlineEpochMs, deadline)
         if (polls % 3 === 0) {
           if (idleIndex === 0) await browser.resync(saved.gameId)
