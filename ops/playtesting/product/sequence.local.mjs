@@ -96,7 +96,7 @@ try {
     const land = decision.kind === 'priority' && decision.choices.find(choice => choice.card?.name === 'Mountain'
       && state.ownHand.some(card => card.id === choice.card.id))
     if (land) { await answer(state, land); continue }
-    if (decision.kind === 'priority' && state.activePlayerId === ownPlayer(state).id
+    if (decision.kind === 'priority' && state.priority === 'self' && state.step === 'PRECOMBAT_MAIN' && state.activePlayerId === ownPlayer(state).id
       && burnCards(state).length >= 3 && freeLands(state).length >= 3 && rivalPlayer(state).battlefield.length > 0) break
     const discard = decision.kind === 'target' && decision.choices.find(choice => choice.card?.name === 'Mountain')
     const choice = discard || decision.choices.find(item => /^Keep\b|^Play first\b/.test(item.label))
@@ -104,7 +104,7 @@ try {
     if (!choice) throw Error('Unexpected setup decision: ' + decision.kind)
     await answer(state, choice)
   }
-  assert.ok(state?.activePlayerId === ownPlayer(state).id && burnCards(state).length >= 3 && freeLands(state).length >= 3, 'Fixed-seed setup must reach three burn spells and their public mana sources')
+  assert.ok(state?.step === 'PRECOMBAT_MAIN' && state.activePlayerId === ownPlayer(state).id && burnCards(state).length >= 3 && freeLands(state).length >= 3, 'Fixed-seed setup must reach three burn spells and their public mana sources')
   // Learn target/payment prompt order with one real identical-cost burn spell. Never infer missing callbacks.
   const warmup = burnCards(state)[0]
   const warmupChoice = state.decision.choices.find(choice => choice.card?.id === warmup.id)
