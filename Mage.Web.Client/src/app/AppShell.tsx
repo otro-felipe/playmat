@@ -221,9 +221,13 @@ export function AppShell() {
       <TableJoinWatch />
       <SettingsHost open={settingsOpen} onOpenChange={setSettingsOpen} />
       <FeedbackHost />
-      <WhatsNewHost />
-      <SupportHost />
-      {career && connection === 'open' && <Suspense fallback={null}><WelcomeDialog /></Suspense>}
+      {!PRIVATE_PLAYTESTING && (
+        <>
+          <WhatsNewHost />
+          <SupportHost />
+          {career && connection === 'open' && <Suspense fallback={null}><WelcomeDialog /></Suspense>}
+        </>
+      )}
       <ImportSheetHost />
       <Toaster />
     </div>

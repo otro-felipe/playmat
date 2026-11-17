@@ -33,6 +33,15 @@ const sheet = (page: Page) => page.getByRole('dialog', { name: /import a deck/i 
 test.describe('deck import', () => {
   test.skip(!requireServer, 'needs the local server (MAGE_E2E_REQUIRE_SERVER=1)');
 
+  test('a narrow, short screen can click through a typed deck list', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 430 });
+    await signIn(page);
+    await page.getByRole('button', { name: 'Import', exact: true }).click();
+    await sheet(page).getByLabel('Deck link or list').fill('60 Plains\n\nSideboard\n15 Island');
+    await sheet(page).getByRole('button', { name: 'Continue', exact: true }).click({ timeout: 10_000 });
+    await expect(sheet(page).getByLabel('Deck name')).toBeVisible();
+  });
+
   test('a pasted list: fix a typo, save and play', async ({ page }) => {
     test.setTimeout(120_000);
     await signIn(page);
