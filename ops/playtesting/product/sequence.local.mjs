@@ -5,6 +5,7 @@ import { createRequire } from 'node:module'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { createProduct } from './product.mjs'
 import { PlaymatEngineSeat } from '../mcp/src/engine-seat.mjs'
+import { mayDriveRival, drivePlanPeerOnce } from './sequence-driver.mjs'
 
 if (process.env.PLAYMAT_SEQUENCE_LOCAL_TEST !== 'yes'
   || !process.env.DATABASE_URL?.includes('@playmat-sequence-pg:5432/sequence_fixture')) throw Error('Explicit isolated sequence fixture required')
@@ -45,8 +46,9 @@ function cleanupMountain(state) {
   return state.decision.choices.find(item => item.card?.name === 'Mountain'
     && state.ownHand.some(card => card.id === item.card.id && card.name === 'Mountain')) ?? null
 }
-async function rivalPass() {
+async function rivalPass(boundary) {
   const state = browser.snapshot()
+  if (!mayDriveRival(state, boundary)) return false
   const decision = state.decision
   if (!decision || state.status !== 'active') return false
   let choice, mana
@@ -155,17 +157,22 @@ try {
   }
   steps.push({ kind: 'pass_until', step: 'END_TURN', skipOptionalResponses: true })
   assert.ok(steps.length <= 12, 'Learned concrete line must fit the public step budget')
+  const boundary = { gameId: state.gameId, turn: state.turn, activePlayerId: state.activePlayerId }
   const plan = await call('play_sequence', { gameId: state.gameId, cursor: state.cursor, steps })
   let result
   while (Date.now() < totalDeadline) {
-    await rivalPass()
-    result = await call('get_sequence_status', { gameId: state.gameId, sequenceId: plan.sequenceId })
+    result = await drivePlanPeerOnce({
+      readStatus: () => call('get_sequence_status', { gameId: boundary.gameId, sequenceId: plan.sequenceId }),
+      readPeer: () => browser.snapshot(), respondPeer: rivalPass, boundary,
+    })
     if (result.status !== 'running') break
     await sleep(15)
   }
   assert.equal(result.status, 'completed', 'The real own-damage line must retain its unapplied second spell and complete')
   assert.equal(result.completedSteps, steps.length)
   const after = await ownState()
+  assert.equal(after.turn, boundary.turn)
+  assert.equal(after.activePlayerId, boundary.activePlayerId)
   assert.equal(after.step, 'END_TURN')
   assert.equal(rivalPlayer(after).life, before.life - cards.reduce((sum, card) => sum + (card.name === 'Lightning Bolt' ? 3 : 2), 0))
   assert.equal(after.sequenceEvidence.epoch, before.epoch)
