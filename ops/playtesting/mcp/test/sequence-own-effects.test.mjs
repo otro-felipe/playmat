@@ -24,7 +24,7 @@ async function run(t, variant) {
       else if (id === 'yield-bolt') {
         const ev = variant === 'missing' ? undefined : variant === 'epoch' ? evidence(0, { 'stack-bolt': 1 }, 1, 'feed-2')
           : variant === 'gap' ? evidence(0, { 'stack-bolt': 34 }, 34) : evidence(variant === 'rival-action' ? 1 : 0, { 'stack-bolt': 1 }, 1);
-        update({ sequenceEvidence: ev, players: [state.players[0], { ...state.players[1], life: 17, ...(variant === 'effect-tap' ? { battlefield: [{ id: 'rival-land', tapped: true }] } : variant === 'effect-destroy' ? { battlefield: [] } : {}) }],
+        update({ sequenceEvidence: ev, players: [state.players[0], { ...state.players[1], life: 17, ...(variant === 'effect-tap' ? { battlefield: [{ id: 'rival-land', tapped: true }] } : variant === 'effect-destroy' ? { battlefield: [] } : variant === 'effect-discard' ? { handCount: 1, graveyard: [{ id: 'public-discard', name: 'Mountain' }] } : {}) }],
           ...(variant === 'mid-resolution' ? {} : { stack: variant === 'unexpected-stack' ? [{ id: 'enemy-trigger', controllerId: 'them' }] : [] }),
           decision: variant === 'unexpected-prompt' ? { id: 'target', kind: 'target', choices: [{ id: 'unplanned-target', type: 'object' }] } : priority('cast-spike', spike) });
         if (variant === 'mid-resolution') update({ stack: [] });
@@ -50,7 +50,7 @@ async function run(t, variant) {
   assert.fail('The sequence must reach a bounded terminal state');
 }
 
-for (const variant of ['damage', 'mid-resolution', 'effect-tap', 'effect-destroy']) test(`OWN-DAMAGE-REGRESSION planned damage continues to the next spell with explicit resolution evidence: ${variant}`, async (t) => {
+for (const variant of ['damage', 'mid-resolution', 'effect-tap', 'effect-destroy', 'effect-discard']) test(`OWN-DAMAGE-REGRESSION planned damage continues to the next spell with explicit resolution evidence: ${variant}`, async (t) => {
   const { status, applied, state } = await run(t, variant);
   assert.equal(status.status, 'completed');
   assert.equal(status.completedSteps, 3);

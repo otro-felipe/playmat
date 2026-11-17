@@ -841,7 +841,10 @@ public abstract class PlayerImpl implements Player, Serializable {
                         + (this.maxHandSize == 1
                         ? " hand card" : " hand cards"));
             }
-            discard(hand.size() - this.maxHandSize, false, false, null, game);
+            Cards discarded = discard(hand.size() - this.maxHandSize, false, false, null, game);
+            // A completed public cleanup choice is a player action. Ordinary effect-caused
+            // discard() calls deliberately do not notify this observer (for example Mind Rot).
+            if (!game.isSimulation() && discarded != null && !discarded.isEmpty()) PublicActionObservations.accepted(game.getId(), playerId);
         }
     }
 

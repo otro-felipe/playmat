@@ -39,6 +39,12 @@ async function answer(state, choice) {
     choiceId: choice.id, idempotencyKey: randomUUID() })
   acceptedSetup++
 }
+function cleanupMountain(state) {
+  if (state.step !== 'CLEANUP' || state.decision?.kind !== 'target'
+    || !/discard/i.test(state.decision.instruction ?? '')) return null
+  return state.decision.choices.find(item => item.card?.name === 'Mountain'
+    && state.ownHand.some(card => card.id === item.card.id && card.name === 'Mountain')) ?? null
+}
 async function rivalPass() {
   const state = browser.snapshot()
   const decision = state.decision
@@ -52,7 +58,7 @@ async function rivalPass() {
     choice = mana || !ownPlayer(state).battlefield.length && decision.choices.find(item => item.card?.name === 'Mountain'
       && state.ownHand.some(card => card.id === item.card.id))
     choice ||= decision.choices.find(item => item.type === 'pass')
-  } else choice = decision.choices.find(item => /^Keep\b|^Play first\b/.test(item.label)) || decision.choices.find(item => item.type === 'button')
+  } else choice = cleanupMountain(state) || decision.choices.find(item => /^Keep\b|^Play first\b/.test(item.label)) || decision.choices.find(item => item.type === 'button')
   if (!choice) throw Error('Unexpected rival fixture decision: ' + decision.kind)
   try { await browser.respond(decision.id, choice.id); if (choice === mana) rivalManaAccepted = true; return true }
   catch (error) { if (['stale_decision', 'engine_rejected', 'illegal_choice'].includes(error.code)) return false; throw error }
@@ -102,7 +108,7 @@ try {
     if (land) { await answer(state, land); continue }
     if (decision.kind === 'priority' && state.priority === 'self' && state.step === 'PRECOMBAT_MAIN' && state.activePlayerId === ownPlayer(state).id
       && burnCards(state).length >= 3 && freeLands(state).length >= 3 && rivalPlayer(state).battlefield.length > 0) break
-    const discard = decision.kind === 'target' && decision.choices.find(choice => choice.card?.name === 'Mountain')
+    const discard = cleanupMountain(state)
     const choice = discard || decision.choices.find(item => /^Keep\b|^Play first\b/.test(item.label))
       || decision.choices.find(item => item.type === 'pass') || decision.choices.find(item => item.type === 'button')
     if (!choice) throw Error('Unexpected setup decision: ' + decision.kind)
@@ -177,7 +183,7 @@ try {
       && state.activePlayerId === ownPlayer(state).id && burnCards(state).length && freeLands(state).length) break
     const land = state.decision.kind === 'priority' && state.decision.choices.find(item => item.card?.name === 'Mountain'
       && state.ownHand.some(card => card.id === item.card.id))
-    const discard = state.decision.kind === 'target' && state.decision.choices.find(item => item.card?.name === 'Mountain')
+    const discard = cleanupMountain(state)
     const choice = land || discard || state.decision.choices.find(item => item.type === 'pass') || state.decision.choices.find(item => item.type === 'button')
     if (!choice) throw Error('Unplanned setup decision before rival mana scenario')
     await answer(state, choice)
