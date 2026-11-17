@@ -89,7 +89,8 @@ public class WebClientApiContractTest {
             "accountExport", "accountDelete", // the player's own data (api/MyAccountApiTest)
             "presenceGet", "presenceSet", "playerDirectory", // presence store and the directory (social/PresenceTest, PlayerDirectoryTest)
             "supportStatus", "supportPerks", "supportNoticeSeen", "supportSetWall", "profileSetLook", "profileLooks",
-            "adminSupportLedger", "adminSupportLink", "adminSupportRevoke", "adminSupportGrant", "adminContributorGrant" // support store (support/*Test)
+            "adminSupportLedger", "adminSupportLink", "adminSupportRevoke", "adminSupportGrant", "adminContributorGrant", // support store (support/*Test)
+            "recoveryList", "recoveryStatus", "recoveryJoin" // recovery coordinator, not MageServer (RecoveryStoreTest and isolated image acceptance)
     ));
 
     static {
