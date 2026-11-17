@@ -21,6 +21,9 @@ pg_created=false
 finish() {
     result=$?
     trap - EXIT
+    if [[ $result != 0 && $app_created == true ]]; then
+        docker inspect --format 'Isolated app state: status={{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}}' "$app" || true
+    fi
     if [[ $app_created == true ]]; then docker stop "$app" >/dev/null 2>&1 || true; fi
     if [[ $pg_created == true ]]; then docker stop "$pg" >/dev/null 2>&1 || true; fi
     if [[ $result != 0 ]]; then echo 'Isolated recovery acceptance failed; no private fixture contents were exported' >&2; fi
@@ -41,7 +44,7 @@ docker run -d --name "$pg" --network "$network" --network-alias playmat-recovery
     -v "$pg_volume:/var/lib/postgresql/data" -e POSTGRES_USER=playmat -e POSTGRES_DB=recovery_fixture \
     -e POSTGRES_PASSWORD=isolated-local-fixture postgres:17-alpine >/dev/null
 pg_created=true
-docker run -d --name "$app" --network "$network" --network-alias playmat-recovery-local --memory 2g \
+docker run -d --name "$app" --network "$network" --network-alias playmat-recovery-local --memory 4g \
     -v "$engine_volume:/var/lib/playmat" \
     -e DATABASE_URL=postgresql://playmat:isolated-local-fixture@playmat-recovery-pg:5432/recovery_fixture \
     -e PLAYMAT_PUBLIC_URL=http://127.0.0.1:8080 -e PLAYMAT_INSECURE_COOKIE=true \
