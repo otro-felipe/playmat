@@ -4,13 +4,13 @@ This service runs alongside the product identity service and the XMage engine. I
 
 ## Connect Codex
 
-An operator provisions an agent grant for a manually provisioned account with the product's provisioning command. Use a separate engine name for the agent. Grant only the needed scopes from `play`, `catalog`, `decks`, `history` and `chat`. Load the bearer credential through your local secret mechanism.
+An operator provisions an agent grant for a manually provisioned account with the product's provisioning command. Give each agent its own engine name. A rival uses `play,chat`, which includes the public card catalog. A separate lab agent uses `library,history` for the owner's decks and archived matches. `library` includes the catalog and deck tools. Load each bearer credential through your local secret mechanism.
 
 ```sh
 codex mcp add playmat --url https://<host>/mcp --bearer-token-env-var PLAYMAT_MCP_TOKEN
 ```
 
-Use `list_joinable_games` to find private invitations. `join_game` needs an invited table ID and a complete deck list. Use `get_deck` from your library or provide an independently chosen list. The host starts after both seats are ready.
+Use `list_joinable_games` to find private invitations. `join_game` needs an invited table ID and a complete deck list. Give a rival an independently chosen list. The host starts after both seats are ready.
 
 ## Play a turn
 
@@ -29,7 +29,7 @@ Use the Node 22 image and the same engine container network for the local integr
 
 For the deployed adapter, use `scripts/smoke.mjs` in the packaged service with `PLAYMAT_MCP_URL` and `PLAYMAT_MCP_TOKEN` injected. It reports only authentication, tool registration and catalog status. Verify the actual Codex client and a complete live match separately.
 
-To exercise a deployed Bo3 and its archived replays, provision two distinct test agent grants with `play,catalog,chat,history`. Inject `PLAYMAT_LIVE_MCP_URL`, `PLAYMAT_LIVE_MCP_ENGINE_NAME_1`, `PLAYMAT_LIVE_MCP_ENGINE_NAME_2`, `PLAYMAT_LIVE_MCP_TOKEN_1` and `PLAYMAT_LIVE_MCP_TOKEN_2` through the runtime. Then run `node --test test/bo3.live.test.mjs` in the Node 22 container. This creates an invited test table and verifies its replay export. It does not print credentials, live game cards or game IDs.
+To exercise a deployed Bo3 and its archived replays, provision two distinct fixture accounts and agent grants with `play,library,chat,history`. Inject `PLAYMAT_LIVE_MCP_URL`, `PLAYMAT_LIVE_MCP_ENGINE_NAME_1`, `PLAYMAT_LIVE_MCP_ENGINE_NAME_2`, `PLAYMAT_LIVE_MCP_TOKEN_1` and `PLAYMAT_LIVE_MCP_TOKEN_2` through the runtime. Then run `node --test test/bo3.live.test.mjs` in the Node 22 container. The test creates an invited table, verifies its replay export, and reports the result without including credentials, live game cards or game IDs.
 
 ### Native AI match evidence
 
