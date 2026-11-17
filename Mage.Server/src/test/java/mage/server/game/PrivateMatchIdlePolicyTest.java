@@ -6,7 +6,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class PrivateMatchIdlePolicyTest {
     @Test void realMatchOptionsKeepRankedSpectatedTournamentAndNonHumanModesOut() {
-        MatchOptions options = new MatchOptions();
+        MatchOptions options = new MatchOptions("Private idle policy fixture", "Two Player Duel", false);
         options.setRated(false);
         options.setSpectatorsAllowed(false);
         assertTrue(PrivateMatchIdlePolicy.eligible(options, false, false, 2, 2, 2));
