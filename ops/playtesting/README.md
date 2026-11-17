@@ -2,6 +2,10 @@
 
 [Product specification and acceptance scenarios](../../docs/specs/playtesting/one-shot.md)
 
+## Private response-idle timeout
+
+Authenticated private unrated two-human-engine-seat games with spectators disabled default to a fifteen-minute response window. `PLAYMAT_PRIVATE_RESPONSE_IDLE_SECONDS` explicitly accepts 60–3600 seconds in that scope; missing, blank or invalid values use 900. Public, ranked, tournament, spectated, AI and other multiplayer modes keep their existing idle policy. This is independent of the cumulative match clock: disabling that clock does not disable response inactivity. Only accepted engine answers and new prompts change the window; polling, chat and resync do not renew it. The own-seat server deadline is exposed to MCP and a small human-facing countdown. See [timing, configuration and verification](../../docs/mcp-decision-timing.md). Deploy the new engine JAR/core/frontend together and do not assume older checkpoint fingerprints are compatible.
+
 ## Run in Docker
 
 ```sh

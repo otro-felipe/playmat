@@ -70,4 +70,23 @@ class ResponseIdleTimerTest {
         assertEquals("disabled", timer.view(player, false).getStatus());
         executor.shutdownNow();
     }
+    @Test void aQueuedExpiryCannotConcedeAfterAnAcceptedResponseOrNewPrompt() {
+        FakeExecutor executor = new FakeExecutor();
+        ResponseIdleTimer timer = new ResponseIdleTimer(executor, () -> 1000L);
+        UUID player = UUID.randomUUID();
+        AtomicInteger lost = new AtomicInteger();
+        List<Runnable> queuedGameActions = new ArrayList<>();
+        timer.start(player, 60, claim -> queuedGameActions.add(() -> {
+            if (timer.isExpired(claim)) lost.incrementAndGet();
+        }));
+        executor.callbacks.get(0).run();
+        assertEquals(1, queuedGameActions.size());
+        timer.cancel(); // the network accepted a response before the queued expiry could run
+        timer.start(player, 60, ignored -> lost.incrementAndGet());
+        queuedGameActions.get(0).run();
+        assertEquals(0, lost.get());
+        assertEquals("running", timer.view(player, true).getStatus());
+        executor.shutdownNow();
+    }
+
 }

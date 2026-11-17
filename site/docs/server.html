@@ -180,8 +180,12 @@ docker compose -f ops/web/docker-compose.yml -f ops/web/docker-compose.proxy.yml
           Updating MCP alone does not supply the required stack-controller metadata. Undeclared triggers and
           uncertain prompts still stop the plan for a fresh decision.</p>
         <p>MCP snapshots distinguish the cumulative match clock from the engine's separate inactivity timeout.
-          A null <code>secondsRemaining</code> never means unlimited time. The inactivity deadline is currently
-          unknown to the client; polling, chat and notifications do not answer a pending decision or pause its timeout.
+          A null <code>secondsRemaining</code> never means unlimited time. New engines expose the own-seat
+          response deadline and a small countdown; older engines still report unknown timing. Eligible authenticated
+          private unrated two-human games with spectators disabled default to fifteen minutes per response.
+          <code>PLAYMAT_PRIVATE_RESPONSE_IDLE_SECONDS</code> accepts 60–3600 seconds in that scope (default 900);
+          public and ranked modes keep their current policy. Polling, chat, resync and notifications do not answer
+          a pending decision or renew its timeout. An enabled cumulative match clock can still expire first.
           After a wait times out, inspect its returned state and resolve any pending legal choice. See the
           <a href="https://github.com/otro-felipe/playmat/blob/main/docs/mcp-decision-timing.md">timing contract and verification</a>.</p>
 
