@@ -43,4 +43,12 @@ describe('[READ-AC-004] whole-stack connections', () => {
     expect(result[0].targetIds).toEqual(['dead', 'exiled']);
     expect(result[0].targetAnchors).toEqual({ dead: 'graveyard:doge', exiled: 'exile:doge' });
   });
+
+  test('keeps high arcs inside the table and ends at a player plate edge rather than covering life text', () => {
+    const { path, end } = stackTargetCurve({ x: 1450, y: 700 }, { x: 120, y: 70 }, 2, 0, { width: 240, height: 100 });
+    const controlY = Number(path.match(/Q [^ ]+ ([^ ]+)/)![1]);
+    expect(controlY).toBeGreaterThanOrEqual(0);
+    expect(end.x > 240 || end.y > 120).toBe(true);
+    expect(Math.hypot(end.x - 120, end.y - 70)).toBeGreaterThan(60);
+  });
 });

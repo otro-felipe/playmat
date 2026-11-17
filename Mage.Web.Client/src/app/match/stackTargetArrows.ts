@@ -35,12 +35,21 @@ export function stackTargetConnections(items: readonly CardView[], view: GameVie
 export interface ArrowPoint { x: number; y: number }
 
 /** Fan both the bend and the endpoint so shared targets never collapse into a single line. */
-export function stackTargetCurve(from: ArrowPoint, to: ArrowPoint, depth: number, branch: number): { path: string; end: ArrowPoint } {
+export function stackTargetCurve(from: ArrowPoint, to: ArrowPoint, depth: number, branch: number, targetSize?: { width: number; height: number }): { path: string; end: ArrowPoint } {
   const dx = to.x - from.x;
   const dy = to.y - from.y;
   const distance = Math.hypot(dx, dy) || 1;
   const lane = Math.atan(depth + branch * 0.4) * 22;
-  const end = { x: to.x - dx / distance * 24 - dy / distance * lane, y: to.y - dy / distance * 24 + dx / distance * lane };
-  const control = { x: (from.x + end.x) / 2, y: Math.min(from.y, end.y) - Math.abs(dx) * 0.16 - 55 - Math.min(depth, 6) * 42 - Math.min(branch, 6) * 18 };
+  // End outside the target's near edge, keeping player life totals and card text readable.
+  let stop = 24;
+  if (targetSize && targetSize.width > 1 && targetSize.height > 1 && (dx !== 0 || dy !== 0)) {
+    const toward = { x: -dx / distance, y: -dy / distance };
+    const offset = { x: -dy / distance * lane, y: dx / distance * lane };
+    const edgeX = Math.abs(toward.x) > 0.001 ? (Math.sign(toward.x) * targetSize.width / 2 - offset.x) / toward.x : Infinity;
+    const edgeY = Math.abs(toward.y) > 0.001 ? (Math.sign(toward.y) * targetSize.height / 2 - offset.y) / toward.y : Infinity;
+    stop = Math.max(0, Math.min(edgeX, edgeY)) + 8;
+  }
+  const end = { x: to.x - dx / distance * stop - dy / distance * lane, y: to.y - dy / distance * stop + dx / distance * lane };
+  const control = { x: (from.x + end.x) / 2, y: Math.max(14, Math.min(from.y, end.y) - Math.abs(dx) * 0.16 - 55 - Math.min(depth, 6) * 42 - Math.min(branch, 6) * 18) };
   return { path: `M ${from.x} ${from.y} Q ${control.x} ${control.y} ${end.x} ${end.y}`, end };
 }

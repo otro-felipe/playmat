@@ -30,6 +30,16 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
       await expect(page.getByText(/^Targets:/)).toHaveCount(0);
       const burst = page.locator('[data-stack-source="burst"][data-stack-target="them"]');
       const top = page.locator('[data-stack-source="fork"][data-stack-target="them"]');
+      const expectEndpointAtDoge = async () => {
+        await expect.poll(async () => {
+          const [endpoint, target] = await Promise.all([burst.locator('circle').last().boundingBox(), page.locator('[data-object-id="them"]').boundingBox()]);
+          if (!endpoint || !target) return false;
+          const x = endpoint.x + endpoint.width / 2;
+          const y = endpoint.y + endpoint.height / 2;
+          return x >= target.x - 32 && x <= target.x + target.width + 32 && y >= target.y - 32 && y <= target.y + target.height + 32;
+        }).toBe(true);
+      };
+      await expectEndpointAtDoge();
       await expect(burst).toHaveAttribute('data-emphasis', 'waiting');
       const strokes = await Promise.all([burst, top].map((group) => group.locator('path').last().evaluate((path) => ({ dash: getComputedStyle(path).strokeDasharray, width: getComputedStyle(path).strokeWidth, d: path.getAttribute('d') }))));
       expect(strokes[0].dash).not.toBe('none');
@@ -42,7 +52,20 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
       await expect(arrows).toHaveCount(4);
       await page.evaluate(async () => { await document.fonts.ready; });
       await page.screenshot({ path: test.info().outputPath(`stack-targets-${viewport.width}x${viewport.height}.png`) });
-      await page.getByRole('button', { name: 'Resolve', exact: true }).click();
+      if (viewport.width === 390) {
+        const portraitPath = await burst.locator('path').last().getAttribute('d');
+        await page.setViewportSize({ width: 844, height: 390 });
+        await expect(arrows).toHaveCount(4);
+        await expect.poll(() => burst.locator('path').last().getAttribute('d')).not.toBe(portraitPath);
+        await expectEndpointAtDoge();
+        await page.screenshot({ path: test.info().outputPath('stack-targets-rotated-landscape.png') });
+        await page.setViewportSize(viewport);
+        await expect(arrows).toHaveCount(4);
+        await expectEndpointAtDoge();
+        await page.screenshot({ path: test.info().outputPath('stack-targets-rotated-back-portrait.png') });
+      }
+      await page.getByRole('button', { name: 'Pass', exact: true }).click();
+      await expect.poll(() => page.evaluate(() => (window as unknown as { paymentFixture: { calls: string[] } }).paymentFixture.calls)).toEqual(['confirm']);
       await expect(arrows).toHaveCount(0);
     });
   });

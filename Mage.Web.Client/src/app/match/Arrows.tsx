@@ -122,8 +122,12 @@ export function Arrows({ sourceId, targetIds, live, links, attacks, leads, tints
     const start = stackAnchor(connection.sourceId);
     if (!start) return [];
     return connection.targetIds.flatMap((id, branch) => {
-      const end = stackAnchor(id) ?? (connection.targetAnchors?.[id] ? center(connection.targetAnchors[id]) : null);
-      return end ? [{ ...connection, targetId: id, start, ...stackTargetCurve(start, end, connection.depth, branch) }] : [];
+      const anchorId = stackAnchor(id) ? id : connection.targetAnchors?.[id];
+      const end = anchorId ? stackAnchor(anchorId) : null;
+      const target = anchorId ? stage.element?.querySelector(`[data-stack-arrow-origin="${CSS.escape(anchorId)}"]`) ?? stage.element?.querySelector(`[data-object-id="${CSS.escape(anchorId)}"]`) : null;
+      const box = target?.getBoundingClientRect();
+      const size = box ? { width: box.width / stage.scale, height: box.height / stage.scale } : undefined;
+      return end ? [{ ...connection, targetId: id, start, ...stackTargetCurve(start, end, connection.depth, branch, size) }] : [];
     });
   }).sort((a, b) => Number(a.emphasis !== 'waiting') - Number(b.emphasis !== 'waiting') || Number(a.emphasis === 'focused') - Number(b.emphasis === 'focused'));
   const combat = links
