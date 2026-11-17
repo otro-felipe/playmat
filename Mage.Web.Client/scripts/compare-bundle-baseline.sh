@@ -4,6 +4,7 @@ set -euo pipefail
 baseline=${1:?Pass the deployed baseline commit}
 [[ $baseline =~ ^[0-9a-f]{40}$ ]] || exit 2
 frontend=$PWD
+repository=$(git rev-parse --show-toplevel)
 [[ -f scripts/check-bundle-size.mjs && -d node_modules ]] || exit 2
 comparison=$(mktemp -d "${RUNNER_TEMP:-/tmp}/playmat-bundle-comparison.XXXXXX")
 measure() {
@@ -14,7 +15,7 @@ measure() {
 }
 measure "$comparison/current.json"
 git fetch --no-tags --depth=1 origin "$baseline"
-git archive "$baseline" Mage.Web.Client | tar -x -C "$comparison"
+git -C "$repository" archive "$baseline" Mage.Web.Client | tar -x -C "$comparison"
 cmp package-lock.json "$comparison/Mage.Web.Client/package-lock.json"
 ln -s "$frontend/node_modules" "$comparison/Mage.Web.Client/node_modules"
 (
