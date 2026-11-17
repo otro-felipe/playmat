@@ -57,8 +57,10 @@ function stackIdentity(stack) {
 function plannedChoice(state, decision, step) {
   if (step.choiceId) return decision.choices.find((choice) => choice.id === step.choiceId);
   const { cardName, cardId, label, zone } = step.select;
-  const own = state.players?.find((player) => player.yourSeat);
-  const cards = zone === 'hand' ? state.ownHand : own?.battlefield;
+  // Battlefield is a public zone, not a controller filter. The current
+  // engine choices still decide which objects may actually be selected.
+  const cards = zone === 'hand' ? state.ownHand
+    : state.players?.flatMap((player) => player.battlefield ?? []);
   const matches = decision.choices.filter((choice) => {
     if (zone && !cards?.some((card) => card.id === choice.card?.id)) return false;
     if (cardName !== undefined && choice.card?.name !== cardName) return false;
