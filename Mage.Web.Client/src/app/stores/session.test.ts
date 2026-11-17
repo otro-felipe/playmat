@@ -212,6 +212,24 @@ describe('session store', () => {
       return JSON.parse(localStorage.getItem('playmat.login') ?? 'null');
     }
 
+    test('[PM-AC-04] a new private product session can sign on after logout', async () => {
+      vi.doMock('../playtesting', () => ({ PRIVATE_PLAYTESTING: true }));
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 200 })));
+      const navigate = vi.spyOn(window.location, 'assign').mockImplementation(() => undefined);
+      try {
+        const { useSession } = await load();
+        await useSession.getState().signInWithSignOn(SERVER, 'alice');
+        await useSession.getState().signOut();
+        expect(fetch).toHaveBeenCalledWith('/logout', { method: 'POST' });
+        expect(navigate).toHaveBeenCalledWith('/login');
+        expect(await useSession.getState().signInWithSignOn(SERVER, 'bob', true)).toBe(true);
+      } finally {
+        navigate.mockRestore();
+        vi.unstubAllGlobals();
+        vi.doUnmock('../playtesting');
+      }
+    });
+
     test('signs in as the signed-on account without a password, and a reload does it again', async () => {
       let loaded = await load();
       expect(await loaded.useSession.getState().signInWithSignOn(SERVER, 'alice', true)).toBe(true);

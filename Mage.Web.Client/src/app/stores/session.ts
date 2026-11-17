@@ -325,7 +325,9 @@ export const useSession = create<SessionState>((set, get) => ({
       writeJson<RememberedRestore | null>(RESTORE_KEY, null);
       forgetOpenGames(get().serverUrl, get().userName);
     }
-    writeJson<RememberedLogin>(LOGIN_KEY, { serverUrl: get().serverUrl, userName: get().userName, passwordless: false, account: false });
+    writeJson<RememberedLogin | null>(LOGIN_KEY, PRIVATE_PLAYTESTING ? null : {
+      serverUrl: get().serverUrl, userName: get().userName, passwordless: false, account: false,
+    });
     rpc.disconnect();
     set({ phase: 'signedOut', roomId: null, signedInElsewhere: false, staleLogin: false, signedInViaOidc: false });
     // the provider bounces the browser back to the sign-in screen; when its session is gone, the next

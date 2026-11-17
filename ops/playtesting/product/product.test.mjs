@@ -74,6 +74,9 @@ test('[PM-AC-04] the claimed guest and actual table host control admission', { s
   }))
   assert.equal(invite.status, 201)
   assert.equal(Object.hasOwn(await invite.json(), 'password'), false)
+  assert.deepEqual((await (await f.path(route, { headers: alice })).json()).invites, [])
+  assert.deepEqual((await (await f.path(route, { headers: carol })).json()).invites, [])
+  assert.deepEqual((await (await f.path(route + '?limit=1', { headers: bob })).json()).invites.map(row => row.tableId), [tableId])
   const claim = route + '/' + tableId + '/claim'
   const gate = '/internal/invites/' + tableId + '?host=Alice&guest=Bob'
   assert.equal((await f.path(gate)).status, 404)

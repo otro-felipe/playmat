@@ -123,10 +123,11 @@ export async function createProduct({
     attempts.set(key, count)
   }
 
-  async function listInvites(actor) {
+  async function listInvites(actor, requestedLimit) {
+    const limit = Math.max(1, Math.min(50, Number.parseInt(requestedLimit, 10) || 25))
     const { rows } = await pool.query(
-      'SELECT * FROM invitations WHERE (creator_key=$1 OR invitee_key=$1) AND expires_at>now() ORDER BY expires_at DESC LIMIT 50',
-      [normalize(actor.engineName)],
+      'SELECT * FROM invitations WHERE invitee_key=$1 AND expires_at>now() ORDER BY expires_at DESC,table_id LIMIT $2',
+      [normalize(actor.engineName), limit],
     )
     return { invites: rows.map(invitationView) }
   }
@@ -277,7 +278,7 @@ export async function createProduct({
     }
     if (endpoint === 'invites') {
       requireScope(actor, 'play')
-      if (req.method === 'GET') return send(res, 200, await listInvites(actor))
+      if (req.method === 'GET') return send(res, 200, await listInvites(actor, url.searchParams.get('limit')))
       if (req.method === 'POST') return send(res, 201, await createInvite(actor, await body(req)))
     }
     if (req.method === 'POST' && /^invites\/[a-f0-9-]+\/claim$/i.test(endpoint)) {
