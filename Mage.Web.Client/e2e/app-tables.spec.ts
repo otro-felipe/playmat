@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
-import { concede, decisionCluster, gameOver, importTestDeck, keepOpeningHand, playerName, requireServer, signIn } from './helpers/app';
+import { concede, gameOver, importTestDeck, keepOpeningHand, playerName, requireServer, signIn } from './helpers/app';
+import { finishBestOfThree, sideboardDeck } from './helpers/bo3';
 
 /**
  * Hosting and joining a table between two players, each in their own browser: the host opens a table, the guest
@@ -84,34 +85,7 @@ test.describe('app: tables', () => {
       await expect(dialog).toBeHidden({ timeout: 20_000 });
       await tableRow(guest, tableName).getByRole('button', { name: 'Join' }).click();
       await tableRow(host, tableName).getByRole('button', { name: 'Start' }).click();
-      await openGame(host, guest);
-      const firstGame = host.url();
-      const hostsTurn = /your turn/.test((await host.getByRole('navigation', { name: /^Turn \d+/ }).getAttribute('aria-label')) ?? '');
-      const [loser, winner] = hostsTurn ? [host, guest] : [guest, host];
-      await requestConcede(loser);
-      await Promise.all([winner.waitForURL(/\/build\//), loser.waitForURL(/\/build\//)]);
-
-      const sideboard = winner.getByRole('region', { name: 'Sideboard, 15 cards' });
-      await expect(sideboard.getByRole('button', { name: 'Island' })).toHaveCount(15);
-      const titleStrip = { position: { x: 22, y: 12 } };
-      await sideboard.getByRole('button', { name: 'Island' }).first().click(titleStrip);
-      const editedDeck = winner.getByRole('region', { name: 'Deck, 61 cards' });
-      await expect(editedDeck.getByRole('button', { name: 'Island' })).toHaveCount(1);
-      await editedDeck.getByRole('button', { name: 'Plains' }).first().click(titleStrip);
-      await expect(sideboard.getByRole('button', { name: 'Plains' })).toBeVisible();
-      await expect(loser.getByRole('region', { name: 'Sideboard, 15 cards' }).getByRole('button', { name: 'Plains' })).toHaveCount(0);
-      await winner.getByRole('button', { name: 'Submit deck' }).click();
-      await expect(winner.getByText('Deck submitted — waiting for the others')).toBeVisible();
-      await loser.getByRole('button', { name: 'Submit deck' }).click();
-
-      await openGame(host, guest);
-      expect(host.url()).not.toBe(firstGame);
-      await requestConcede(loser);
-      const pass = decisionCluster(winner).getByRole('button', { name: /^(go to|pass$)/i });
-      await Promise.race([pass.click({ timeout: 15_000 }), gameOver(winner).waitFor({ timeout: 15_000 })]);
-      await expect(gameOver(winner).getByRole('heading', { name: 'Victory' })).toBeVisible();
-      await expect(gameOver(loser).getByRole('heading', { name: 'Defeat' })).toBeVisible();
-      await expect(winner).toHaveURL(/\/game\//);
+      await finishBestOfThree(host, guest);
     } finally {
       await hostContext.close();
       await guestContext.close();
@@ -121,20 +95,7 @@ test.describe('app: tables', () => {
 
 async function registerSideboardDeck(page: Page, name: string) {
   await signIn(page, playerName(name), '/decks');
-  await importTestDeck(page, 'Sideboard test deck', '60 Plains\n\nSideboard\n15 Island');
+  await importTestDeck(page, 'Sideboard test deck', sideboardDeck);
   await page.getByRole('link', { name: 'Tables', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Host a table' })).toBeEnabled();
-}
-
-async function openGame(host: Page, guest: Page) {
-  await Promise.all([host.waitForURL(/\/game\//), guest.waitForURL(/\/game\//)]);
-  await Promise.all([keepOpeningHand(host), keepOpeningHand(guest)]);
-  await Promise.all([host, guest].map((page) =>
-    expect(page.getByRole('navigation', { name: /^Turn \d+/ })).toBeVisible({ timeout: 30_000 })));
-}
-
-async function requestConcede(page: Page) {
-  await page.getByRole('button', { name: 'Game menu' }).click();
-  await page.getByRole('menuitem', { name: 'Concede' }).click();
-  await page.getByRole('dialog', { name: /concede this game/i }).getByRole('button', { name: 'Concede' }).click();
 }
