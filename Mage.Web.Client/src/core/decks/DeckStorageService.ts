@@ -83,6 +83,16 @@ interface DeckMeta {
 
 export class LocalDeckStorage implements IDeckStorage {
     private listeners = new Set<(change: DeckChange) => void>();
+    private accountStores = "";
+
+    /** The private beta can have several people sign in on the same browser. */
+    setAccountScope(scope: string) {
+        this.accountStores = scope ? `playtesting.${encodeURIComponent(scope)}.` : "";
+    }
+
+    private storageKey(key: string) {
+        return this.accountStores + key;
+    }
 
     /** Changes made through saveDeck and deleteDeck (not the sync's own writes). */
     onChange(listener: (change: DeckChange) => void): () => void {
@@ -123,7 +133,7 @@ export class LocalDeckStorage implements IDeckStorage {
     }
 
     private store(deck: DeckCardLists & { id: string; updatedAt: number }, meta: DeckMeta[]) {
-        localStorage.setItem(STORAGE_PREFIX + deck.id, JSON.stringify(deck));
+        localStorage.setItem(this.storageKey(STORAGE_PREFIX + deck.id), JSON.stringify(deck));
         const newMetaItem: DeckMeta = {
             id: deck.id,
             name: deck.name || "Untitled Deck",
@@ -175,13 +185,13 @@ export class LocalDeckStorage implements IDeckStorage {
 
     /** Deleted on another device: gone here too, without a tombstone. */
     removeFromSync(id: string) {
-        localStorage.removeItem(STORAGE_PREFIX + id);
+        localStorage.removeItem(this.storageKey(STORAGE_PREFIX + id));
         this.saveMeta(this.getMeta().filter(m => m.id !== id));
     }
 
     tombstones(): Record<string, number> {
         try {
-            return JSON.parse(localStorage.getItem(TOMBSTONES_KEY) ?? "{}") ?? {};
+            return JSON.parse(localStorage.getItem(this.storageKey(TOMBSTONES_KEY)) ?? "{}") ?? {};
         } catch {
             return {};
         }
@@ -191,11 +201,11 @@ export class LocalDeckStorage implements IDeckStorage {
         const tombstones = this.tombstones();
         if (!(id in tombstones)) return;
         delete tombstones[id];
-        localStorage.setItem(TOMBSTONES_KEY, JSON.stringify(tombstones));
+        localStorage.setItem(this.storageKey(TOMBSTONES_KEY), JSON.stringify(tombstones));
     }
 
     async loadDeck(id: string): Promise<DeckCardLists | null> {
-        const content = localStorage.getItem(STORAGE_PREFIX + id);
+        const content = localStorage.getItem(this.storageKey(STORAGE_PREFIX + id));
         if (!content) return null;
 
         // Try parsing as JSON first (new format), fall back to .dck format
@@ -243,16 +253,16 @@ export class LocalDeckStorage implements IDeckStorage {
     }
 
     async deleteDeck(id: string): Promise<void> {
-        localStorage.removeItem(STORAGE_PREFIX + id);
+        localStorage.removeItem(this.storageKey(STORAGE_PREFIX + id));
         const meta = this.getMeta();
         this.saveMeta(meta.filter(m => m.id !== id));
         const at = Date.now();
-        localStorage.setItem(TOMBSTONES_KEY, JSON.stringify({ ...this.tombstones(), [id]: at }));
+        localStorage.setItem(this.storageKey(TOMBSTONES_KEY), JSON.stringify({ ...this.tombstones(), [id]: at }));
         this.emit({ type: "deleted", id, at });
     }
 
     private getMeta(): DeckMeta[] {
-        const s = localStorage.getItem(META_KEY);
+        const s = localStorage.getItem(this.storageKey(META_KEY));
         if (!s) return [];
         try {
             return JSON.parse(s);
@@ -262,7 +272,7 @@ export class LocalDeckStorage implements IDeckStorage {
     }
 
     private saveMeta(meta: DeckMeta[]) {
-        localStorage.setItem(META_KEY, JSON.stringify(meta));
+        localStorage.setItem(this.storageKey(META_KEY), JSON.stringify(meta));
     }
 }
 

@@ -1,14 +1,15 @@
 import { createHash } from 'node:crypto'
-import { readdir, readFile, stat, unlink } from 'node:fs/promises'
+import { readdir, readFile, rename, stat, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { gunzip } from 'node:zlib'
+import { constants, gunzip, gzip } from 'node:zlib'
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import { strToU8, zipSync } from 'fflate'
 import { isUuid, normalize, normalizeFormat, ProductError, transaction } from './decks.mjs'
 import { viewerNames } from './identity.mjs'
 
 const unzip = promisify(gunzip)
+const compress = promisify(gzip)
 const compressedLimit = 24 * 1024 * 1024
 const decompressedLimit = 96 * 1024 * 1024
 const exportLimit = 32 * 1024 * 1024
@@ -25,13 +26,13 @@ export function s3Store({ bucket, endpoint, region, forcePathStyle = false }) {
         await s3.send(new PutObjectCommand({
           Bucket: bucket, Key: key, Body: bytes, ContentType: 'application/x-ndjson',
           ContentEncoding: 'gzip', Metadata: { sha256 }, IfNoneMatch: '*',
-        }))
+        }), { abortSignal: AbortSignal.timeout(20_000) })
       } catch (error) {
         if (error.$metadata?.httpStatusCode !== 412) throw error
       }
     },
     async get(key) {
-      const result = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }))
+      const result = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }), { abortSignal: AbortSignal.timeout(20_000) })
       if (!result.Body || !(result.ContentLength <= compressedLimit)) throw new Error('Replay object is unavailable')
       return Buffer.from(await result.Body.transformToByteArray())
     },
@@ -117,7 +118,8 @@ function gameView(row) {
     startedAt: Number(row.started_at), endedAt: row.ended_at === null ? 0 : Number(row.ended_at),
     result: row.result, winner: row.winner, startPlayer: row.start_player, turns: row.turns,
     events: row.events, archiveState: row.archive_state, status: row.status,
-    truncated: row.truncated, players: row.players,
+    truncated: row.truncated, players: row.players, replayAvailable: Boolean(row.object_key),
+    ownMulligans: row.own_mulligans,
   }
 }
 
@@ -126,7 +128,9 @@ const selectGame = `
     (SELECT json_agg(json_build_object('name',p.engine_name,'human',p.human) ORDER BY p.engine_name)
        FROM game_players p WHERE p.game_id=g.id) AS players,
     (SELECT p.engine_key FROM game_players p WHERE p.game_id=g.id AND p.engine_key=ANY($1::text[])
-       ORDER BY array_position($1::text[],p.engine_key) LIMIT 1) AS viewer
+       ORDER BY array_position($1::text[],p.engine_key) LIMIT 1) AS viewer,
+    (SELECT p.mulligans FROM game_players p WHERE p.game_id=g.id AND p.engine_key=ANY($1::text[])
+       ORDER BY array_position($1::text[],p.engine_key) LIMIT 1) AS own_mulligans
   FROM games g JOIN matches m ON m.id=g.match_id`
 
 function cursorFrom(row) {
@@ -159,7 +163,7 @@ export function createArchive(pool, stage, backend) {
     }
     const knownFiles = new Set(files)
     for (const file of files) {
-      const match = /^([\da-f-]+)(\.active|\.match)?\.json$/i.exec(file)
+      const match = /^([\da-f-]+)(\.active|\.interrupted|\.match)?\.json$/i.exec(file)
       if (!match || !isUuid(match[1])) continue
       const [, id, variant] = match
       try {
@@ -174,29 +178,67 @@ export function createArchive(pool, stage, backend) {
         if (raw.batchOwner || (variant === '.active' && knownFiles.has(id + '.json'))) continue
         const info = replayMetadata(raw, id)
         if (variant === '.active') {
-          await recordMetadata(pool, info, markInterrupted ? 'interrupted' : 'active')
-          if (markInterrupted) await unlink(join(stage, file))
+          if (markInterrupted) {
+            await rename(join(stage, file), join(stage, id + '.interrupted.json'))
+            await recordMetadata(pool, info, 'interrupted')
+          } else {
+            await recordMetadata(pool, info, 'active')
+          }
           continue
         }
-        await recordMetadata(pool, info, 'completed')
+        if (markInterrupted) continue
+        const interrupted = variant === '.interrupted'
+        const eventPath = join(stage, id + '.ndjson.gz' + (interrupted ? '.part' : ''))
+        await recordMetadata(pool, info, interrupted ? 'interrupted' : 'completed')
         const previous = (await pool.query('SELECT checksum FROM games WHERE id=$1', [id])).rows[0]
-        if (previous?.checksum) continue
-        const eventPath = join(stage, id + '.ndjson.gz')
+        if (previous?.checksum) {
+          await removeStaging(join(stage, file), eventPath)
+          continue
+        }
         if ((await stat(eventPath)).size > compressedLimit) {
           await pool.query('UPDATE games SET archive_state=\'partial\', truncated=TRUE WHERE id=$1', [id])
           continue
         }
-        const bytes = await readFile(eventPath)
+        let bytes = await readFile(eventPath)
+        if (interrupted) {
+          bytes = await recoverInterrupted(bytes)
+          if (!bytes) {
+            await removeStaging(join(stage, file), eventPath)
+            continue
+          }
+        }
         const hash = digest(bytes)
         const key = ['replays', 'v1', id, hash + '.ndjson.gz'].join('/')
         await store.put(key, bytes, hash)
         const uploaded = await store.get(key)
         if (!uploaded || digest(uploaded) !== hash) throw new Error('Archive verification failed')
         await pool.query('UPDATE games SET archive_state=$2, checksum=$3, object_key=$4 WHERE id=$1 AND checksum IS NULL', [
-          id, info.truncated ? 'partial' : 'ready', hash, key,
+          id, info.truncated || interrupted ? 'partial' : 'ready', hash, key,
         ])
+        await removeStaging(join(stage, file), eventPath)
       } catch (error) {
         if (error.code !== 'ENOENT') console.warn('Playmat replay archive retry scheduled', { gameId: id })
+      }
+    }
+  }
+
+  async function recoverInterrupted(bytes) {
+    let recovered
+    try {
+      recovered = await unzip(bytes, { finishFlush: constants.Z_SYNC_FLUSH, maxOutputLength: decompressedLimit })
+    } catch {
+      return null
+    }
+    const lastNewline = recovered.lastIndexOf(10)
+    return lastNewline > 0 ? compress(recovered.subarray(0, lastNewline + 1)) : null
+  }
+
+  async function removeStaging(metadata, events) {
+    for (const file of [events, metadata]) {
+      try {
+        await unlink(file)
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error
       }
     }
   }

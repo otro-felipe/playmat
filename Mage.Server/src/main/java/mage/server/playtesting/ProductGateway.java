@@ -13,6 +13,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.UUID;
 
 /** The private product process co-located with the Java bridge. Only the verified ingress can reach the bridge. */
@@ -47,6 +49,29 @@ public final class ProductGateway {
             return false;
         } catch (IOException exception) {
             return false;
+        }
+    }
+
+    public static Set<UUID> visibleInvitations(String engineName) {
+        if (engineName == null || engineName.isBlank()) {
+            return Set.of();
+        }
+        String guest = URLEncoder.encode(engineName, StandardCharsets.UTF_8);
+        HttpRequest request = HttpRequest.newBuilder(endpoint("/internal/invites?guest=" + guest))
+                .timeout(Duration.ofSeconds(2)).GET().build();
+        try {
+            var response = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() != 200) {
+                return Set.of();
+            }
+            Set<UUID> result = new HashSet<>();
+            JsonParser.parseString(response.body()).getAsJsonArray().forEach(id -> result.add(UUID.fromString(id.getAsString())));
+            return result;
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            return Set.of();
+        } catch (IOException | IllegalArgumentException | IllegalStateException | com.google.gson.JsonParseException exception) {
+            return Set.of();
         }
     }
 

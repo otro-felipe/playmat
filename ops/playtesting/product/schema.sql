@@ -48,7 +48,10 @@ CREATE TABLE IF NOT EXISTS deck_revision_cards (
   revision integer NOT NULL,
   zone text NOT NULL CHECK (zone IN ('cards', 'sideboard')),
   position integer NOT NULL,
-  entry jsonb NOT NULL,
+  card_name text NOT NULL,
+  set_code text,
+  card_number text,
+  amount integer NOT NULL CHECK (amount BETWEEN 1 AND 250),
   PRIMARY KEY (account_id, deck_id, revision, zone, position),
   FOREIGN KEY (account_id, deck_id, revision) REFERENCES deck_revisions(account_id, deck_id, revision)
 );

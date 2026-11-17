@@ -46,10 +46,12 @@ export async function getDeck(db, account, deckId, revision) {
   if (!row) return null
   const data = { ...row.metadata, id: row.id, name: row.name, format: row.format, updatedAt: Number(row.updated_at), cards: [], sideboard: [] }
   const { rows: entries } = await db.query(
-    'SELECT zone, entry FROM deck_revision_cards WHERE account_id=$1 AND deck_id=$2 AND revision=$3 ORDER BY position',
+    'SELECT zone, card_name, set_code, card_number, amount FROM deck_revision_cards WHERE account_id=$1 AND deck_id=$2 AND revision=$3 ORDER BY position',
     [account, deckId, row.revision],
   )
-  for (const { zone, entry } of entries) data[zone].push(entry)
+  for (const entry of entries) data[entry.zone].push({
+    cardName: entry.card_name, setCode: entry.set_code, cardNumber: entry.card_number, amount: entry.amount,
+  })
   return { id: deckId, name: row.name, format: row.format, revision: row.revision, updatedAt: data.updatedAt, data }
 }
 
@@ -57,8 +59,21 @@ function validateEntry(entry) {
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false
   const name = entry.cardName ?? entry.name
   const amount = entry.amount ?? entry.quantity ?? entry.count
+  const set = entry.setCode ?? entry.set
+  const number = entry.cardNumber ?? entry.number
   return typeof name === 'string' && name.trim().length > 0 && name.length <= 200
     && Number.isInteger(amount) && amount >= 1 && amount <= 250
+    && (set == null || (typeof set === 'string' && set.length <= 20))
+    && (number == null || (typeof number === 'string' && number.length <= 20))
+}
+
+function canonicalCards(entries) {
+  return entries.map(entry => ({
+    cardName: entry.cardName ?? entry.name,
+    setCode: entry.setCode ?? entry.set ?? null,
+    cardNumber: entry.cardNumber ?? entry.number ?? null,
+    amount: entry.amount ?? entry.quantity ?? entry.count,
+  }))
 }
 
 export async function putDeck(pool, account, deckId, { data, name, format, expectedRevision, updatedAt }) {
@@ -71,7 +86,9 @@ export async function putDeck(pool, account, deckId, { data, name, format, expec
     || data.cards.length + data.sideboard.length > 300 || ![...data.cards, ...data.sideboard].every(validateEntry)) {
     throw new ProductError(400, 'Provide a valid Standard, Pioneer or Modern deck list')
   }
-  const { cards, sideboard, id, name: ignoredName, format: ignoredFormat, updatedAt: ignoredTime, ...metadata } = data
+  const { cards: rawCards, sideboard: rawSideboard, id, name: ignoredName, format: ignoredFormat, updatedAt: ignoredTime, ...metadata } = data
+  const cards = canonicalCards(rawCards)
+  const sideboard = canonicalCards(rawSideboard)
   return transaction(pool, async db => {
     if (expectedRevision === 0) {
       await db.query('INSERT INTO decks (account_id, id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [account, deckId])
@@ -86,7 +103,9 @@ export async function putDeck(pool, account, deckId, { data, name, format, expec
     ])
     for (const [zone, entries] of Object.entries({ cards, sideboard })) {
       await db.query(
-        'INSERT INTO deck_revision_cards (account_id,deck_id,revision,zone,position,entry) SELECT $1,$2,$3,$4,ord,value FROM jsonb_array_elements($5::jsonb) WITH ORDINALITY AS e(value,ord)',
+        `INSERT INTO deck_revision_cards (account_id,deck_id,revision,zone,position,card_name,set_code,card_number,amount)
+          SELECT $1,$2,$3,$4,ord,value->>'cardName',value->>'setCode',value->>'cardNumber',(value->>'amount')::integer
+          FROM jsonb_array_elements($5::jsonb) WITH ORDINALITY AS e(value,ord)`,
         [account, deckId, revision, zone, JSON.stringify(entries)],
       )
     }

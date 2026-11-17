@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Clapperboard, Trophy } from 'lucide-react';
 import { Fragment, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -7,6 +7,7 @@ import { formatRules } from '../../core/decks/formats';
 import { matchPlayers, matchWinner } from '../../core/history/matchRecord';
 import { describeResult, replayWinner } from '../../core/replay/timeline';
 import { api } from '../connection';
+import { PRIVATE_PLAYTESTING } from '../playtesting';
 import { NameLevel } from '../social/LevelBadge';
 import { useSession } from '../stores/session';
 import { Button } from '../ui/Button';
@@ -35,6 +36,149 @@ function when(time: number | undefined): string {
 
 /** Finished matches on this server, with their replays, and every saved replay. */
 export function HistoryScreen() {
+  return PRIVATE_PLAYTESTING ? <PrivateHistoryScreen /> : <LobbyHistoryScreen />;
+}
+
+interface PracticeGame {
+  gameId: string;
+  gameNumber: number;
+  endedAt: number;
+  archiveState: 'ready' | 'pending' | 'partial';
+  replayAvailable: boolean;
+  winner?: string;
+  startPlayer?: string;
+  turns?: number;
+  ownMulligans?: number;
+  players: { name: string }[];
+}
+
+interface PracticeMatch {
+  id: string;
+  name: string;
+  format: string;
+  status: 'active' | 'completed' | 'interrupted';
+  winner?: string;
+  startedAt: number;
+  games: PracticeGame[];
+}
+
+interface PracticeHistoryPage {
+  matches: PracticeMatch[];
+  cursor: string | null;
+}
+
+const practiceStatus = { active: 'En curso', completed: 'Terminado', interrupted: 'Interrumpido' };
+
+function PrivateHistoryScreen() {
+  const navigate = useNavigate();
+  const account = useSession((state) => state.userName);
+  const [format, setFormat] = useState('');
+  const [selected, setSelected] = useState<string[]>([]);
+  const [exportState, setExportState] = useState<'idle' | 'downloading' | 'error'>('idle');
+  const history = useInfiniteQuery({
+    queryKey: ['playtesting-history', account, format],
+    initialPageParam: '',
+    queryFn: async ({ pageParam }) => {
+      const query = new URLSearchParams({ limit: '25' });
+      if (format) query.set('format', format);
+      if (pageParam) query.set('cursor', pageParam);
+      const response = await fetch('/api/playtesting/matches?' + query);
+      if (!response.ok) throw new Error('No se pudo abrir el historial.');
+      return await response.json() as PracticeHistoryPage;
+    },
+    getNextPageParam: (page) => page.cursor ?? undefined,
+    enabled: !!account,
+    refetchInterval: 15_000,
+  });
+  const matches = (history.data?.pages ?? []).flatMap((page) => page.matches);
+
+  async function exportSelected() {
+    setExportState('downloading');
+    try {
+      const response = await fetch('/api/playtesting/exports', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gameIds: selected }),
+      });
+      if (!response.ok) throw new Error('Export unavailable');
+      const url = URL.createObjectURL(await response.blob());
+      const download = document.createElement('a');
+      download.href = url;
+      download.download = 'playmat-replays.zip';
+      download.click();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+      setExportState('idle');
+    } catch {
+      setExportState('error');
+    }
+  }
+
+  return (
+    <div className={styles.page}>
+      <header className={styles.head}>
+        <h1 className={styles.title}>Historial</h1>
+        <div className={styles.filter}>
+          <select aria-label="Formato" value={format} onChange={(event) => setFormat(event.target.value)}>
+            <option value="">Todos los formatos</option>
+            {['Standard', 'Pioneer', 'Modern'].map((option) => <option key={option}>{option}</option>)}
+          </select>
+          <Button disabled={!selected.length || exportState === 'downloading'} onClick={() => void exportSelected()}>
+            Descargar selección{selected.length > 0 ? ` (${selected.length})` : ''}
+          </Button>
+        </div>
+      </header>
+      {exportState === 'error' && <p role="alert">No se pudo descargar la selección.</p>}
+      <Zone label="Tus partidas" className={styles.zone}>
+        {history.isPending && <p className={styles.empty}>Cargando…</p>}
+        {history.isError && <p role="alert" className={styles.empty}>No se pudo abrir el historial.</p>}
+        {history.isSuccess && !matches.length && <p className={styles.empty}>Todavía no hay partidas en este formato.</p>}
+        <ul className={styles.list}>
+          {matches.map((match) => (
+            <li key={match.id} className={styles.row}>
+              <div className={styles.main}>
+                <p className={styles.name}>{match.games[0]?.players.length
+                  ? <Players names={match.games[0].players.map((player) => player.name)} />
+                  : match.name}</p>
+                <p className={styles.meta}>
+                  {[match.format, practiceStatus[match.status], when(match.startedAt)].filter(Boolean).join(' · ')}
+                </p>
+                {match.winner && <p className={styles.result}>Ganó {match.winner}</p>}
+                {match.games.map((game) => (
+                  <div className={styles.actions} key={game.gameId}>
+                    <span className={styles.meta}>
+                      {[
+                        `Juego ${game.gameNumber}`,
+                        game.turns ? `Turnos ${game.turns}` : null,
+                        game.startPlayer ? `Empieza ${game.startPlayer}` : null,
+                        game.ownMulligans !== undefined && game.ownMulligans !== null ? `Tus mulligans ${game.ownMulligans}` : null,
+                        game.archiveState === 'partial' ? 'Replay parcial' : null,
+                        game.endedAt && game.archiveState === 'pending' ? 'Archivando replay' : null,
+                      ].filter(Boolean).join(' · ')}
+                    </span>
+                    {game.replayAvailable && (
+                      <>
+                        <Button size="sm" variant="quiet" icon={<Clapperboard size={15} />} onClick={() => navigate(`/replay/${game.gameId}`)}>
+                          Replay
+                        </Button>
+                        <Button size="sm" variant="quiet" aria-pressed={selected.includes(game.gameId)}
+                          disabled={selected.length >= 10 && !selected.includes(game.gameId)}
+                          onClick={() => setSelected((prior) => prior.includes(game.gameId) ? prior.filter((id) => id !== game.gameId) : [...prior, game.gameId])}>
+                          {selected.includes(game.gameId) ? 'Quitar' : 'Seleccionar'}
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </li>
+          ))}
+        </ul>
+        {history.hasNextPage && <Button disabled={history.isFetchingNextPage} onClick={() => void history.fetchNextPage()}>Ver más partidas</Button>}
+      </Zone>
+    </div>
+  );
+}
+
+function LobbyHistoryScreen() {
   const navigate = useNavigate();
   const roomId = useSession((state) => state.roomId);
   const me = useSession((state) => state.userName);

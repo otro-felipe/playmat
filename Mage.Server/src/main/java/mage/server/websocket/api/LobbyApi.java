@@ -15,6 +15,7 @@ import mage.server.websocket.rpc.RpcException;
 import mage.server.websocket.rpc.RpcMethod;
 import mage.server.websocket.service.OptionsMapper;
 import mage.view.RoomUsersView;
+import mage.view.TableView;
 
 import java.sql.SQLException;
 import java.util.Arrays;
@@ -22,6 +23,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static mage.server.websocket.rpc.RpcParam.Type.INT;
 import static mage.server.websocket.rpc.RpcParam.Type.STRING;
@@ -145,19 +147,34 @@ final class LobbyApi {
                         .params(of("roomId", UUID))
                         .returns("TableView[]")
                         .doc("All open and running tables of a room.")
-                        .handler(call -> ctx.server.roomGetAllTables(call.uuid(0))),
+                        .handler(call -> {
+                            var tables = ctx.server.roomGetAllTables(call.uuid(0));
+                            if (!ProductGateway.enabled()) {
+                                return tables;
+                            }
+                            String viewer = signedIn(ctx, call);
+                            var invitations = ProductGateway.visibleInvitations(viewer);
+                            return tables.stream().filter(table -> visibleToSeat(table, viewer, invitations)).toList();
+                        }),
 
                 RpcMethod.named("roomGetTableById")
                         .params(of("roomId", UUID), of("tableId", UUID))
                         .returns("TableView | null")
                         .doc("One table of a room.")
-                        .handler(call -> ctx.server.roomGetTableById(call.uuid(0), call.uuid(1))),
+                        .handler(call -> {
+                            var table = ctx.server.roomGetTableById(call.uuid(0), call.uuid(1));
+                            if (!ProductGateway.enabled() || table == null) {
+                                return table;
+                            }
+                            String viewer = signedIn(ctx, call);
+                            return visibleToSeat(table, viewer, ProductGateway.visibleInvitations(viewer)) ? table : null;
+                        }),
 
                 RpcMethod.named("roomGetFinishedMatches")
                         .params(of("roomId", UUID))
                         .returns("MatchView[]")
                         .doc("Recently finished matches of a room.")
-                        .handler(call -> ctx.server.roomGetFinishedMatches(call.uuid(0))),
+                        .handler(call -> ProductGateway.enabled() ? Collections.emptyList() : ctx.server.roomGetFinishedMatches(call.uuid(0))),
 
                 RpcMethod.named("roomCreateTable")
                         .session(0)
@@ -309,6 +326,12 @@ final class LobbyApi {
                         .doc("Chat of a room.")
                         .handler(call -> ctx.server.chatFindByRoom(call.uuid(0)))
         );
+    }
+
+    private static boolean visibleToSeat(TableView table, String viewer, Set<java.util.UUID> invitations) {
+        return viewer.equalsIgnoreCase(table.getControllerName())
+                || table.getSeats().stream().anyMatch(seat -> viewer.equalsIgnoreCase(seat.getPlayerName()))
+                || invitations.contains(table.getTableId());
     }
 
     private static boolean canJoinPrivateChat(ApiContext ctx, String sessionId, java.util.UUID chatId) {

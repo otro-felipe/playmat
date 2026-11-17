@@ -161,7 +161,7 @@ export async function createProduct({
       case 'replayList': {
         requireScope(actor, 'history')
         const { matches } = await archive.matchList(actor, { limit: 100 })
-        return send(res, 200, matches.flatMap(match => match.games.filter(game => game.archiveState !== 'pending' && game.endedAt > 0)))
+        return send(res, 200, matches.flatMap(match => match.games.filter(game => game.replayAvailable)))
       }
       case 'replayPage': {
         requireScope(actor, 'history')
@@ -216,6 +216,12 @@ export async function createProduct({
       return res.writeHead(303, { 'Set-Cookie': await id.signOut(req), Location: '/login' }).end()
     }
     if (enableInternal && path === '/internal/legacy' && req.method === 'POST') return legacy(req, res)
+    if (enableInternal && path === '/internal/invites' && req.method === 'GET') {
+      const result = await pool.query('SELECT table_id FROM invitations WHERE invitee_key=$1 AND expires_at>now()', [
+        normalize(url.searchParams.get('guest')),
+      ])
+      return send(res, 200, result.rows.map(row => row.table_id))
+    }
     if (enableInternal && path.startsWith('/internal/invites/') && req.method === 'GET') {
       const tableId = path.slice('/internal/invites/'.length)
       if (!isUuid(tableId)) throw new ProductError(404, 'Invitation not found')
@@ -241,6 +247,10 @@ export async function createProduct({
     }
     const endpoint = path.slice('/api/playtesting/'.length)
     if (endpoint === 'me' && req.method === 'GET') return send(res, 200, identityView(actor))
+    if (endpoint === 'decks' || endpoint.startsWith('decks/')) {
+      const expectedOwner = req.headers['x-playmat-deck-owner']
+      if (expectedOwner && normalize(expectedOwner) !== normalize(actor.username)) throw new ProductError(403, 'The browser session has changed')
+    }
     if (endpoint === 'decks' && req.method === 'GET') {
       requireScope(actor, 'library')
       return send(res, 200, { decks: await listDecks(pool, actor.accountId, url.searchParams.get('deleted') === '1') })

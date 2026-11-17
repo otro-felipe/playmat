@@ -61,6 +61,30 @@ test('[PM-AC-04] password sign-in and scoped forward auth reject forged or revok
   assert.equal((await f.path('/internal/verify', { headers: alice })).status, 401)
 })
 
+test('[PM-AC-04] the claimed guest and actual table host control admission', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const alice = await signIn(f, 'Alice')
+  const bob = await signIn(f, 'Bob')
+  const carol = await signIn(f, 'Carol')
+  const tableId = randomUUID()
+  const roomId = randomUUID()
+  const route = '/api/playtesting/invites'
+  const invite = await f.path(route, json('POST', alice, {
+    tableId, roomId, guestEngineName: 'Bob', format: 'Pioneer', password,
+  }))
+  assert.equal(invite.status, 201)
+  assert.equal(Object.hasOwn(await invite.json(), 'password'), false)
+  const claim = route + '/' + tableId + '/claim'
+  const gate = '/internal/invites/' + tableId + '?host=Alice&guest=Bob'
+  assert.equal((await f.path(gate)).status, 404)
+  assert.equal((await f.path(claim, { method: 'POST', headers: carol })).status, 404)
+  const accepted = await Promise.all([1, 2].map(() => f.path(claim, { method: 'POST', headers: bob })))
+  assert.deepEqual(accepted.map(response => response.status), [200, 200])
+  assert.deepEqual(await accepted[0].json(), await accepted[1].json())
+  assert.equal((await f.path(gate)).status, 200)
+  assert.equal((await f.path(gate.replace('=Alice', '=Carol'))).status, 404)
+})
+
 test('[PM-AC-05] browser and delegated agent share immutable owned revisions and reject stale writes', { skip: !databaseUrl }, async t => {
   const f = await fixture(t)
   const alice = await signIn(f, 'Alice')
@@ -155,4 +179,9 @@ test('[PM-AC-12] bounded batch export preserves only the requesting seat and rej
   assert.doesNotMatch(content, /secret:Bob|secret:Carol|private:Bob|private:Carol|private chat|objectKey/)
   assert.ok(archive['manifest.json'])
   assert.ok(archive['summary.csv'])
+  const response = await f.path(exportRoute, json('POST', alice, { gameIds: [game1, game2], mode: 'handle' }))
+  assert.equal(response.status, 201)
+  const { path } = await response.json()
+  assert.equal((await f.path(path, { headers: alice })).status, 200)
+  assert.equal((await f.path(path, { headers: bob })).status, 404)
 })

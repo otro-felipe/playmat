@@ -1,4 +1,5 @@
 import { api } from '../connection';
+import { PRIVATE_PLAYTESTING } from '../playtesting';
 import { deckStorage, type DeckChange } from '../../core/decks/DeckStorageService';
 import { planSync } from '../../core/decks/deckSync';
 import { useDecks } from './decks';
@@ -9,6 +10,61 @@ import { useSession } from './session';
 /** Which decks this browser has synced with each account, so one account's decks never land in another's. */
 const KNOWN_KEY = 'playmat.deckSync';
 const PUSH_DELAY_MS = 1500;
+const REVISION_KEY = 'playtesting.deckRevisions';
+
+interface ProductDeckStamp {
+  id: string;
+  revision: number;
+  updatedAt: number;
+  deleted?: boolean;
+}
+
+async function productRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch('/api/playtesting/decks' + path, {
+    ...init,
+    headers: {
+      'X-Playmat-Deck-Owner': useSession.getState().userName,
+      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+    },
+  });
+  if (response.status === 409) throw new Error('El mazo cambió en otra sesión. Conservamos tus cambios en este navegador.');
+  if (!response.ok) throw new Error('No se pudo sincronizar la biblioteca.');
+  return response.json();
+}
+
+function revisions() {
+  return readJson<Record<string, Record<string, number>>>(REVISION_KEY, {});
+}
+
+function rememberRevision(account: string, deckId: string, revision: number) {
+  const book = revisions();
+  const entries = book[account] ?? {};
+  writeJson(REVISION_KEY, { ...book, [account]: { ...entries, [deckId]: revision } });
+}
+
+async function listRemote() {
+  if (!PRIVATE_PLAYTESTING) return api.deckSyncList();
+  return (await productRequest<{ decks: ProductDeckStamp[] }>('?deleted=1')).decks;
+}
+
+async function download(id: string) {
+  if (!PRIVATE_PLAYTESTING) return (await api.deckSyncGet(id))?.data;
+  const account = accountKey();
+  const deck = await productRequest<ProductDeckStamp & { data: object }>('/' + encodeURIComponent(id));
+  if (account !== accountKey()) return undefined;
+  rememberRevision(account, id, deck.revision);
+  return JSON.stringify(deck.data);
+}
+
+async function removeRemote(id: string, at: number) {
+  if (!PRIVATE_PLAYTESTING) return api.deckSyncDelete(id, at);
+  const expectedRevision = revisions()[accountKey()]?.[id];
+  if (!expectedRevision) return;
+  return productRequest('/' + encodeURIComponent(id), {
+    method: 'DELETE',
+    body: JSON.stringify({ expectedRevision }),
+  });
+}
 
 function accountKey(): string {
   const { serverUrl, userName } = useSession.getState();
@@ -51,6 +107,18 @@ const pending = new Map<string, ReturnType<typeof setTimeout>>();
 async function upload(id: string): Promise<void> {
   const deck = await deckStorage.exportForSync(id);
   if (!deck) return;
+  if (PRIVATE_PLAYTESTING) {
+    const account = accountKey();
+    const version = await productRequest<ProductDeckStamp>('/' + encodeURIComponent(id), {
+      method: 'PUT',
+      body: JSON.stringify({
+        data: JSON.parse(deck.data), updatedAt: deck.updatedAt,
+        expectedRevision: revisions()[account]?.[id] ?? 0,
+      }),
+    });
+    rememberRevision(account, id, version.revision);
+    return;
+  }
   const result = await api.deckSyncPut(id, deck.name, deck.updatedAt, deck.data);
   if (!result.stored) {
     // someone else's change is newer: take it
@@ -75,21 +143,21 @@ export async function syncNow(): Promise<void> {
   running = (async () => {
     useDeckSyncStatus.setState({ status: 'syncing', error: null });
     try {
-      const remote = (await api.deckSyncList())
+      const remote = (await listRemote())
         .filter((entry) => !!entry.id)
         .map((entry) => ({ id: entry.id!, updatedAt: entry.updatedAt ?? 0, deleted: !!entry.deleted }));
       const plan = planSync(deckStorage.stamps(), deckStorage.tombstones(), remote, foreignIds());
       let changedHere = false;
       for (const id of plan.upload) await upload(id);
       for (const id of plan.download) {
-        const deck = await api.deckSyncGet(id);
-        if (deck?.data && deckStorage.importFromSync(id, deck.data)) changedHere = true;
+        const data = await download(id);
+        if (data && deckStorage.importFromSync(id, data)) changedHere = true;
       }
       for (const id of plan.deleteLocal) {
         deckStorage.removeFromSync(id);
         changedHere = true;
       }
-      for (const { id, at } of plan.deleteRemote) await api.deckSyncDelete(id, at);
+      for (const { id, at } of plan.deleteRemote) await removeRemote(id, at);
       for (const id of plan.dropTombstones) deckStorage.forgetTombstone(id);
       rememberKnown(deckStorage.stamps().map((deck) => deck.id), true);
       if (changedHere || plan.upload.length) await useDecks.getState().refresh();
@@ -111,7 +179,7 @@ function push(change: DeckChange) {
     pending.delete(change.id);
     const work = change.type === 'saved'
       ? upload(change.id)
-      : api.deckSyncDelete(change.id, change.at).then(() => deckStorage.forgetTombstone(change.id));
+      : removeRemote(change.id, change.at).then(() => deckStorage.forgetTombstone(change.id));
     useDeckSyncStatus.setState({ status: 'syncing' });
     work
       .then(() => useDeckSyncStatus.setState({ status: 'synced', lastSyncedAt: Date.now(), error: null }))
@@ -125,6 +193,11 @@ deckStorage.onChange(push);
 let lastLogin = 0;
 function onSession(state: ReturnType<typeof useSession.getState>) {
   if (state.phase !== 'signedIn') {
+    if (PRIVATE_PLAYTESTING) {
+      for (const timer of pending.values()) clearTimeout(timer);
+      pending.clear();
+      deckStorage.setAccountScope('signed-out');
+    }
     if (enabled) {
       enabled = false;
       useDeckSyncStatus.setState({ status: 'off' });
@@ -133,6 +206,10 @@ function onSession(state: ReturnType<typeof useSession.getState>) {
   }
   if (state.loginCount === lastLogin) return;
   lastLogin = state.loginCount;
+  if (PRIVATE_PLAYTESTING) {
+    deckStorage.setAccountScope(accountKey());
+    void useDecks.getState().refresh();
+  }
   api.serverInfo()
     .then((info) => {
       enabled = !!info?.deckSync;
