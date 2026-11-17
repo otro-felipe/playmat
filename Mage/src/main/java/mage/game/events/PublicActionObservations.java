@@ -6,7 +6,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 /**
- * Server observation of accepted mana/no-stack activations and public cleanup discard choices.
+ * Server observation of accepted mana/no-stack activations and public cleanup discard/Undo actions.
  * This is deliberately not a GameEvent: observing an action must never create triggers or replacement effects.
  * No card, selected option, private prompt, or attempt is carried here. Runtime observers are not game state,
  * so undo/copying a state cannot erase a public action that already occurred.

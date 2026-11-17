@@ -15,6 +15,7 @@ import mage.game.Table;
 import mage.game.command.Plane;
 import mage.game.events.Listener;
 import mage.game.events.PlayerQueryEvent;
+import mage.game.events.PublicActionObservations;
 import mage.game.events.TableEvent;
 import mage.game.match.MatchPlayer;
 import mage.game.permanent.Permanent;
@@ -1023,16 +1024,27 @@ public class GameController implements GameCallback {
         if (player == null) {
             return;
         }
-        java.util.function.Consumer<Game> undo = g -> {
-            Player undoing = g.getPlayer(playerId);
-            if (undoing != null && !undoing.isInPayManaMode() && g.getStack().isEmpty()) {
-                g.undo(playerId);
-            }
-        };
+        java.util.function.Consumer<Game> undo = g -> applyPublicUndo(g, playerId);
         if (player.isHuman()) {
             player.queueGameThreadAction(undo);
         } else {
             undo.accept(game);
+        }
+    }
+
+    /** The public user action only; internal engine undo/cost rollback must not become an opponent action. */
+    static boolean applyPublicUndo(Game game, UUID playerId) {
+        synchronized (game) {
+            Player undoing = playerId == null ? null : game.getPlayer(playerId);
+            if (undoing == null || undoing.isInPayManaMode() || !game.getStack().isEmpty()
+                    || undoing.getStoredBookmark() == -1) return false;
+            // Match GameImpl.undo, retaining the actual restore result. Observe before its update is published,
+            // so a guarded client cannot advance using the restored board and an obsolete public-action counter.
+            GameState restored = undoing.restoreState(undoing.getStoredBookmark(), "undo", game);
+            undoing.setStoredBookmark(-1);
+            if (restored != null && !game.isSimulation()) PublicActionObservations.accepted(game.getId(), playerId);
+            game.fireUpdatePlayersEvent();
+            return restored != null;
         }
     }
 

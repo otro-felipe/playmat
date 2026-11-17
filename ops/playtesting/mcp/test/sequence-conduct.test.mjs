@@ -84,3 +84,13 @@ test('advance stops for a public cleanup discard choice, while automatic draws a
   assert.equal(status.appliedDecisions, 1);
   assert.deepEqual(submitted, [['our-end', 'pass']]);
 });
+
+test('advance interrupts when the rival successfully undoes a bookmark created before the plan', async (t) => {
+  const { status, submitted } = await scenario(t, { initial: { sequenceEvidence: evidence(1), players: [{ id: 'us', yourSeat: true },
+    { id: 'them', battlefield: [{ id: 'their-land', tapped: true }] }] },
+    updates: [{ sequenceEvidence: evidence(2), players: [{ id: 'us', yourSeat: true },
+      { id: 'them', battlefield: [{ id: 'their-land', tapped: false }] }], decision: decision('after-undo') }] });
+  assert.equal(status.reason, 'opponent_action');
+  assert.equal(status.appliedDecisions, 1);
+  assert.equal(submitted.length, 1, 'The fresh priority after Undo must remain unanswered');
+});
