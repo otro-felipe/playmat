@@ -80,7 +80,7 @@ try {
   const discovered = await client.listTools()
   assert.ok(discovered.tools.some(tool => tool.name === 'advance_to_own_turn'))
   assert.ok(JSON.stringify(discovered.tools.find(tool => tool.name === 'play_sequence').inputSchema).includes('allowPlannedResolutions'))
-  const created = await browser.createGame({ name: 'Isolated causal sequence acceptance', format: 'Modern', deck: rivalDeck, matchTimeLimit: 'MIN___15', seed: 77 }, async record => {
+  const created = await browser.createGame({ name: 'Isolated causal sequence acceptance', format: 'Modern', deck: rivalDeck, matchTimeLimit: 'MIN__15', seed: 77 }, async record => {
     const response = await fetch(base + '/api/playtesting/invites', { method: 'POST', headers: { 'content-type': 'application/json', Cookie: cookie }, body: JSON.stringify({ ...record, guestEngineName: engineName }) })
     assert.equal(response.status, 201)
     return response.json()
