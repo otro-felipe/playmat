@@ -18,11 +18,14 @@ stamp=$(git rev-parse HEAD)
 # Each invocation owns fresh names. Keep synthetic volumes for local diagnosis; never upload their contents.
 app_created=false
 pg_created=false
+phase=boot
 finish() {
     result=$?
     trap - EXIT
     if [[ $result != 0 && $app_created == true ]]; then
         docker inspect --format 'Isolated app state: status={{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}}' "$app" || true
+        # Before readiness, no fixture accounts or matches exist. Never dump game-time logs.
+        if [[ $phase == boot ]]; then docker logs --tail 35 "$app" 2>&1 || true; fi
     fi
     if [[ $app_created == true ]]; then docker stop "$app" >/dev/null 2>&1 || true; fi
     if [[ $pg_created == true ]]; then docker stop "$pg" >/dev/null 2>&1 || true; fi
@@ -44,6 +47,11 @@ docker run -d --name "$pg" --network "$network" --network-alias playmat-recovery
     -v "$pg_volume:/var/lib/postgresql/data" -e POSTGRES_USER=playmat -e POSTGRES_DB=recovery_fixture \
     -e POSTGRES_PASSWORD=isolated-local-fixture postgres:17-alpine >/dev/null
 pg_created=true
+for attempt in {1..60}; do
+    if docker exec "$pg" pg_isready -h 127.0.0.1 -U playmat -d recovery_fixture >/dev/null 2>&1; then break; fi
+    [[ $attempt != 60 ]] || { echo 'Isolated PostgreSQL did not become ready' >&2; exit 1; }
+    sleep 1
+done
 docker run -d --name "$app" --network "$network" --network-alias playmat-recovery-local --memory 4g \
     -v "$engine_volume:/var/lib/playmat" \
     -e DATABASE_URL=postgresql://playmat:isolated-local-fixture@playmat-recovery-pg:5432/recovery_fixture \
@@ -72,6 +80,7 @@ restart() {
 }
 
 healthy
+phase=fixture
 docker exec -w /opt/playtesting/mcp "$app" sh -c 'node --test test/*.test.mjs'
 fixture prepare
 docker exec --user xmage "$app" python3 /opt/playtesting/recovery-backup.py once
