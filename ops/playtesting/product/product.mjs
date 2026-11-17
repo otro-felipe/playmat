@@ -246,10 +246,6 @@ export async function createProduct({
     }
     const endpoint = path.slice('/api/playtesting/'.length)
     if (endpoint === 'me' && req.method === 'GET') return send(res, 200, identityView(actor))
-    if (endpoint === 'event-rivals' && req.method === 'GET') {
-      requireScope(actor, 'play')
-      return send(res, 200, await invitations.eventRivals(actor))
-    }
     if (endpoint === 'decks' || endpoint.startsWith('decks/')) {
       const expectedOwner = req.headers['x-playmat-deck-owner']
       if (expectedOwner && normalize(expectedOwner) !== normalize(actor.username)) throw new ProductError(403, 'The browser session has changed')

@@ -72,4 +72,39 @@ describe('GameLog (#249)', () => {
     expect(screen.queryByRole('textbox', { name: 'Chat message' })).toBeNull();
     expect(connection.api.chatJoin).toHaveBeenCalledTimes(1);
   });
+
+  test('[PM-AC-04] a rival’s chosen name labels authenticated chat and log entries, including entries that arrived before the alias', async () => {
+    const { GameLog, connection } = await load();
+    connection.api.chatFindByGame.mockResolvedValue('chat1');
+    connection.api.chatJoin.mockResolvedValue(true);
+    const props = { gameId: 'g1', notices: [], canChat: true, view: null };
+    const { rerender } = render(<GameLog {...props} />);
+    fireEvent.click(screen.getByRole('button', { name: /^Chat$/ }));
+    const drawer = within(screen.getByRole('complementary', { name: 'Game chat' }));
+    await waitFor(() => expect((drawer.getByRole('textbox', { name: 'Chat message' }) as HTMLInputElement).disabled).toBe(false));
+    act(() => {
+      connection.rpc.emit({
+        method: 'CHATMESSAGE', objectId: 'chat1', messageId: 1,
+        data: { messageType: 'TALK', username: 'mcp_fixture', message: 'Nice play!' },
+      });
+      connection.rpc.emit({
+        method: 'CHATMESSAGE', objectId: 'chat1', messageId: 2,
+        data: { messageType: 'TALK', username: 'Roberto', message: 'mcp_fixture is the other player.' },
+      });
+      connection.rpc.emit({
+        method: 'CHATMESSAGE', objectId: 'chat1', messageId: 3,
+        data: { messageType: 'GAME', message: "<font color='#20B2AA'>mcp_fixture</font> plays Island", turnInfo: 'T1.M1' },
+      });
+    });
+    rerender(<GameLog {...props} seatDisplayNames={{ mcp_fixture: 'Spell Pilot' }} />);
+    expect(drawer.getByText('Spell Pilot:')).toBeTruthy();
+    expect(drawer.queryByText('mcp_fixture:')).toBeNull();
+    expect(drawer.getByText('Roberto:')).toBeTruthy();
+    expect(drawer.getByText('mcp_fixture is the other player.')).toBeTruthy();
+
+    fireEvent.click(drawer.getByRole('button', { name: /^Log$/ }));
+    const log = within(screen.getByRole('complementary', { name: 'Game log' }));
+    expect(log.getByText('Spell Pilot', { exact: true })).toBeTruthy();
+    expect(connection.api.chatJoin).toHaveBeenCalledTimes(1);
+  });
 });

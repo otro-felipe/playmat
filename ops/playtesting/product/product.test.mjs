@@ -43,6 +43,17 @@ function json(method, headers, body) {
   return { method, headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
 }
 
+async function withTestDatabase(f, run) {
+  const { default: pg } = await import('pg')
+  const db = new pg.Client({ connectionString: databaseUrl, options: '-c search_path=' + f.schema })
+  await db.connect()
+  try {
+    return await run(db)
+  } finally {
+    await db.end()
+  }
+}
+
 test('[PM-AC-04] password sign-in and scoped forward auth reject forged or revoked identities', { skip: !databaseUrl }, async t => {
   const f = await fixture(t)
   assert.equal((await f.path('/internal/verify', { headers: { 'X-Playmat-User': 'Alice' } })).status, 401)
@@ -93,7 +104,7 @@ test('[PM-AC-04] the claimed guest and actual table host control admission', { s
   assert.equal((await f.path(gate.replace('=Alice', '=Carol'))).status, 404)
 })
 
-test('[PM-AC-04] a private MCP link admits exactly one delegated identity with a display-only alias', { skip: !databaseUrl }, async t => {
+test('[PM-AC-04] an existing legacy MCP link admits exactly one delegated identity with a display-only alias', { skip: !databaseUrl }, async t => {
   const f = await fixture(t)
   const host = await signIn(f, 'Host')
   const guest = await signIn(f, 'Guest')
@@ -107,9 +118,15 @@ test('[PM-AC-04] a private MCP link admits exactly one delegated identity with a
   const tableId = randomUUID()
   const invitations = '/api/playtesting/invites'
   const invitation = `${invitations}/${tableId}`
-  const created = await f.path(invitations, json('POST', host, {
+  const createLegacy = async options => {
+    const response = await f.path(invitations, json('POST', host, options))
+    assert.equal(response.status, 201)
+    await withTestDatabase(f, db => db.query('UPDATE invitations SET owner_account_id=NULL WHERE table_id=$1', [options.tableId]))
+    return response
+  }
+  const created = await createLegacy({
     tableId, roomId: randomUUID(), format: 'Pioneer', password, mode: 'mcp', chatMode: 'coach',
-  }))
+  })
   assert.equal(created.status, 201)
   const createdInfo = await created.json()
   assert.equal(createdInfo.mode, 'mcp')
@@ -149,9 +166,9 @@ test('[PM-AC-04] a private MCP link admits exactly one delegated identity with a
   assert.equal((await f.path('/api/playtesting/decks', { headers: grants[winner] })).status, 403)
 
   const ownSeat = randomUUID()
-  assert.equal((await f.path(invitations, json('POST', host, {
+  await createLegacy({
     tableId: ownSeat, roomId: randomUUID(), format: 'Pioneer', password, mode: 'mcp',
-  }))).status, 201)
+  })
   const selfDelegation = await f.path(`${invitations}/${ownSeat}/claim`, json('POST', grants[0], {}))
   assert.equal(selfDelegation.status, 200)
   const ownSeatInfo = await selfDelegation.json()
@@ -181,8 +198,10 @@ test('[PM-AC-04] a private MCP link admits exactly one delegated identity with a
   assert.equal((await f.path(`/internal/invites/${ownSeat}?host=Host&guest=HostAgent`)).status, 404)
 })
 
-test('[PM-AC-16] a targeted MCP invitation is discoverable and claimable only by the selected player grant', { skip: !databaseUrl }, async t => {
+test('[PM-AC-16] an MCP table belongs to the signed-in account and notifies only its own connected agent', { skip: !databaseUrl }, async t => {
+  const issuer = 'https://playmat-invitations.example'
   const f = await fixture(t, new Map(), {
+    publicUrl: issuer,
     eventOptions: { deliver: async (_url, { body }) => {
       const { challenge } = JSON.parse(body)
       assert.ok(challenge)
@@ -191,72 +210,75 @@ test('[PM-AC-16] a targeted MCP invitation is discoverable and claimable only by
   })
   const alice = await signIn(f, 'Alice')
   const bob = await signIn(f, 'Bob')
-  const agent = async (owner, name, scopes = ['play']) => ({ Authorization: 'Bearer ' + await f.product.provisionAgent(owner, name, scopes) })
-  const target = await agent('Alice', 'AliceDot')
-  const sibling = await agent('Alice', 'AliceOther')
-  const outsider = await agent('Bob', 'BobDot')
-  await agent('Alice', 'AliceLibrary', ['library'])
+  const legacy = { Authorization: 'Bearer ' + await f.product.provisionAgent('Alice', 'LegacyAgent', ['play']) }
   const route = '/api/playtesting/invites'
-  const rivals = '/api/playtesting/event-rivals'
   const tableId = randomUUID()
   const invite = { tableId, roomId: randomUUID(), format: 'Pioneer', password, mode: 'mcp' }
+  const link = route + '/' + tableId
 
-  assert.equal((await f.path(rivals)).status, 401)
-  assert.equal((await f.path(rivals, { headers: outsider })).status, 403)
-  assert.deepEqual(await (await f.path(rivals, { headers: alice })).json(), { rivals: [] })
+  const created = await f.path(route, json('POST', alice, invite))
+  assert.equal(created.status, 201, 'the game can be created before connecting a client')
+  assert.equal((await created.json()).guestEngineName, null)
+  assert.equal((await f.path(link, { headers: legacy })).status, 404)
+
+  const { digest, newToken } = await import('./identity.mjs')
+  const oauth = (username, engineName) => withTestDatabase(f, async db => {
+    const { rows: [{ id: accountId }] } = await db.query('SELECT id FROM accounts WHERE username=$1', [username])
+    const connection = randomUUID()
+    const access = newToken()
+    await db.query(`INSERT INTO agent_grants(digest,account_id,engine_name,engine_key,scopes,oauth_managed)
+      VALUES($1,$2,$3,$4,ARRAY['play','chat','library'],true)`, [digest(newToken()), accountId, engineName, engineName])
+    await db.query(`INSERT INTO oauth_connections(id,account_id,engine_key,client_id,audience,scopes_approved,refresh_digest,expires_at)
+      VALUES($1,$2,$3,'https://chatgpt.com/oauth/client.json',$4,ARRAY['play','chat','library'],$5,now()+interval '1 day')`,
+    [connection, accountId, engineName, issuer + '/mcp', digest(newToken())])
+    await db.query(`INSERT INTO oauth_access_tokens(digest,connection_id,expires_at)
+      VALUES($1,$2,now()+interval '1 hour')`, [digest(access), connection])
+    return { Authorization: 'Bearer ' + access }
+  })
+  const engineName = 'mcp_00000000000000000001'
+  const owner = await oauth('Alice', engineName)
+  const other = await oauth('Bob', 'mcp_00000000000000000002')
+
   const params = {
     name: 'game.invitation.created',
     delivery: { mode: 'webhook', url: 'https://receiver.example.net/mcp-events', secret: 'whsec_' + Buffer.alloc(32, 19).toString('base64') },
   }
-  for (const headers of [target, outsider]) {
+  for (const headers of [owner, other, legacy]) {
     assert.equal((await f.path('/internal/mcp-events/subscribe', json('POST', headers, params))).status, 200)
   }
-  assert.deepEqual(await (await f.path(rivals, { headers: alice })).json(), { rivals: [{ engineName: 'AliceDot' }] })
-  assert.deepEqual(await (await f.path(rivals, { headers: bob })).json(), { rivals: [{ engineName: 'BobDot' }] })
-  for (const notifyEngineName of ['BobDot', 'AliceLibrary', 'Alice']) {
-    assert.equal((await f.path(route, json('POST', alice, { ...invite, notifyEngineName }))).status, 400)
-  }
-  const unsentTable = randomUUID()
-  const unsent = await f.path(route, json('POST', alice, { ...invite, tableId: unsentTable, notifyEngineName: 'AliceOther' }))
-  assert.equal(unsent.status, 409)
-  assert.equal((await f.path(route + '/' + unsentTable, { headers: alice })).status, 404)
-  assert.equal((await f.path(route, json('POST', sibling, { ...invite, notifyEngineName: 'AliceDot' }))).status, 403)
-  assert.equal((await f.path(route, json('POST', alice, { ...invite, mode: 'friend', guestEngineName: 'Bob', notifyEngineName: 'AliceDot' }))).status, 400)
-  const created = await f.path(route, json('POST', alice, { ...invite, notifyEngineName: 'alicedot' }))
-  assert.equal(created.status, 201)
-  assert.equal((await created.json()).guestEngineName, 'AliceDot')
-  assert.equal((await f.path(route, json('POST', alice, { ...invite, notifyEngineName: 'AliceDot' }))).status, 409)
-  const manual = await f.path(route, json('POST', alice, { ...invite, tableId: randomUUID() }))
-  assert.equal(manual.status, 201)
-  assert.equal((await manual.json()).guestEngineName, null)
-  const { default: pg } = await import('pg')
-  const db = new pg.Client({ connectionString: databaseUrl, options: '-c search_path=' + f.schema })
-  await db.connect()
-  try {
-    const { rows } = await db.query(`SELECT e.event_name, e.engine_key, e.table_id, e.format, s.engine_key AS subscriber
-      FROM mcp_events e JOIN mcp_event_deliveries d ON d.event_id=e.id
-      JOIN mcp_event_subscriptions s ON s.id=d.subscription_id`)
-    assert.deepEqual(rows, [{
-      event_name: 'game.invitation.created', engine_key: 'alicedot', table_id: tableId, format: 'Pioneer', subscriber: 'alicedot',
-    }])
-  } finally {
-    await db.end()
-  }
-
-  assert.deepEqual((await (await f.path(route, { headers: target })).json()).invites.map(row => row.tableId), [tableId])
-  const link = route + '/' + tableId
-  for (const headers of [bob, sibling, outsider]) {
+  assert.deepEqual((await (await f.path(route, { headers: owner })).json()).invites.map(row => row.tableId), [tableId])
+  for (const headers of [bob, legacy, other]) {
     assert.deepEqual((await (await f.path(route, { headers })).json()).invites, [])
     assert.equal((await f.path(link, { headers })).status, 404)
     assert.equal((await f.path(link + '/claim', json('POST', headers, {}))).status, 404)
   }
-  const gate = '/internal/invites/' + tableId + '?host=Alice&guest=AliceDot'
+  assert.equal((await f.path(link + '/claim', json('POST', alice, {}))).status, 404)
+  assert.equal((await f.path(link, { headers: alice })).status, 200)
+  assert.equal((await f.path(link, { headers: owner })).status, 200)
+
+  const gate = '/internal/invites/' + tableId + '?host=Alice&guest=' + engineName
   assert.equal((await f.path(gate)).status, 404)
-  assert.equal((await f.path(link + '/claim', json('POST', target, { displayName: 'Desk rival' }))).status, 200)
+  const accepted = await f.path(link + '/claim', json('POST', owner, { displayName: 'Desk rival' }))
+  assert.equal(accepted.status, 200)
+  const acceptedInfo = await accepted.json()
+  assert.equal(acceptedInfo.guestDisplayName, 'Desk rival')
+  assert.equal(acceptedInfo.guestEngineName, engineName)
   assert.equal((await f.path(gate)).status, 200)
-  await f.product.revokeAgent(target.Authorization.slice('Bearer '.length))
-  assert.deepEqual(await (await f.path(rivals, { headers: alice })).json(), { rivals: [] })
-  assert.equal((await f.path(gate)).status, 404)
+
+  const notifiedId = randomUUID()
+  const notified = await f.path(route, json('POST', alice, { ...invite, tableId: notifiedId }))
+  assert.equal(notified.status, 201)
+  assert.equal((await notified.json()).guestEngineName, null, 'notification alone leaves the rival seat empty')
+  assert.equal((await f.path(route, json('POST', alice, { ...invite, tableId: notifiedId }))).status, 409)
+  const queue = await withTestDatabase(f, async db => (await db.query(`SELECT e.event_name, e.engine_key, e.table_id, e.format
+    FROM mcp_events e JOIN mcp_event_deliveries d ON d.event_id=e.id`)).rows)
+  assert.deepEqual(queue, [{
+    event_name: 'game.invitation.created', engine_key: engineName, table_id: notifiedId, format: 'Pioneer',
+  }])
+
+  const fallback = await f.path(route + '/' + notifiedId + '/claim', json('POST', owner, {}))
+  assert.equal(fallback.status, 200)
+  assert.equal((await fallback.json()).guestDisplayName, 'Rival MCP')
 })
 
 test('[PM-AC-04] a prehashed provisioning import is idempotent and cannot rotate an existing identity', { skip: !databaseUrl }, async t => {

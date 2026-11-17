@@ -72,6 +72,37 @@ export async function prepareProvisionBundle(bundle) {
   return { accounts: users, agents: verified, revocations: revoked }
 }
 
+async function lockName(db, username) {
+  await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [normalize(username)])
+}
+
+async function nameExists(db, name) {
+  const { rowCount } = await db.query(
+    'SELECT 1 FROM accounts WHERE username_key=$1 UNION ALL SELECT 1 FROM agent_grants WHERE engine_key=$1 LIMIT 1',
+    [normalize(name)],
+  )
+  return rowCount > 0
+}
+
+export async function ensureOAuthAgent(db, accountId) {
+  await db.query('SELECT pg_advisory_xact_lock(hashtext($1), 0)', [accountId])
+  const account = await db.query('SELECT 1 FROM accounts WHERE id=$1 AND enabled FOR SHARE', [accountId])
+  if (!account.rowCount) throw new ProductError(401, 'Inicia sesión en Playmat')
+  const { rows: [existing] } = await db.query(`SELECT engine_key FROM agent_grants
+    WHERE account_id=$1 AND oauth_managed AND revoked_at IS NULL`, [accountId])
+  if (existing) return existing.engine_key
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    // The default XMage login configuration accepts at most 14 characters.
+    const engineName = 'mcp_' + randomBytes(5).toString('hex')
+    await lockName(db, engineName)
+    if (await nameExists(db, engineName)) continue
+    await db.query(`INSERT INTO agent_grants(digest,account_id,engine_name,engine_key,scopes,oauth_managed)
+      VALUES($1,$2,$3,$3,$4,true)`, [randomBytes(32).toString('hex'), accountId, engineName, allScopes])
+    return engineName
+  }
+  throw new ProductError(503, 'No se pudo conectar el agente de Playmat')
+}
+
 export function createIdentity(pool, insecureCookie, resolveOAuth = async () => null) {
   const cookieName = insecureCookie ? 'playmat-session' : '__Host-playmat-session'
   const attributes = '; Path=/; HttpOnly; SameSite=Lax' + (insecureCookie ? '' : '; Secure')
@@ -81,20 +112,8 @@ export function createIdentity(pool, insecureCookie, resolveOAuth = async () => 
     return row
   }
 
-  async function lockName(db, username) {
-    await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [normalize(username)])
-  }
-
   async function assertAvailable(db, name) {
     if (await nameExists(db, name)) throw new ProductError(409, 'That engine name is already provisioned')
-  }
-
-  async function nameExists(db, name) {
-    const { rowCount } = await db.query(
-      'SELECT 1 FROM accounts WHERE username_key=$1 UNION ALL SELECT 1 FROM agent_grants WHERE engine_key=$1 LIMIT 1',
-      [normalize(name)],
-    )
-    return rowCount > 0
   }
 
   async function provisionHuman(name, password) {
@@ -129,7 +148,7 @@ export function createIdentity(pool, insecureCookie, resolveOAuth = async () => 
 
   async function revokeAgentDigests(db, digests) {
     if (digests.length) {
-      await db.query('UPDATE agent_grants SET revoked_at=now() WHERE digest=ANY($1::text[]) AND revoked_at IS NULL', [digests])
+      await db.query('UPDATE agent_grants SET revoked_at=now() WHERE digest=ANY($1::text[]) AND revoked_at IS NULL AND NOT oauth_managed', [digests])
     }
   }
 
@@ -209,7 +228,7 @@ export function createIdentity(pool, insecureCookie, resolveOAuth = async () => 
       if (!match) return null
       const tokenDigest = digest(match[1])
       const { rows: [row] } = await pool.query(
-        'SELECT a.id, a.username, g.engine_name, g.scopes FROM agent_grants g JOIN accounts a ON a.id=g.account_id WHERE g.digest=$1 AND g.revoked_at IS NULL AND a.enabled',
+        'SELECT a.id, a.username, g.engine_name, g.scopes FROM agent_grants g JOIN accounts a ON a.id=g.account_id WHERE g.digest=$1 AND g.revoked_at IS NULL AND a.enabled AND NOT g.oauth_managed',
         [tokenDigest],
       )
       return row ? actor(row.id, row.username, row.engine_name, row.scopes, true) : resolveOAuth(tokenDigest)
@@ -246,6 +265,7 @@ export function viewerNames(actor) {
 }
 
 export function identityView(actor) {
-  const { accountId, engineName, scopes, agent, connectionId } = actor
-  return { accountId, engineName, scopes, agent, ...(connectionId ? { connectionId } : {}) }
+  const { accountId, engineName, scopes, agent, connectionId, accountAgent, username } = actor
+  return { accountId, engineName, scopes, agent, ...(connectionId ? { connectionId } : {}),
+    ...(accountAgent ? { accountAgent, username } : {}) }
 }

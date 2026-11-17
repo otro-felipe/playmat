@@ -60,6 +60,7 @@ import { useOpponentVoice } from './useOpponentVoice';
 import { useRevealedHands } from './useRevealedHands';
 import { setCardMotion, useFlipOrigin } from './flip';
 import { GameLog } from './GameLog';
+import { seatDisplayName, type SeatDisplayNames } from './seatDisplayNames';
 import { useMatchZoomKeys } from './matchZoomKeys';
 import { Hand } from './Hand';
 import './matchMessages';
@@ -171,7 +172,7 @@ export interface MatchStageProps {
   /** where leaving goes, instead of closing the game and going back to Play */
   onLeave?: () => void;
   /** presentation names chosen by seats, keyed by their engine account name */
-  seatDisplayNames?: Readonly<Record<string, string>>;
+  seatDisplayNames?: SeatDisplayNames;
 }
 
 export function MatchStage({ session, state, replayLog, onLeave, seatDisplayNames }: MatchStageProps) {
@@ -506,8 +507,7 @@ export function MatchStage({ session, state, replayLog, onLeave, seatDisplayName
   // a concession takes effect when the player holding priority passes: name them while it is pending
   const enginePriorityName = (view?.players ?? []).find((player) => player.hasPriority && player.playerId !== myId)?.name
     ?? (view?.priorityPlayerName !== board.me?.player.name ? view?.priorityPlayerName ?? null : null);
-  const displayName = (engineName?: string | null) => engineName && seatDisplayNames && Object.hasOwn(seatDisplayNames, engineName)
-    ? seatDisplayNames[engineName] : engineName ?? undefined;
+  const displayName = (engineName?: string | null) => engineName == null ? undefined : seatDisplayName(engineName, seatDisplayNames);
   const priorityName = displayName(enginePriorityName) ?? null;
   let priorityLabel: string | null = null;
   if (interaction.mode === 'declareAttackers') priorityLabel = t('match.hud.attackers');
@@ -773,7 +773,7 @@ export function MatchStage({ session, state, replayLog, onLeave, seatDisplayName
             <EmoteBubbles view={view} gameId={state.gameId} />
             {mode === 'play' && <Coach view={view ?? null} mode={choosingStarter ? 'panel' : interaction.mode} awaiting={awaitingServer} gameOver={!!state.gameOver} />}
             {mode === 'play' && <LessonCoach gameId={state.gameId} view={view ?? null} mode={choosingStarter ? 'panel' : interaction.mode} awaiting={awaitingServer} gameOver={!!state.gameOver} />}
-            <GameLog key={`chat:${state.gameId}`} gameId={state.gameId} notices={state.notices} canChat={mode === 'play'} view={view} replayLog={replayLog} delayMs={state.broadcastDelayMs} />
+            <GameLog key={`chat:${state.gameId}`} gameId={state.gameId} notices={state.notices} canChat={mode === 'play'} view={view} replayLog={replayLog} delayMs={state.broadcastDelayMs} seatDisplayNames={seatDisplayNames} />
             {mode === 'watch' && !view && state.broadcastDelayMs > 0 && (
               <p className={styles.delayNote} role="status">
                 The table appears in {delayLabel(Math.round(state.broadcastDelayMs / 1000))}: the broadcast delay holds the game back.

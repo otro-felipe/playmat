@@ -1,4 +1,3 @@
-import { useQuery } from '@tanstack/react-query';
 import { BookOpen, Bot, Eye, Link2, Lock, MessageSquare, Plus, UserRound } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -26,7 +25,7 @@ import { joinTable } from './joinTable';
 import { TableAdvancedFields } from './TableAdvancedFields';
 import styles from './TablesScreen.module.css';
 import { PUBLIC_ORIGIN } from '../brand';
-import { createPlaytestingInvite, listPlaytestingEventRivals, MCP_CHAT_MODES, PRIVATE_PLAYTESTING, type McpChatMode, type PlaytestingInvitationView } from '../playtesting';
+import { createPlaytestingInvite, MCP_CHAT_MODES, PRIVATE_PLAYTESTING, type McpChatMode, type PlaytestingInvitationView } from '../playtesting';
 import { usePlaytestingInvitation } from '../usePlaytestingInvitation';
 import { registerMessages, useT } from '../i18n';
 import messages from '../i18n/en/social';
@@ -311,21 +310,11 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
   const [opponent, setOpponent] = useState(initialOpponent);
   const [mcpGuideOpen, setMcpGuideOpen] = useState(() => open && initialOpponent === 'mcp' && !mcpConnectionGuideHidden());
   const [chatMode, setChatMode] = useState<McpChatMode>('quiet');
-  const [notifyEngineName, setNotifyEngineName] = useState('');
   const [password, setPassword] = useState('');
   const [guest, setGuest] = useState('');
   const [advanced, setAdvanced] = useState<TableAdvanced>(DEFAULT_ADVANCED);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const eventRivals = useQuery({
-    queryKey: ['playtesting-event-rivals', userName],
-    queryFn: ({ signal }) => listPlaytestingEventRivals(signal),
-    enabled: PRIVATE_PLAYTESTING && open && !mcpGuideOpen && opponent === 'mcp' && Boolean(userName),
-    retry: false,
-    staleTime: 0,
-    refetchOnWindowFocus: true,
-  });
-
   // the table takes the format of the deck you join with
   useEffect(() => {
     if (!open || !deckId) return;
@@ -350,14 +339,9 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
   const listed = menu.some((group) => group.types.includes(deckType));
   const aiCount = PRIVATE_PLAYTESTING ? (opponent === 'ai' ? 1 : 0) : aiSeats;
   const needsGuest = PRIVATE_PLAYTESTING && opponent === 'friend';
-  const unavailableRecipient = opponent === 'mcp' && !!notifyEngineName
-    && !eventRivals.data?.some((agent) => agent.engineName === notifyEngineName);
-  const recipientHint = unavailableRecipient ? 'mcpInvite.recipient.unavailable'
-    : eventRivals.isSuccess && !eventRivals.data.length ? 'mcpInvite.recipient.subscribe' : null;
 
   function closeDialog() {
     setChatMode('quiet');
-    setNotifyEngineName('');
     setOpponent('friend');
     onOpenChange(false);
   }
@@ -398,7 +382,7 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
       }
       if (PRIVATE_PLAYTESTING && opponent !== 'ai') {
         await createPlaytestingInvite({ tableId: table.tableId, roomId, format: deckType, password: tablePassword },
-          opponent === 'mcp' ? { mode: 'mcp', chatMode, notifyEngineName: notifyEngineName || undefined }
+          opponent === 'mcp' ? { mode: 'mcp', chatMode }
             : { mode: 'friend', guestEngineName: guest.trim() });
       }
       if (aiCount > 0) {
@@ -438,7 +422,7 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
       footer={
         <>
           <Button variant="quiet" onClick={closeDialog}>Cancel</Button>
-          <Button variant="decision" busy={busy} disabled={!deckId || (needsGuest && !guest.trim()) || unavailableRecipient} onClick={() => void host()}>Host</Button>
+          <Button variant="decision" busy={busy} disabled={!deckId || (needsGuest && !guest.trim())} onClick={() => void host()}>Host</Button>
         </>
       }
     >
@@ -499,17 +483,7 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
           : <Field label="Password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} hint="Leave empty for an open table." />}
         {PRIVATE_PLAYTESTING && opponent === 'mcp' && (
           <div>
-            <label className={styles.selectField}>
-              <span>{t('mcpInvite.recipient.label')}</span>
-              <select value={notifyEngineName} disabled={!notifyEngineName && !eventRivals.data?.length}
-                aria-describedby={recipientHint ? 'mcp-recipient-description' : undefined}
-                onChange={(event) => setNotifyEngineName(event.target.value)}>
-                <option value="">{t('mcpInvite.recipient.manual')}</option>
-                {unavailableRecipient && <option value={notifyEngineName} disabled>{notifyEngineName}</option>}
-                {eventRivals.data?.map(({ engineName }) => <option key={engineName} value={engineName}>{engineName}</option>)}
-              </select>
-            </label>
-            {recipientHint && <p id="mcp-recipient-description" className={styles.selectionHint} role={unavailableRecipient ? 'status' : undefined}>{t(recipientHint)}</p>}
+            <p className={styles.selectionHint}>{t('mcpInvite.accountRival')}</p>
             <label className={styles.selectField}>
               <span>{t('mcpInvite.chat.label')}</span>
               <select value={chatMode} aria-describedby="mcp-chat-description" onChange={(event) => setChatMode(event.target.value as McpChatMode)}>

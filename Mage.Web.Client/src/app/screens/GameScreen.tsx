@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useStore } from 'zustand';
 import { useEvents } from '../stores/events';
@@ -57,6 +58,8 @@ function ConnectedStage({ gameId, leaveLabel, onLeave }: { gameId: string; leave
   const session = useGames((state) => state.sessions[gameId])!;
   const tableId = useGames((state) => state.tables[gameId]?.tableId);
   const { data: invite } = usePlaytestingInvitation(tableId);
+  const seatDisplayNames = useMemo(() => invite?.mode === 'mcp' && invite.guestEngineName && invite.guestDisplayName
+    ? { [invite.guestEngineName]: invite.guestDisplayName } : undefined, [invite]);
   const state = useStore(session.store);
   const connection = useSession((session) => session.connection);
   const phase = useSession((session) => session.phase);
@@ -74,8 +77,7 @@ function ConnectedStage({ gameId, leaveLabel, onLeave }: { gameId: string; leave
   });
   return (
     <>
-      <MatchStage session={session} state={state} seatDisplayNames={invite?.mode === 'mcp' && invite.guestEngineName && invite.guestDisplayName
-        ? { [invite.guestEngineName]: invite.guestDisplayName } : undefined} />
+      <MatchStage session={session} state={state} seatDisplayNames={seatDisplayNames} />
       {(offline || state.resyncing) && !state.gameOver && state.mode !== 'replay' && (
         <ReconnectScrim offline={offline} onLeave={onLeave} leaveLabel={leaveLabel} />
       )}

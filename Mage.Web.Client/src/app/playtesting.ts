@@ -11,7 +11,7 @@ export const MCP_CHAT_MODES = ['quiet', 'chatty', 'coach'] as const;
 export type McpChatMode = typeof MCP_CHAT_MODES[number];
 
 export type PlaytestingOpponent = { mode: 'friend'; guestEngineName: string }
-  | { mode: 'mcp'; chatMode: McpChatMode; notifyEngineName?: string };
+  | { mode: 'mcp'; chatMode: McpChatMode };
 
 export interface PlaytestingInvitationView {
   mode: 'friend' | 'mcp';
@@ -37,13 +37,6 @@ async function sendInviteRequest(path: string, input?: Record<string, unknown>, 
 
 export async function createPlaytestingInvite(invite: PlaytestingInvite, opponent: PlaytestingOpponent): Promise<void> {
   await sendInviteRequest('', { ...invite, ...opponent });
-}
-
-export async function listPlaytestingEventRivals(signal: AbortSignal): Promise<{ engineName: string }[]> {
-  const response = await fetch('/api/playtesting/event-rivals', { signal });
-  if (!response.ok) throw new Error('Subscribed agents could not be loaded.');
-  const { rivals } = await response.json() as { rivals: { engineName: string }[] };
-  return rivals;
 }
 
 export async function getPlaytestingInvitation(tableId: string, signal: AbortSignal): Promise<PlaytestingInvitationView | null> {

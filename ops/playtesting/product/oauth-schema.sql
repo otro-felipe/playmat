@@ -46,3 +46,8 @@ CREATE TABLE IF NOT EXISTS oauth_access_tokens (
 );
 CREATE INDEX IF NOT EXISTS oauth_access_tokens_expiry ON oauth_access_tokens(expires_at);
 CREATE INDEX IF NOT EXISTS oauth_access_tokens_connection ON oauth_access_tokens(connection_id);
+
+-- Ask clients authorized for a manually chosen agent to reconnect to the account.
+UPDATE oauth_connections c SET revoked_at=now()
+FROM agent_grants g
+WHERE c.engine_key=g.engine_key AND NOT g.oauth_managed AND c.revoked_at IS NULL;

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { test } from 'node:test';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { WebSocketServer } from 'ws';
@@ -56,19 +57,23 @@ test('[PM-AC-08] join_game uses a private Playmat link, validates before claim, 
   assert.deepEqual(claimed, [{ tableId, displayName: 'Angels' }]);
 });
 
-test('[PM-AC-08] the MCP seat receives the host chat mode for its invited match', { timeout: 5_000 }, async (t) => {
+test('[PM-AC-08] the MCP seat receives its chosen display name and chat mode for the invited match', { timeout: 5_000 }, async (t) => {
   const origin = 'https://playmat.example';
   const tableId = '22222222-2222-4222-8222-222222222222';
   const roomId = '33333333-3333-4333-8333-333333333333';
   const deck = { name: 'Fixture deck', cards: [{ cardName: 'Forest', amount: 60 }] };
   const engineName = 'FixtureAgent';
+  const chatId = '44444444-4444-4444-8444-444444444444';
+  const chatSends = [];
   const engineServer = new WebSocketServer({ host: '127.0.0.1', port: 0 });
   await once(engineServer, 'listening');
   const connected = once(engineServer, 'connection');
-  const reply = { connectUser: true, serverGetMainRoomId: roomId, deckValidate: { valid: true }, roomJoinTable: true, gameJoin: true };
+  const reply = { connectUser: true, serverGetMainRoomId: roomId, deckValidate: { valid: true }, roomJoinTable: true,
+    gameJoin: true, chatFindByGame: chatId, chatJoin: true, chatSendMessage: true };
   engineServer.on('connection', (socket) => {
     socket.on('message', (raw) => {
-      const { method, id } = JSON.parse(raw);
+      const { method, id, params } = JSON.parse(raw);
+      if (method === 'chatSendMessage') chatSends.push(params);
       socket.send(JSON.stringify({ jsonrpc: '2.0', id, result: reply[method] ?? null }));
     });
   });
@@ -83,7 +88,7 @@ test('[PM-AC-08] the MCP seat receives the host chat mode for its invited match'
     product: async (_token, operation) => {
       if (operation === 'inspect_game_invite') return invite;
       assert.equal(operation, 'get_game_invite');
-      return { ...invite, password: 'synthetic-table-fixture' };
+      return { ...invite, guestDisplayName: 'Counter Pilot', password: 'synthetic-table-fixture' };
     },
   });
   t.after(() => {
@@ -108,7 +113,8 @@ test('[PM-AC-08] the MCP seat receives the host chat mode for its invited match'
 
   const join = await call('join_game', { inviteLink: `${origin}/join/${tableId}`, deck });
   assert.equal(join.chatMode, 'coach');
-  assert.equal((await call('get_game_state')).chatMode, 'coach');
+  assert.equal(join.displayName, 'Counter Pilot');
+  assert.equal((await call('get_game_state')).displayName, 'Counter Pilot');
   const [socket] = await connected;
   const starts = [
     { gameId: '11111111-1111-4111-8111-111111111111', currentTableId: tableId, expectedMode: 'coach' },
@@ -128,5 +134,18 @@ test('[PM-AC-08] the MCP seat receives the host chat mode for its invited match'
     await started;
     const state = await call('get_game_state', { gameId });
     assert.equal(state.chatMode, expectedMode);
+    assert.equal(state.displayName, expectedMode ? 'Counter Pilot' : undefined);
+    if (index === 0) {
+      assert.equal((await call('send_chat', { gameId, message: 'Good game' })).sent, true);
+      assert.deepEqual(chatSends, [[chatId, null, 'Good game']]);
+      socket.send(JSON.stringify({ method: 'CHATMESSAGE', messageId: 100, objectId: chatId,
+        data: { username: engineName, messageType: 'TALK', message: 'Good game', time: 1 } }));
+      let messages = [];
+      for (let attempt = 0; attempt < 10 && !messages.length; attempt++) {
+        ({ messages } = await call('list_chat', { gameId }));
+        if (!messages.length) await sleep(20);
+      }
+      assert.deepEqual(messages, [{ author: 'Counter Pilot', message: 'Good game', time: 1 }]);
+    }
   }
 });

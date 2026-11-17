@@ -76,27 +76,27 @@ test.each(['quiet', 'chatty', 'coach'])('[PM-AC-04] the host creates a Rival MCP
   expect(invite).not.toHaveProperty('notifyEngineName');
 });
 
-test('[PM-AC-16] the host can notify one subscribed MCP rival while the manual link is the default', async () => {
+test('[PM-AC-16] the host creates an account-private MCP invitation without selecting an agent', async () => {
   tables = [];
   calls.create.mockResolvedValue({ tableId });
   calls.join.mockResolvedValue(true);
   const fetcher = vi.fn(async (_url: string, request?: RequestInit) => request?.method === 'POST'
     ? Response.json({}, { status: 201 })
-    : Response.json({ rivals: [{ engineName: 'MyDot' }, { engineName: 'OtherDot' }] }));
+    : Response.json({ rivals: [] }));
   vi.stubGlobal('fetch', fetcher);
   const { page } = mount({ host: deck.id, opponent: 'mcp' });
   const guide = within(await page.findByRole('dialog', { name: 'Connect to Playmat MCP' }));
   fireEvent.click(guide.getByRole('button', { name: 'Continue' }));
   const dialog = within(await page.findByRole('dialog', { name: 'Host a table' }));
-  await dialog.findByRole('option', { name: 'MyDot' });
-  const select = await dialog.findByLabelText('Notify agent') as HTMLSelectElement;
-  expect(fetcher).toHaveBeenCalledWith('/api/playtesting/event-rivals', expect.objectContaining({ signal: expect.any(AbortSignal) }));
-  expect(select.value).toBe('');
-  fireEvent.change(select, { target: { value: 'MyDot' } });
+  expect(dialog.queryByLabelText('Notify agent')).toBeNull();
+  expect(dialog.getByText('Your connected agent can join this table.')).toBeTruthy();
   fireEvent.click(dialog.getByRole('button', { name: /^Host$/ }));
   await waitFor(() => expect(fetcher.mock.calls.some(([, request]) => request?.method === 'POST')).toBe(true));
   const [, request] = fetcher.mock.calls.find(([, request]) => request?.method === 'POST')!;
-  expect(JSON.parse(String(request?.body))).toMatchObject({ tableId, mode: 'mcp', notifyEngineName: 'MyDot' });
+  const invite = JSON.parse(String(request?.body));
+  expect(invite).toMatchObject({ tableId, mode: 'mcp' });
+  expect(invite).not.toHaveProperty('notifyEngineName');
+  expect(fetcher.mock.calls.every(([url]) => url !== '/api/playtesting/event-rivals')).toBe(true);
 });
 
 test('[PM-AC-04] the play entry shows the connection guide and remembers the host’s choice', async () => {

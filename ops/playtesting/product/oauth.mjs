@@ -1,6 +1,6 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
-import { digest, newToken } from './identity.mjs'
-import { isUuid, normalize, ProductError, transaction } from './decks.mjs'
+import { digest, ensureOAuthAgent, newToken } from './identity.mjs'
+import { isUuid, ProductError, transaction } from './decks.mjs'
 
 const chatgpt = {
   clientId: 'https://chatgpt.com/oauth/client.json',
@@ -13,6 +13,7 @@ const accessLifetime = 15 * 60
 const connectionLifetime = 30 * 24 * 60 * 60
 const scopeLabels = { play: 'juego e invitaciones', chat: 'chat de partida', library: 'mazos de la cuenta', history: 'historial de la cuenta' }
 const scopesSupported = Object.keys(scopeLabels)
+const defaultScopes = ['play', 'library', 'chat']
 const tokenPattern = /^[a-zA-Z0-9_-]{43}$/
 const verifierPattern = /^[a-zA-Z0-9_.~-]{43,128}$/
 const statePattern = /^[\x21-\x7e]{1,1024}$/
@@ -37,7 +38,7 @@ function html(res, title, content, redirectOrigin = '') {
     :root{color-scheme:dark;font:16px system-ui;background:#171c18;color:#f5f3ed}
     main{box-sizing:border-box;max-width:min(92vw,32rem);margin:8dvh auto;padding:2rem;background:#222b24;border:1px solid #405043;border-radius:1rem}
     form,label{display:grid;gap:.65rem}form+form{margin-top:1rem}
-    select,button{border:1px solid #687568;border-radius:.5rem;padding:.75rem;color:inherit;background:#18201a;font:inherit}
+    button{border:1px solid #687568;border-radius:.5rem;padding:.75rem;color:inherit;background:#18201a;font:inherit}
     button{cursor:pointer}button[value="allow"]{background:#c6dfaf;color:#182018;font-weight:650}
     </style><main><h1>${title}</h1>${content}</main></html>`)
 }
@@ -90,7 +91,8 @@ function authRequest(params, audience, registry) {
   if (params.get('code_challenge_method') !== 'S256' || !tokenPattern.test(challenge ?? '')) {
     return { client, state, error: 'invalid_request' }
   }
-  const scopes = [...new Set((params.get('scope') ?? 'play').trim().split(/ +/))]
+  const requested = params.get('scope')?.trim()
+  const scopes = requested ? [...new Set(requested.split(/ +/))] : defaultScopes
   if (scopes.some(scope => !scopesSupported.includes(scope))) return { client, state, error: 'invalid_scope' }
   return { client, state, challenge, scopes }
 }
@@ -110,22 +112,17 @@ export function createOAuth(pool, publicUrl, { body, clients = [] }) {
       const next = requestUrl.pathname + requestUrl.search
       return res.writeHead(303, { Location: '/login?next=' + encodeURIComponent(next), 'Referrer-Policy': 'no-referrer' }).end()
     }
-    const { rows } = await pool.query(`SELECT engine_name,scopes FROM agent_grants
-      WHERE account_id=$1 AND revoked_at IS NULL AND scopes && $2::text[] ORDER BY engine_name`, [owner.accountId, request.scopes])
-    const agents = rows.map(agent => ({ name: agent.engine_name, scopes: approvedScopes(agent.scopes, request.scopes) }))
-      .filter(agent => agent.scopes.length)
-    if (!agents.length) return html(res, 'Conectar un agente MCP',
-      '<p>Tu cuenta todavía no tiene un asiento de agente habilitado. Pídele uno al administrador de Playmat y vuelve a iniciar la conexión.</p>')
     const id = randomUUID()
     await pool.query('DELETE FROM oauth_consent_requests WHERE expires_at<=now()')
     await pool.query(`INSERT INTO oauth_consent_requests(id,browser_session,code_challenge,client_state,client_id,redirect_uri,audience,scopes_requested,expires_at)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [id, owner.browserSession, request.challenge, request.state, request.client.clientId,
       request.client.redirectUri, audience, request.scopes, deadline(consentLifetime)])
-    const options = agents.map(agent => `<option value="${escape(agent.name)}">${escape(agent.name)} (${agent.scopes.map(scope => scopeLabels[scope]).join(', ')})</option>`).join('')
-    return html(res, 'Conectar un agente MCP', `
-      <p>Elige el asiento que podrá usar <strong>${escape(request.client.name)}</strong>. Cada opción muestra los permisos que autorizas para esa conexión.</p>
+    const permissions = request.scopes.map(scope => `<li>${scopeLabels[scope]}</li>`).join('')
+    return html(res, 'Conectar tu cuenta de Playmat', `
+      <p>Autoriza a <strong>${escape(request.client.name)}</strong> a usar tu cuenta de Playmat <strong>${escape(owner.username)}</strong> con estos permisos.</p>
+      <ul>${permissions}</ul>
+      ${request.scopes.includes('play') ? '<p>El agente puede controlar al rival cuando lo invitas a una partida MCP.</p>' : ''}
       <form method="post" action="/oauth/authorize"><input type="hidden" name="request" value="${id}">
-      <label>Asiento de agente<select name="seat" required>${options}</select></label>
       <button name="decision" value="allow">Autorizar</button>
       <button name="decision" value="deny">Cancelar</button></form>`, new URL(request.client.redirectUri).origin)
   }
@@ -136,7 +133,9 @@ export function createOAuth(pool, publicUrl, { body, clients = [] }) {
     const form = await body(req, 'form', 4096)
     const requestId = form.get('request')
     const decision = form.get('decision')
-    if (!owner || !isUuid(requestId) || !['allow', 'deny'].includes(decision)) throw new ProductError(400, 'Autorización OAuth vencida')
+    if (!owner || !isUuid(requestId) || !['allow', 'deny'].includes(decision) || form.has('seat')) {
+      throw new ProductError(400, 'Autorización OAuth vencida')
+    }
     const approved = await transaction(pool, async db => {
       const { rows: [request] } = await db.query(`SELECT * FROM oauth_consent_requests
         WHERE id=$1 AND browser_session=$2 AND audience=$3 AND expires_at>now() FOR UPDATE`,
@@ -145,15 +144,13 @@ export function createOAuth(pool, publicUrl, { body, clients = [] }) {
       if (!client || request.redirect_uri !== client.redirectUri) throw new ProductError(400, 'Autorización OAuth vencida')
       let result = { error: 'access_denied' }
       if (decision === 'allow') {
-        const { rows: [agent] } = await db.query(`SELECT engine_key,scopes FROM agent_grants
-          WHERE account_id=$1 AND engine_key=$2 AND revoked_at IS NULL`,
-        [owner.accountId, normalize(form.get('seat'))])
-        const scopes = approvedScopes(agent?.scopes ?? [], request.scopes_requested)
-        if (!agent || !scopes.length) throw new ProductError(400, 'Elige uno de tus asientos de agente')
+        const engineKey = await ensureOAuthAgent(db, owner.accountId)
+        const scopes = approvedScopes(scopesSupported, request.scopes_requested)
+        if (!scopes.length) throw new ProductError(400, 'Permisos OAuth vencidos')
         const code = newToken()
         await db.query('DELETE FROM oauth_authorization_codes WHERE expires_at<=now()')
         await db.query(`INSERT INTO oauth_authorization_codes(digest,account_id,engine_key,code_challenge,client_id,redirect_uri,audience,scopes_approved,expires_at)
-          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [digest(code), owner.accountId, agent.engine_key, request.code_challenge,
+          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [digest(code), owner.accountId, engineKey, request.code_challenge,
           client.clientId, request.redirect_uri, audience, scopes, deadline(codeLifetime)])
         result = { code }
       }
@@ -170,7 +167,7 @@ export function createOAuth(pool, publicUrl, { body, clients = [] }) {
     const { rows: [grant] } = await db.query(`SELECT k.*,g.scopes AS current_scopes
       FROM oauth_authorization_codes k JOIN agent_grants g ON g.engine_key=k.engine_key AND g.account_id=k.account_id
       JOIN accounts a ON a.id=k.account_id WHERE k.digest=$1 AND k.audience=$2 AND k.client_id=$3 AND k.redirect_uri=$4
-      AND k.expires_at>now() AND a.enabled AND g.revoked_at IS NULL FOR UPDATE OF k`,
+      AND k.expires_at>now() AND a.enabled AND g.revoked_at IS NULL AND g.oauth_managed FOR UPDATE OF k`,
     [digest(code), audience, client.clientId, client.redirectUri])
     const actualChallenge = createHash('sha256').update(verifier).digest('base64url')
     if (!grant || !timingSafeEqual(Buffer.from(grant.code_challenge), Buffer.from(actualChallenge))) return null
@@ -189,7 +186,7 @@ export function createOAuth(pool, publicUrl, { body, clients = [] }) {
     const { rows: [connection] } = await db.query(`UPDATE oauth_connections c SET refresh_digest=$1, expires_at=$2
       FROM agent_grants g JOIN accounts a ON a.id=g.account_id
       WHERE c.refresh_digest=$3 AND c.audience=$4 AND c.client_id=$5 AND c.expires_at>now() AND c.revoked_at IS NULL
-      AND c.engine_key=g.engine_key AND c.account_id=g.account_id AND a.enabled AND g.revoked_at IS NULL
+      AND c.engine_key=g.engine_key AND c.account_id=g.account_id AND a.enabled AND g.revoked_at IS NULL AND g.oauth_managed
       AND g.scopes && c.scopes_approved AND (NOT ('play'=ANY(c.scopes_approved)) OR 'play'=ANY(g.scopes))
       RETURNING c.id,c.scopes_approved,g.scopes AS current_scopes`,
     [refreshDigest, deadline(connectionLifetime), digest(token), audience, client.clientId])
@@ -256,12 +253,13 @@ export function createOAuth(pool, publicUrl, { body, clients = [] }) {
       if (!revoked.rowCount) throw new ProductError(404, 'Conexión no encontrada')
       return res.writeHead(303, { Location: '/oauth/connections' }).end()
     }
-    const { rows } = await pool.query(`SELECT c.id,g.engine_name,c.client_id FROM oauth_connections c JOIN agent_grants g
+    const { rows } = await pool.query(`SELECT c.id,c.client_id,c.scopes_approved,g.scopes FROM oauth_connections c JOIN agent_grants g
       ON g.engine_key=c.engine_key AND g.account_id=c.account_id WHERE c.audience=$1 AND c.account_id=$2
-      AND c.revoked_at IS NULL AND c.expires_at>now() AND g.revoked_at IS NULL ORDER BY c.created_at DESC`,
+      AND c.revoked_at IS NULL AND c.expires_at>now() AND g.revoked_at IS NULL AND g.oauth_managed ORDER BY c.created_at DESC`,
     [audience, owner.accountId])
     const entries = rows.map(row => `<form method="post"><input type="hidden" name="connection" value="${escape(row.id)}">
-      <span>${escape(row.engine_name)} · ${escape(registry.get(row.client_id)?.name ?? 'Cliente MCP')}</span><button>Desconectar</button></form>`).join('')
+      <span>${escape(registry.get(row.client_id)?.name ?? 'Cliente MCP')} · ${approvedScopes(row.scopes, row.scopes_approved).map(scope => scopeLabels[scope]).join(', ')}</span>
+      <button>Desconectar</button></form>`).join('')
     return html(res, 'Conexiones MCP', entries || '<p>No tienes conexiones activas.</p>')
   }
 
@@ -294,11 +292,11 @@ export function createOAuth(pool, publicUrl, { body, clients = [] }) {
       JOIN oauth_connections c ON c.id=t.connection_id JOIN accounts a ON a.id=c.account_id
       JOIN agent_grants g ON g.engine_key=c.engine_key AND g.account_id=c.account_id
       WHERE t.digest=$1 AND t.expires_at>now() AND c.audience=$2 AND c.expires_at>now() AND c.revoked_at IS NULL
-      AND a.enabled AND g.revoked_at IS NULL`, [accessDigest, audience])
+      AND a.enabled AND g.revoked_at IS NULL AND g.oauth_managed`, [accessDigest, audience])
     if (!row || !registry.has(row.client_id)) return null
     const scopes = approvedScopes(row.current_scopes, row.scopes_approved)
     return scopes.length ? { accountId: row.id, username: row.username, engineName: row.engine_name,
-      scopes, agent: true, connectionId: row.connection_id } : null
+      scopes, agent: true, accountAgent: true, connectionId: row.connection_id } : null
   }
 
   return { route, resolve }

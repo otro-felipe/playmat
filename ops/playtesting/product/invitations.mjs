@@ -3,6 +3,8 @@ import { isUuid, normalize, normalizeFormat, ProductError, transaction } from '.
 const CHAT_MODES = new Set(['quiet', 'chatty', 'coach'])
 const INVITATION_EVENT = 'game.invitation.created'
 
+const rivalAccount = actor => actor.accountAgent === true ? actor.accountId : null
+
 function invitationView(row) {
   if (!row) throw new ProductError(404, 'Invitation not found')
   return {
@@ -25,27 +27,13 @@ export function createInvitations(pool, identity, events) {
   async function list(actor, requestedLimit) {
     const limit = Math.max(1, Math.min(50, Number.parseInt(requestedLimit, 10) || 25))
     const { rows } = await pool.query(
-      'SELECT * FROM invitations WHERE invitee_key=$1 AND expires_at>now() ORDER BY expires_at DESC,table_id LIMIT $2',
-      [normalize(actor.engineName), limit],
+      `SELECT * FROM invitations WHERE expires_at>now() AND (
+        (owner_account_id IS NULL AND invitee_key=$1)
+        OR (owner_account_id=$2 AND (invitee_key IS NULL OR invitee_key=$1))
+      ) ORDER BY expires_at DESC,table_id LIMIT $3`,
+      [normalize(actor.engineName), rivalAccount(actor), limit],
     )
     return { invites: rows.map(invitationView) }
-  }
-
-  async function eventRivals(actor) {
-    if (actor.agent) throw new ProductError(403, 'Sign in as the host account to view subscribed agents')
-    const { rows } = await pool.query(`SELECT g.engine_name AS "engineName"
-      FROM agent_grants g JOIN accounts a ON a.id=g.account_id
-      WHERE g.account_id=$1 AND a.enabled AND g.revoked_at IS NULL AND 'play'=ANY(g.scopes)
-      AND EXISTS (
-        SELECT 1 FROM mcp_event_subscriptions s
-        WHERE s.account_id=g.account_id AND s.engine_key=g.engine_key AND s.event_name=$2 AND s.expires_at>now()
-        AND (s.connection_id IS NULL OR EXISTS (
-          SELECT 1 FROM oauth_connections c
-          WHERE c.id=s.connection_id AND c.account_id=g.account_id AND c.engine_key=g.engine_key
-          AND c.revoked_at IS NULL AND c.expires_at>now()
-        ))
-      ) ORDER BY g.engine_key`, [actor.accountId, INVITATION_EVENT])
-    return { rivals: rows }
   }
 
   async function create(actor, data) {
@@ -54,15 +42,12 @@ export function createInvitations(pool, identity, events) {
       || data.password.length < 12 || data.password.length > 100) throw new ProductError(400, 'Provide a valid protected table')
     const mode = data.mode ?? 'friend'
     if (mode !== 'friend' && mode !== 'mcp') throw new ProductError(400, 'Invalid invitation mode')
+    if (mode === 'mcp' && actor.agent) throw new ProductError(403, 'Sign in as the host account to create an MCP invitation')
     if (data.chatMode !== undefined && (mode !== 'mcp' || !CHAT_MODES.has(data.chatMode))) {
       throw new ProductError(400, 'Choose quiet, chatty, or coach for an MCP invitation')
     }
     const chatMode = data.chatMode ?? 'quiet'
-    const notify = data.notifyEngineName !== undefined
-    if (notify && (mode !== 'mcp' || typeof data.notifyEngineName !== 'string' || !/^[a-z0-9_-]{3,24}$/i.test(data.notifyEngineName.trim()))) {
-      throw new ProductError(400, 'Select a delegated agent for the MCP invitation')
-    }
-    if (notify && actor.agent) throw new ProductError(403, 'Sign in as the host account to select an agent')
+    if (data.notifyEngineName !== undefined) throw new ProductError(400, 'MCP invitations use the host account')
     let friend = null
     if (mode === 'friend') {
       friend = await identity.fromEngine(data.guestEngineName)
@@ -72,26 +57,22 @@ export function createInvitations(pool, identity, events) {
     } else if (data.guestEngineName !== undefined) {
       throw new ProductError(400, 'An MCP invitation cannot name a guest account')
     }
+    const ownerAccountId = mode === 'mcp' ? actor.accountId : null
     return transaction(pool, async db => {
-      let invitee = friend?.engineName ?? null
-      if (notify) {
-        const { rows: [agent] } = await db.query(`SELECT g.engine_name FROM agent_grants g JOIN accounts a ON a.id=g.account_id
-          WHERE g.account_id=$1 AND g.engine_key=$2 AND a.enabled AND g.revoked_at IS NULL AND 'play'=ANY(g.scopes)
-          FOR SHARE OF g,a`, [actor.accountId, normalize(data.notifyEngineName)])
-        if (!agent) throw new ProductError(400, 'Select an active agent from this account with play access')
-        invitee = agent.engine_name
-      }
-      const { rows: [invite] } = await db.query(`INSERT INTO invitations(table_id,room_id,format,creator_key,invitee_key,invitee_name,table_password,expires_at,mode,chat_mode)
-        VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '48 hours',$8,$9) ON CONFLICT (table_id) DO NOTHING RETURNING *`,
+      const invitee = friend?.engineName ?? null
+      const { rows: [invite] } = await db.query(`INSERT INTO invitations(
+        table_id,room_id,format,creator_key,invitee_key,invitee_name,table_password,expires_at,mode,chat_mode,owner_account_id
+      ) VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '48 hours',$8,$9,$10) ON CONFLICT (table_id) DO NOTHING RETURNING *`,
       [data.tableId, data.roomId, format, normalize(actor.engineName), invitee ? normalize(invitee) : null,
-        invitee, data.password, mode, chatMode])
+        invitee, data.password, mode, chatMode, ownerAccountId])
       if (!invite) throw new ProductError(409, 'This table already has an invitation')
-      if (notify) {
-        const queued = await events.enqueue(db, {
-          accountId: actor.accountId, engineName: invitee, name: INVITATION_EVENT, key: invite.table_id,
+      if (ownerAccountId) {
+        const { rows: [agent] } = await db.query(`SELECT engine_name FROM agent_grants
+          WHERE account_id=$1 AND oauth_managed AND revoked_at IS NULL AND 'play'=ANY(scopes)`, [ownerAccountId])
+        if (agent) await events.enqueue(db, {
+          accountId: ownerAccountId, engineName: agent.engine_name, name: INVITATION_EVENT, key: invite.table_id,
           data: { tableId: invite.table_id, format },
         })
-        if (!queued) throw new ProductError(409, 'This agent is no longer subscribed to invitations')
       }
       return invitationView(invite)
     })
@@ -99,21 +80,25 @@ export function createInvitations(pool, identity, events) {
 
   async function inspect(actor, tableId) {
     const { rows: [invite] } = await pool.query(`SELECT * FROM invitations WHERE table_id=$1 AND expires_at>now()
-      AND (creator_key=$2 OR invitee_key=$2 OR (mode='mcp' AND invitee_key IS NULL AND $3))`,
-    [tableId, normalize(actor.engineName), actor.agent])
+      AND (creator_key=$2
+        OR (owner_account_id IS NULL AND (invitee_key=$2 OR (mode='mcp' AND invitee_key IS NULL AND $3)))
+        OR (owner_account_id=$4 AND (invitee_key IS NULL OR invitee_key=$2)))`,
+    [tableId, normalize(actor.engineName), actor.agent, rivalAccount(actor)])
     return invitationView(invite)
   }
 
   async function claim(actor, tableId, data) {
     const alias = displayName(data?.displayName)
     const key = normalize(actor.engineName)
+    const fallback = actor.accountAgent === true ? 'Rival MCP' : actor.engineName
     // The claim chooses the authenticated engine identity once. Retries by that identity keep the same alias.
     const { rows: [invite] } = await pool.query(`UPDATE invitations SET
       claimed_at=COALESCE(claimed_at,now()), invitee_key=COALESCE(invitee_key,$2), invitee_name=COALESCE(invitee_name,$3),
-      guest_display_name=CASE WHEN mode='mcp' THEN COALESCE(guest_display_name,$4,$3) ELSE guest_display_name END
-      WHERE table_id=$1 AND creator_key<>$2 AND expires_at>now() AND (
+      guest_display_name=CASE WHEN mode='mcp' THEN COALESCE(guest_display_name,$4,$7) ELSE guest_display_name END
+      WHERE table_id=$1 AND creator_key<>$2 AND expires_at>now()
+        AND (owner_account_id IS NULL OR owner_account_id=$6) AND (
         (mode='friend' AND invitee_key=$2) OR (mode='mcp' AND $5 AND (invitee_key IS NULL OR invitee_key=$2))
-      ) RETURNING *`, [tableId, key, actor.engineName, alias, actor.agent])
+      ) RETURNING *`, [tableId, key, actor.engineName, alias, actor.agent, rivalAccount(actor), fallback])
     return { ...invitationView(invite), password: invite.table_password }
   }
 
@@ -123,9 +108,10 @@ export function createInvitations(pool, identity, events) {
       AND (mode='friend' OR EXISTS (
         SELECT 1 FROM agent_grants g JOIN accounts a ON a.id=g.account_id
         WHERE g.engine_key=i.invitee_key AND g.revoked_at IS NULL AND 'play'=ANY(g.scopes) AND a.enabled
+          AND (i.owner_account_id IS NULL OR (g.account_id=i.owner_account_id AND g.oauth_managed))
       ))`, [tableId, normalize(host), normalize(guest)])
     return Boolean(rowCount)
   }
 
-  return { list, eventRivals, create, inspect, claim, admit }
+  return { list, create, inspect, claim, admit }
 }

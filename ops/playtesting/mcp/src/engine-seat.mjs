@@ -49,7 +49,7 @@ export class PlaymatEngineSeat {
   #vote = null;
   #chatId = null;
   #chat = [];
-  #chatPreference = null;
+  #invitePresentation = null;
 
   constructor({ engineUrl, engineName, trustedHeader, guardedPrompts = true }) {
     this.engineUrl = engineUrl;
@@ -197,11 +197,12 @@ export class PlaymatEngineSeat {
         ? Math.max(state.endInfo?.wins ?? 0, state.endInfo?.loses ?? 0) >= (state.endInfo?.winsNeeded ?? 2) ? 'match_over' : 'game_over'
         : state ? 'active' : 'lobby';
     const decision = status === 'active' ? this.#decision(state) : null;
-    const chatPreference = this.#chatPreference;
-    const chatTableId = state ? this.#gameTableId : this.#tableId;
+    const tableId = state ? this.#gameTableId : this.#tableId;
+    const presentation = this.#invitePresentation?.tableId === tableId ? this.#invitePresentation : null;
     return {
       gameId: state?.gameId ?? null, tableId: this.#tableId, status, epoch: this.#epoch, cursor: this.#cursor,
-      ...(chatPreference?.tableId === chatTableId ? { chatMode: chatPreference.mode } : {}),
+      ...(presentation ? { chatMode: presentation.chatMode } : {}),
+      ...(presentation?.displayName ? { displayName: presentation.displayName } : {}),
       ...visibleAgentGame(state),
       priority,
       secondsRemaining: own?.timerActive && own.priorityTimeLeftSecs > 0 ? own.priorityTimeLeftSecs : null,
@@ -280,7 +281,7 @@ export class PlaymatEngineSeat {
       this.#tableId = tableId;
     }
     const chatMode = grant.mode === 'mcp' ? grant.chatMode ?? 'quiet' : null;
-    this.#chatPreference = chatMode ? { tableId, mode: chatMode } : null;
+    this.#invitePresentation = chatMode ? { tableId, chatMode, displayName: grant.guestDisplayName } : null;
     this.#publish();
     return {
       tableId, state: 'seated', gameId,
@@ -379,14 +380,16 @@ export class PlaymatEngineSeat {
 
   listChat(gameId) {
     this.#requireGame(gameId);
-    return { messages: this.#chat.slice() };
+    const displayName = this.#invitePresentation?.tableId === this.#gameTableId ? this.#invitePresentation.displayName : null;
+    return { messages: this.#chat.map((message) => displayName && message.author === this.engineName
+      ? { ...message, author: displayName } : message) };
   }
 
   async sendChat({ gameId, message }) {
     this.#requireGame(gameId);
     const chatId = await this.#joinChat(gameId);
     if (!chatId) throw new ToolError('chat_unavailable', 'There is no participant chat for the current game.');
-    rejectOnFalse(await this.api.chatSendMessage(chatId, this.engineName, message), 'chat_refused', 'XMage refused this chat message.');
+    rejectOnFalse(await this.api.chatSendMessage(chatId, null, message), 'chat_refused', 'XMage refused this chat message.');
     return { sent: true };
   }
 

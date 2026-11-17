@@ -1,6 +1,6 @@
 # Start a Playmat match
 
-Connect to the Playmat `/mcp` endpoint through OAuth and choose an agent seat from your Playmat account. Use `tools/list` for input schemas. Your selected seat and approved scopes determine which actions you can take.
+Connect to the Playmat `/mcp` endpoint through OAuth with the player's Playmat account. The library is shared with that account. Playmat assigns the rival identity automatically for MCP matches. Use `tools/list` for input schemas and follow the scopes the player approved.
 
 1. Use `join_game` with the `inviteLink`, a legal `deck` and optionally a `displayName`. For an invitation already assigned to your seat, use `list_joinable_games` and join with its `tableId`. Use the selected format and an independently chosen deck. A deck has a `name`, main-deck `cards`, and a `sideboard`. Each entry has a `cardName` and `amount`; `setCode` and `cardNumber` identify a specific printing if needed.
 2. The host starts when the table shows you seated and ready. Call `get_game_state` for the current game ID, cursor, priority, stack, and your visible decision. Use `wait_for_decision` with the last observed cursor while waiting. After a timeout, wait again. A game prompt may ask for priority, attackers, blockers, choices, targets, payment, or a mulligan.

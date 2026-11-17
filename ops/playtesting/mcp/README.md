@@ -4,20 +4,20 @@ This service runs alongside the product identity service and the XMage engine. I
 
 ## Connect an MCP client
 
-Add the remote `/mcp` URL in a client that supports OAuth. Open the authorization page, sign in with your Playmat account, and select one of your own provisioned agent seats. Grant it `play` for matches and events, plus any other scopes needed for the task and already present on the seat. The consent flow uses authorization code with S256 PKCE and rotating refresh tokens. Revoke a client from `/oauth/connections`.
+Add the remote `/mcp` URL in a client that supports OAuth. Sign in with your Playmat account and authorize the connection. Deck tools use that account's library. Playmat assigns the engine identity for an MCP rival automatically. The consent flow uses authorization code with S256 PKCE and rotating refresh tokens. Revoke a client from `/oauth/connections`.
 
 Configure additional OAuth public clients with `PLAYMAT_OAUTH_CLIENTS` when operating the server. Provide a JSON array of objects with `clientId`, `redirectUri` and `name`. The callback must match exactly. A native client's fixed loopback callback can use HTTP. The browser and the configured client complete authentication without a shared client secret.
 
-For an MCP table, give the rival a private join link and an independently chosen deck. Call `join_game` with `inviteLink`, `deck`, and an optional `displayName`. The first eligible agent that joins binds its authenticated seat to the link. The display name appears to the players during the match. Use `list_joinable_games` for invitations already assigned to the agent, and pass `tableId` to join by ID. The host starts when Playmat shows the rival seated and ready.
+Create an MCP table while signed in to the same account. Tell the connected agent to find it with `list_joinable_games` or give it the private join link. Call `join_game` with the table ID or link, the rival's deck and an optional `displayName`. The host starts when Playmat shows the rival seated and ready. The name appears on the table, the board and in participant chat.
 
 ## Subscribe to game events
 
 An event-capable client uses `events/list`, `events/subscribe` and `events/unsubscribe` on `/mcp`. Playmat verifies each HTTPS receiver before delivering a Standard Webhooks-signed event.
 
-- `game.invitation.created` carries a table ID and format. A host directs the invitation to a subscribed play seat under their account. The recipient can look up and claim it with `list_joinable_games` and `join_game`.
+- `game.invitation.created` carries a table ID and format. A new MCP table automatically notifies subscribed clients connected to the host's Playmat account. The client can look up and claim it with `list_joinable_games` and `join_game`.
 - `game.decision.required` carries the game ID, decision ID, cursor and prompt kind for the subscribed seat. Optionally filter by `gameId`. Read `get_game_state` before acting and compare the current decision ID. Handle sideboarding with the sideboard tools. Webhook deliveries may arrive late, so continue using `wait_for_decision` during a live game when timing matters.
 
-If you have ChatGPT Dot, add Playmat as a private custom MCP server using OAuth. Ask your dot to monitor both events for the connected seat. Select that seat when hosting a table with Rival MCP. Each event includes only enough information for the client to look up the current invitation or decision.
+If you have ChatGPT Dot, add Playmat as a private custom MCP server using OAuth. Ask your dot to monitor both events for your Playmat account. Each event includes only enough information for the client to look up the current invitation or decision.
 
 The server advertises these guides at initialization. Read them through `resources/list` and `resources/read` with the same grant, even before joining a table.
 

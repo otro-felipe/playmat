@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import { once } from 'node:events'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { request as httpRequest } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { setTimeout as sleep } from 'node:timers/promises'
+import pg from 'pg'
 import { createProduct } from './product.mjs'
 
 const databaseUrl = process.env.PLAYMAT_TEST_DATABASE_URL
@@ -21,7 +23,14 @@ const password = 'synthetic-browser-password'
 async function fixture(t, oauthClients = []) {
   const replayDirectory = await mkdtemp(join(tmpdir(), 'playmat-oauth-'))
   const schema = 'test_' + randomUUID().replaceAll('-', '')
-  const product = await createProduct({ databaseUrl, schema, replayDirectory, store: new Map(), publicUrl: issuer, oauthClients, insecureCookie: true })
+  const delivered = []
+  const eventOptions = { deliver: async (_url, { body }) => {
+    const payload = JSON.parse(body)
+    if (payload.type === 'verification') return { status: 200, body: JSON.stringify({ challenge: payload.challenge }) }
+    delivered.push({ type: payload.name, tableId: payload.data.tableId })
+    return { status: 204, body: '' }
+  } }
+  const product = await createProduct({ databaseUrl, schema, replayDirectory, store: new Map(), publicUrl: issuer, oauthClients, insecureCookie: true, eventOptions })
   product.server.listen(0, '127.0.0.1')
   await once(product.server, 'listening')
   t.after(async () => {
@@ -32,11 +41,15 @@ async function fixture(t, oauthClients = []) {
     await rm(replayDirectory, { recursive: true, force: true })
   })
   const endpoint = 'http://127.0.0.1:' + product.server.address().port
-  const request = (path, fields = {}, form) => new Promise((resolve, reject) => {
+  const request = (path, fields = {}, form, method = form ? 'POST' : 'GET') => new Promise((resolve, reject) => {
     const headers = { Host: new URL(issuer).host, ...fields }
-    const payload = form && new URLSearchParams(form).toString()
-    if (form) headers['Content-Type'] = 'application/x-www-form-urlencoded'
-    const req = httpRequest(endpoint + path, { method: form ? 'POST' : 'GET', headers }, reply => {
+    const mime = headers['Content-Type'] ?? (method === 'PUT' ? 'application/json' : 'application/x-www-form-urlencoded')
+    const payload = form && (mime === 'application/json' ? JSON.stringify(form) : new URLSearchParams(form).toString())
+    if (form) {
+      headers['Content-Type'] = mime
+      headers['Content-Length'] = Buffer.byteLength(payload)
+    }
+    const req = httpRequest(endpoint + path, { method, headers }, reply => {
       const chunks = []
       reply.on('data', chunk => chunks.push(chunk))
       reply.on('error', reject)
@@ -57,13 +70,13 @@ async function fixture(t, oauthClients = []) {
     assert.equal(signedIn.status, 303)
     return { Cookie: signedIn.headers.get('Set-Cookie').split(';', 1)[0], Origin: issuer }
   }
-  return { product, request, login }
+  return { product, request, login, schema, delivered }
 }
 
 function authPath(fields = {}) {
   return '/oauth/authorize?' + new URLSearchParams({
     response_type: 'code', client_id: clientId, redirect_uri: redirect, resource,
-    code_challenge: challenge, code_challenge_method: 'S256', scope: 'play chat', state, ...fields,
+    code_challenge: challenge, code_challenge_method: 'S256', state, ...fields,
   })
 }
 
@@ -71,20 +84,18 @@ async function consent(f, headers) {
   const approval = await f.request(authPath(), headers)
   assert.equal(approval.status, 200)
   const html = await approval.text()
-  assert.match(html, /OwnDot/)
-  assert.doesNotMatch(html, /AnotherDot|AnalysisOnly/)
+  assert.match(html, /mazos de la cuenta/)
+  assert.doesNotMatch(html, /name="seat"|<select|OwnDot|AnotherDot|AnalysisOnly|mcp_[a-f0-9]{10}/)
   const request = /name="request" value="([a-f0-9-]{36})"/.exec(html)?.[1]
   assert.ok(Boolean(request), 'The browser consent request can be submitted')
   return request
 }
 
-test('[PM-AC-18] a browser session approves only its own delegated seat and exchanges a single PKCE code', { skip: !databaseUrl }, async t => {
+test('[PM-AC-18] a Playmat account connects its library and rival without a preconfigured agent, then exchanges a single PKCE code', { skip: !databaseUrl }, async t => {
   const f = await fixture(t)
   const alice = await f.login('Alice')
   const bob = await f.login('Bob')
-  const originalGrant = await f.product.provisionAgent('Alice', 'OwnDot', ['play', 'chat', 'history'])
-  await f.product.provisionAgent('Alice', 'AnalysisOnly', ['history'])
-  await f.product.provisionAgent('Bob', 'AnotherDot', ['play', 'chat'])
+  const originalGrant = await f.product.provisionAgent('Bob', 'AnotherDot', ['play', 'chat'])
 
   const res = await f.request('/.well-known/oauth-protected-resource/mcp')
   assert.equal(res.status, 200)
@@ -108,11 +119,11 @@ test('[PM-AC-18] a browser session approves only its own delegated seat and exch
   assert.equal((await f.request(authPath(), { Authorization: 'Bearer ' + originalGrant })).status, 303)
 
   const request = await consent(f, alice)
-  assert.equal((await f.request('/oauth/authorize', bob, { request, seat: 'AnotherDot', decision: 'allow' })).status, 400)
+  assert.equal((await f.request('/oauth/authorize', bob, { request, decision: 'allow' })).status, 400)
   assert.equal((await f.request('/oauth/authorize', alice, { request, seat: 'AnotherDot', decision: 'allow' })).status, 400)
-  assert.equal((await f.request('/oauth/authorize', { ...alice, Origin: 'https://untrusted.example' }, { request, seat: 'OwnDot', decision: 'allow' })).status, 403)
+  assert.equal((await f.request('/oauth/authorize', { ...alice, Origin: 'https://untrusted.example' }, { request, decision: 'allow' })).status, 403)
 
-  const approved = await f.request('/oauth/authorize', alice, { request, seat: 'OwnDot', decision: 'allow' })
+  const approved = await f.request('/oauth/authorize', alice, { request, decision: 'allow' })
   assert.equal(approved.status, 303)
   const returned = new URL(approved.headers.get('Location'))
   assert.equal(returned.origin + returned.pathname, redirect)
@@ -129,19 +140,54 @@ test('[PM-AC-18] a browser session approves only its own delegated seat and exch
   assert.equal(tokenResponse.status, 200)
   const tokens = await tokenResponse.json()
   assert.equal(tokens.token_type, 'Bearer')
-  assert.equal(tokens.scope, 'play chat')
+  assert.equal(tokens.scope, 'play library chat')
   assert.ok(Boolean(tokens.refresh_token) && Boolean(tokens.access_token), 'Both token types are issued')
   assert.equal((await f.request('/oauth/token', {}, exchange)).status, 400)
-  assert.equal((await f.request('/oauth/authorize', alice, { request, seat: 'OwnDot', decision: 'allow' })).status, 400)
+  assert.equal((await f.request('/oauth/authorize', alice, { request, decision: 'allow' })).status, 400)
 
   async function authenticate(accessToken) {
     return f.request('/internal/verify', { Authorization: 'Bearer ' + accessToken })
   }
   const identity = await (await authenticate(tokens.access_token)).json()
-  assert.equal(identity.engineName, 'OwnDot')
+  assert.match(identity.engineName, /^mcp_[a-f0-9]{10}$/)
   assert.equal(identity.agent, true)
-  assert.deepEqual(identity.scopes, ['play', 'chat'])
+  assert.equal(identity.accountAgent, true)
+  assert.deepEqual(identity.scopes, ['play', 'library', 'chat'])
+  assert.equal(identity.accountId, (await (await f.request('/api/playtesting/me', alice)).json()).accountId)
   assert.match(identity.connectionId, /^[a-f0-9-]{36}$/)
+  const decks = '/api/playtesting/decks'
+  const deckId = randomUUID()
+  const deck = { name: 'Alice Forests', format: 'Pioneer', cards: [{ name: 'Forest', quantity: 60 }], sideboard: [] }
+  const stored = await f.request(`${decks}/${deckId}`, { Authorization: 'Bearer ' + tokens.access_token },
+    { expectedRevision: 0, data: deck }, 'PUT')
+  assert.equal(stored.status, 200)
+  const browserDecks = await (await f.request(decks, alice)).json()
+  const foreignDecks = await (await f.request(decks, bob)).json()
+  assert.equal(browserDecks.decks.some(entry => entry.id === deckId), true)
+  assert.equal(foreignDecks.decks.some(entry => entry.id === deckId), false)
+  assert.doesNotMatch(await (await f.request('/oauth/connections', alice)).text(), /mcp_[a-f0-9]{10}/)
+
+  const jsonHeaders = { 'Content-Type': 'application/json' }
+  const subscription = await f.request('/internal/mcp-events/subscribe', { ...jsonHeaders, Authorization: 'Bearer ' + tokens.access_token }, {
+    name: 'game.invitation.created',
+    delivery: { mode: 'webhook', url: 'https://mcp-events-fixture.example/callback', secret: 'whsec_' + Buffer.alloc(32, 44).toString('base64') },
+  })
+  assert.equal(subscription.status, 200)
+  const ownInvite = { tableId: randomUUID(), roomId: randomUUID(), format: 'Pioneer', mode: 'mcp', password: 'synthetic-table-password' }
+  const otherInvite = { ...ownInvite, tableId: randomUUID() }
+  assert.equal((await f.request('/api/playtesting/invites', { ...alice, ...jsonHeaders }, ownInvite)).status, 201)
+  assert.equal((await f.request('/api/playtesting/invites', { ...bob, ...jsonHeaders }, otherInvite)).status, 201)
+  f.product.startMcpEvents()
+  for (let attempt = 0; !f.delivered.length && attempt < 25; attempt += 1) await sleep(100)
+  assert.deepEqual(f.delivered, [{ type: 'game.invitation.created', tableId: ownInvite.tableId }])
+
+  const reconnect = await f.request('/oauth/authorize', alice, { request: await consent(f, alice), decision: 'allow' })
+  assert.equal(reconnect.status, 303)
+  const newCode = new URL(reconnect.headers.get('Location')).searchParams.get('code')
+  const extraTokens = await (await f.request('/oauth/token', {}, { ...exchange, code: newCode })).json()
+  const extraIdentity = await (await authenticate(extraTokens.access_token)).json()
+  assert.equal(extraIdentity.engineName, identity.engineName)
+  assert.notEqual(extraIdentity.connectionId, identity.connectionId)
 
   const refresh = { grant_type: 'refresh_token', client_id: clientId, refresh_token: tokens.refresh_token, resource }
   const refreshed = await f.request('/oauth/token', {}, refresh)
@@ -161,7 +207,6 @@ test('[PM-AC-18] a browser session approves only its own delegated seat and exch
 test('[PM-AC-18] denial returns an issuer-bound error and sign-out invalidates pending consent', { skip: !databaseUrl }, async t => {
   const f = await fixture(t)
   const alice = await f.login('Alice')
-  const grant = await f.product.provisionAgent('Alice', 'OwnDot', ['play'])
   const request = await consent(f, alice)
   const denied = await f.request('/oauth/authorize', alice, { request, decision: 'deny' })
   assert.equal(denied.status, 303)
@@ -170,15 +215,42 @@ test('[PM-AC-18] denial returns an issuer-bound error and sign-out invalidates p
   assert.equal(response.searchParams.get('error'), 'access_denied')
   const next = await consent(f, alice)
   assert.equal((await f.request('/logout', alice, {})).status, 303)
-  assert.equal((await f.request('/oauth/authorize', alice, { request: next, seat: 'OwnDot', decision: 'allow' })).status, 400)
-  assert.equal((await f.request('/internal/verify', { Authorization: 'Bearer ' + grant })).status, 200)
+  assert.equal((await f.request('/oauth/authorize', alice, { request: next, decision: 'allow' })).status, 400)
+})
+
+test('[PM-AC-18] a legacy OAuth connection cannot authenticate, refresh, or keep delivering events after the migration', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const alice = await f.login('Alice')
+  const originalGrant = await f.product.provisionAgent('Alice', 'PreviousRival', ['play', 'chat'])
+  const { accountId } = await (await f.request('/api/playtesting/me', alice)).json()
+  const connectionId = randomUUID()
+  const oldAccess = 'a'.repeat(43)
+  const oldRefresh = 'r'.repeat(43)
+  const sha256 = value => createHash('sha256').update(value).digest('hex')
+  const client = new pg.Client({ connectionString: databaseUrl, options: '-c search_path=' + f.schema })
+  await client.connect()
+  try {
+    await client.query(`INSERT INTO oauth_connections (id,account_id,engine_key,client_id,audience,scopes_approved,refresh_digest,expires_at)
+      VALUES ($1,$2,'previousrival',$3,$4,ARRAY['play'],$5,now()+interval '1 day')`,
+    [connectionId, accountId, clientId, resource, sha256(oldRefresh)])
+    await client.query("INSERT INTO oauth_access_tokens(digest,connection_id,expires_at) VALUES ($1,$2,now()+interval '1 day')",
+      [sha256(oldAccess), connectionId])
+    assert.equal((await f.request('/internal/verify', { Authorization: 'Bearer ' + oldAccess })).status, 401)
+    const refresh = await f.request('/oauth/token', {}, { grant_type: 'refresh_token', client_id: clientId, resource, refresh_token: oldRefresh })
+    assert.equal(refresh.status, 400)
+    await client.query(await readFile(new URL('./oauth-schema.sql', import.meta.url), 'utf8'))
+    const { rows: [row] } = await client.query('SELECT revoked_at IS NOT NULL AS revoked FROM oauth_connections WHERE id=$1', [connectionId])
+    assert.equal(row.revoked, true)
+    assert.equal((await f.request('/internal/verify', { Authorization: 'Bearer ' + originalGrant })).status, 200)
+  } finally {
+    await client.end()
+  }
 })
 
 test('[PM-AC-18] a registered OAuth client is bound to its exact callback and selected non-play scopes', { skip: !databaseUrl }, async t => {
   const client = { clientId: 'sample-mcp-client', redirectUri: 'https://mcp-client-fixture.example/connect', name: 'Sample MCP client' }
   const f = await fixture(t, [client])
   const alice = await f.login('Alice')
-  await f.product.provisionAgent('Alice', 'AnalysisOnly', ['library', 'history'])
   const parameters = { client_id: client.clientId, redirect_uri: client.redirectUri, scope: 'history library' }
   assert.equal((await f.request(authPath({ ...parameters, redirect_uri: client.redirectUri + '/wrong' }), alice)).status, 400)
   const consentPage = await f.request(authPath(parameters), alice)
@@ -186,10 +258,11 @@ test('[PM-AC-18] a registered OAuth client is bound to its exact callback and se
   assert.doesNotMatch(consentPage.headers.get('content-security-policy'), /chatgpt\.com/)
   const html = await consentPage.text()
   assert.match(html, /Sample MCP client/)
-  assert.match(html, /AnalysisOnly/)
+  assert.match(html, /historial de la cuenta/)
+  assert.doesNotMatch(html, /name="seat"|<select|juego e invitaciones/)
   const request = /name="request" value="([a-f0-9-]{36})"/.exec(html)?.[1]
   assert.ok(Boolean(request), 'Registered OAuth client offers consent')
-  const approved = await f.request('/oauth/authorize', alice, { request, seat: 'AnalysisOnly', decision: 'allow' })
+  const approved = await f.request('/oauth/authorize', alice, { request, decision: 'allow' })
   assert.equal(approved.status, 303)
   const callback = new URL(approved.headers.get('Location'))
   assert.equal(callback.origin + callback.pathname, client.redirectUri)

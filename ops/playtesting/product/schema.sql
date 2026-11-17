@@ -22,6 +22,10 @@ CREATE TABLE IF NOT EXISTS agent_grants (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
+ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS oauth_managed boolean NOT NULL DEFAULT false;
+CREATE UNIQUE INDEX IF NOT EXISTS agent_grants_account_oauth
+  ON agent_grants(account_id) WHERE oauth_managed AND revoked_at IS NULL;
+
 CREATE TABLE IF NOT EXISTS decks (
   account_id uuid NOT NULL REFERENCES accounts(id),
   id text NOT NULL,
@@ -121,8 +125,12 @@ ALTER TABLE invitations
   ADD COLUMN IF NOT EXISTS mode text NOT NULL DEFAULT 'friend' CHECK (mode IN ('friend', 'mcp')),
   ADD COLUMN IF NOT EXISTS guest_display_name text,
   ADD COLUMN IF NOT EXISTS chat_mode text NOT NULL DEFAULT 'quiet' CHECK (chat_mode IN ('quiet', 'chatty', 'coach')),
+  ADD COLUMN IF NOT EXISTS owner_account_id uuid REFERENCES accounts(id) ON DELETE CASCADE,
   ALTER COLUMN invitee_key DROP NOT NULL,
   ALTER COLUMN invitee_name DROP NOT NULL;
+
+CREATE INDEX IF NOT EXISTS invitations_by_owner ON invitations(owner_account_id, expires_at DESC)
+  WHERE owner_account_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS replay_exports (
   id uuid PRIMARY KEY,
