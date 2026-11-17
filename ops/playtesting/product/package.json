@@ -3,10 +3,14 @@
   "version": "0.1.0",
   "type": "module",
   "private": true,
-  "scripts": { "start": "node main.mjs", "test": "node --test" },
+  "scripts": {
+    "start": "node main.mjs",
+    "test": "node --test"
+  },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.922.0",
     "fflate": "^0.8.2",
+    "oidc-provider": "9.15.0",
     "pg": "^8.16.3"
   }
 }

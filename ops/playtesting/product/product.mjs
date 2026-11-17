@@ -97,7 +97,7 @@ function rejectMissing(value, message) {
 
 export async function createProduct({
   databaseUrl, schema = 'playmat_product', replayDirectory, store, insecureCookie = false, enableInternal = true,
-  publicUrl, oauthClients = [], eventOptions,
+  publicUrl, oauthClients = [], oauthClientOptions, eventOptions,
 }) {
   if (!databaseUrl || !/^[a-z_][a-z0-9_]{0,60}$/.test(schema)) throw Error('A valid product database configuration is required')
   const pool = new pg.Pool({
@@ -111,7 +111,7 @@ export async function createProduct({
     await pool.end()
     throw error
   }
-  const oauth = createOAuth(pool, publicUrl, { body, clients: oauthClients })
+  const oauth = createOAuth(pool, publicUrl, { body, clients: oauthClients, clientOptions: oauthClientOptions })
   const id = createIdentity(pool, insecureCookie, oauth.resolve)
   const archive = createArchive(pool, replayDirectory, store)
   const events = createMcpEvents(pool, eventOptions)
@@ -175,8 +175,8 @@ export async function createProduct({
       await pool.query('SELECT 1')
       return send(res, 200, { status: 'ok' })
     }
-    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !sameOrigin(req, insecureCookie)) throw new ProductError(403, 'Cross-origin request')
     if (await oauth.route(req, res, url, id.resolve)) return
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !sameOrigin(req, insecureCookie)) throw new ProductError(403, 'Cross-origin request')
     if (path === '/login' && req.method === 'GET') {
       const next = safeNext(url.searchParams.get('next'))
       if (await id.resolve(req)) return res.writeHead(303, { Location: next }).end()

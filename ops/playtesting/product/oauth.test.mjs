@@ -10,6 +10,7 @@ import { test } from 'node:test'
 import { setTimeout as sleep } from 'node:timers/promises'
 import pg from 'pg'
 import { createProduct } from './product.mjs'
+import { createClientRegistry } from './oauth-clients.mjs'
 
 const databaseUrl = process.env.PLAYMAT_TEST_DATABASE_URL
 const issuer = 'https://playmat-oauth-fixture.example'
@@ -21,7 +22,7 @@ const verifier = 'fixture-verifier'.padEnd(64, '0')
 const challenge = createHash('sha256').update(verifier).digest('base64url')
 const password = 'synthetic-browser-password'
 
-async function fixture(t, oauthClients = []) {
+async function fixture(t, oauthClients = [], oauthClientOptions) {
   const replayDirectory = await mkdtemp(join(tmpdir(), 'playmat-oauth-'))
   const schema = 'test_' + randomUUID().replaceAll('-', '')
   const delivered = []
@@ -31,7 +32,9 @@ async function fixture(t, oauthClients = []) {
     delivered.push({ type: payload.name, tableId: payload.data.tableId })
     return { status: 204, body: '' }
   } }
-  const product = await createProduct({ databaseUrl, schema, replayDirectory, store: new Map(), publicUrl: issuer, oauthClients, insecureCookie: true, eventOptions })
+  const product = await createProduct({ databaseUrl, schema, replayDirectory, store: new Map(), publicUrl: issuer,
+    oauthClients: [{ clientId, redirectUri: redirect, name: 'Fixture client' }, ...oauthClients], oauthClientOptions,
+    insecureCookie: true, eventOptions })
   product.server.listen(0, '127.0.0.1')
   await once(product.server, 'listening')
   t.after(async () => {
@@ -44,7 +47,7 @@ async function fixture(t, oauthClients = []) {
   const endpoint = 'http://127.0.0.1:' + product.server.address().port
   const request = (path, fields = {}, form, method = form ? 'POST' : 'GET') => new Promise((resolve, reject) => {
     const headers = { Host: new URL(issuer).host, ...fields }
-    const mime = headers['Content-Type'] ?? (method === 'PUT' ? 'application/json' : 'application/x-www-form-urlencoded')
+    const mime = headers['Content-Type'] ?? headers['content-type'] ?? (method === 'PUT' ? 'application/json' : 'application/x-www-form-urlencoded')
     const payload = form && (mime === 'application/json' ? JSON.stringify(form) : new URLSearchParams(form).toString())
     if (form) {
       headers['Content-Type'] = mime
@@ -81,8 +84,8 @@ function authPath(fields = {}) {
   })
 }
 
-async function consent(f, headers) {
-  const approval = await f.request(authPath(), headers)
+async function consent(f, headers, parameters = {}) {
+  const approval = await f.request(authPath(parameters), headers)
   assert.equal(approval.status, 200)
   const html = await approval.text()
   assert.match(html, /mazos de la cuenta/)
@@ -124,6 +127,7 @@ test('[PM-AC-18] a Playmat account connects its library and rival without a prec
   assert.equal((await f.request('/oauth/authorize', alice, { request, seat: 'AnotherDot', decision: 'allow' })).status, 400)
   assert.equal((await f.request('/oauth/authorize', { ...alice, Origin: 'https://untrusted.example' }, { request, decision: 'allow' })).status, 403)
   assert.equal((await f.request('/oauth/authorize', { ...alice, Origin: 'null' }, { request, decision: 'allow' })).status, 403)
+  assert.equal((await f.request('/oauth/authorize', { ...alice, 'Sec-Fetch-Site': 'cross-site' }, { request, decision: 'allow' })).status, 403)
   assert.equal((await f.request('/oauth/authorize', { Cookie: alice.Cookie }, { request, decision: 'allow' })).status, 403)
 
   const approved = await f.request('/oauth/authorize', alice, { request, decision: 'allow' })
@@ -206,6 +210,255 @@ test('[PM-AC-18] a Playmat account connects its library and rival without a prec
   assert.equal((await authenticate(next.access_token)).status, 401)
   assert.equal((await authenticate(originalGrant)).status, 200)
 })
+
+test('[PM-AC-20] DCR persists a generic native client and binds each code to the requested loopback port', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const alice = await f.login('Alice')
+  const web = { Origin: 'https://generic-client.example', 'Content-Type': 'application/json' }
+  const metadata = { client_name: 'Any MCP application', redirect_uris: ['http://localhost/callback'],
+    token_endpoint_auth_method: 'none', grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'] }
+  const discovery = await (await f.request('/.well-known/oauth-authorization-server')).json()
+  assert.equal(discovery.registration_endpoint, issuer + '/oauth/register')
+  const preflight = await f.request('/oauth/register', web, undefined, 'OPTIONS')
+  assert.equal(preflight.status, 204)
+  const registered = await f.request('/oauth/register', web, metadata)
+  assert.equal(registered.status, 201, await registered.clone().text())
+  assert.equal(registered.headers.get('access-control-allow-origin'), '*')
+  const client = await registered.json()
+  assert.equal(client.application_type, 'native')
+  assert.equal(client.token_endpoint_auth_method, 'none')
+  assert.equal(client.client_secret, undefined)
+  assert.equal(client.registration_access_token, undefined)
+  assert.equal(typeof client.client_id, 'string')
+  assert.notEqual(client.client_id, clientId)
+  const db = new pg.Client({ connectionString: databaseUrl, options: '-c search_path=' + f.schema })
+  await db.connect()
+  t.after(() => db.end())
+  const { rows: [persisted] } = await db.query('SELECT metadata FROM oauth_registered_clients WHERE client_id=$1', [client.client_id])
+  assert.equal(persisted.metadata.application_type, 'native')
+  const fresh = createClientRegistry(db, issuer)
+  assert.equal((await fresh.get(client.client_id)).allows('http://localhost:45679/callback'), true, 'A new provider reads durable registrations')
+
+  const destination = 'http://localhost:45678/callback'
+  const parameters = { client_id: client.client_id, redirect_uri: destination }
+  for (const bad of ['http://localhost:45678/other', 'http://localhost.evil.example:45678/callback',
+    'http://127.0.0.1:45678/callback', 'https://localhost:45678/callback', 'http://localhost:45678/callback?changed=1']) {
+    const response = await f.request(authPath({ ...parameters, redirect_uri: bad }), alice)
+    assert.equal(response.status, 400, bad)
+    assert.equal(response.headers.get('location'), null)
+  }
+  const id = await consent(f, alice, parameters)
+  const page = await (await f.request(authPath(parameters), alice)).text()
+  assert.match(page, /Any MCP application/)
+  assert.match(page, /http:\/\/localhost:45678\/callback/)
+  assert.match(page, /este dispositivo/)
+  const approved = await f.request('/oauth/authorize', alice, { request: id, decision: 'allow' })
+  const callback = new URL(approved.headers.get('location'))
+  assert.equal(callback.origin + callback.pathname, destination)
+  assert.equal(callback.searchParams.get('state'), state)
+  assert.equal(callback.searchParams.get('iss'), issuer)
+  const exchange = { grant_type: 'authorization_code', client_id: client.client_id, redirect_uri: destination,
+    code: callback.searchParams.get('code'), code_verifier: verifier, resource }
+  for (const changed of [{ redirect_uri: 'http://localhost:45679/callback' }, { client_id: clientId, redirect_uri: redirect },
+    { resource: issuer + '/wrong' }, { code_verifier: 'wrong'.padEnd(64, '0') }]) {
+    const denied = await f.request('/oauth/token', {}, { ...exchange, ...changed })
+    assert.equal(denied.status, 400)
+    assert.equal((await denied.json()).access_token, undefined)
+  }
+  const clientOrigin = { Origin: web.Origin }
+  const outcomes = await Promise.all([f.request('/oauth/token', clientOrigin, exchange), f.request('/oauth/token', clientOrigin, exchange)])
+  assert.deepEqual(outcomes.map(res => res.status).sort(), [200, 400], 'Concurrent code use succeeds exactly once')
+  const tokens = await outcomes.find(res => res.status === 200).json()
+  assert.equal((await f.request('/internal/verify', { Authorization: 'Bearer ' + tokens.access_token })).status, 200)
+  const refresh = { grant_type: 'refresh_token', client_id: client.client_id, refresh_token: tokens.refresh_token, resource }
+  assert.equal((await f.request('/oauth/token', {}, { ...refresh, client_id: clientId })).status, 400)
+  assert.equal((await f.request('/oauth/token', {}, { ...refresh, resource: issuer + '/wrong' })).status, 400)
+  const rotated = await Promise.all([f.request('/oauth/token', {}, refresh), f.request('/oauth/token', {}, refresh)])
+  assert.deepEqual(rotated.map(res => res.status).sort(), [200, 400])
+  const next = await rotated.find(res => res.status === 200).json()
+  assert.notEqual(next.refresh_token, tokens.refresh_token)
+  assert.equal((await f.request('/oauth/revoke', clientOrigin, { client_id: client.client_id, token: next.refresh_token })).status, 200)
+  assert.equal((await f.request('/internal/verify', { Authorization: 'Bearer ' + next.access_token })).status, 401)
+  assert.equal((await f.request('/oauth/token', {}, { ...refresh, refresh_token: next.refresh_token })).status, 400)
+  assert.equal((await db.query('SELECT count(*)::int AS count FROM oauth_authorization_codes')).rows[0].count, 0)
+})
+
+test('[PM-AC-20] CIMD resolves unconfigured clients, accepts native loopbacks and preserves exact HTTPS callbacks', { skip: !databaseUrl }, async t => {
+  let fetches = 0
+  const documents = new Map()
+  const genericId = 'https://generic-client.example/oauth/client.json'
+  const callback = 'https://generic-client.example/connect?installation=fixture'
+  documents.set(genericId, { client_id: genericId, client_name: '<Generic MCP client>', redirect_uris: [callback],
+    token_endpoint_auth_method: 'private_key_jwt', token_endpoint_auth_methods_supported: ['none', 'private_key_jwt'],
+    jwks_uri: 'https://generic-client.example/oauth/jwks.json',
+    grant_types: ['authorization_code', 'refresh_token', 'urn:ietf:params:oauth:grant-type:jwt-bearer'] })
+  const nativeId = 'https://native-client.example/oauth/client.json'
+  documents.set(nativeId, { client_id: nativeId, client_name: 'Native MCP client', application_type: 'native',
+    redirect_uris: ['http://localhost/callback', 'http://127.0.0.1/callback', 'http://[::1]/callback'], token_endpoint_auth_method: 'none' })
+  const f = await fixture(t, [], { fetch: async url => {
+    fetches++
+    return new Response(JSON.stringify(documents.get(url)), { headers: { 'Cache-Control': 'max-age=60' } })
+  } })
+  const alice = await f.login('Alice')
+  for (const [id, destination] of [[genericId, callback], [nativeId, 'http://localhost:43210/callback'],
+    [nativeId, 'http://127.0.0.1:43211/callback'], [nativeId, 'http://[::1]:43212/callback']]) {
+    const parameters = { client_id: id, redirect_uri: destination }
+    const request = await consent(f, alice, parameters)
+    const approved = await f.request('/oauth/authorize', alice, { request, decision: 'allow' })
+    const returned = new URL(approved.headers.get('location'))
+    if (id === genericId) assert.equal(returned.searchParams.get('installation'), 'fixture')
+    assert.equal(returned.searchParams.get('state'), state)
+    const token = await f.request('/oauth/token', {}, { grant_type: 'authorization_code', client_id: id,
+      redirect_uri: destination, code: returned.searchParams.get('code'), code_verifier: verifier, resource })
+    assert.equal(token.status, 200, await token.clone().text())
+    assert.equal((await f.request('/internal/verify', { Authorization: 'Bearer ' + (await token.json()).access_token })).status, 200)
+  }
+  assert.equal(fetches, 2, 'Metadata is cached by the library across authorization and token requests')
+  const page = await (await f.request(authPath({ client_id: genericId, redirect_uri: callback }), alice)).text()
+  assert.match(page, /&lt;Generic MCP client&gt;/)
+  assert.doesNotMatch(page, /<Generic MCP client>/)
+  for (const bad of [callback + '&extra=1', 'https://generic-client.example/connect?installation=other',
+    'https://generic-client.example/other?installation=fixture', 'https://evil.example/connect?installation=fixture']) {
+    assert.equal((await f.request(authPath({ client_id: genericId, redirect_uri: bad }), alice)).status, 400)
+  }
+})
+
+test('[PM-AC-20] DCR supports unnamed public web clients and matches their full HTTPS callback exactly', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const alice = await f.login('Alice')
+  const destination = 'https://any-web-client.example:8443/callback?tenant=one'
+  const registered = await f.request('/oauth/register', { 'Content-Type': 'application/json' },
+    { redirect_uris: [destination], token_endpoint_auth_method: 'none' })
+  assert.equal(registered.status, 201, await registered.clone().text())
+  const client = await registered.json()
+  assert.equal(client.client_name, 'Cliente MCP')
+  assert.equal(client.application_type, 'web')
+  for (const bad of ['https://any-web-client.example:8444/callback?tenant=one', 'https://any-web-client.example:8443/callback?tenant=two']) {
+    assert.equal((await f.request(authPath({ client_id: client.client_id, redirect_uri: bad }), alice)).status, 400)
+  }
+  const request = await consent(f, alice, { client_id: client.client_id, redirect_uri: destination })
+  const approved = await f.request('/oauth/authorize', alice, { request, decision: 'allow' })
+  const callback = new URL(approved.headers.get('location'))
+  assert.equal(callback.origin, 'https://any-web-client.example:8443')
+  assert.equal(callback.searchParams.get('tenant'), 'one')
+  const token = await f.request('/oauth/token', {}, { client_id: client.client_id, grant_type: 'authorization_code',
+    code: callback.searchParams.get('code'), redirect_uri: destination, code_verifier: verifier, resource })
+  assert.equal(token.status, 200)
+})
+
+test('[PM-AC-20] invalid DCR and CIMD never issue grants or redirect to unchecked destinations', { skip: !databaseUrl }, async t => {
+  const badId = 'https://unconfigured-client.example/client.json'
+  let document = { client_id: 'https://different.example/client.json', client_name: 'Impersonation', redirect_uris: ['https://evil.example/callback'] }
+  const f = await fixture(t, [], { fetch: async () => new Response(typeof document === 'string' ? document : JSON.stringify(document),
+    { headers: { 'Cache-Control': 'no-store' } }) })
+  const alice = await f.login('Alice')
+  for (const value of [document, 'not json', [], { client_id: badId, redirect_uris: [redirect] },
+    { client_id: badId, client_name: 'Invalid', redirect_uris: ['http://10.0.0.1/callback'] },
+    { client_id: badId, client_name: 'Invalid', redirect_uris: [redirect], token_endpoint_auth_method: 'client_secret_post' }]) {
+    document = value
+    const destination = value?.redirect_uris?.[0] ?? 'https://evil.example/callback'
+    const result = await f.request(authPath({ client_id: badId, redirect_uri: destination }), alice)
+    assert.equal(result.status, 400)
+    assert.equal(result.headers.get('location'), null)
+  }
+  const headers = { 'Content-Type': 'application/json' }
+  for (const redirectUri of ['http://evil.example/callback', 'https://user:pass@evil.example/callback',
+    'https://evil.example/callback#fragment', 'https://*.example/callback', 'https://evil.example/callback?code=preexisting']) {
+    const result = await f.request('/oauth/register', headers, { client_name: 'Invalid', redirect_uris: [redirectUri], token_endpoint_auth_method: 'none' })
+    assert.equal(result.status, 400, redirectUri)
+    assert.equal((await result.json()).error, 'invalid_client_metadata')
+  }
+  const confidential = await f.request('/oauth/register', headers, {
+    client_name: 'Unsupported', redirect_uris: [redirect], token_endpoint_auth_method: 'client_secret_post',
+  })
+  assert.equal(confidential.status, 400)
+  const db = new pg.Client({ connectionString: databaseUrl, options: '-c search_path=' + f.schema })
+  await db.connect()
+  t.after(() => db.end())
+  for (const table of ['oauth_registered_clients', 'oauth_consent_requests', 'oauth_authorization_codes', 'oauth_connections', 'oauth_access_tokens']) {
+    assert.equal((await db.query(`SELECT count(*)::int AS count FROM ${table}`)).rows[0].count, 0, table)
+  }
+  await db.query("INSERT INTO oauth_registration_limits(hour,attempts) VALUES (date_trunc('hour',now()),200) ON CONFLICT(hour) DO UPDATE SET attempts=200")
+  assert.equal((await f.request('/oauth/register', headers, { client_name: 'Rate limited', redirect_uris: [redirect] })).status, 429)
+})
+
+test('[PM-AC-20] expired consent, codes, access and refresh credentials fail independently', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const alice = await f.login('Alice')
+  const db = new pg.Client({ connectionString: databaseUrl, options: '-c search_path=' + f.schema })
+  await db.connect()
+  t.after(() => db.end())
+  const request = await consent(f, alice)
+  await db.query("UPDATE oauth_consent_requests SET expires_at=now()-interval '1 second'")
+  assert.equal((await f.request('/oauth/authorize', alice, { request, decision: 'allow' })).status, 400)
+  async function code() {
+    const approved = await f.request('/oauth/authorize', alice, { request: await consent(f, alice), decision: 'allow' })
+    return new URL(approved.headers.get('location')).searchParams.get('code')
+  }
+  const exchange = { grant_type: 'authorization_code', client_id: clientId, redirect_uri: redirect, code_verifier: verifier, resource, code: await code() }
+  await db.query("UPDATE oauth_authorization_codes SET expires_at=now()-interval '1 second'")
+  assert.equal((await f.request('/oauth/token', {}, exchange)).status, 400)
+  exchange.code = await code()
+  const tokens = await (await f.request('/oauth/token', {}, exchange)).json()
+  const verify = () => f.request('/internal/verify', { Authorization: 'Bearer ' + tokens.access_token })
+  assert.equal((await verify()).status, 200)
+  await db.query("UPDATE oauth_access_tokens SET expires_at=now()-interval '1 second'")
+  assert.equal((await verify()).status, 401)
+  // Restore only access expiry: the independently expired connection must still reject it.
+  await db.query("UPDATE oauth_access_tokens SET expires_at=now()+interval '1 minute'")
+  assert.equal((await verify()).status, 200)
+  await db.query("UPDATE oauth_connections SET expires_at=now()-interval '1 second'")
+  assert.equal((await verify()).status, 401)
+  assert.equal((await f.request('/oauth/token', {}, { grant_type: 'refresh_token', client_id: clientId, refresh_token: tokens.refresh_token, resource })).status, 400)
+})
+
+test('[PM-AC-20] the official MCP SDK discovers, registers, authorizes and refreshes through standard HTTP',
+  { skip: !databaseUrl || process.env.PLAYMAT_OAUTH_SDK_TEST !== '1' }, async t => {
+    const requireMcp = createRequire(new URL('../mcp/package.json', import.meta.url))
+    const { auth } = requireMcp('@modelcontextprotocol/sdk/client/auth.js')
+    const f = await fixture(t)
+    const alice = await f.login('Alice')
+    let information, tokens, savedVerifier, authorization
+    const provider = {
+      redirectUrl: new URL('http://127.0.0.1:49152/callback'),
+      clientMetadata: { client_name: 'Official SDK fixture', token_endpoint_auth_method: 'none',
+        redirect_uris: ['http://127.0.0.1:49152/callback'], grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'] },
+      clientInformation: () => information,
+      saveClientInformation: value => { information = value },
+      tokens: () => tokens,
+      saveTokens: value => { tokens = value },
+      state: () => state,
+      codeVerifier: () => savedVerifier,
+      saveCodeVerifier: value => { savedVerifier = value },
+      redirectToAuthorization: value => { authorization = value },
+    }
+    const options = { serverUrl: resource, fetchFn: async (value, init = {}) => {
+      const url = new URL(value)
+      assert.equal(url.origin, issuer)
+      const headers = Object.fromEntries(new Headers(init.headers))
+      const payload = init.body && (headers['content-type']?.startsWith('application/json')
+        ? JSON.parse(init.body) : new URLSearchParams(init.body))
+      return f.request(url.pathname + url.search, headers, payload, init.method ?? 'GET')
+    } }
+    assert.equal(await auth(provider, options), 'REDIRECT')
+    assert.equal(information.token_endpoint_auth_method, 'none')
+    assert.equal(authorization.searchParams.get('resource'), resource)
+    assert.equal(authorization.searchParams.get('code_challenge_method'), 'S256')
+    assert.equal(authorization.searchParams.get('state'), state)
+    const page = await f.request(authorization.pathname + authorization.search, alice)
+    assert.equal(page.status, 200)
+    const request = /name="request" value="([a-f0-9-]{36})"/.exec(await page.text())?.[1]
+    assert.ok(request)
+    const approved = await f.request('/oauth/authorize', alice, { request, decision: 'allow' })
+    const callback = new URL(approved.headers.get('location'))
+    assert.equal(callback.origin + callback.pathname, provider.redirectUrl.href)
+    assert.equal(await auth(provider, { ...options, authorizationCode: callback.searchParams.get('code') }), 'AUTHORIZED')
+    const first = tokens
+    assert.equal((await f.request('/internal/verify', { Authorization: 'Bearer ' + first.access_token })).status, 200)
+    assert.equal(await auth(provider, options), 'AUTHORIZED')
+    assert.notEqual(tokens.refresh_token, first.refresh_token)
+    assert.equal((await f.request('/internal/verify', { Authorization: 'Bearer ' + tokens.access_token })).status, 200)
+  })
 
 test('[PM-AC-19] the browser can approve OAuth and returns to the external client without a referrer',
   { skip: !databaseUrl || process.env.PLAYMAT_OAUTH_BROWSER_TEST !== '1' }, async t => {

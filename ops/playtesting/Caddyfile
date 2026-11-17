@@ -31,7 +31,7 @@
 			reverse_proxy 127.0.0.1:8791
 		}
 
-		@product path /login /logout /api/playtesting/* /oauth/authorize /oauth/token /oauth/revoke /oauth/connections /.well-known/oauth-authorization-server /.well-known/oauth-protected-resource /.well-known/oauth-protected-resource/mcp
+		@product path /login /logout /api/playtesting/* /oauth/authorize /oauth/token /oauth/register /oauth/revoke /oauth/connections /.well-known/oauth-authorization-server /.well-known/oauth-protected-resource /.well-known/oauth-protected-resource/mcp
 		handle @product {
 			reverse_proxy 127.0.0.1:8790
 		}

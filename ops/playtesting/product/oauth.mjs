@@ -1,12 +1,8 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
 import { digest, ensureOAuthAgent, newToken } from './identity.mjs'
 import { isUuid, ProductError, transaction } from './decks.mjs'
+import { createClientRegistry } from './oauth-clients.mjs'
 
-const chatgpt = {
-  clientId: 'https://chatgpt.com/oauth/client.json',
-  redirectUri: 'https://chatgpt.com/connector_platform_oauth_redirect',
-  name: 'ChatGPT',
-}
 const consentLifetime = 10 * 60
 const codeLifetime = 90
 const accessLifetime = 15 * 60
@@ -53,38 +49,24 @@ function approvedScopes(allowed, requested) {
   return requested.filter(scope => allowed.includes(scope))
 }
 
-function registeredClients(clients) {
-  if (!Array.isArray(clients) || clients.length > 50) throw new Error('Invalid OAuth client registry')
-  const registry = new Map([[chatgpt.clientId, chatgpt]])
-  for (const item of clients) {
-    if (typeof item?.clientId !== 'string' || !/^[\x21-\x7e]{1,200}$/.test(item.clientId) || registry.has(item.clientId)
-      || typeof item.name !== 'string' || !item.name.trim() || item.name.length > 100 || typeof item.redirectUri !== 'string') {
-      throw new Error('Invalid OAuth client configuration')
-    }
-    const callback = new URL(item.redirectUri)
-    const loopback = callback.protocol === 'http:' && ['127.0.0.1', '[::1]'].includes(callback.hostname) && Boolean(callback.port)
-    if ((callback.protocol !== 'https:' && !loopback) || callback.username || callback.password || callback.search || callback.hash
-      || callback.href !== item.redirectUri) throw new Error('Invalid OAuth client callback')
-    registry.set(item.clientId, item)
-  }
-  return registry
-}
-
 function callback(res, issuer, client, state, result) {
   const target = new URL(client.redirectUri)
-  target.search = new URLSearchParams({ ...result, state, iss: issuer })
+  for (const [key, value] of Object.entries({ ...result, state, iss: issuer })) target.searchParams.set(key, value)
   res.setHeader('Referrer-Policy', 'no-referrer')
   res.writeHead(303, { Location: target.href }).end()
 }
 
-function authRequest(params, audience, registry) {
+async function authRequest(params, audience, registry) {
   for (const key of ['client_id', 'redirect_uri', 'resource', 'response_type', 'scope', 'state', 'code_challenge', 'code_challenge_method']) {
     if (params.getAll(key).length > 1) throw new ProductError(400, 'Parámetro OAuth duplicado')
   }
-  const client = registry.get(params.get('client_id'))
-  if (!client || params.get('redirect_uri') !== client.redirectUri || params.get('resource') !== audience) {
+  const redirectUri = params.get('redirect_uri')
+  if (params.get('resource') !== audience) throw new ProductError(400, 'Destino OAuth no admitido')
+  const registered = await registry.get(params.get('client_id'))
+  if (!registered || !registered.allows(redirectUri)) {
     throw new ProductError(400, 'Cliente o destino OAuth no admitido')
   }
+  const client = { ...registered, redirectUri }
   const state = params.get('state')
   if (!statePattern.test(state ?? '')) throw new ProductError(400, 'Estado OAuth inválido')
   if (params.get('response_type') !== 'code') return { client, state, error: 'unsupported_response_type' }
@@ -98,15 +80,15 @@ function authRequest(params, audience, registry) {
   return { client, state, challenge, scopes }
 }
 
-export function createOAuth(pool, publicUrl, { body, clients = [] }) {
+export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions }) {
   const url = publicUrl ? new URL(publicUrl) : null
   if (url?.protocol !== 'https:') return { route: async () => false, resolve: async () => null }
   const issuer = url.origin
   const audience = issuer + '/mcp'
-  const registry = registeredClients(clients)
+  const registry = createClientRegistry(pool, issuer, clients, clientOptions)
 
   async function begin(req, res, requestUrl, resolveIdentity) {
-    const request = authRequest(requestUrl.searchParams, audience, registry)
+    const request = await authRequest(requestUrl.searchParams, audience, registry)
     if (request.error) return callback(res, issuer, request.client, request.state, { error: request.error })
     const owner = browserOnly(await resolveIdentity(req))
     if (!owner) {
@@ -121,6 +103,8 @@ export function createOAuth(pool, publicUrl, { body, clients = [] }) {
     const permissions = request.scopes.map(scope => `<li>${scopeLabels[scope]}</li>`).join('')
     return html(res, 'Conectar tu cuenta de Playmat', `
       <p>Autoriza a <strong>${escape(request.client.name)}</strong> a usar tu cuenta de Playmat <strong>${escape(owner.username)}</strong> con estos permisos.</p>
+      <p>Cliente: ${escape(request.client.clientId)}<br>Destino: <strong>${escape(request.client.redirectUri)}</strong></p>
+      ${new URL(request.client.redirectUri).protocol === 'http:' ? '<p>El destino es una aplicación en este dispositivo. Comprueba que abriste esta conexión desde la aplicación que quieres autorizar.</p>' : ''}
       <ul>${permissions}</ul>
       ${request.scopes.includes('play') ? '<p>El agente puede controlar al rival cuando lo invitas a una partida MCP.</p>' : ''}
       <form method="post" action="/oauth/authorize"><input type="hidden" name="request" value="${id}">
@@ -129,7 +113,7 @@ export function createOAuth(pool, publicUrl, { body, clients = [] }) {
   }
 
   async function approve(req, res, resolveIdentity) {
-    if (req.headers.origin !== issuer) throw new ProductError(403, 'Origen OAuth inválido')
+    if (req.headers.origin !== issuer || req.headers['sec-fetch-site'] === 'cross-site') throw new ProductError(403, 'Origen OAuth inválido')
     const owner = browserOnly(await resolveIdentity(req))
     const form = await body(req, 'form', 4096)
     const requestId = form.get('request')
@@ -141,8 +125,9 @@ export function createOAuth(pool, publicUrl, { body, clients = [] }) {
       const { rows: [request] } = await db.query(`SELECT * FROM oauth_consent_requests
         WHERE id=$1 AND browser_session=$2 AND audience=$3 AND expires_at>now() FOR UPDATE`,
       [requestId, owner.browserSession, audience])
-      const client = request && registry.get(request.client_id)
-      if (!client || request.redirect_uri !== client.redirectUri) throw new ProductError(400, 'Autorización OAuth vencida')
+      const registered = request && await registry.get(request.client_id)
+      if (!registered || !registered.allows(request.redirect_uri)) throw new ProductError(400, 'Autorización OAuth vencida')
+      const client = { ...registered, redirectUri: request.redirect_uri }
       let result = { error: 'access_denied' }
       if (decision === 'allow') {
         const engineKey = await ensureOAuthAgent(db, owner.accountId)
@@ -164,12 +149,13 @@ export function createOAuth(pool, publicUrl, { body, clients = [] }) {
   async function useCode(db, form, refreshDigest, client) {
     const verifier = form.get('code_verifier')
     const code = form.get('code')
-    if (!tokenPattern.test(code ?? '') || !verifierPattern.test(verifier ?? '') || form.get('redirect_uri') !== client.redirectUri) return null
+    const redirectUri = form.get('redirect_uri')
+    if (!tokenPattern.test(code ?? '') || !verifierPattern.test(verifier ?? '') || !client.allows(redirectUri)) return null
     const { rows: [grant] } = await db.query(`SELECT k.*,g.scopes AS current_scopes
       FROM oauth_authorization_codes k JOIN agent_grants g ON g.engine_key=k.engine_key AND g.account_id=k.account_id
       JOIN accounts a ON a.id=k.account_id WHERE k.digest=$1 AND k.audience=$2 AND k.client_id=$3 AND k.redirect_uri=$4
       AND k.expires_at>now() AND a.enabled AND g.revoked_at IS NULL AND g.oauth_managed FOR UPDATE OF k`,
-    [digest(code), audience, client.clientId, client.redirectUri])
+    [digest(code), audience, client.clientId, redirectUri])
     const actualChallenge = createHash('sha256').update(verifier).digest('base64url')
     if (!grant || !timingSafeEqual(Buffer.from(grant.code_challenge), Buffer.from(actualChallenge))) return null
     const scopes = approvedScopes(grant.current_scopes, grant.scopes_approved)
@@ -196,7 +182,7 @@ export function createOAuth(pool, publicUrl, { body, clients = [] }) {
 
   async function token(req, res) {
     const form = await body(req, 'form', 8192)
-    const client = registry.get(form.get('client_id'))
+    const client = await registry.get(form.get('client_id'))
     if (form.getAll('client_id').length !== 1 || !client || req.headers.authorization || form.has('client_secret') || form.has('client_assertion')) {
       return reply(res, 400, { error: 'invalid_client' })
     }
@@ -229,8 +215,9 @@ export function createOAuth(pool, publicUrl, { body, clients = [] }) {
 
   async function revoke(req, res) {
     const form = await body(req, 'form', 8192)
-    const client = registry.get(form.get('client_id'))
-    if (!client || req.headers.authorization) return reply(res, 400, { error: 'invalid_client' })
+    const client = await registry.get(form.get('client_id'))
+    if (!client || req.headers.authorization || form.getAll('client_id').length !== 1 || form.getAll('token').length !== 1
+      || form.has('client_secret') || form.has('client_assertion')) return reply(res, 400, { error: 'invalid_client' })
     const token = form.get('token')
     if (tokenPattern.test(token ?? '')) {
       await pool.query(`UPDATE oauth_connections SET revoked_at=now() WHERE audience=$1 AND client_id=$3 AND revoked_at IS NULL
@@ -245,7 +232,7 @@ export function createOAuth(pool, publicUrl, { body, clients = [] }) {
     if (!owner && req.method === 'GET') return res.writeHead(303, { Location: '/login?next=%2Foauth%2Fconnections' }).end()
     if (!owner) throw new ProductError(401, 'Inicia sesión en Playmat')
     if (req.method === 'POST') {
-      if (req.headers.origin !== issuer) throw new ProductError(403, 'Origen OAuth inválido')
+      if (req.headers.origin !== issuer || req.headers['sec-fetch-site'] === 'cross-site') throw new ProductError(403, 'Origen OAuth inválido')
       const form = await body(req, 'form', 4096)
       const id = form.get('connection')
       if (!isUuid(id)) throw new ProductError(400, 'Conexión inválida')
@@ -259,13 +246,20 @@ export function createOAuth(pool, publicUrl, { body, clients = [] }) {
       AND c.revoked_at IS NULL AND c.expires_at>now() AND g.revoked_at IS NULL AND g.oauth_managed ORDER BY c.created_at DESC`,
     [audience, owner.accountId])
     const entries = rows.map(row => `<form method="post"><input type="hidden" name="connection" value="${escape(row.id)}">
-      <span>${escape(registry.get(row.client_id)?.name ?? 'Cliente MCP')} · ${approvedScopes(row.scopes, row.scopes_approved).map(scope => scopeLabels[scope]).join(', ')}</span>
+      <span>${escape(registry.name(row.client_id))} · ${approvedScopes(row.scopes, row.scopes_approved).map(scope => scopeLabels[scope]).join(', ')}</span>
       <button>Desconectar</button></form>`).join('')
     return html(res, 'Conexiones MCP', entries || '<p>No tienes conexiones activas.</p>')
   }
 
   async function route(req, res, requestUrl, resolveIdentity) {
     const path = requestUrl.pathname
+    const machine = ['/oauth/token', '/oauth/revoke', '/oauth/register'].includes(path)
+    if (machine || path.startsWith('/.well-known/oauth-')) {
+      res.setHeader('Access-Control-Allow-Origin', '*')
+      res.setHeader('Access-Control-Allow-Methods', machine ? 'POST, OPTIONS' : 'GET, OPTIONS')
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+      if (req.method === 'OPTIONS') { res.writeHead(204).end(); return true }
+    }
     const get = req.method === 'GET'
     const post = req.method === 'POST'
     if (get && ['/.well-known/oauth-protected-resource/mcp', '/.well-known/oauth-protected-resource'].includes(path)) {
@@ -274,10 +268,17 @@ export function createOAuth(pool, publicUrl, { body, clients = [] }) {
       reply(res, 200, {
         issuer, authorization_endpoint: issuer + '/oauth/authorize', token_endpoint: issuer + '/oauth/token',
         revocation_endpoint: issuer + '/oauth/revoke', authorization_response_iss_parameter_supported: true,
+        registration_endpoint: issuer + '/oauth/register',
         client_id_metadata_document_supported: true, response_types_supported: ['code'],
         grant_types_supported: ['authorization_code', 'refresh_token'], code_challenge_methods_supported: ['S256'],
         token_endpoint_auth_methods_supported: ['none'], revocation_endpoint_auth_methods_supported: ['none'], scopes_supported: scopesSupported,
       })
+    } else if (path === '/oauth/register' && post) {
+      await pool.query("DELETE FROM oauth_registration_limits WHERE hour<now()-interval '1 day'")
+      const { rows: [limit] } = await pool.query(`INSERT INTO oauth_registration_limits(hour,attempts) VALUES (date_trunc('hour',now()),1)
+        ON CONFLICT(hour) DO UPDATE SET attempts=oauth_registration_limits.attempts+1 RETURNING attempts`)
+      if (limit.attempts > 200) reply(res, 429, { error: 'temporarily_unavailable' })
+      else await registry.register(req, res)
     } else if (path === '/oauth/authorize' && get) await begin(req, res, requestUrl, resolveIdentity)
     else if (path === '/oauth/authorize' && post) await approve(req, res, resolveIdentity)
     else if (path === '/oauth/token' && post) await token(req, res)
@@ -294,7 +295,7 @@ export function createOAuth(pool, publicUrl, { body, clients = [] }) {
       JOIN agent_grants g ON g.engine_key=c.engine_key AND g.account_id=c.account_id
       WHERE t.digest=$1 AND t.expires_at>now() AND c.audience=$2 AND c.expires_at>now() AND c.revoked_at IS NULL
       AND a.enabled AND g.revoked_at IS NULL AND g.oauth_managed`, [accessDigest, audience])
-    if (!row || !registry.has(row.client_id)) return null
+    if (!row) return null
     const scopes = approvedScopes(row.current_scopes, row.scopes_approved)
     return scopes.length ? { accountId: row.id, username: row.username, engineName: row.engine_name,
       scopes, agent: true, accountAgent: true, connectionId: row.connection_id } : null

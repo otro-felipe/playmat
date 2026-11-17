@@ -93,6 +93,19 @@ docker compose -f ops/web/docker-compose.yml --env-file ops/web/.env up -d</code
           end). To find out what filled it, set <code>XMAGE_HEAP_DUMP=true</code>: the next time it writes the memory to
           <code>logs/heap-oom.hprof</code> in the logs volume. <code>XMAGE_MEMORY</code> sets the memory size.</p>
 
+        <h2 id="mcp-oauth">MCP clients in the private playtesting service</h2>
+        <p>The private playtesting service accepts compatible public OAuth clients from any vendor. Add the server's
+          <code>/mcp</code> URL in your client, sign in with your Playmat account and approve the displayed client,
+          destination and permissions. Disconnect clients at <code>/oauth/connections</code>.</p>
+        <p>Clients can publish an HTTPS Client ID Metadata Document or register through the discovered
+          <code>/oauth/register</code> endpoint. Registration grants no account access. Native clients can use
+          <code>localhost</code>, <code>127.0.0.1</code> or <code>[::1]</code> HTTP callbacks with a changing port;
+          the code exchange must use the exact callback from the authorization request. Other callbacks use HTTPS.</p>
+        <p><code>PLAYMAT_OAUTH_CLIENTS</code> is optional static configuration, rather than a vendor allowlist.
+          Metadata resolution blocks local and private network destinations. Custom URI schemes and confidential-client
+          authentication are not enabled. See the <a href="https://github.com/arcanite24/playmat/blob/master/ops/playtesting/mcp/README.md">private MCP operator reference</a>
+          for metadata restrictions, registration limits and migration details.</p>
+
         <h2 id="first">After the first start</h2>
         <ol>
           <li>Open your domain and register the account named in <code>XMAGE_OWNER</code>. Until you do, the sign-in

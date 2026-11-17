@@ -1,3 +1,12 @@
+CREATE TABLE IF NOT EXISTS oauth_registered_clients (
+  client_id text PRIMARY KEY,
+  metadata jsonb NOT NULL
+);
+CREATE TABLE IF NOT EXISTS oauth_registration_limits (
+  hour timestamptz PRIMARY KEY,
+  attempts integer NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS oauth_consent_requests (
   id uuid PRIMARY KEY,
   browser_session text NOT NULL REFERENCES browser_sessions(digest) ON DELETE CASCADE,
