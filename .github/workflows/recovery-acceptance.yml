@@ -8,8 +8,11 @@ on:
       - ops/playtesting/recovery-backup.py
       - ops/playtesting/entrypoint.sh
       - ops/playtesting/test/**
-      - Mage.Server/src/main/java/mage/server/websocket/api/SessionApi.java
-      - Mage.Server/src/main/java/mage/server/recovery/**
+      - ops/playtesting/product/**
+      - ops/playtesting/mcp/**
+      - Mage/**
+      - Mage.Common/**
+      - Mage.Server/**
       - Mage.Web.Client/**
       - .github/workflows/recovery-acceptance.yml
   workflow_dispatch:

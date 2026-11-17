@@ -1,6 +1,6 @@
 # MCP decision timing
 
-## Current response-idle contract (candidate; runtime validation pending)
+## Current response-idle contract
 
 The server now exposes the receiving player's actual pending response-idle timer as `GameView.responseIdle`: `status`, `deadlineEpochMs`, `sampledAtEpochMs`, `remainingMillis` and `timeoutSeconds`. The sample comes from the scheduler's remaining delay, not the cumulative match clock or a client receipt timestamp. Zero remains zero. Watcher views contain no such private timer; another player's view cannot read the recipient's pending deadline. Older engines still produce `timing.inactivity.status: "unknown"` with null values.
 
@@ -12,7 +12,7 @@ Cached prompt/state resends preserve the same absolute deadline and resample ser
 
 Idle windows are not persisted as match-clock balances. Recovery still requires the matching assembled JAR fingerprint, preserved private volume and both original participants' fresh agreement. A replacement game's new prompt starts its response window; agreement/downtime does not consume a match clock. This change builds a new engine JAR and does not promise recovery of an older incompatible image's snapshots.
 
-### Verification prepared for CI
+### Verification
 
 - Java `PrivateMatchIdlePolicyTest`: actual ranked/spectator/tournament/human-count options, private default/config bounds and public fallback.
 - Java `ResponseIdleTimerTest`: scheduler delay/deadline, zero, reads that cannot renew, own-seat isolation, accepted-response cancellation, next-prompt window and stale-generation rejection.
@@ -21,7 +21,7 @@ Idle windows are not persisted as match-clock balances. Recovery still requires 
 - Frontend pure/component cases: monotonic countdown, client wall-clock skew, duplicate sample, urgent zero and unknown states. Chromium EN/ES fixtures leave manual mobile controls usable.
 - Complete-image isolated acceptance adds a new private untimed match after the existing recovery encounter. With the deliberately configured minimum 60-second idle policy, it observes an accepted response create a fresh deadline, then continuously reads and resends the next cached prompt until the actual idle auto-concede and game-over callbacks. Production is never used for this test.
 
-The candidate's dependency/framework tests have not run on the host: Docker is unavailable. Only `git diff --check`, JavaScript syntax-only checks and shell syntax checks ran before handoff. The integrator must record actual CI outcomes before describing these gates as passed.
+Dependency/framework tests run on isolated GitHub Actions runners because local Docker is unavailable. On 2026-11-17, candidate `b4bfbbfca3d6b1cf8de6e2d0261d559590c41e64` passed Maven ([44190745219](https://github.com/otro-felipe/playmat/actions/runs/44190745219)), web checks and Chromium fixtures ([44190751498](https://github.com/otro-felipe/playmat/actions/runs/44190751498)), MCP contracts ([44190733027](https://github.com/otro-felipe/playmat/actions/runs/44190733027)), and complete-image recovery/backup/idle acceptance ([44190756832](https://github.com/otro-felipe/playmat/actions/runs/44190756832)). The actual engine fixture reported accepted-response reset, polling and cached-prompt resync not renewing the deadline, and inactivity auto-concede with the match clock disabled. It deliberately used 60 seconds; production's 900-second setting is covered by policy tests, not a 15-minute production expiry experiment. These results precede the final combined sequence/UI integration, which requires its own CI before rollout. No host framework tests or production crash experiment are claimed.
 
 ## Historical investigation before this engine contract
 
