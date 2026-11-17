@@ -1587,6 +1587,7 @@ public abstract class PlayerImpl implements Player, Serializable {
         // ability.newId();
         ability.setControllerId(playerId);
         if (ability.activate(game, false) && ability.resolve(game)) {
+            if (!game.isSimulation()) PublicActionObservations.accepted(game.getId(), playerId);
             if (ability.isUndoPossible()) {
                 if (storedBookmark == -1 || storedBookmark > bookmark) { // e.g. useful for undo Nykthos, Shrine to Nyx
                     setStoredBookmark(bookmark);
@@ -1624,6 +1625,7 @@ public abstract class PlayerImpl implements Player, Serializable {
             // resolve without stack
             if (ability.activate(game, false)) {
                 ability.resolve(game);
+                if (!game.isSimulation()) PublicActionObservations.accepted(game.getId(), playerId);
                 game.removeBookmark(bookmark);
                 resetStoredBookmark(game);
                 return true;
