@@ -97,7 +97,7 @@ function StackItem({ item, index, total, clickable, selected, sleeve, onClick, o
       }}
       onClick={() => clickable && onClick(item.id!)}
       data-object-id={item.id}
-      aria-label={`${ability ? 'Ability of ' : ''}${face.name}${index === 0 ? ', resolves next' : ''}${targets.length ? `, targets: ${targets.join(', ')}` : ''}`}
+      aria-label={`${publicCardName(item)}${index === 0 ? ', resolves next' : ''}${targets.length ? `, targets: ${targets.join(', ')}` : ''}`}
     >
       {ability ? <AbilityCard ability={item} sleeve={sleeve} /> : <CardFace card={face} sleeve={sleeve} size="normal" />}
       {index === 0 && <span className={styles.next}>Resolving next</span>}

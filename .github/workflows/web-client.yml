@@ -35,7 +35,11 @@ jobs:
       - run: npm test
       - run: npm run build
       # fails when the app's JS grows past the budget in scripts/check-bundle-size.mjs; prints the sizes
-      - run: npm run size
+      - id: size
+        run: npm run size
+      - name: Compare an exceeded budget with the deployed baseline
+        if: failure() && steps.size.outcome == 'failure'
+        run: bash scripts/compare-bundle-baseline.sh a91940d78ba00db8539c8eed291db0b5d5ab5c44
 
   # Playwright: the specs that need no game server (sign-in, axe on the sign-in screen) against the
   # production build served by `vite preview`. Specs that play on a live server skip here (they need
@@ -68,6 +72,8 @@ jobs:
         run: npx playwright install-deps chromium
       - run: npm run build
       - run: npm run test:e2e:ci
+      - name: Mana payment mobile and desktop interaction fixtures
+        run: npx playwright test e2e/mana-payment.spec.ts --project=chromium-desktop --workers=1
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

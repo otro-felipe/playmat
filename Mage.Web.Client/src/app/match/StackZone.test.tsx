@@ -5,6 +5,15 @@ import { StackZone } from './StackZone';
 import type { GameView, StackAbilityView } from '../../protocol/generated/views';
 
 describe('[READ-AC-001] stack target announcements', () => {
+  test.each([
+    { id: 'hidden', name: 'Private identity', faceDown: true },
+    { id: 'hidden-trigger', name: 'Triggered ability', mageObjectType: 'ABILITY_STACK_FROM_CARD', sourceCard: { name: 'Private identity', hideInfo: true } },
+  ] as StackAbilityView[])('keeps hidden stack identities out of accessible labels for $id', (item) => {
+    render(<StackZone items={[item]} clickable={new Set()} selected={new Set()} sleeveOf={() => ''} onClick={() => undefined} originOf={() => undefined} />);
+    expect(screen.getByRole('listitem', { name: /Face-down card, resolves next/ })).toBeTruthy();
+    expect(screen.queryByRole('listitem', { name: /Private identity/ })).toBeNull();
+  });
+
   test('keeps public targets visible for every waiting spell and ability, with no hover or resolution', () => {
     const bolt = { id: 'bolt', name: 'Lightning Bolt', targets: ['rival', 'morph'] };
     const trigger: StackAbilityView = { id: 'trigger', name: 'Triggered ability', mageObjectType: 'ABILITY_STACK_FROM_CARD', sourceCard: { name: 'Grave Titan' }, targets: ['bear'] };

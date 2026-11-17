@@ -10,6 +10,7 @@ on:
       - ops/playtesting/test/**
       - Mage.Server/src/main/java/mage/server/websocket/api/SessionApi.java
       - Mage.Server/src/main/java/mage/server/recovery/**
+      - Mage.Web.Client/**
       - .github/workflows/recovery-acceptance.yml
   workflow_dispatch:
 
