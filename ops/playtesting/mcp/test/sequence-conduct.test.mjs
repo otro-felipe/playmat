@@ -75,3 +75,12 @@ test('brief pace refuses a mandatory prompt', async (t) => {
   const { status, submitted } = await scenario(t, { initial: { decision: { id: 'target', kind: 'target', choices: [pass] } }, steps: [{ kind: 'pace', delayMs: 1 }] });
   assert.equal(status.reason, 'response_available'); assert.equal(submitted.length, 0);
 });
+
+test('advance stops for a public cleanup discard choice, while automatic draws alone remain passable', async (t) => {
+  const { status, submitted } = await scenario(t, { updates: [{ sequenceEvidence: evidence(1), step: 'CLEANUP',
+    players: [{ id: 'us', yourSeat: true }, { id: 'them', handCount: 7, graveyard: [{ id: 'public-card', name: 'Mountain' }] }],
+    decision: decision('after-cleanup') }] });
+  assert.equal(status.reason, 'opponent_action');
+  assert.equal(status.appliedDecisions, 1);
+  assert.deepEqual(submitted, [['our-end', 'pass']]);
+});

@@ -1,6 +1,9 @@
 package mage.server.game;
 
 import mage.abilities.ActivatedAbilityImpl;
+import mage.abilities.Ability;
+import mage.cards.Cards;
+import mage.cards.CardsImpl;
 import mage.abilities.mana.ActivatedManaAbilityImpl;
 import mage.constants.AbilityType;
 import mage.constants.RangeOfInfluence;
@@ -27,6 +30,8 @@ public class PublicNonStackActionTest {
 
     private static class Pilot extends StubPlayer {
         Pilot() { super("Synthetic observer pilot", RangeOfInfluence.ALL); }
+        Cards discarded = new CardsImpl();
+        @Override public Cards discard(int amount, boolean random, boolean payForCost, Ability source, Game game) { return discarded; }
         boolean mana(Game game) { return playManaAbility(new Mana(), game); }
         boolean direct(Game game) { return playAbility(new Direct(), game); }
     }
@@ -72,6 +77,25 @@ public class PublicNonStackActionTest {
         assertTrue(player.direct(game(true)));
         assertTrue(feed.sequenceEvidence().getPublicActions().isEmpty());
         assertEquals(0, rulesEvents.get());
+    }
+    @Test public void publicCleanupChoiceCountsButEffectCausedDiscardDoesNot() {
+        Game actual = game(false);
+        UUID chosen = UUID.randomUUID();
+        player.getHand().add(chosen);
+        player.setMaxHandSize(0);
+        player.discarded.add(chosen);
+        player.discardToMax(actual);
+        assertEquals(Long.valueOf(1), feed.sequenceEvidence().getPublicActions().get(player.getId()));
+        // The ordinary discard entry point used by Mind Rot and other effects is not an actor signal.
+        player.discard(1, false, false, null, actual);
+        assertEquals(Long.valueOf(1), feed.sequenceEvidence().getPublicActions().get(player.getId()));
+        assertEquals(0, rulesEvents.get());
+    }
+    @Test public void aCleanupAttemptWithoutAnyActualPublicDiscardDoesNotCount() {
+        player.getHand().add(UUID.randomUUID());
+        player.setMaxHandSize(0);
+        player.discardToMax(game(false));
+        assertTrue(feed.sequenceEvidence().getPublicActions().isEmpty());
     }
     @Test public void observerFailureAndCloseNeverLeaveApparentlyValidEvidence() {
         PublicActionObservations.close(gameId);
