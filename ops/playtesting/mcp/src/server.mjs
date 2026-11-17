@@ -20,6 +20,8 @@ const GameCondition = {
 };
 const hasDestination = (value) => value.phase !== undefined || value.step !== undefined || value.priority !== undefined;
 const Hold = z.object({ kind: z.literal('hold'), delayMs: z.number().int().min(1).max(10_000) }).strict();
+const Pace = z.object({ kind: z.literal('pace'), delayMs: z.number().int().min(1).max(1000).describe('Brief ordinary-priority pacing only; actual delay is capped at 250ms when inactivity timing is unknown.') }).strict();
+const AdvanceToOwnTurn = z.object({ kind: z.literal('advance_to_own_turn') }).strict();
 const ChoiceSelector = z.object({
   cardName: z.string().trim().min(1).max(250).optional(),
   cardId: StringId.optional(), label: z.string().trim().min(1).max(500).optional(),
@@ -48,7 +50,7 @@ const PassUntil = z.object({
   allowPlannedResolutions: z.boolean().default(false).describe('Allow only removal of this plan’s expected spell/trigger objects; unexpected responses and public opponent changes still interrupt.'),
   skipOptionalResponses: z.boolean().default(false).describe('Keep false unless intentionally declining every optional play, including land drops. Never use this to wait for your next turn.'),
 }).strict().refine((value) => hasDestination(value) || value.stackEmpty === true, 'A pass needs a phase, step, priority or empty-stack destination.');
-const Sequence = { gameId: Uuid, cursor: Cursor, steps: z.array(z.union([Hold, Answer, PassUntil, YieldPriority])).min(1).max(12) };
+const Sequence = { gameId: Uuid, cursor: Cursor, steps: z.array(z.union([Hold, Pace, Answer, PassUntil, YieldPriority, AdvanceToOwnTurn])).min(1).max(12) };
 const Catalog = {
   format: Format.optional(), query: z.string().trim().min(1).max(160).optional(),
   colors: z.array(z.enum(['W', 'U', 'B', 'R', 'G', 'C'])).min(1).max(6).optional(),
@@ -83,7 +85,7 @@ function readToken(req) {
 
 function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedOrigins }) {
   function tool(name, description, inputSchema, scope, run, readOnlyHint = false) {
-    if (['create_game', 'join_game', 'start_match', 'get_game_state', 'submit_decision', 'pass_until', 'play_sequence', 'submit_sequence'].includes(name)) {
+    if (['create_game', 'join_game', 'start_match', 'get_game_state', 'submit_decision', 'pass_until', 'advance_to_own_turn', 'play_sequence', 'submit_sequence'].includes(name)) {
       description += ` ${guideBootstrap}`;
     }
     if (['play_sequence', 'submit_sequence'].includes(name)) description += ` ${sequenceInstructions}`;
@@ -140,6 +142,8 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
       steps: [{ kind: 'pass_until', ...destination, skipOptionalResponses: true }],
     }, reauthorize, 'ignore');
   });
+  tool('advance_to_own_turn', 'Pass only when the current engine offers no non-mana optional play, stopping before your next turn or any useful legal play, mandatory decision, public opponent action or missing causal evidence. Zero mana is never evidence that no action exists.', { gameId: Uuid, cursor: Cursor },
+    'play', ({ gameId, cursor }) => getSeat().startSequence({ gameId, cursor, steps: [{ kind: 'advance_to_own_turn' }] }, reauthorize));
   const playSequence = (args) => getSeat().startSequence(args, reauthorize);
   tool('play_sequence', 'Queue guarded choices by exact ID, card or label. Mark a planned cast with expectCast to let later steps pay for that same spell.', Sequence, 'play', playSequence);
   tool('submit_sequence', 'Start a conditional, bounded sequence of choices, brief waits and ordinary passes.', Sequence, 'play', playSequence);

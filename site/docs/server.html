@@ -115,6 +115,12 @@ docker compose -f ops/web/docker-compose.yml --env-file ops/web/.env up -d</code
           authentication are not enabled. See the <a href="https://github.com/arcanite24/playmat/blob/master/ops/playtesting/mcp/README.md">private MCP operator reference</a>
           for metadata restrictions, registration limits and migration details.</p>
 
+        <p>Guarded MCP lines can distinguish planned own resolutions from an opponent's public action only when
+          the engine JARs and rebuilt MCP core both expose the public causal witness. Update them together and refresh
+          the client's tool metadata. The witness contains public action counts and recent public stack IDs, never
+          hidden choices or cards. Old or incomplete evidence stops the plan safely. Use the explicit next-own-turn
+          mode only when the engine offers no useful legal action; zero mana alone is not that evidence.</p>
+
         <h2 id="first">After the first start</h2>
         <ol>
           <li>Open your domain and register the account named in <code>XMAGE_OWNER</code>. Until you do, the sign-in

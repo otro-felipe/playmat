@@ -1,12 +1,14 @@
 package mage.server.game;
 
 import mage.view.GameEventView;
+import mage.view.SequenceEvidenceView;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.Map;
+import java.util.LinkedHashMap;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -24,6 +26,28 @@ public final class GameEventFeed {
 
     private final Deque<Entry> events = new ArrayDeque<>();
     private long lastSeq = 0;
+    private final String evidenceEpoch = UUID.randomUUID().toString();
+    private final Map<UUID, Long> publicActions = new LinkedHashMap<>();
+    private final Map<UUID, Long> resolutions = new LinkedHashMap<>();
+    private long resolutionRevision;
+    static final int RESOLUTION_CAPACITY = 32;
+
+    /** Only committed, already-public rules actions; never clicks, hidden prompts or passes. */
+    public synchronized void publicAction(UUID playerId) {
+        if (playerId != null) publicActions.merge(playerId, 1L, Long::sum);
+    }
+
+    /** Only IDs of objects already announced on the public stack are admitted. */
+    public synchronized void beginResolution(UUID publicStackId) {
+        if (publicStackId == null) return;
+        resolutions.remove(publicStackId);
+        resolutions.put(publicStackId, ++resolutionRevision);
+        while (resolutions.size() > RESOLUTION_CAPACITY) resolutions.remove(resolutions.keySet().iterator().next());
+    }
+
+    public synchronized SequenceEvidenceView sequenceEvidence() {
+        return new SequenceEvidenceView(evidenceEpoch, publicActions, resolutions, resolutionRevision);
+    }
 
     private static final class Entry {
         final GameEventView event;

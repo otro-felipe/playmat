@@ -9,6 +9,7 @@ import mage.game.events.GameEvent;
 import mage.game.events.ZoneChangeEvent;
 import mage.game.permanent.Permanent;
 import mage.game.stack.Spell;
+import mage.game.stack.StackObject;
 import mage.players.Player;
 import mage.view.GameEventView;
 import mage.view.GameEventView.GameEventKind;
@@ -42,6 +43,26 @@ public class GameEventRecorder extends Watcher {
         GameEventFeed feed = GameEventFeed.of(game.getId());
         if (feed == null) {
             return;
+        }
+        // Committed public rules actions, not private selections or attempts.
+        switch (event.getType()) {
+            case SPELL_CAST:
+            case LAND_PLAYED:
+            case ACTIVATED_ABILITY:
+            case TAKEN_SPECIAL_ACTION:
+            case TAKEN_SPECIAL_MANA_PAYMENT:
+            case ATTACKER_DECLARED:
+            case BLOCKER_DECLARED:
+                feed.publicAction(event.getPlayerId());
+                break;
+            case RESOLVING_ABILITY:
+                StackObject top = game.getStack().getFirstOrNull();
+                // A mana ability resolving above the stack is not the spell below it.
+                if (top != null && top.getStackAbility().getOriginalId().equals(event.getTargetId())
+                        && top.getControllerId().equals(event.getPlayerId())) feed.beginResolution(top.getId());
+                break;
+            default:
+                break;
         }
         switch (event.getType()) {
             case DAMAGED_PLAYER:

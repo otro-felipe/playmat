@@ -1486,6 +1486,7 @@ export interface GameView extends Serializable {
     combat?: CombatGroupView[];
     companion?: RevealedView[];
     events?: GameEventView[];
+    sequenceEvidence?: SequenceEvidenceView;
     exiles?: { [index: string]: CardView }[];
     gameCycle?: number;
     lookedAt?: LookedAtView[];
@@ -2578,3 +2579,10 @@ export type TimingOption = "BEGINNER" | "REGULAR" | "PROFESSIONAL" | "NONE";
 export type TurnPhase = "BEGINNING" | "PRECOMBAT_MAIN" | "COMBAT" | "POSTCOMBAT_MAIN" | "END";
 
 export type Zone = "HAND" | "GRAVEYARD" | "LIBRARY" | "BATTLEFIELD" | "STACK" | "EXILED" | "ALL" | "OUTSIDE" | "COMMAND";
+
+export interface SequenceEvidenceView extends Serializable {
+    epoch?: string;
+    publicActions?: { [index: string]: number };
+    resolutions?: { [index: string]: number };
+    resolutionRevision?: number;
+}

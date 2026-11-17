@@ -36,6 +36,18 @@ function cardsOnBoard(cards: Record<string, CardView> | undefined) {
   return Object.entries(cards ?? {}).flatMap(([id, card]) => card ? [cardOnBoard(card, id)] : []);
 }
 
+/** Explicit projection: future diagnostic/private engine fields never enter the agent contract. */
+function sequenceEvidence(view: GameSessionState['view']) {
+  const evidence = view?.sequenceEvidence;
+  if (!evidence) return null;
+  return {
+    epoch: evidence.epoch,
+    publicActions: evidence.publicActions ? { ...evidence.publicActions } : undefined,
+    resolutions: evidence.resolutions ? { ...evidence.resolutions } : undefined,
+    resolutionRevision: evidence.resolutionRevision,
+  };
+}
+
 /** The game state visible to the authenticated seat, with public counts for every other hand. */
 export function visibleAgentGame(state: GameSessionState | undefined) {
   const view = state?.view;
@@ -44,6 +56,8 @@ export function visibleAgentGame(state: GameSessionState | undefined) {
     phase: view?.phase ?? null,
     step: view?.step ?? null,
     activePlayer: view?.activePlayerName ?? null,
+    activePlayerId: view?.activePlayerId ?? null,
+    sequenceEvidence: sequenceEvidence(view),
     priorityPlayer: view?.priorityPlayerName ?? null,
     ownHand: cardsOnBoard(view?.myHand),
     stack: cardsOnBoard(view?.stack),
