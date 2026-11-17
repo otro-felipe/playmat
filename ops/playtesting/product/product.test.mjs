@@ -363,6 +363,70 @@ test('[PM-AC-05] browser and delegated agent share immutable owned revisions and
   assert.equal((await (await f.path(route + '?revision=1', { headers: agent })).json()).data.name, 'Mono Red')
 })
 
+test('[PM-AC-05] the account library saves browser drafts and preserves their chosen engine formats', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const alice = { ...await signIn(f, 'Alice'), 'X-Playmat-Deck-Owner': 'Alice' }
+  const bob = { ...await signIn(f, 'Bob'), 'X-Playmat-Deck-Owner': 'Bob' }
+  const library = '/api/playtesting/decks'
+  const deck = { name: 'New deck', cards: [], sideboard: [] }
+  const formats = [
+    [undefined, 'Constructed - Freeform'],
+    [' ', 'Constructed - Freeform'],
+    ['Freeform', 'Constructed - Freeform'],
+    ['Constructed - Freeform', 'Constructed - Freeform'],
+    ['Variant Magic - Commander', 'Variant Magic - Commander'],
+    ['Block Constructed Custom - Star Wars', 'Block Constructed Custom - Star Wars'],
+    ['Constructed Custom - Custom fixture', 'Constructed Custom - Custom fixture'],
+    ['Constructed - Pioneer', 'Pioneer'],
+  ]
+  for (const [format, storedFormat] of formats) {
+    const route = `${library}/${randomUUID()}`
+    const saved = await f.path(route, json('PUT', alice, { expectedRevision: 0, data: { ...deck, format } }))
+    assert.equal(saved.status, 200, `The library accepts ${format ?? 'a missing format'}`)
+    const { revision, data } = await saved.json()
+    assert.equal(revision, 1)
+    assert.deepEqual([data.format, data.cards, data.sideboard], [storedFormat, [], []])
+    assert.equal((await f.path(route, { headers: bob })).status, 404)
+
+    const edited = { expectedRevision: revision, data: { ...data, name: 'Edited draft' } }
+    assert.equal((await f.path(route, json('PUT', alice, edited))).status, 200)
+    assert.equal((await f.path(route, json('PUT', alice, edited))).status, 409)
+    const history = await (await f.path(route + '?revision=1', { headers: alice })).json()
+    assert.deepEqual([history.revision, history.data.format, history.data.name], [1, storedFormat, 'New deck'])
+  }
+  for (const format of ['Constructed - ' + 'x'.repeat(120), 'Constructed - Bad\nFormat', 'constructor', 42]) {
+    assert.equal((await f.path(`${library}/${randomUUID()}`, json('PUT', alice, {
+      expectedRevision: 0, data: { ...deck, format },
+    }))).status, 400)
+  }
+  const rejectedInvite = await f.path('/api/playtesting/invites', json('POST', alice, {
+    tableId: randomUUID(), roomId: randomUUID(), format: 'Constructed - Freeform', mode: 'mcp', password,
+  }))
+  assert.equal(rejectedInvite.status, 400)
+})
+
+test('[PM-AC-05] startup upgrades existing deck storage without changing its saved decks', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const owner = await signIn(f, 'Alice')
+  const route = `/api/playtesting/decks/${randomUUID()}`
+  const deck = { name: 'Existing list', format: 'Pioneer', cards: [], sideboard: [] }
+  assert.equal((await f.path(route, json('PUT', owner, { expectedRevision: 0, data: deck }))).status, 200)
+  await withTestDatabase(f, db => db.query(`ALTER TABLE deck_revisions
+    DROP CONSTRAINT IF EXISTS deck_revisions_library_format_check,
+    DROP CONSTRAINT IF EXISTS deck_revisions_format_check,
+    ADD CONSTRAINT deck_revisions_format_check CHECK (format IN ('Standard', 'Pioneer', 'Modern'))`))
+
+  const { createProduct } = await import('./product.mjs')
+  const reopened = await createProduct({ databaseUrl, schema: f.schema, replayDirectory: f.replayDirectory, store: new Map() })
+  await reopened.close()
+
+  const saved = await f.path(route, json('PUT', owner, { expectedRevision: 1, data: { ...deck, format: 'Constructed - Freeform' } }))
+  assert.equal(saved.status, 200)
+  assert.equal((await saved.json()).revision, 2)
+  const previous = await (await f.path(route + '?revision=1', { headers: owner })).json()
+  assert.deepEqual([previous.revision, previous.data.name, previous.data.format], [1, 'Existing list', 'Pioneer'])
+})
+
 async function addReplay(f, matchId, gameId, names, events) {
   const now = Date.now()
   const info = {

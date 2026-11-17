@@ -9,9 +9,22 @@ export const normalize = value => String(value ?? '').trim().toLowerCase()
 export const isId = value => typeof value === 'string' && /^[a-z0-9_:.-]{1,64}$/i.test(value)
 export const isUuid = value => typeof value === 'string' && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(value)
 
+const competitiveFormats = new Map([['standard', 'Standard'], ['pioneer', 'Pioneer'], ['modern', 'Modern']])
+
 export function normalizeFormat(value) {
   const key = normalize(value).replace(/^constructed[\s-]+/, '')
-  return { standard: 'Standard', pioneer: 'Pioneer', modern: 'Modern' }[key] ?? null
+  return competitiveFormats.get(key) ?? null
+}
+
+function libraryFormat(value) {
+  if (value != null && typeof value !== 'string') return null
+  const label = value?.trim() ?? ''
+  if (!label || label.toLowerCase() === 'freeform') return 'Constructed - Freeform'
+  if (label.length > 120 || /\p{Cc}/u.test(label)) return null
+  const competitive = normalizeFormat(label)
+  if (competitive) return competitive
+  const engineFormat = label === 'Limited' || /^(?:(?:Block )?Constructed(?: Custom)?|Variant Magic) - \S/.test(label)
+  return engineFormat ? label : null
 }
 
 export async function transaction(pool, work) {
@@ -78,13 +91,13 @@ function canonicalCards(entries) {
 
 export async function putDeck(pool, account, deckId, { data, name, format, expectedRevision, updatedAt }) {
   const headName = String(name ?? data?.name ?? '').trim()
-  const headFormat = normalizeFormat(format ?? data?.format)
+  const headFormat = libraryFormat(format ?? data?.format)
   if (!isId(deckId) || !Number.isInteger(expectedRevision) || expectedRevision < 0) {
     throw new ProductError(400, 'Deck ID and expectedRevision are required')
   }
   if (!headName || headName.length > 200 || !headFormat || !data || !Array.isArray(data.cards) || !Array.isArray(data.sideboard)
     || data.cards.length + data.sideboard.length > 300 || ![...data.cards, ...data.sideboard].every(validateEntry)) {
-    throw new ProductError(400, 'Provide a valid Standard, Pioneer or Modern deck list')
+    throw new ProductError(400, 'Provide a valid deck name, format and card list')
   }
   const { cards: rawCards, sideboard: rawSideboard, id, name: ignoredName, format: ignoredFormat, updatedAt: ignoredTime, ...metadata } = data
   const cards = canonicalCards(rawCards)

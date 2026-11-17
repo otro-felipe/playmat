@@ -148,20 +148,39 @@ export async function syncNow(): Promise<void> {
         .map((entry) => ({ id: entry.id!, updatedAt: entry.updatedAt ?? 0, deleted: !!entry.deleted }));
       const plan = planSync(deckStorage.stamps(), deckStorage.tombstones(), remote, foreignIds());
       let changedHere = false;
-      for (const id of plan.upload) await upload(id);
+      let firstError: string | null = null;
+      async function attempt(work: () => void | Promise<void>) {
+        try {
+          await work();
+          return true;
+        } catch (error) {
+          firstError ??= describe(error);
+          return false;
+        }
+      }
+      for (const id of plan.upload) await attempt(() => upload(id));
       for (const id of plan.download) {
-        const data = await download(id);
-        if (data && deckStorage.importFromSync(id, data)) changedHere = true;
+        await attempt(async () => {
+          const data = await download(id);
+          if (data && deckStorage.importFromSync(id, data)) changedHere = true;
+        });
       }
       for (const id of plan.deleteLocal) {
-        deckStorage.removeFromSync(id);
-        changedHere = true;
+        await attempt(() => {
+          deckStorage.removeFromSync(id);
+          changedHere = true;
+        });
       }
-      for (const { id, at } of plan.deleteRemote) await removeRemote(id, at);
-      for (const id of plan.dropTombstones) deckStorage.forgetTombstone(id);
+      const tombstonesToDrop = new Set(plan.dropTombstones);
+      for (const { id, at } of plan.deleteRemote) {
+        const removed = await attempt(async () => { await removeRemote(id, at); });
+        if (!removed) tombstonesToDrop.delete(id);
+      }
+      for (const id of tombstonesToDrop) await attempt(() => deckStorage.forgetTombstone(id));
       rememberKnown(deckStorage.stamps().map((deck) => deck.id), true);
       if (changedHere || plan.upload.length) await useDecks.getState().refresh();
-      useDeckSyncStatus.setState({ status: 'synced', lastSyncedAt: Date.now() });
+      if (firstError !== null) useDeckSyncStatus.setState({ status: 'error', error: firstError });
+      else useDeckSyncStatus.setState({ status: 'synced', lastSyncedAt: Date.now() });
     } catch (error) {
       useDeckSyncStatus.setState({ status: 'error', error: describe(error) });
     } finally {

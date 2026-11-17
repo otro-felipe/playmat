@@ -40,11 +40,21 @@ CREATE TABLE IF NOT EXISTS deck_revisions (
   deck_id text NOT NULL,
   revision integer NOT NULL,
   name text NOT NULL,
-  format text NOT NULL CHECK (format IN ('Standard', 'Pioneer', 'Modern')),
+  format text NOT NULL CONSTRAINT deck_revisions_library_format_check CHECK (char_length(format) BETWEEN 1 AND 120),
   metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
   PRIMARY KEY (account_id, deck_id, revision),
   FOREIGN KEY (account_id, deck_id) REFERENCES decks(account_id, id)
 );
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'deck_revisions'::regclass AND conname = 'deck_revisions_library_format_check') THEN
+    ALTER TABLE deck_revisions
+      DROP CONSTRAINT IF EXISTS deck_revisions_format_check,
+      ADD CONSTRAINT deck_revisions_library_format_check CHECK (char_length(format) BETWEEN 1 AND 120);
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS deck_revision_cards (
   account_id uuid NOT NULL,
