@@ -18,7 +18,7 @@ services:
   playmat:
     build:
       context: ../..
-      dockerfile: ops/playtesting/Dockerfile
+      dockerfile: Dockerfile
     image: playmat-oneshot-dev:local
     environment:
       DATABASE_URL: postgresql://playmat:local-docker-fixture@postgres:5432/playmat

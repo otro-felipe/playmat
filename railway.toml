@@ -1,9 +1,0 @@
-[build]
-builder = "DOCKERFILE"
-dockerfilePath = "ops/playtesting/Dockerfile"
-
-[deploy]
-healthcheckPath = "/healthz"
-healthcheckTimeout = 240
-restartPolicyType = "ON_FAILURE"
-restartPolicyMaxRetries = 4
