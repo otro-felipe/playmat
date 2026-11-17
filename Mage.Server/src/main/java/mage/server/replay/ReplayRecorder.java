@@ -315,7 +315,8 @@ public final class ReplayRecorder {
             info.startPlayer = startingPlayer == null ? null : startingPlayer.getName();
             game.getPlayers().values().stream().filter(Player::hasWon).findFirst()
                     .ifPresent(winner -> info.winner = winner.getName());
-            if (game.getMulligan() instanceof LondonMulligan london) {
+            if (game.getMulligan() instanceof LondonMulligan) {
+                LondonMulligan london = (LondonMulligan) game.getMulligan();
                 for (ReplayInfo.ReplayPlayer replaySeat : info.players) {
                     game.getPlayers().values().stream().filter(player -> player.getName().equals(replaySeat.name)).findFirst()
                             .ifPresent(player -> replaySeat.mulligans = london.getMulliganCount(player.getId()));

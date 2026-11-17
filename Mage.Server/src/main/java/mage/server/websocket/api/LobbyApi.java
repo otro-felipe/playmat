@@ -1,11 +1,13 @@
 package mage.server.websocket.api;
 
 import mage.cards.decks.DeckCardLists;
+import mage.game.Table;
 import mage.server.AuthorizedUserRepository;
 import mage.server.User;
 import mage.server.admin.RuntimeSettings;
 import mage.server.career.CareerStore;
 import mage.server.game.GamesRoom;
+import mage.server.game.GameController;
 import mage.server.playtesting.ProductGateway;
 import mage.server.social.PlayerDirectory;
 import mage.server.social.Presence;
@@ -24,6 +26,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import static mage.server.websocket.rpc.RpcParam.Type.INT;
 import static mage.server.websocket.rpc.RpcParam.Type.STRING;
@@ -148,13 +151,13 @@ final class LobbyApi {
                         .returns("TableView[]")
                         .doc("All open and running tables of a room.")
                         .handler(call -> {
-                            var tables = ctx.server.roomGetAllTables(call.uuid(0));
+                            List<TableView> tables = ctx.server.roomGetAllTables(call.uuid(0));
                             if (!ProductGateway.enabled()) {
                                 return tables;
                             }
                             String viewer = signedIn(ctx, call);
-                            var invitations = ProductGateway.visibleInvitations(viewer);
-                            return tables.stream().filter(table -> visibleToSeat(table, viewer, invitations)).toList();
+                            Set<java.util.UUID> invitations = ProductGateway.visibleInvitations(viewer);
+                            return tables.stream().filter(table -> visibleToSeat(table, viewer, invitations)).collect(Collectors.toList());
                         }),
 
                 RpcMethod.named("roomGetTableById")
@@ -162,7 +165,7 @@ final class LobbyApi {
                         .returns("TableView | null")
                         .doc("One table of a room.")
                         .handler(call -> {
-                            var table = ctx.server.roomGetTableById(call.uuid(0), call.uuid(1));
+                            TableView table = ctx.server.roomGetTableById(call.uuid(0), call.uuid(1));
                             if (!ProductGateway.enabled() || table == null) {
                                 return table;
                             }
@@ -343,9 +346,9 @@ final class LobbyApi {
                 .anyMatch(chat -> chatId.equals(chat.getChatId()) && chat.isRoomChat())) {
             return true;
         }
-        var game = ctx.managers.gameManager().getGameController().values().stream()
+        GameController game = ctx.managers.gameManager().getGameController().values().stream()
                 .filter(controller -> chatId.equals(controller.getChatId())).findFirst().orElse(null);
-        var table = game == null
+        Table table = game == null
                 ? ctx.managers.tableManager().getTables().stream()
                     .filter(candidate -> ctx.managers.tableManager().getChatId(candidate.getId())
                             .filter(chatId::equals).isPresent())
