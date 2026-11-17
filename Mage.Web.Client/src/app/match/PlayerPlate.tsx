@@ -21,6 +21,7 @@ import styles from './PlayerPlate.module.css';
 
 export interface PlayerPlateProps {
   player: PlayerView;
+  displayName?: string;
   isMe: boolean;
   /** the player is a legal target right now */
   targetable: boolean;
@@ -84,8 +85,9 @@ function useRopeSeconds(player: PlayerView): number {
 }
 
 /** A player's seat: who they are, their life, counters, floating mana and clock. */
-export function PlayerPlate({ player, isMe, targetable, selected, deciding, sleeve, onClick, toPay, payable, onPay, commanderDamage = [], outOfRange = false, look }: PlayerPlateProps) {
+export function PlayerPlate({ player, displayName, isMe, targetable, selected, deciding, sleeve, onClick, toPay, payable, onPay, commanderDamage = [], outOfRange = false, look }: PlayerPlateProps) {
   const t = useT();
+  const name = displayName ?? player.name ?? '';
   const life = player.life ?? 0;
   // a player out of the game (lost, conceded or left: leaving loses) has no life worth showing, however low it went
   const out = !!player.hasLeft;
@@ -111,7 +113,7 @@ export function PlayerPlate({ player, isMe, targetable, selected, deciding, slee
   const ticking = ropeVisible(player.timerActive, player.hasPriority, timeLeft);
   // the player's sigil from their profile, or their initial
   const sigil = sigilOf(player.userData?.avatarId);
-  const initial = (player.name ?? '?').slice(0, 1).toUpperCase();
+  const initial = (name || '?').slice(0, 1).toUpperCase();
   // a Career avatar replaces the initial, with its drawn crest as the fallback
   const avatar = useCatalogItem('avatar', look?.avatar);
   const crest = avatar?.path ? { light: avatar.light ?? '#7a7466', dark: avatar.dark ?? '#22201b', path: avatar.path } : undefined;
@@ -140,8 +142,8 @@ export function PlayerPlate({ player, isMe, targetable, selected, deciding, slee
       tabIndex={targetable ? 0 : undefined}
       onMouseDown={preventMatchObjectMouseFocus}
       aria-label={out
-        ? t('match.plate.aria.lost', { name: player.name ?? '' })
-        : `${player.name}, ${life} life${disconnected ? `, ${t('match.plate.aria.disconnected')}` : ''}${outOfRange ? ', out of range' : ''}${targetable ? ', can be targeted' : ''}`}
+        ? t('match.plate.aria.lost', { name })
+        : `${name}, ${life} life${disconnected ? `, ${t('match.plate.aria.disconnected')}` : ''}${outOfRange ? ', out of range' : ''}${targetable ? ', can be targeted' : ''}`}
       onClick={() => targetable && onClick()}
       onKeyDown={(event) => {
         if (targetable && isMatchObjectKey(event.nativeEvent)) {
@@ -167,7 +169,7 @@ export function PlayerPlate({ player, isMe, targetable, selected, deciding, slee
       </PlateFrame>
       <div className={styles.info}>
         <div className={styles.name}>
-          {player.name}
+          {name}
           <LevelBadge level={look?.level} />
           {look?.flair === 'heart' && <Heart className={styles.flair} size={14} fill="currentColor" role="img" aria-label={t('shell.supporter')} />}
           {out && <span className={styles.range}>{t('match.plate.lost')}</span>}

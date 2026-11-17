@@ -170,9 +170,11 @@ export interface MatchStageProps {
   replayLog?: ChatMessage[];
   /** where leaving goes, instead of closing the game and going back to Play */
   onLeave?: () => void;
+  /** presentation names chosen by seats, keyed by their engine account name */
+  seatDisplayNames?: Readonly<Record<string, string>>;
 }
 
-export function MatchStage({ session, state, replayLog, onLeave }: MatchStageProps) {
+export function MatchStage({ session, state, replayLog, onLeave, seatDisplayNames }: MatchStageProps) {
   const { view, interaction, playerId, mode, awaitingServer, prediction } = state;
   const revealedHands = useRevealedHands(view, mode !== 'replay');
   const reveals = useReveals(view, mode !== 'replay');
@@ -502,9 +504,11 @@ export function MatchStage({ session, state, replayLog, onLeave }: MatchStagePro
   // announcing X: what the player could pay, when the server sets no limit
   const announceLimit = useMemo(() => (prompt?.kind === 'amount' ? xLimit(prompt, view, myId) : null), [prompt, view, myId]);
   // a concession takes effect when the player holding priority passes: name them while it is pending
-  const priorityName = (view?.players ?? []).find((player) => player.hasPriority && player.playerId !== myId)?.name
+  const enginePriorityName = (view?.players ?? []).find((player) => player.hasPriority && player.playerId !== myId)?.name
     ?? (view?.priorityPlayerName !== board.me?.player.name ? view?.priorityPlayerName ?? null : null);
-  const turnLabel = t(myTurn ? 'match.hud.yourTurn' : 'match.hud.opponentTurn');
+  const displayName = (engineName?: string | null) => engineName && seatDisplayNames && Object.hasOwn(seatDisplayNames, engineName)
+    ? seatDisplayNames[engineName] : engineName ?? undefined;
+  const priorityName = displayName(enginePriorityName) ?? null;
   let priorityLabel: string | null = null;
   if (interaction.mode === 'declareAttackers') priorityLabel = t('match.hud.attackers');
   else if (interaction.mode === 'declareBlockers') priorityLabel = t('match.hud.blockers');
@@ -518,8 +522,8 @@ export function MatchStage({ session, state, replayLog, onLeave }: MatchStagePro
       step={view?.step}
       myTurn={myTurn}
       turn={currentTurn}
-      activeName={spectating ? view?.activePlayerName ?? null : null}
-      status={!spectating && view?.step ? [turnLabel, priorityLabel].filter(Boolean).join(' · ') : undefined}
+      activeName={spectating ? displayName(view?.activePlayerName) : null}
+      priorityLabel={!spectating && view?.step ? priorityLabel : null}
       stops={turnStops}
       onToggleStop={canAct && !overlayOpen ? toggleStops : undefined}
     />
@@ -635,6 +639,7 @@ export function MatchStage({ session, state, replayLog, onLeave }: MatchStagePro
                 index={index}
                 count={board.opponents.length}
                 sleeve={theirSleeves.get(opponent.player.playerId!) ?? sleeves.theirs}
+                displayName={displayName(opponent.player.name)}
                 look={lookOf(opponent.player)}
                 handCount={opponent.player.handCount ?? 0}
                 revealed={revealedInHand(revealedHands, opponent.player.playerId)}
@@ -659,6 +664,7 @@ export function MatchStage({ session, state, replayLog, onLeave }: MatchStagePro
                 <div ref={plateRef} className={styles.myPlate} style={layout.myPlate}>
                   <PlayerPlate
                     player={board.me.player}
+                    displayName={displayName(board.me.player.name)}
                     isMe={board.me.isMe}
                     sleeve={sleeves.mine}
                     look={lookOf(board.me.player)}
@@ -704,7 +710,6 @@ export function MatchStage({ session, state, replayLog, onLeave }: MatchStagePro
                 sleeve={sleeves.mine}
                 onPlay={ignore}
                 playLine={0}
-                libraryOrigin={`library:${board.me.player.playerId}`}
                 cardWidth={layout.handCard}
               />
             )}
@@ -719,7 +724,6 @@ export function MatchStage({ session, state, replayLog, onLeave }: MatchStagePro
                 sleeve={sleeves.mine}
                 onPlay={onClick}
                 playLine={layout.playLine}
-                libraryOrigin={`library:${board.me.player.playerId}`}
                 cardWidth={layout.handCard}
                 // wide: the fan keeps clear of your seat (it grows sideways with counters) and of the decision corner
                 clearLeft={layout.tall || !plateRight ? 0 : plateRight + HAND_SEAT_GAP + (emotes ? EMOTE_BUTTON_ROOM : 0)}
@@ -764,7 +768,7 @@ export function MatchStage({ session, state, replayLog, onLeave }: MatchStagePro
               <AttackGroups groups={attackMany.groups} wanted={attackMany.wanted} busy={attackMany.busy} remaining={attackMany.remaining} onWant={attackMany.want} onStop={attackMany.stop} />
             )}
             {defenders && (attackDrop.manualDefender || !(automation.attackPlayerByDefault && defaultDefender(defenders))) && <DefenderPicker attacker={attackerName} options={defenders} onPick={onClick} />}
-            <Vfx view={view} myPlayerId={myId} simpleOnly />
+            <Vfx key={state.gameId} view={view} myPlayerId={myId} liveDraws={mode === 'play' && !state.resyncing && !state.gameOver} simpleOnly />
             <Arrows sourceId={arrowSource} targetIds={arrowTargets} live={choosingTargets} links={links} attacks={attacks} leads={leads} tints={arrowTint} />
             <EmoteBubbles view={view} gameId={state.gameId} />
             {mode === 'play' && <Coach view={view ?? null} mode={choosingStarter ? 'panel' : interaction.mode} awaiting={awaitingServer} gameOver={!!state.gameOver} />}
@@ -929,9 +933,10 @@ function Row({ groups, left, width, top, ideal, min, forward, label, flip, ...re
 }
 
 /** An opponent's half: their rows mirrored above the seam, their seat, piles and hidden hand. */
-function OpponentSide({ board, index, count, sleeve, handCount, revealed, deciding, layout, commanders, commanderDamage, outOfRange, look, ...row }: RowProps & {
+function OpponentSide({ board, index, count, sleeve, handCount, revealed, deciding, layout, commanders, commanderDamage, outOfRange, look, displayName, ...row }: RowProps & {
   layout: MatchLayout;
   look: PlayerLook | undefined;
+  displayName?: string;
   board: PlayerBoard;
   index: number;
   count: number;
@@ -951,6 +956,7 @@ function OpponentSide({ board, index, count, sleeve, handCount, revealed, decidi
       <div className={[styles.theirPlate, count > 1 ? styles.seat : '', look?.pet && count === 1 ? styles.withPet : ''].join(' ')} style={layout.theirPlate(index, count)}>
         <PlayerPlate
           player={player}
+          displayName={displayName}
           isMe={false}
           sleeve={sleeve}
           targetable={row.clickable.has(player.playerId!)}
@@ -977,7 +983,7 @@ function OpponentSide({ board, index, count, sleeve, handCount, revealed, decidi
           <Piles player={player} sleeve={sleeve} isMe={false} commanders={commanders} />
         </div>
       )}
-      {count > 1 && !layout.tall && <span className={styles.seatName} style={{ left: place.left + 16 }} aria-hidden="true">{player.name}</span>}
+      {count > 1 && !layout.tall && <span className={styles.seatName} style={{ left: place.left + 16 }} aria-hidden="true">{displayName ?? player.name}</span>}
       <HiddenHand playerId={player.playerId!} count={handCount} revealed={revealed} sleeve={sleeve} left={layout.hiddenHandX(index, count)} />
     </>
   );

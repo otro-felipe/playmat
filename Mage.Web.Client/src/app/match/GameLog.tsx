@@ -12,6 +12,7 @@ import {
 } from '../../core/game/gameLog';
 import type { CardView, ChatMessage, GameView } from '../../protocol/generated/views';
 import { api, events } from '../connection';
+import { useT } from '../i18n';
 import { readJson, writeJson } from '../stores/persist';
 import { useSession } from '../stores/session';
 import { useSocial } from '../stores/social';
@@ -19,6 +20,7 @@ import { IconButton } from '../ui/Button';
 import { PromptText } from '../ui/PromptText';
 import { useEmotes } from './emotes';
 import { matchKeysBlocked } from './keyboard';
+import './matchMessages';
 import { useMatchUi } from './matchUi';
 import { usePresence } from './presence';
 import styles from './GameLog.module.css';
@@ -73,7 +75,11 @@ function useGameChat(gameId: string, view: GameView | null, live: boolean, delay
     api.chatFindByGame(gameId)
       .then(async (id) => {
         if (cancelled || !id) return;
-        await api.chatJoin(id, useSession.getState().userName);
+        if (!await api.chatJoin(id, useSession.getState().userName)) return;
+        if (cancelled) {
+          await api.chatLeave(id);
+          return;
+        }
         joined = id;
         setChatId(id);
       })
@@ -148,6 +154,7 @@ export function GameLog({ gameId, notices, canChat, view, replayLog, delayMs = 0
   /** watching: the broadcast delay, which the log keeps too */
   delayMs?: number;
 }) {
+  const t = useT();
   const open = useMatchUi((state) => state.logOpen);
   const toggle = useMatchUi((state) => state.toggleLog);
   const muted = useEmotes((state) => !!state.muted[gameId]);
@@ -158,6 +165,8 @@ export function GameLog({ gameId, notices, canChat, view, replayLog, delayMs = 0
   const recorded = useMemo(() => (replayLog ? replayEntries(replayLog) : null), [replayLog]);
   const chat = recorded ? { ...live, entries: recorded } : live;
   const [draft, setDraft] = useState('');
+  const [pane, setPane] = useState<'chat' | 'log'>('chat');
+  const showChat = canChat && pane === 'chat';
   const [pinned, setPinned] = useState(() => readJson(PINNED_KEY, false));
   const list = useRef<HTMLOListElement>(null);
   const drawer = useRef<HTMLElement>(null);
@@ -207,24 +216,40 @@ export function GameLog({ gameId, notices, canChat, view, replayLog, delayMs = 0
   }, [chat.entries, notices, muted, myName, ignored]);
 
   useEffect(() => {
-    if (open) chat.clearUnread();
+    if (open && showChat) chat.clearUnread();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, chat.unread]);
+  }, [open, showChat, chat.unread]);
 
+  const displayed = showChat ? rows.filter((row) => row.kind !== 'separator' && row.entry.tone === 'chat') : rows;
   useEffect(() => {
     list.current?.scrollTo({ top: list.current.scrollHeight });
-  }, [rows.length, open]);
+  }, [displayed.length, open, showChat]);
+
+  const panelLabel = t(showChat ? 'match.chat.panel' : 'match.chat.logPanel');
+  const onSend = () => {
+    if (!chat.ready || !draft.trim()) return;
+    chat.send(draft);
+    setDraft('');
+  };
 
   return (
     <>
       <div ref={toggleRef} className={styles.toggle}>
-        <IconButton label={open ? 'Close log and chat' : 'Open log and chat'} icon={<MessageSquare size={22} />} pressed={open} onClick={() => toggle()} />
-        {chat.unread > 0 && !open && <span className={styles.badge}>{chat.unread}</span>}
+        <button type="button" className={styles.launcher} aria-expanded={open} onClick={() => { if (!open) setPane('chat'); toggle(); }}>
+          {canChat ? <MessageSquare aria-hidden="true" /> : <BookOpen aria-hidden="true" />}
+          {t(canChat ? 'match.chat.title' : 'match.chat.log')}
+        </button>
+        {chat.unread > 0 && (!open || !showChat) && <span className={styles.badge} aria-hidden="true">{chat.unread}</span>}
       </div>
       {open && (
-        <aside ref={drawer} className={styles.drawer} aria-label="Game log and chat">
+        <aside ref={drawer} className={[styles.drawer, showChat ? styles.chatDrawer : ''].join(' ')} aria-label={panelLabel}>
           <header className={styles.head}>
-            <h2>Log</h2>
+            {canChat ? (
+              <div className={styles.panes}>
+                <button type="button" aria-pressed={showChat} onClick={() => setPane('chat')}>{t('match.chat.title')}</button>
+                <button type="button" aria-pressed={!showChat} onClick={() => setPane('log')}>{t('match.chat.log')}</button>
+              </div>
+            ) : <h2>{t('match.chat.log')}</h2>}
             <div className={styles.headActions}>
               {canChat && (
                 <button type="button" className={styles.mute} aria-pressed={muted} onClick={() => toggleMute(gameId)}>
@@ -237,12 +262,12 @@ export function GameLog({ gameId, notices, canChat, view, replayLog, delayMs = 0
                 pressed={pinned}
                 onClick={pin}
               />
-              <IconButton label="Close log" icon={<X size={20} />} onClick={() => toggle(false)} />
+              <IconButton label={t('match.chat.close')} icon={<X size={20} />} onClick={() => toggle(false)} />
             </div>
           </header>
-          <ol ref={list} className={styles.lines}>
-            {rows.length === 0 && <li className={styles.empty}>The game's events will show here.</li>}
-            {rows.map((row) => (row.kind === 'separator'
+          <ol ref={list} className={styles.lines} aria-live={showChat ? 'polite' : undefined}>
+            {displayed.length === 0 && <li className={styles.empty}>{t(showChat ? 'match.chat.empty' : 'match.chat.emptyLog')}</li>}
+            {displayed.map((row) => (row.kind === 'separator'
               ? (
                 <li key={row.key} className={[styles.separator, row.mine ? styles.separatorMine : ''].join(' ')}>
                   <span>Turn {row.turn}{row.player ? ` · ${row.mine ? 'You' : row.player}` : ''}</span>
@@ -250,7 +275,7 @@ export function GameLog({ gameId, notices, canChat, view, replayLog, delayMs = 0
               )
               : <LogLine key={row.key} entry={row.entry} cards={cards} />))}
           </ol>
-          {canChat && (
+          {showChat && (
             <footer className={styles.foot}>
               <div className={styles.emotes}>
                 {EMOTES.map((emote) => (
@@ -261,19 +286,19 @@ export function GameLog({ gameId, notices, canChat, view, replayLog, delayMs = 0
                 className={styles.form}
                 onSubmit={(event) => {
                   event.preventDefault();
-                  chat.send(draft);
-                  setDraft('');
+                  onSend();
                 }}
               >
                 <input
                   className={styles.input}
                   value={draft}
                   onChange={(event) => setDraft(event.target.value)}
-                  placeholder={chat.ready ? 'Say something' : 'Joining chat…'}
+                  placeholder={t(chat.ready ? 'match.chat.placeholder' : 'match.chat.joining')}
                   disabled={!chat.ready}
-                  aria-label="Chat message"
+                  aria-label={t('match.chat.message')}
                   maxLength={400}
                 />
+                <button type="submit" className={styles.send} disabled={!chat.ready || !draft.trim()}>{t('match.chat.send')}</button>
               </form>
             </footer>
           )}

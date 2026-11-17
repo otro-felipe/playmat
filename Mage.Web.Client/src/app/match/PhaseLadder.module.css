@@ -9,19 +9,12 @@
 }
 
 .context {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  color: var(--ink-soft);
-  font-size: 21px;
-  line-height: 1.2;
-}
-
-.context strong {
-  white-space: nowrap;
   color: var(--ink-strong);
   font-family: var(--font-print);
+  font-size: 18px;
+  line-height: 1.2;
+  text-align: center;
+  white-space: nowrap;
 }
 
 .rungs,
@@ -124,7 +117,7 @@
 }
 
 :global([data-touch]) .context {
-  font-size: clamp(26px, calc(var(--touch-target) * 0.33), 36px);
+  font-size: clamp(22px, calc(var(--touch-target) * 0.26), 30px);
 }
 
 :global([data-touch]) .rung svg {

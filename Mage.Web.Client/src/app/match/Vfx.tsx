@@ -28,7 +28,7 @@ import styles from './Vfx.module.css';
 /** at most this many signature effects play at once: a storm turn shouldn't bury the board */
 const MAX_SIGNATURES = 4;
 
-type EffectKind = 'damage' | 'heal' | 'enter' | 'resolve' | 'death' | 'charge' | 'bolt' | 'spark';
+type EffectKind = 'damage' | 'heal' | 'enter' | 'resolve' | 'death' | 'charge' | 'bolt' | 'spark' | 'draw';
 
 interface Effect {
   key: number;
@@ -38,7 +38,7 @@ interface Effect {
   value?: number;
   /** shockwaves and dissolves follow the card's size */
   size?: number;
-  /** where a bolt lands */
+  /** where a bolt or drawn card lands */
   to?: { x: number; y: number };
   /** a hit spark's color */
   color?: string;
@@ -52,11 +52,12 @@ interface Snapshot {
   stackCards: Map<string, CardView>;
   attackers: Set<string>;
   step: string | undefined;
+  liveDraws: boolean;
 }
 
-const LIFETIME: Record<EffectKind, number> = { damage: 1300, heal: 1300, enter: 700, resolve: 800, death: 900, charge: 600, bolt: 480, spark: 760 };
+const LIFETIME: Record<EffectKind, number> = { damage: 1300, heal: 1300, enter: 700, resolve: 800, death: 900, charge: 600, bolt: 480, spark: 760, draw: 430 };
 
-function snapshot(view: GameView): Snapshot {
+function snapshot(view: GameView, liveDraws: boolean): Snapshot {
   const permanents = new Map<string, PermanentView>();
   const life = new Map<string, number>();
   for (const player of view.players ?? []) {
@@ -65,7 +66,7 @@ function snapshot(view: GameView): Snapshot {
   }
   const attackers = new Set<string>();
   for (const group of view.combat ?? []) Object.keys(group.attackers ?? {}).forEach((id) => attackers.add(id));
-  return { permanents, life, stack: new Set(Object.keys(view.stack ?? {})), stackCards: new Map(Object.entries(view.stack ?? {})), attackers, step: view.step };
+  return { permanents, life, stack: new Set(Object.keys(view.stack ?? {})), stackCards: new Map(Object.entries(view.stack ?? {})), attackers, step: view.step, liveDraws };
 }
 
 /** Shake an element without disturbing its own transform (tapped, attacking). */
@@ -87,16 +88,18 @@ function lunge(element: Element | null, from: { x: number; y: number }, to: { x:
   );
 }
 
-export function Vfx({ view, myPlayerId, sparks, simpleOnly = false }: {
+export function Vfx({ view, myPlayerId, sparks, simpleOnly = false, liveDraws = false }: {
   view: GameView | null;
   myPlayerId: string | null;
   /** players who earned hit sparks: player id to the spark's color */
   sparks?: ReadonlyMap<string, string>;
   simpleOnly?: boolean;
+  liveDraws?: boolean;
 }) {
   const [effects, setEffects] = useState<Effect[]>([]);
   const [signatures, setSignatures] = useState<SignatureEffect[]>([]);
   const effectPreference = useSettings((state) => state.settings.cardEffects);
+  const animations = useSettings((state) => state.settings.animations);
   const cardEffects = simpleOnly && effectPreference === 'signature' ? 'simple' : effectPreference;
   // where each stack object was drawn on the last view: a resolved spell's effect starts there
   const stackSpots = useRef(new Map<string, Point>());
@@ -107,15 +110,18 @@ export function Vfx({ view, myPlayerId, sparks, simpleOnly = false }: {
   }, [sparks]);
   const [hurt, setHurt] = useState(0);
   const previous = useRef<Snapshot | null>(null);
+  const lastDrawEvent = useRef(0);
   const nextKey = useRef(0);
   const center = useObjectCenter();
   const stage = useStage();
 
   useEffect(() => {
     if (!view) return;
-    const now = snapshot(view);
+    const now = snapshot(view, liveDraws);
     const before = previous.current;
     previous.current = now;
+    const drawEvents = (view.events ?? []).filter((event) => event.kind === 'DRAW' && (event.seq ?? 0) > lastDrawEvent.current);
+    for (const event of drawEvents) lastDrawEvent.current = Math.max(lastDrawEvent.current, event.seq ?? 0);
     // measured once this view has painted, for the next one
     const measureStack = () => {
       const spots = new Map<string, Point>();
@@ -176,6 +182,14 @@ export function Vfx({ view, myPlayerId, sparks, simpleOnly = false }: {
     const plainSpells = cardEffects !== 'off';
 
     if (view.events) {
+      if (animations && liveDraws && before.liveDraws && before.step && now.step && myPlayerId) {
+        const from = center(`library:${myPlayerId}`);
+        for (const event of drawEvents.slice(-4)) {
+          if (event.playerId !== myPlayerId || !event.targetId || !view.myHand?.[event.targetId]) continue;
+          const to = center(event.targetId);
+          if (from && to) add({ kind: 'draw', ...from, to });
+        }
+      }
       const visuals = eventVisuals(view.events);
       for (const [id, amount] of visuals.damage) {
         const at = pointOf(id);
@@ -291,7 +305,7 @@ export function Vfx({ view, myPlayerId, sparks, simpleOnly = false }: {
       }
       measureStack();
     });
-  }, [view, center, stage, myPlayerId, cardEffects]);
+  }, [view, center, stage, myPlayerId, cardEffects, liveDraws, animations]);
 
   return (
     <div className={styles.layer} aria-hidden="true">
@@ -360,6 +374,13 @@ function EffectView({ effect }: { effect: Effect }) {
       return <span className={styles.charge} style={position} />;
     case 'bolt':
       return <Bolt from={effect} to={effect.to ?? effect} />;
+    case 'draw':
+      return <span data-draw-animation className={styles.draw} style={{
+        ...position,
+        ['--draw-x' as string]: `${(effect.to?.x ?? effect.x) - effect.x}px`,
+        ['--draw-y' as string]: `${(effect.to?.y ?? effect.y) - effect.y}px`,
+        animationDuration: `${LIFETIME.draw}ms`,
+      }} />;
     case 'spark':
       return (
         <div className={styles.sparks} style={{ ...position, ['--spark' as string]: effect.color }}>

@@ -39,6 +39,7 @@ export function Piles({ player, sleeve, isMe, commanders = [], clickable, onCast
         ref={libraryRef}
         type="button"
         className={styles.pile}
+        data-object-id={`library:${player.playerId}`}
         aria-label={t('match.cards', { label: `${name} library`, count: player.libraryCount ?? 0 })}
         onClick={() => player.topCard && openViewer({ title: `${name} library (top card)`, cards: [player.topCard] })}
         {...libraryZoom}

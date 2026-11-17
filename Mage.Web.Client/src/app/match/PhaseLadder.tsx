@@ -12,12 +12,12 @@ interface PhaseLadderProps {
   myTurn: boolean;
   turn: number;
   activeName?: string | null;
-  status?: string;
+  priorityLabel?: string | null;
   stops?: readonly PhaseStop[];
   onToggleStop?(stops: readonly PhaseStop[]): void;
 }
 
-export function PhaseLadder({ step, myTurn, turn, activeName, status, stops = [], onToggleStop }: PhaseLadderProps) {
+export function PhaseLadder({ step, myTurn, turn, activeName, priorityLabel, stops = [], onToggleStop }: PhaseLadderProps) {
   const t = useT();
   const settings = useSettings((state) => state.settings);
   const fullControl = useSettings((state) => state.fullControl);
@@ -48,11 +48,8 @@ export function PhaseLadder({ step, myTurn, turn, activeName, status, stops = []
   }
 
   return (
-    <nav className={styles.ladder} aria-label={description}>
-      <div className={styles.context}>
-        <span>{status ?? (activeName && started ? description : t('match.turn.starting'))}</span>
-        {phase && <strong>{t(`match.phase.${phase.phase}`)}</strong>}
-      </div>
+    <nav className={styles.ladder} aria-label={description} aria-description={priorityLabel ?? undefined}>
+      <strong className={styles.context}>{phase ? t(`match.phase.${phase.phase}`) : t('match.turn.starting')}</strong>
       <ol className={styles.rungs}>
         {PHASES.map(({ name, stops: keys }) => {
           const Icon = ICONS[name];

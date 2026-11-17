@@ -144,7 +144,7 @@ export function ActionCluster({
   const deciding = interaction.mode !== 'waiting';
   // every decision is asked here, next to its buttons, so the question never covers the cards it is about
   const headline = deciding && interaction.mode !== 'priority' ? interaction.headline
-    : (interaction.mode === 'priority' || phases) ? status : status ?? interaction.headline;
+    : phases ? null : interaction.mode === 'priority' ? status : status ?? interaction.headline;
   const passAhead = canAct && (interaction.mode === 'priority' || interaction.mode === 'waiting');
 
   return (
@@ -205,7 +205,7 @@ export function ActionCluster({
         </div>
       )}
       {phases}
-      <div className={styles.mainRow}>
+      <div className={styles.mainRow} data-phases={phases ? '' : undefined}>
         {passAhead && (
           <DropdownMenu.Root>
             <DropdownMenu.Trigger className={styles.ahead} aria-label="Pass ahead">
@@ -262,7 +262,7 @@ export function ActionCluster({
             }}
             onClick={() => onCommand(main.command)}
           >
-            {main.label}
+            <span className={styles.mainLabel}>{main.label}</span>
             {hints && primaryShortcut && <kbd aria-hidden="true">{t('match.shortcuts.primaryKeys')}</kbd>}
           </Button>
         ) : deciding ? null : (

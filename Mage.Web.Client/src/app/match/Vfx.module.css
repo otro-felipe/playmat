@@ -7,6 +7,28 @@
   overflow: hidden;
 }
 
+.draw {
+  position: absolute;
+  width: 66px;
+  aspect-ratio: 63 / 88;
+  border: 3px double var(--ink-soft);
+  border-radius: 5px;
+  background: radial-gradient(ellipse, var(--mat-600) 35%, var(--mat-950) 72%);
+  box-shadow: var(--shadow-held);
+  translate: -50% -50%;
+  animation: draw-card 430ms cubic-bezier(0.19, 0.8, 0.28, 1) both;
+}
+
+@keyframes draw-card {
+  0% { transform: translate(0, 0) rotate(-9deg) scale(0.9); opacity: 0.7; }
+  65% { opacity: 1; }
+  100% { transform: translate(var(--draw-x), var(--draw-y)) rotate(5deg) scale(1.4); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .draw { display: none; }
+}
+
 /* --- damage and healing ------------------------------------------------- */
 
 .hit {

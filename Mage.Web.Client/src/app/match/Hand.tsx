@@ -27,7 +27,7 @@ export interface HandProps {
   /** stage y above which a dragged card counts as played */
   playLine: number;
   /** fly drawn cards from here */
-  libraryOrigin: string;
+  libraryOrigin?: string;
   /** watching: the cards show their backs (an unknown hand, or one hidden for the broadcast) */
   faceDown?: boolean;
   /** the hand's accessible name (default: "Your hand") */
@@ -234,7 +234,7 @@ interface HandCardProps {
   sleeve: string;
   onPlay(id: string): void;
   playLine: number;
-  libraryOrigin: string;
+  libraryOrigin?: string;
   faceDown: boolean;
   fromZone?: PlayableZone;
   /** how far the fan is scrolled */

@@ -59,8 +59,27 @@ test.describe('app: the match on a phone, by touch', () => {
     await combat.tap();
     await expect(combat).toHaveAttribute('aria-pressed', 'true');
 
+    // Sample both localized labels on the same live primary control, without changing the engine prompt.
+    const primary = corner.getByRole('button', { name: /^(Go to |Pass$)/ });
+    const [short, long] = await primary.evaluate((button) => {
+      const label = button.querySelector('span')!;
+      const saved = label.textContent;
+      try {
+        return ['Pasar', 'Ir a próximo turno'].map((text) => {
+          label.textContent = text;
+          const { width, height } = button.getBoundingClientRect();
+          return { width, height, fits: label.scrollWidth <= label.clientWidth + 1 };
+        });
+      } finally {
+        label.textContent = saved;
+      }
+    });
+    expect(long).toEqual(short);
+    expect(long.fits).toBe(true);
+    expect(long.height).toBeGreaterThanOrEqual(44);
+
     // A space typed into chat must not answer the current priority prompt.
-    await page.getByRole('button', { name: 'Open log and chat' }).tap();
+    await page.getByRole('button', { name: 'Chat', exact: true }).tap();
     const chat = page.getByRole('textbox', { name: 'Chat message' });
     const step = await phases.locator('[aria-current="step"]').first().getAttribute('aria-label');
     await chat.fill('Testing');

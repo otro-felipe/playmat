@@ -5,6 +5,48 @@
   z-index: var(--z-vfx);
 }
 
+.launcher,
+.panes button,
+.send {
+  min-width: var(--touch-target, 0px);
+  min-height: max(38px, var(--touch-target, 0px));
+  padding-inline: 12px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: rgb(var(--mat-rgb) / 0.9);
+  box-shadow: inset 0 0 0 1px var(--ink-faint);
+  color: var(--ink-soft);
+  font-family: var(--font-print);
+  font-size: max(20px, calc(var(--touch-target, 0px) * 0.29));
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.launcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.launcher svg {
+  width: 1em;
+  height: 1em;
+}
+
+.launcher:hover,
+.launcher[aria-expanded='true'],
+.panes button[aria-pressed='true'],
+.send:hover:not(:disabled) {
+  color: var(--ink-strong);
+  box-shadow: inset 0 0 0 1px var(--decision);
+}
+
+.send:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .badge {
   position: absolute;
   top: -6px;
@@ -38,11 +80,22 @@
   animation: slide var(--dur-place) var(--ease-place);
 }
 
+.chatDrawer {
+  top: 330px;
+  bottom: auto;
+  height: max(365px, calc(var(--touch-target, 0px) * 4.9));
+}
+
 .head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 10px 10px 6px 18px;
+}
+
+.panes {
+  display: flex;
+  gap: 4px;
 }
 
 .head h2 {
@@ -55,6 +108,7 @@
   user-select: text;
   -webkit-user-select: text;
   flex: 1;
+  min-height: 0;
   margin: 0;
   padding: 4px 18px 12px;
   overflow-y: auto;
@@ -233,11 +287,13 @@
 
 .emotes {
   display: flex;
-  flex-wrap: wrap;
   gap: 6px;
+  overflow-x: auto;
+  touch-action: pan-x;
 }
 
 .emote {
+  flex: none;
   padding: 5px 10px;
   border: 0;
   border-radius: 999px;
@@ -254,10 +310,12 @@
 
 .form {
   display: flex;
+  gap: 6px;
 }
 
 .input {
   flex: 1;
+  min-width: 0;
   height: 44px;
   padding: 0 14px;
   border: 0;
@@ -290,14 +348,18 @@
   bottom: 330px;
 }
 
+:global([data-layout='tall']) .chatDrawer {
+  bottom: auto;
+}
+
 /* touch: a tablet shows the stage small; the log's text and drawer grow with the scale (--touch-target is 44px in stage pixels) */
 :global([data-touch]) .drawer {
   width: min(calc(100% - 48px), max(440px, calc(var(--touch-target, 0px) * 7.5)));
 }
 
 :global([data-touch]) .toggle > button {
-  width: var(--touch-target);
-  height: var(--touch-target);
+  min-width: var(--touch-target);
+  min-height: var(--touch-target);
 }
 
 :global([data-touch]) .lines {

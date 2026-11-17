@@ -32,18 +32,19 @@ beforeEach(() => {
     saved: [], sleeves: { 'starter:test': '#6e3f24' },
     starters: [{ file: 'test', name: 'Test', cards: 60, cover: { name: 'Forest', setCode: 'M21', cardNumber: '274' } }],
   });
-  useSettings.getState().update({ matCloth: 'sand', matArt: 'deck', sound: false });
+  useSettings.getState().update({ matCloth: 'sand', matArt: 'deck', sound: false, animations: true });
   rememberLook({ name: 'Alice', sleeve: '#20302b', cloth: 'navy' });
   rememberLook({ name: 'Bob', sleeve: '#1f2a44', cloth: 'plum' });
 });
 
 afterEach(() => {
   queryClient.clear();
+  vi.restoreAllMocks();
   vi.clearAllTimers();
   vi.useRealTimers();
 });
 
-function match(watch = false) {
+function match(watch = false, seatDisplayNames?: Readonly<Record<string, string>>) {
   const bus = new EventBus(rpc);
   const session = new GameSession(api, bus, { gameId: 'g1', playerId: watch ? null : 'me', mode: watch ? 'watch' : 'play' });
   const state = {
@@ -53,13 +54,13 @@ function match(watch = false) {
       { playerId: 'them', name: 'Bob', life: 20, handCount: 1 },
     ] },
   };
-  const stage = (snapshot: GameSessionState) => <QueryClientProvider client={queryClient}><MemoryRouter><MatchStage session={session} state={snapshot} /></MemoryRouter></QueryClientProvider>;
+  const stage = (snapshot: GameSessionState) => <QueryClientProvider client={queryClient}><MemoryRouter><MatchStage session={session} state={snapshot} seatDisplayNames={seatDisplayNames} /></MemoryRouter></QueryClientProvider>;
   const rendered = render(stage(state));
   return {
     ...rendered,
-    updateView(view: GameView, hasPrompt: boolean) {
+    updateView(view: GameView, hasPrompt: boolean, status: string | null = null, resyncing = false) {
       const prompt = hasPrompt ? parsePrompt('GAME_SELECT', { message: 'Play spells and abilities' }) : null;
-      const snapshot = { ...state, view, prompt, interaction: deriveInteraction(view, prompt) };
+      const snapshot = { ...state, view, prompt, status, resyncing, interaction: deriveInteraction(view, prompt) };
       act(() => {
         session.store.setState(snapshot);
         rendered.rerender(stage(snapshot));
@@ -82,20 +83,69 @@ const BOARD: GameView = {
 };
 
 test('[PM-AC-01] priority can change without moving the phase and the stack changes the offered action', () => {
-  const game = match();
+  const game = match(false, { Bob: 'CodexRival' });
   game.updateView(BOARD, true);
   const phases = within(game.getByRole('navigation', { name: /turn 3/i }));
   expect(phases.getAllByRole('button')).toHaveLength(5);
   expect(phases.getByRole('button', { name: 'Main I' }).getAttribute('aria-current')).toBe('step');
   expect(game.getByRole('button', { name: /^Go to combat$/i })).toBeTruthy();
 
-  game.updateView({ ...BOARD, priorityPlayerName: 'Bob' }, false);
+  game.updateView({ ...BOARD, priorityPlayerName: 'Bob' }, false, 'Precombat Main - Waiting for Bob');
   expect(phases.getByRole('button', { name: 'Main I' }).getAttribute('aria-current')).toBe('step');
-  expect(game.getByText('Your turn · Waiting for Bob')).toBeTruthy();
+  expect(phases.getByText('Main I', { exact: true })).toBeTruthy();
+  expect(game.queryByText(/Precombat Main|Waiting for (Bob|CodexRival)|Your turn ·/i)).toBeNull();
+  expect(game.getByRole('navigation', { name: /turn 3/i }).getAttribute('aria-description')).toContain('Waiting for CodexRival');
+  expect(game.container.querySelector('[data-object-id="them"]')?.getAttribute('aria-label')).toContain('CodexRival, 20 life');
 
   game.updateView({ ...BOARD, stack: { shock: { name: 'Shock' } } }, true);
   expect(phases.getByRole('button', { name: 'Main I' }).getAttribute('aria-current')).toBe('step');
   expect(game.getByRole('button', { name: /^Pass$/i })).toBeTruthy();
+  game.dispose();
+});
+
+test('[PM-AC-03] a new live draw flies from the library once without animating opening hands and resyncs', () => {
+  // Happy DOM does not perform layout; the stage needs a measurable frame and card bounds.
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 1440, 810));
+  vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => window.setTimeout(() => callback(performance.now()), 16));
+  const game = match();
+  const drawn = { id: 'drawn', name: 'Plains' };
+  const draw = { kind: 'DRAW' as const, seq: 1, playerId: 'me', targetId: 'drawn' };
+  const initial = { ...BOARD, turn: 0, step: undefined, myHand: { drawn }, events: [draw] };
+  const effects = () => game.container.querySelectorAll('[data-draw-animation]');
+  const frame = () => act(() => { vi.advanceTimersByTime(20); });
+
+  game.updateView(initial, false);
+  frame();
+  expect(effects()).toHaveLength(0);
+
+  game.updateView(BOARD, false);
+  const view = { ...BOARD, myHand: { drawn }, events: [{ ...draw, seq: 2 }] };
+  game.updateView(view, false);
+  expect(game.container.querySelector('[data-object-id="library:me"]')).toBeTruthy();
+  expect(game.container.querySelector('[data-object-id="drawn"]')).toBeTruthy();
+  frame();
+  expect(effects()).toHaveLength(1);
+
+  game.updateView({ ...view }, true);
+  frame();
+  expect(effects()).toHaveLength(1);
+
+  act(() => { vi.advanceTimersByTime(1000); });
+  game.updateView({ ...view, events: [{ ...draw, seq: 3 }] }, false, null, true);
+  frame();
+  expect(effects()).toHaveLength(0);
+
+  // Resuming from the same snapshot or drawing with reduced motion enables neither effect.
+  game.updateView({ ...view, events: [{ ...draw, seq: 3 }] }, false);
+  const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const originalMatchMedia = window.matchMedia;
+  vi.spyOn(window, 'matchMedia').mockImplementation((query) => query === media.media
+    ? { ...media, matches: true }
+    : originalMatchMedia.call(window, query));
+  const next = { id: 'next', name: 'Swamp' };
+  game.updateView({ ...view, myHand: { drawn, next }, events: [{ ...draw, seq: 4, targetId: 'next' }] }, false);
+  frame();
+  expect(effects()).toHaveLength(0);
   game.dispose();
 });
 
