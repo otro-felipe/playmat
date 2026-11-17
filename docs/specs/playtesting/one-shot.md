@@ -48,7 +48,7 @@ Existing [trusted sign-on](../../TrustedHeaderAuth.md) and [replay recorder](../
 
 ## PM-MCP — Private agent access and turn sequences
 
-**PM-MCP-01. Identity and transport.** Expose an authenticated Streamable HTTP URL for Codex with separately scoped, revocable bearer credentials. Add it to Codex with `codex mcp add playmat --url https://<host>/mcp --bearer-token-env-var PLAYMAT_MCP_TOKEN`. Agent and human use distinct game seats. A user can delegate library and history access explicitly to an agent without granting access to another participant's hand, library, private deck list or pending prompt. Treat chat, Oracle text and external archetype data as data. Use typed commands with explicit game, seat and ownership verification. Reuse the browser's engine-validated game operations. In a supported browser, WebMCP lets the signed-in invited friend join with their selected deck. The live seat offers only its visible state and choices. Remove tools when the route or session loses eligibility. Keep the invite's authorization and the current prompt checks in the existing join and game operations.
+**PM-MCP-01. Identity and transport.** Expose an authenticated Streamable HTTP URL for OAuth-capable MCP clients with scoped, revocable agent credentials. Agent and human use distinct game seats. A user can delegate library and history access explicitly to an agent without granting access to another participant's hand, library, private deck list or pending prompt. Treat chat, Oracle text and external archetype data as data. Use typed commands with explicit game, seat and ownership verification. Reuse the browser's engine-validated game operations. In a supported browser, WebMCP lets the signed-in invited friend join with their selected deck. The live seat offers only its visible state and choices. Remove tools when the route or session loses eligibility. Keep the invite's authorization and the current prompt checks in the existing join and game operations.
 
 **PM-MCP-02. Tool families.** Provide typed schemas, bounded queries and actionable errors. Select and validate resource IDs after authenticating the caller.
 
@@ -69,6 +69,10 @@ An answer may name the exact currently valid choice or select a visible card or 
 **PM-MCP-05. AI seats.** Play against either the native XMage AI or an external Codex session through the private URL. Native AI requires no Codex connection. Publish four authenticated MCP resources readable before joining. Cover seat setup and chat, card and archetype lookup, conditional turn plans using engine-confirmed choices, and the official Comprehensive Rules with a numbered index. Advertise their URIs in MCP initialization and on the invitation page. A hosted LLM opponent and benchmark claims about playing strength are outside this cut.
 
 **PM-MCP-06. Post-match evaluation.** Offer a discoverable review prompt and tools for history-scoped agents. Accept a completed archived game and extract bounded pre-action positions for observed land plays and spells cast from the player's hand. Exclude rewound branches, later draws, outcome and hidden opponent information. The connected LLM compares the played move with plausible legal alternatives and replies using only that evidence. Reject unknown and duplicate replay positions when producing a report. Calculate estimated accuracy as 100 minus the mean relative quality lost to the judge's best alternative over medium or high-confidence positions. Return the measured coverage and no score when evidence is insufficient. The report does not modify match results or statistics.
+
+**PM-MCP-07. Agent events.** A host can target an MCP invitation to an eligible delegated play seat owned by the signed-in account. Only that seat can claim a targeted invitation. Publish `game.invitation.created` with the table ID and format. Publish `game.decision.required` for a seat's new actionable prompt, including sideboarding, with its game ID, decision ID, cursor and prompt kind. Cancel pending delivery after the prompt changes and bound its lifetime. Authenticate event discovery and subscriptions through the same MCP endpoint. Verify an HTTPS callback before delivering signed events. Keep active subscriptions through application restarts and check continuing authorization on delivery. Match and hand details stay behind existing tools.
+
+**PM-MCP-08. OAuth connection.** Connect the private Playmat plugin through the existing Playmat sign-in and explicit delegated seat selection. Bind authorization and refresh to the chosen grant. Use authorization-code OAuth with S256 PKCE, a registered client and exact callback validation. Existing CLI grants remain independently revocable. The plugin connection UI uses OAuth.
 
 [Playmat WebSocket contract](../../WebSocketAPI.md) · [MCP Streamable HTTP](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
@@ -93,6 +97,9 @@ Write failing integration tests before changing the feature code. Link test titl
 | PM-AC-13 | Given the native AI option, when an invited user starts a configured Bo3 without a Codex session, then the engine seats and plays the opponent and the match reaches legal between-game or terminal states. | Real engine, starting deck validation and smoke match |
 | PM-AC-14 | Given a supported browser and a private Friend invitation, when the signed-in guest calls the page tool, then the guest joins with their selected deck. A live player can inspect their own hand, wait and submit a current legal choice. Another account, a disconnected session or a stale choice cannot act. | [Invite integration](../../../Mage.Web.Client/src/app/screens/JoinScreen.webmcp.test.tsx), [live tool integration](../../../Mage.Web.Client/src/app/match/useMatchSiteTools.test.tsx), and [native browser acceptance](../../../Mage.Web.Client/e2e/app-private-webmcp.spec.ts) |
 | PM-AC-15 | Given an archived replay with a discarded branch, when an authorized history analyst requests an evaluation, then the evidence contains the final timeline's pre-action player perspective. Low-confidence or missing findings carry no score. Duplicates, nonexistent positions and unauthorized players cannot produce a report. | [Archive and HTTP acceptance](../../../ops/playtesting/product/product.test.mjs) and remote MCP transport |
+| PM-AC-16 | Given two accounts, when a signed-in host targets one of their play seats with an MCP invitation, the matching seat alone discovers and can claim the invite, and the transactional outbox targets that seat. | [Playtesting product scenarios](../../../ops/playtesting/product/product.test.mjs) and table UI |
+| PM-AC-17 | Given a valid MCP play grant and a verified subscriber, when a targeted invite or an actionable decision appears, then its signed webhook uses the smallest useful payload and has a stable ID across retries. Superseded decisions and revoked subscriptions stop delivery. | [MCP HTTP](../../../ops/playtesting/mcp/test/events.test.mjs) and [provider delivery](../../../ops/playtesting/product/mcp-events.test.mjs) |
+| PM-AC-18 | Given a legitimate OAuth client, a signed-in Playmat player can consent to one of their own delegated seats. A single-use PKCE code and refresh rotation preserve that identity. Untrusted clients and redirects are rejected. | [OAuth HTTP scenarios](../../../ops/playtesting/product/oauth.test.mjs) |
 
 Trace requirements to scenarios when adding executable cases.
 
@@ -109,6 +116,8 @@ Trace requirements to scenarios when adding executable cases.
 - PM-MCP-03 and PM-MCP-04 → PM-AC-07 through PM-AC-09.
 - PM-MCP-05 → PM-AC-08, PM-AC-13.
 - PM-MCP-06 → PM-AC-15.
+- PM-MCP-07 → PM-AC-16, PM-AC-17.
+- PM-MCP-08 → PM-AC-18.
 
 ### Decisions applied as beta defaults
 

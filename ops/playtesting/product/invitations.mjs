@@ -1,6 +1,7 @@
-import { isUuid, normalize, normalizeFormat, ProductError } from './decks.mjs'
+import { isUuid, normalize, normalizeFormat, ProductError, transaction } from './decks.mjs'
 
 const CHAT_MODES = new Set(['quiet', 'chatty', 'coach'])
+const INVITATION_EVENT = 'game.invitation.created'
 
 function invitationView(row) {
   if (!row) throw new ProductError(404, 'Invitation not found')
@@ -20,7 +21,7 @@ function displayName(value) {
   return name
 }
 
-export function createInvitations(pool, identity) {
+export function createInvitations(pool, identity, events) {
   async function list(actor, requestedLimit) {
     const limit = Math.max(1, Math.min(50, Number.parseInt(requestedLimit, 10) || 25))
     const { rows } = await pool.query(
@@ -28,6 +29,23 @@ export function createInvitations(pool, identity) {
       [normalize(actor.engineName), limit],
     )
     return { invites: rows.map(invitationView) }
+  }
+
+  async function eventRivals(actor) {
+    if (actor.agent) throw new ProductError(403, 'Sign in as the host account to view subscribed agents')
+    const { rows } = await pool.query(`SELECT g.engine_name AS "engineName"
+      FROM agent_grants g JOIN accounts a ON a.id=g.account_id
+      WHERE g.account_id=$1 AND a.enabled AND g.revoked_at IS NULL AND 'play'=ANY(g.scopes)
+      AND EXISTS (
+        SELECT 1 FROM mcp_event_subscriptions s
+        WHERE s.account_id=g.account_id AND s.engine_key=g.engine_key AND s.event_name=$2 AND s.expires_at>now()
+        AND (s.connection_id IS NULL OR EXISTS (
+          SELECT 1 FROM oauth_connections c
+          WHERE c.id=s.connection_id AND c.account_id=g.account_id AND c.engine_key=g.engine_key
+          AND c.revoked_at IS NULL AND c.expires_at>now()
+        ))
+      ) ORDER BY g.engine_key`, [actor.accountId, INVITATION_EVENT])
+    return { rivals: rows }
   }
 
   async function create(actor, data) {
@@ -40,21 +58,43 @@ export function createInvitations(pool, identity) {
       throw new ProductError(400, 'Choose quiet, chatty, or coach for an MCP invitation')
     }
     const chatMode = data.chatMode ?? 'quiet'
-    let invitee = null
+    const notify = data.notifyEngineName !== undefined
+    if (notify && (mode !== 'mcp' || typeof data.notifyEngineName !== 'string' || !/^[a-z0-9_-]{3,24}$/i.test(data.notifyEngineName.trim()))) {
+      throw new ProductError(400, 'Select a delegated agent for the MCP invitation')
+    }
+    if (notify && actor.agent) throw new ProductError(403, 'Sign in as the host account to select an agent')
+    let friend = null
     if (mode === 'friend') {
-      invitee = await identity.fromEngine(data.guestEngineName)
-      if (!invitee || normalize(invitee.engineName) === normalize(actor.engineName) || !invitee.scopes.includes('play')) {
+      friend = await identity.fromEngine(data.guestEngineName)
+      if (!friend || normalize(friend.engineName) === normalize(actor.engineName) || !friend.scopes.includes('play')) {
         throw new ProductError(400, 'Provide a provisioned guest seat')
       }
     } else if (data.guestEngineName !== undefined) {
       throw new ProductError(400, 'An MCP invitation cannot name a guest account')
     }
-    const { rows: [invite] } = await pool.query(`INSERT INTO invitations(table_id,room_id,format,creator_key,invitee_key,invitee_name,table_password,expires_at,mode,chat_mode)
-      VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '48 hours',$8,$9) ON CONFLICT (table_id) DO NOTHING RETURNING *`,
-    [data.tableId, data.roomId, format, normalize(actor.engineName), invitee ? normalize(invitee.engineName) : null,
-      invitee?.engineName ?? null, data.password, mode, chatMode])
-    if (!invite) throw new ProductError(409, 'This table already has an invitation')
-    return invitationView(invite)
+    return transaction(pool, async db => {
+      let invitee = friend?.engineName ?? null
+      if (notify) {
+        const { rows: [agent] } = await db.query(`SELECT g.engine_name FROM agent_grants g JOIN accounts a ON a.id=g.account_id
+          WHERE g.account_id=$1 AND g.engine_key=$2 AND a.enabled AND g.revoked_at IS NULL AND 'play'=ANY(g.scopes)
+          FOR SHARE OF g,a`, [actor.accountId, normalize(data.notifyEngineName)])
+        if (!agent) throw new ProductError(400, 'Select an active agent from this account with play access')
+        invitee = agent.engine_name
+      }
+      const { rows: [invite] } = await db.query(`INSERT INTO invitations(table_id,room_id,format,creator_key,invitee_key,invitee_name,table_password,expires_at,mode,chat_mode)
+        VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '48 hours',$8,$9) ON CONFLICT (table_id) DO NOTHING RETURNING *`,
+      [data.tableId, data.roomId, format, normalize(actor.engineName), invitee ? normalize(invitee) : null,
+        invitee, data.password, mode, chatMode])
+      if (!invite) throw new ProductError(409, 'This table already has an invitation')
+      if (notify) {
+        const queued = await events.enqueue(db, {
+          accountId: actor.accountId, engineName: invitee, name: INVITATION_EVENT, key: invite.table_id,
+          data: { tableId: invite.table_id, format },
+        })
+        if (!queued) throw new ProductError(409, 'This agent is no longer subscribed to invitations')
+      }
+      return invitationView(invite)
+    })
   }
 
   async function inspect(actor, tableId) {
@@ -87,5 +127,5 @@ export function createInvitations(pool, identity) {
     return Boolean(rowCount)
   }
 
-  return { list, create, inspect, claim, admit }
+  return { list, eventRivals, create, inspect, claim, admit }
 }

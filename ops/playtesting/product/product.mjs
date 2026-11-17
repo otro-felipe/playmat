@@ -7,7 +7,9 @@ import pg from 'pg'
 import { createArchive } from './archive.mjs'
 import { createIdentity, identityView } from './identity.mjs'
 import { createInvitations } from './invitations.mjs'
-import { ProductError, deleteDeck, getDeck, isUuid, listDecks, normalize, putDeck } from './decks.mjs'
+import { createMcpEvents } from './mcp-events.mjs'
+import { createOAuth } from './oauth.mjs'
+import { ProductError, deleteDeck, getDeck, isUuid, listDecks, normalize, putDeck, transaction } from './decks.mjs'
 
 const maxBody = 300 * 1024
 const directory = dirname(fileURLToPath(import.meta.url))
@@ -95,6 +97,7 @@ function rejectMissing(value, message) {
 
 export async function createProduct({
   databaseUrl, schema = 'playmat_product', replayDirectory, store, insecureCookie = false, enableInternal = true,
+  publicUrl, oauthClients = [], eventOptions,
 }) {
   if (!databaseUrl || !/^[a-z_][a-z0-9_]{0,60}$/.test(schema)) throw Error('A valid product database configuration is required')
   const pool = new pg.Pool({
@@ -103,13 +106,16 @@ export async function createProduct({
   try {
     await pool.query('CREATE SCHEMA IF NOT EXISTS ' + schema)
     await pool.query(await readFile(resolve(directory, 'schema.sql'), 'utf8'))
+    await pool.query(await readFile(resolve(directory, 'oauth-schema.sql'), 'utf8'))
   } catch (error) {
     await pool.end()
     throw error
   }
-  const id = createIdentity(pool, insecureCookie)
+  const oauth = createOAuth(pool, publicUrl, { body, clients: oauthClients })
+  const id = createIdentity(pool, insecureCookie, oauth.resolve)
   const archive = createArchive(pool, replayDirectory, store)
-  const invitations = createInvitations(pool, id)
+  const events = createMcpEvents(pool, eventOptions)
+  const invitations = createInvitations(pool, id, events)
   const attempts = new Map()
 
   function throttle(key) {
@@ -155,7 +161,10 @@ export async function createProduct({
       }
       const status = Number.isInteger(error?.status) ? error.status : 500
       if (status >= 500) console.warn('Playmat product request failed', { status, code: typeof error?.code === 'string' ? error.code : undefined })
-      send(res, status, { error: status === 500 ? 'Product service unavailable' : error.message })
+      send(res, status, {
+        error: status === 500 ? 'Product service unavailable' : error.message,
+        ...(error?.rpcCode === -32015 ? { rpcCode: -32015, reason: error.reason } : {}),
+      })
     })
   })
 
@@ -167,6 +176,7 @@ export async function createProduct({
       return send(res, 200, { status: 'ok' })
     }
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !sameOrigin(req, insecureCookie)) throw new ProductError(403, 'Cross-origin request')
+    if (await oauth.route(req, res, url, id.resolve)) return
     if (path === '/login' && req.method === 'GET') {
       const next = safeNext(url.searchParams.get('next'))
       if (await id.resolve(req)) return res.writeHead(303, { Location: next }).end()
@@ -197,6 +207,28 @@ export async function createProduct({
       const allowed = await invitations.admit(tableId, url.searchParams.get('host'), url.searchParams.get('guest'))
       return send(res, allowed ? 200 : 404, { allowed })
     }
+    if (enableInternal && path.startsWith('/internal/mcp-events/') && req.method === 'POST') {
+      const method = path.slice('/internal/mcp-events/'.length)
+      if (method === 'seat') {
+        const input = await body(req, 'json', 4096)
+        const { operation, accountId, engineName, key, data, expiresAt } = input ?? {}
+        if (!isUuid(accountId) || typeof engineName !== 'string' || !/^[a-z0-9_-]{3,24}$/i.test(engineName)
+          || typeof key !== 'string' || key.length > 200) throw new ProductError(400, 'Invalid game decision event')
+        const notice = { accountId, engineName, key, name: 'game.decision.required' }
+        if (operation === 'invalidate') await events.invalidate(pool, notice)
+        else if (operation === 'enqueue' && Number.isSafeInteger(expiresAt) && expiresAt > Date.now() && expiresAt < Date.now() + 31_000) {
+          await transaction(pool, db => events.enqueue(db, { ...notice, data, expiresAt: new Date(expiresAt) }))
+        } else {
+          throw new ProductError(400, 'Invalid game decision event')
+        }
+        return send(res, 200, {})
+      }
+      if (!['list', 'subscribe', 'unsubscribe'].includes(method)) throw new ProductError(404, 'Not found')
+      const actor = await id.resolve(req)
+      if (!actor?.agent) throw new ProductError(401, 'A delegated play seat is required')
+      requireScope(actor, 'play')
+      return send(res, 200, await events[method](actor, await body(req, 'optional-json', 8192)))
+    }
     if (!path.startsWith('/api/playtesting/') && !(enableInternal && path === '/internal/verify')) throw new ProductError(404, 'Not found')
     const actor = await id.resolve(req)
     if (!actor) {
@@ -214,6 +246,10 @@ export async function createProduct({
     }
     const endpoint = path.slice('/api/playtesting/'.length)
     if (endpoint === 'me' && req.method === 'GET') return send(res, 200, identityView(actor))
+    if (endpoint === 'event-rivals' && req.method === 'GET') {
+      requireScope(actor, 'play')
+      return send(res, 200, await invitations.eventRivals(actor))
+    }
     if (endpoint === 'decks' || endpoint.startsWith('decks/')) {
       const expectedOwner = req.headers['x-playmat-deck-owner']
       if (expectedOwner && normalize(expectedOwner) !== normalize(actor.username)) throw new ProductError(403, 'The browser session has changed')
@@ -318,10 +354,14 @@ export async function createProduct({
     server, provisionHuman: id.provisionHuman, provisionAgent: id.provisionAgent, revokeAgent: id.revokeAgent,
     importProvisionBundle: id.importProvisionBundle,
     archiveGames: archive.archiveGames,
+    startMcpEvents: events.start,
     async dropTestSchema() {
       if (!schema.startsWith('test_')) throw Error('Refusing to remove data outside an isolated test schema')
       await pool.query('DROP SCHEMA ' + schema + ' CASCADE')
     },
-    close: () => pool.end(),
+    async close() {
+      await events.stop()
+      return pool.end()
+    },
   }
 }

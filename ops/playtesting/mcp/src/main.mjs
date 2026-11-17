@@ -8,12 +8,18 @@ const trustedHeader = process.env.AUTH_TRUSTED_HEADER ?? 'X-Playmat-User';
 const publicUrl = process.env.PLAYMAT_PUBLIC_URL;
 const product = createProductClient(productUrl, publicUrl);
 const port = Number(process.env.PLAYMAT_MCP_PORT ?? 8791);
-const allowedOrigins = (process.env.XMAGE_ALLOWED_ORIGINS ?? '').split(',').map((origin) => origin.trim()).filter(Boolean);
+const allowedOrigins = (process.env.PLAYMAT_MCP_ALLOWED_ORIGINS ?? process.env.XMAGE_ALLOWED_ORIGINS ?? '')
+  .split(',').map((origin) => origin.trim()).filter(Boolean);
 if (publicUrl) allowedOrigins.push(new URL(publicUrl).origin);
+allowedOrigins.push('https://chatgpt.com');
 
 const server = createMcpServer({
   authorize: product.authorize,
   product: product.operation,
+  eventRequest: product.eventRequest,
+  publishSeatEvent: product.publishSeatEvent,
+  oauthResourceMetadata: publicUrl?.startsWith('https://')
+    ? new URL('/.well-known/oauth-protected-resource/mcp', publicUrl).href : undefined,
   createEngine: ({ engineName }) => new PlaymatEngineSeat({ engineUrl, engineName, trustedHeader }),
   allowedOrigins,
 });

@@ -22,7 +22,6 @@ export function McpConnectionDialog({ onClose }: { onClose(): void }) {
   const t = useT();
   const [hideAgain, setHideAgain] = useState(mcpConnectionGuideHidden);
   const endpoint = mcpEndpoint();
-  const command = `codex mcp add playmat --url ${endpoint} --bearer-token-env-var PLAYMAT_MCP_TOKEN`;
 
   function close() {
     saveMcpConnectionGuidePreference(hideAgain);
@@ -38,14 +37,12 @@ export function McpConnectionDialog({ onClose }: { onClose(): void }) {
     >
       <McpConnectionEndpoint endpoint={endpoint} />
       <ol className={styles.steps}>
-        <li>{t('mcpConnection.credential')}</li>
-        <li>
-          {t('mcpConnection.codex')}
-          <code className={styles.command}>{command}</code>
-        </li>
+        <li>{t('mcpConnection.signIn')}</li>
         <li>{t('mcpConnection.share', { copyLink: t('mcpInvite.copyLink') })}</li>
       </ol>
+      <p className={styles.dot}>{t('mcpConnection.dot', { invitation: 'game.invitation.created', decision: 'game.decision.required' })}</p>
       <p className={styles.browser}>{t('mcpConnection.browser')}</p>
+      <a className={styles.manage} href="/oauth/connections">{t('mcpConnection.manage')}</a>
       <label className={styles.check}>
         <input type="checkbox" checked={hideAgain} onChange={(event) => setHideAgain(event.target.checked)} />
         {t('mcpConnection.hideAgain')}

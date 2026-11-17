@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { McpError } from '@modelcontextprotocol/sdk/types.js';
 import { ToolError } from './game-seat.mjs';
 
 export function createProductClient(baseUrl, publicUrl) {
@@ -118,5 +119,23 @@ export function createProductClient(baseUrl, publicUrl) {
     return data;
   }
 
-  return { authorize, operation };
+  async function eventRequest(token, method, params) {
+    const response = await request(token, '/internal/mcp-events/' + method, { method: 'POST', body: params });
+    const data = await response.json();
+    if (response.ok) return data;
+    if (data.rpcCode === -32015) throw new McpError(-32015, 'Callback verification failed', { reason: data.reason });
+    if (response.status < 500) throw new McpError(-32602, data.error ?? 'Invalid event request.');
+    throw new McpError(-32603, 'The Playmat event service is unavailable.');
+  }
+
+  async function publishSeatEvent(operation, payload) {
+    const response = await fetch(new URL('/internal/mcp-events/seat', base), {
+      method: 'POST', redirect: 'error', signal: AbortSignal.timeout(3500),
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ operation, ...payload }),
+    });
+    await response.body?.cancel();
+    if (!response.ok) throw Error('The Playmat event service did not accept the game decision.');
+  }
+
+  return { authorize, operation, eventRequest, publishSeatEvent };
 }

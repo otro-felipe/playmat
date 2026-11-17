@@ -15,6 +15,8 @@ async function start() {
     replayDirectory: process.env.PLAYMAT_REPLAY_DIR ?? '/opt/xmage/saved/replays',
     store,
     insecureCookie: process.env.PLAYMAT_INSECURE_COOKIE === 'true',
+    publicUrl: process.env.PLAYMAT_PUBLIC_URL,
+    oauthClients: JSON.parse(process.env.PLAYMAT_OAUTH_CLIENTS ?? '[]'),
   })
   const provision = process.env.PLAYMAT_PROVISION_ONCE
   if (provision) {
@@ -23,6 +25,7 @@ async function start() {
   }
   await product.archiveGames({ markInterrupted: true })
   product.server.listen(Number(process.env.PRODUCT_PORT ?? '8790'), '127.0.0.1')
+  product.startMcpEvents()
   const archive = setInterval(() => product.archiveGames().catch(() => console.warn('Playmat archive scan delayed')), 5000)
   for (const signal of ['SIGINT', 'SIGTERM']) {
     process.once(signal, () => {

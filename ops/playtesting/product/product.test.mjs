@@ -10,11 +10,11 @@ import { randomUUID } from 'node:crypto'
 const databaseUrl = process.env.PLAYMAT_TEST_DATABASE_URL
 const password = 'synthetic-fixture-credential'
 
-async function fixture(t, store = new Map()) {
+async function fixture(t, store = new Map(), options = {}) {
   const { createProduct } = await import('./product.mjs')
   const replayDirectory = await mkdtemp(join(tmpdir(), 'playmat-replays-'))
   const schema = `test_${randomUUID().replaceAll('-', '')}`
-  const product = await createProduct({ databaseUrl, schema, replayDirectory, store, insecureCookie: true, enableInternal: true })
+  const product = await createProduct({ databaseUrl, schema, replayDirectory, store, insecureCookie: true, enableInternal: true, ...options })
   const server = product.server
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
@@ -179,6 +179,84 @@ test('[PM-AC-04] a private MCP link admits exactly one delegated identity with a
   assert.equal((await f.path(gate + engineNames[winner])).status, 404)
   await f.product.revokeAgent(tokens[0])
   assert.equal((await f.path(`/internal/invites/${ownSeat}?host=Host&guest=HostAgent`)).status, 404)
+})
+
+test('[PM-AC-16] a targeted MCP invitation is discoverable and claimable only by the selected player grant', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t, new Map(), {
+    eventOptions: { deliver: async (_url, { body }) => {
+      const { challenge } = JSON.parse(body)
+      assert.ok(challenge)
+      return { status: 200, body: JSON.stringify({ challenge }) }
+    } },
+  })
+  const alice = await signIn(f, 'Alice')
+  const bob = await signIn(f, 'Bob')
+  const agent = async (owner, name, scopes = ['play']) => ({ Authorization: 'Bearer ' + await f.product.provisionAgent(owner, name, scopes) })
+  const target = await agent('Alice', 'AliceDot')
+  const sibling = await agent('Alice', 'AliceOther')
+  const outsider = await agent('Bob', 'BobDot')
+  await agent('Alice', 'AliceLibrary', ['library'])
+  const route = '/api/playtesting/invites'
+  const rivals = '/api/playtesting/event-rivals'
+  const tableId = randomUUID()
+  const invite = { tableId, roomId: randomUUID(), format: 'Pioneer', password, mode: 'mcp' }
+
+  assert.equal((await f.path(rivals)).status, 401)
+  assert.equal((await f.path(rivals, { headers: outsider })).status, 403)
+  assert.deepEqual(await (await f.path(rivals, { headers: alice })).json(), { rivals: [] })
+  const params = {
+    name: 'game.invitation.created',
+    delivery: { mode: 'webhook', url: 'https://receiver.example.net/mcp-events', secret: 'whsec_' + Buffer.alloc(32, 19).toString('base64') },
+  }
+  for (const headers of [target, outsider]) {
+    assert.equal((await f.path('/internal/mcp-events/subscribe', json('POST', headers, params))).status, 200)
+  }
+  assert.deepEqual(await (await f.path(rivals, { headers: alice })).json(), { rivals: [{ engineName: 'AliceDot' }] })
+  assert.deepEqual(await (await f.path(rivals, { headers: bob })).json(), { rivals: [{ engineName: 'BobDot' }] })
+  for (const notifyEngineName of ['BobDot', 'AliceLibrary', 'Alice']) {
+    assert.equal((await f.path(route, json('POST', alice, { ...invite, notifyEngineName }))).status, 400)
+  }
+  const unsentTable = randomUUID()
+  const unsent = await f.path(route, json('POST', alice, { ...invite, tableId: unsentTable, notifyEngineName: 'AliceOther' }))
+  assert.equal(unsent.status, 409)
+  assert.equal((await f.path(route + '/' + unsentTable, { headers: alice })).status, 404)
+  assert.equal((await f.path(route, json('POST', sibling, { ...invite, notifyEngineName: 'AliceDot' }))).status, 403)
+  assert.equal((await f.path(route, json('POST', alice, { ...invite, mode: 'friend', guestEngineName: 'Bob', notifyEngineName: 'AliceDot' }))).status, 400)
+  const created = await f.path(route, json('POST', alice, { ...invite, notifyEngineName: 'alicedot' }))
+  assert.equal(created.status, 201)
+  assert.equal((await created.json()).guestEngineName, 'AliceDot')
+  assert.equal((await f.path(route, json('POST', alice, { ...invite, notifyEngineName: 'AliceDot' }))).status, 409)
+  const manual = await f.path(route, json('POST', alice, { ...invite, tableId: randomUUID() }))
+  assert.equal(manual.status, 201)
+  assert.equal((await manual.json()).guestEngineName, null)
+  const { default: pg } = await import('pg')
+  const db = new pg.Client({ connectionString: databaseUrl, options: '-c search_path=' + f.schema })
+  await db.connect()
+  try {
+    const { rows } = await db.query(`SELECT e.event_name, e.engine_key, e.table_id, e.format, s.engine_key AS subscriber
+      FROM mcp_events e JOIN mcp_event_deliveries d ON d.event_id=e.id
+      JOIN mcp_event_subscriptions s ON s.id=d.subscription_id`)
+    assert.deepEqual(rows, [{
+      event_name: 'game.invitation.created', engine_key: 'alicedot', table_id: tableId, format: 'Pioneer', subscriber: 'alicedot',
+    }])
+  } finally {
+    await db.end()
+  }
+
+  assert.deepEqual((await (await f.path(route, { headers: target })).json()).invites.map(row => row.tableId), [tableId])
+  const link = route + '/' + tableId
+  for (const headers of [bob, sibling, outsider]) {
+    assert.deepEqual((await (await f.path(route, { headers })).json()).invites, [])
+    assert.equal((await f.path(link, { headers })).status, 404)
+    assert.equal((await f.path(link + '/claim', json('POST', headers, {}))).status, 404)
+  }
+  const gate = '/internal/invites/' + tableId + '?host=Alice&guest=AliceDot'
+  assert.equal((await f.path(gate)).status, 404)
+  assert.equal((await f.path(link + '/claim', json('POST', target, { displayName: 'Desk rival' }))).status, 200)
+  assert.equal((await f.path(gate)).status, 200)
+  await f.product.revokeAgent(target.Authorization.slice('Bearer '.length))
+  assert.deepEqual(await (await f.path(rivals, { headers: alice })).json(), { rivals: [] })
+  assert.equal((await f.path(gate)).status, 404)
 })
 
 test('[PM-AC-04] a prehashed provisioning import is idempotent and cannot rotate an existing identity', { skip: !databaseUrl }, async t => {

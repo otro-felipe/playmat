@@ -3,6 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 import { GameSeat, ToolError } from './game-seat.mjs';
+import { monitorSeatDecisions, registerEvents } from './events.mjs';
 import { listArchetypes, possibleResponses, searchCards } from './catalog.mjs';
 import { guideInstructions, registerGuides } from './guides.mjs';
 import { registerMatchReviewPrompt, scoredPositions } from './match-review.mjs';
@@ -70,7 +71,10 @@ function readToken(req) {
 
 function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedOrigins }) {
   function tool(name, description, inputSchema, scope, run, readOnlyHint = false) {
-    mcp.registerTool(name, { description, inputSchema, annotations: { readOnlyHint } }, async (args, extra) => {
+    const scopes = scope === 'catalog' ? ['play', 'library'] : [scope === 'decks' ? 'library' : scope];
+    mcp.registerTool(name, { description, inputSchema, annotations: { readOnlyHint },
+      _meta: { securitySchemes: scopes.map(value => ({ type: 'oauth2', scopes: [value] })) },
+    }, async (args, extra) => {
       try {
         if (!actor.scopes.includes(scope)) throw new ToolError('forbidden', 'This credential lacks the required scope.');
         return textResult(await run(args, extra.signal));
@@ -196,8 +200,11 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
   }, 'history', (args) => fromProduct('export_matches', args));
 }
 
-export function createMcpServer({ authorize, createEngine, product, allowedOrigins = [], maxSeats = 64 }) {
+export function createMcpServer({
+  authorize, createEngine, product, eventRequest, publishSeatEvent, oauthResourceMetadata, allowedOrigins = [], maxSeats = 64,
+}) {
   const seats = new Map();
+  const seatWatchers = new Map();
   const server = createServer(async (req, res) => {
     const pathname = req.url?.split('?')[0];
     if (pathname === '/healthz' && req.method === 'GET') {
@@ -208,12 +215,16 @@ export function createMcpServer({ authorize, createEngine, product, allowedOrigi
     if (pathname !== '/mcp') return reply(res, 404, -32601, 'Not found');
     const token = readToken(req);
     if (req.headers.origin && !allowedOrigins.includes(req.headers.origin)) return reply(res, 403, -32600, 'Origin not allowed');
-    if (!token) return reply(res, 401, -32001, 'Unauthorized');
+    function unauthorized() {
+      if (oauthResourceMetadata) res.setHeader('WWW-Authenticate', 'Bearer resource_metadata="' + oauthResourceMetadata + '"');
+      return reply(res, 401, -32001, 'Unauthorized');
+    }
+    if (!token) return unauthorized();
 
     let actor;
     try { actor = await authorize(token); }
     catch { return reply(res, 503, -32000, 'Authorization service unavailable'); }
-    if (!actor || !actor.accountId || !actor.engineName || !Array.isArray(actor.scopes)) return reply(res, 401, -32001, 'Unauthorized');
+    if (!actor || !actor.accountId || !actor.engineName || !Array.isArray(actor.scopes)) return unauthorized();
 
     const seatKey = JSON.stringify([actor.accountId, actor.engineName]);
     function getSeat() {
@@ -221,11 +232,16 @@ export function createMcpServer({ authorize, createEngine, product, allowedOrigi
         if (seats.size >= maxSeats) throw new ToolError('capacity', 'The beta seat limit has been reached.');
         seats.set(seatKey, new GameSeat(createEngine(actor)));
       }
-      return seats.get(seatKey);
+      const seat = seats.get(seatKey);
+      if (publishSeatEvent && actor.scopes.includes('play') && !seatWatchers.has(seatKey)) {
+        seatWatchers.set(seatKey, monitorSeatDecisions(seat.engine, actor, publishSeatEvent));
+      }
+      return seat;
     }
     const mcp = new McpServer({ name: 'playmat-private', version: '0.1.0' }, { instructions: guideInstructions });
     const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true, sessionIdGenerator: undefined });
     registerGuides(mcp);
+    if (eventRequest) registerEvents(mcp.server, actor, (method, args) => eventRequest(token, method, args));
     if (actor.scopes.includes('history')) registerMatchReviewPrompt(mcp);
     registerTools(mcp, {
       actor, getSeat, allowedOrigins,
@@ -245,6 +261,8 @@ export function createMcpServer({ authorize, createEngine, product, allowedOrigi
     }
   });
   server.once('close', () => {
+    for (const stop of seatWatchers.values()) stop();
+    seatWatchers.clear();
     for (const seat of seats.values()) {
       seat.invalidate('process_closed');
       seat.engine.close?.();

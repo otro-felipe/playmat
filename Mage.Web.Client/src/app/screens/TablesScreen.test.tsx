@@ -50,7 +50,9 @@ test.each(['quiet', 'chatty', 'coach'])('[PM-AC-04] the host creates a Rival MCP
   tables = [];
   calls.create.mockResolvedValue({ tableId });
   calls.join.mockResolvedValue(true);
-  const fetcher = vi.fn(async () => Response.json({ tableId }, { status: 201 }));
+  const fetcher = vi.fn(async (_url: string, request?: RequestInit) => request?.method === 'POST'
+    ? Response.json({ tableId }, { status: 201 })
+    : Response.json({ rivals: [] }));
   vi.stubGlobal('fetch', fetcher);
   const { page } = mount();
   fireEvent.click(page.getByRole('button', { name: 'Host a table' }));
@@ -66,11 +68,35 @@ test.each(['quiet', 'chatty', 'coach'])('[PM-AC-04] the host creates a Rival MCP
   expect(chatStyle.value).toBe('quiet');
   if (chatMode !== 'quiet') fireEvent.change(chatStyle, { target: { value: chatMode } });
   fireEvent.click(dialog.getByRole('button', { name: /^Host$/ }));
-  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
-  const [, request] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
-  const invite = JSON.parse(String(request.body));
+  await waitFor(() => expect(fetcher.mock.calls.filter(([, request]) => request?.method === 'POST')).toHaveLength(1));
+  const [, request] = fetcher.mock.calls.find(([, request]) => request?.method === 'POST')!;
+  const invite = JSON.parse(String(request?.body));
   expect(invite).toMatchObject({ mode: 'mcp', tableId, chatMode });
   expect(invite).not.toHaveProperty('guestEngineName');
+  expect(invite).not.toHaveProperty('notifyEngineName');
+});
+
+test('[PM-AC-16] the host can notify one subscribed MCP rival while the manual link is the default', async () => {
+  tables = [];
+  calls.create.mockResolvedValue({ tableId });
+  calls.join.mockResolvedValue(true);
+  const fetcher = vi.fn(async (_url: string, request?: RequestInit) => request?.method === 'POST'
+    ? Response.json({}, { status: 201 })
+    : Response.json({ rivals: [{ engineName: 'MyDot' }, { engineName: 'OtherDot' }] }));
+  vi.stubGlobal('fetch', fetcher);
+  const { page } = mount({ host: deck.id, opponent: 'mcp' });
+  const guide = within(await page.findByRole('dialog', { name: 'Connect to Playmat MCP' }));
+  fireEvent.click(guide.getByRole('button', { name: 'Continue' }));
+  const dialog = within(await page.findByRole('dialog', { name: 'Host a table' }));
+  await dialog.findByRole('option', { name: 'MyDot' });
+  const select = await dialog.findByLabelText('Notify agent') as HTMLSelectElement;
+  expect(fetcher).toHaveBeenCalledWith('/api/playtesting/event-rivals', expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  expect(select.value).toBe('');
+  fireEvent.change(select, { target: { value: 'MyDot' } });
+  fireEvent.click(dialog.getByRole('button', { name: /^Host$/ }));
+  await waitFor(() => expect(fetcher.mock.calls.some(([, request]) => request?.method === 'POST')).toBe(true));
+  const [, request] = fetcher.mock.calls.find(([, request]) => request?.method === 'POST')!;
+  expect(JSON.parse(String(request?.body))).toMatchObject({ tableId, mode: 'mcp', notifyEngineName: 'MyDot' });
 });
 
 test('[PM-AC-04] the play entry shows the connection guide and remembers the host’s choice', async () => {
@@ -78,7 +104,9 @@ test('[PM-AC-04] the play entry shows the connection guide and remembers the hos
   const { page } = mount({ host: deck.id, opponent: 'mcp' });
   const guide = within(await page.findByRole('dialog', { name: 'Connect to Playmat MCP' }));
   expect(guide.getByText(`${window.location.origin}/mcp`)).toBeTruthy();
-  expect(guide.getByText(/^codex mcp add playmat .* PLAYMAT_MCP_TOKEN$/)).toBeTruthy();
+  expect(guide.getByText(/Choose OAuth, sign in with your Playmat account/)).toBeTruthy();
+  expect(guide.getByText(/game\.invitation\.created and game\.decision\.required/)).toBeTruthy();
+  expect(guide.getByRole('link', { name: 'Manage MCP connections' }).getAttribute('href')).toBe('/oauth/connections');
   expect(guide.getByText(/Copy MCP link/)).toBeTruthy();
   const optOut = guide.getByRole('checkbox', { name: 'Don’t show this again' }) as HTMLInputElement;
   expect(optOut.checked).toBe(false);

@@ -1,16 +1,23 @@
 # Playmat's private MCP
 
-This service runs alongside the product identity service and the XMage engine. It listens on loopback. The reverse proxy exposes its `/mcp` route over HTTPS. Each MCP request revalidates its bearer grant against the product service. The granted, distinct engine username is forwarded only over the loopback trusted-header bridge. The service never accepts a client-selected engine identity, engine URL, raw RPC name or raw game command.
+This service runs alongside the product identity service and the XMage engine. It listens on loopback. The reverse proxy exposes its `/mcp` route over HTTPS. Each request revalidates the connected seat against the product service. The granted, distinct engine username is forwarded only over the loopback trusted-header bridge.
 
-## Connect Codex
+## Connect an MCP client
 
-An operator provisions an agent grant for a manually provisioned account with the product's provisioning command. Give each agent its own engine name. A rival uses `play,chat`, which includes the public card catalog. A separate lab agent uses `library,history` for the owner's decks and archived matches. `library` includes the catalog and deck tools. Load each bearer credential through your local secret mechanism.
+Add the remote `/mcp` URL in a client that supports OAuth. Open the authorization page, sign in with your Playmat account, and select one of your own provisioned agent seats. Grant it `play` for matches and events, plus any other scopes needed for the task and already present on the seat. The consent flow uses authorization code with S256 PKCE and rotating refresh tokens. Revoke a client from `/oauth/connections`.
 
-```sh
-codex mcp add playmat --url https://<host>/mcp --bearer-token-env-var PLAYMAT_MCP_TOKEN
-```
+Configure additional OAuth public clients with `PLAYMAT_OAUTH_CLIENTS` when operating the server. Provide a JSON array of objects with `clientId`, `redirectUri` and `name`. The callback must match exactly. A native client's fixed loopback callback can use HTTP. The browser and the configured client complete authentication without a shared client secret.
 
 For an MCP table, give the rival a private join link and an independently chosen deck. Call `join_game` with `inviteLink`, `deck`, and an optional `displayName`. The first eligible agent that joins binds its authenticated seat to the link. The display name appears to the players during the match. Use `list_joinable_games` for invitations already assigned to the agent, and pass `tableId` to join by ID. The host starts when Playmat shows the rival seated and ready.
+
+## Subscribe to game events
+
+An event-capable client uses `events/list`, `events/subscribe` and `events/unsubscribe` on `/mcp`. Playmat verifies each HTTPS receiver before delivering a Standard Webhooks-signed event.
+
+- `game.invitation.created` carries a table ID and format. A host directs the invitation to a subscribed play seat under their account. The recipient can look up and claim it with `list_joinable_games` and `join_game`.
+- `game.decision.required` carries the game ID, decision ID, cursor and prompt kind for the subscribed seat. Optionally filter by `gameId`. Read `get_game_state` before acting and compare the current decision ID. Handle sideboarding with the sideboard tools. Webhook deliveries may arrive late, so continue using `wait_for_decision` during a live game when timing matters.
+
+If you have ChatGPT Dot, add Playmat as a private custom MCP server using OAuth. Ask your dot to monitor both events for the connected seat. Select that seat when hosting a table with Rival MCP. Each event includes only enough information for the client to look up the current invitation or decision.
 
 The server advertises these guides at initialization. Read them through `resources/list` and `resources/read` with the same grant, even before joining a table.
 

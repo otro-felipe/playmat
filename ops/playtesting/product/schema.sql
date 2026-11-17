@@ -131,3 +131,57 @@ CREATE TABLE IF NOT EXISTS replay_exports (
   game_ids uuid[] NOT NULL,
   expires_at timestamptz NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS mcp_event_subscriptions (
+  id text PRIMARY KEY,
+  account_id uuid NOT NULL REFERENCES accounts(id),
+  engine_key text NOT NULL REFERENCES agent_grants(engine_key),
+  connection_id uuid,
+  event_name text NOT NULL CHECK (event_name IN ('game.invitation.created', 'game.decision.required')),
+  game_filter uuid,
+  callback_url text NOT NULL,
+  secret bytea NOT NULL,
+  previous_secret bytea,
+  previous_secret_until timestamptz,
+  verified_at timestamptz NOT NULL,
+  expires_at timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS mcp_event_subscriptions_by_recipient
+  ON mcp_event_subscriptions(account_id, engine_key, event_name, expires_at);
+
+CREATE TABLE IF NOT EXISTS mcp_events (
+  id text PRIMARY KEY,
+  account_id uuid NOT NULL REFERENCES accounts(id),
+  engine_key text NOT NULL REFERENCES agent_grants(engine_key),
+  event_name text NOT NULL,
+  event_key text NOT NULL,
+  table_id uuid,
+  format text,
+  game_id uuid,
+  decision_id text,
+  cursor bigint,
+  kind text,
+  occurred_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL,
+  UNIQUE (account_id, engine_key, event_name, event_key),
+  CHECK (
+    (event_name = 'game.invitation.created' AND table_id IS NOT NULL AND format IS NOT NULL AND format IN ('Standard', 'Pioneer', 'Modern')
+      AND game_id IS NULL AND decision_id IS NULL AND cursor IS NULL AND kind IS NULL)
+    OR
+    (event_name = 'game.decision.required' AND game_id IS NOT NULL AND decision_id IS NOT NULL AND cursor IS NOT NULL AND cursor >= 0
+      AND kind IS NOT NULL AND table_id IS NULL AND format IS NULL)
+  )
+);
+CREATE INDEX IF NOT EXISTS mcp_events_expiry ON mcp_events(expires_at);
+
+CREATE TABLE IF NOT EXISTS mcp_event_deliveries (
+  event_id text NOT NULL REFERENCES mcp_events(id) ON DELETE CASCADE,
+  subscription_id text NOT NULL REFERENCES mcp_event_subscriptions(id) ON DELETE CASCADE,
+  attempts integer NOT NULL DEFAULT 0,
+  available_at timestamptz NOT NULL DEFAULT now(),
+  lease_id uuid,
+  lease_until timestamptz,
+  PRIMARY KEY (event_id, subscription_id)
+);
+CREATE INDEX IF NOT EXISTS mcp_event_deliveries_pending
+  ON mcp_event_deliveries(available_at, lease_until);

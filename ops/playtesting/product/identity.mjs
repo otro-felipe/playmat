@@ -72,7 +72,7 @@ export async function prepareProvisionBundle(bundle) {
   return { accounts: users, agents: verified, revocations: revoked }
 }
 
-export function createIdentity(pool, insecureCookie) {
+export function createIdentity(pool, insecureCookie, resolveOAuth = async () => null) {
   const cookieName = insecureCookie ? 'playmat-session' : '__Host-playmat-session'
   const attributes = '; Path=/; HttpOnly; SameSite=Lax' + (insecureCookie ? '' : '; Secure')
 
@@ -207,11 +207,12 @@ export function createIdentity(pool, insecureCookie) {
     if (req.headers.authorization !== undefined) {
       const match = /^Bearer ([a-z0-9_-]{43})$/i.exec(req.headers.authorization)
       if (!match) return null
+      const tokenDigest = digest(match[1])
       const { rows: [row] } = await pool.query(
         'SELECT a.id, a.username, g.engine_name, g.scopes FROM agent_grants g JOIN accounts a ON a.id=g.account_id WHERE g.digest=$1 AND g.revoked_at IS NULL AND a.enabled',
-        [digest(match[1])],
+        [tokenDigest],
       )
-      return row ? actor(row.id, row.username, row.engine_name, row.scopes, true) : null
+      return row ? actor(row.id, row.username, row.engine_name, row.scopes, true) : resolveOAuth(tokenDigest)
     }
     const session = sessionDigest(req)
     if (!session) return null
@@ -219,7 +220,7 @@ export function createIdentity(pool, insecureCookie) {
       'SELECT a.id, a.username FROM browser_sessions s JOIN accounts a ON a.id=s.account_id WHERE s.digest=$1 AND s.expires_at>now() AND a.enabled',
       [session],
     )
-    return row ? actor(row.id, row.username, row.username, allScopes) : null
+    return row ? { ...actor(row.id, row.username, row.username, allScopes), browserSession: session } : null
   }
 
   async function fromEngine(name) {
@@ -245,6 +246,6 @@ export function viewerNames(actor) {
 }
 
 export function identityView(actor) {
-  const { accountId, engineName, scopes, agent } = actor
-  return { accountId, engineName, scopes, agent }
+  const { accountId, engineName, scopes, agent, connectionId } = actor
+  return { accountId, engineName, scopes, agent, ...(connectionId ? { connectionId } : {}) }
 }
