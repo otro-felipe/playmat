@@ -41,8 +41,21 @@ public final class CardSearchService {
         long start = criteria.getStart() == null ? 0L : Math.max(0L, criteria.getStart());
         long count = criteria.getCount() == null ? DEFAULT_PAGE_SIZE : Math.max(0L, Math.min(MAX_PAGE_SIZE, criteria.getCount()));
 
+        Constructed format = null;
+        if (criteria.getFormat() != null && !criteria.getFormat().isEmpty()) {
+            DeckValidator validator = DeckValidatorFactory.instance.createDeckValidator(criteria.getFormat());
+            if (validator instanceof Constructed) {
+                format = (Constructed) validator;
+                List<String> setCodes = format.getSetCodes();
+                if (setCodes != null && !setCodes.isEmpty()) {
+                    criteria.setCodes(setCodes);
+                }
+            }
+        }
+        final Constructed legalFormat = format != null && web != null && web.isLegalOnly() ? format : null;
+
         boolean textSearch = hasTextSearch(criteria);
-        boolean refinements = textSearch || identity != null || hasRefinements(criteria);
+        boolean refinements = textSearch || identity != null || legalFormat != null || hasRefinements(criteria);
         if (refinements) {
             // web-only filters run in memory, so the database must return the unpaged list
             criteria.start(null);
@@ -50,16 +63,6 @@ public final class CardSearchService {
         } else {
             criteria.start(start);
             criteria.count(count);
-        }
-
-        if (criteria.getFormat() != null && !criteria.getFormat().isEmpty()) {
-            DeckValidator validator = DeckValidatorFactory.instance.createDeckValidator(criteria.getFormat());
-            if (validator instanceof Constructed) {
-                List<String> setCodes = ((Constructed) validator).getSetCodes();
-                if (setCodes != null && !setCodes.isEmpty()) {
-                    criteria.setCodes(setCodes);
-                }
-            }
         }
 
         // the database only matches mana value exactly; ranges are applied below
@@ -83,6 +86,7 @@ public final class CardSearchService {
         if (refinements) {
             cards = cards.filter(info -> matchesRefinements(info, criteria)
                     && matchesManaValue(info, manaValue, manaValueOperator)
+                    && (legalFormat == null || !legalFormat.isCardBanned(info.getName()))
                     && (identity == null || withinIdentity(info, identity)));
             if (criteria.isUniqueNames()) {
                 // one printing per card name: the first the database returns

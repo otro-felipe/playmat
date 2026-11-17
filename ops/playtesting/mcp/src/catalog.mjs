@@ -83,7 +83,7 @@ export async function searchCards(engine, query) {
       if (colors?.length && !colors.some((color) => color === 'C' ? card.colors.length === 0 : card.colors.includes(color))) continue;
       if (manaSymbols?.length && !manaSymbols.every((symbol) => card.manaSymbols.includes(symbol))) continue;
       if (keywords?.length && !keywords.every((keyword) => card.keywords?.some((known) => normalized(known) === normalized(keyword)))) continue;
-      cards.push(card);
+      cards.push(query.format ? { ...card, formatLegal: true } : card);
       if (cards.length === limit) break;
     }
     exhausted = cursor === (offset + pageIndex * pageSize + page.length) && page.length < pageSize;
@@ -92,7 +92,7 @@ export async function searchCards(engine, query) {
     cards,
     nextOffset: exhausted ? null : cursor,
     format: query.format ?? null,
-    formatSelection: query.format ? 'Engine format catalog; validate deck and ban status with validate_deck.' : null,
+    formatSelection: query.format ? 'Card eligibility in the pinned engine. Use validate_deck to check the entire list.' : null,
   };
 }
 

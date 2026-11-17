@@ -11,6 +11,13 @@ public class WebCardFilters {
      */
     private String colorIdentity;
 
+    /** Apply the chosen constructed format's card bans before paginating. */
+    private boolean legalOnly;
+
+    public boolean isLegalOnly() {
+        return legalOnly;
+    }
+
     public String getColorIdentity() {
         return colorIdentity;
     }

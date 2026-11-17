@@ -91,6 +91,8 @@ export interface WebTournamentOptions {
 export interface WebCardFilters {
   /** only cards a commander of these colors allows: letters of WUBRG, '' for colorless */
   colorIdentity?: string;
+  /** Apply the selected constructed format's card bans before paginating. */
+  legalOnly?: boolean;
 }
 
 /** One recorded moment of a replay: a snapshot of the table, or a log line (see the server's ReplayStore). */

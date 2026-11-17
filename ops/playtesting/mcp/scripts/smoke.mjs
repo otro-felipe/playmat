@@ -17,10 +17,11 @@ try {
   const { tools } = await client.listTools();
   assert.ok(tools.some((tool) => tool.name === 'wait_for_decision'));
   assert.ok(tools.some((tool) => tool.name === 'submit_sideboard'));
-  const response = await client.callTool({ name: 'search_cards', arguments: { format: 'Pioneer', query: 'Forest', limit: 5 } });
+  const response = await client.callTool({ name: 'get_card', arguments: { format: 'Pioneer', name: 'Forest' } });
   assert.equal(response.isError ?? false, false);
   const result = JSON.parse(response.content[0].text);
-  assert.ok(result.cards.some((card) => card.name === 'Forest'));
+  assert.equal(result.card?.name, 'Forest');
+  assert.equal(result.formatLegal, true);
   console.log(JSON.stringify({ mcp: 'ready', tools: tools.length, catalog: 'verified', unauthenticated: 'rejected' }));
 } catch {
   console.error('The MCP smoke check did not verify all assertions.');

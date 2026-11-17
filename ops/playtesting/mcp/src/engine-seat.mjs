@@ -144,7 +144,7 @@ export class PlaymatEngineSeat {
     this.engineName = engineName;
     this.rpc = new RpcClient({
       createSocket: (url) => new WebSocket(url, { headers: { [trustedHeader]: engineName }, maxPayload: 4 * 1024 * 1024 }),
-      requestTimeoutMs: 10_000, maxReconnectAttempts: 4, stateDiffs: false,
+      requestTimeoutMs: 12_000, heartbeatTimeoutMs: 30_000, maxReconnectAttempts: 4, stateDiffs: false,
     });
     this.bus = new EventBus(this.rpc);
     const api = createApi(this.rpc);
@@ -186,7 +186,7 @@ export class PlaymatEngineSeat {
       if (!message?.deck || !(message.currentTableId ?? event.objectId)) return;
       this.#sideboard = {
         decisionId: randomUUID(), tableId: message.currentTableId ?? event.objectId,
-        deck: poolFromView(message.deck), deadline: message.time ?? null, submitted: false,
+        deck: poolFromView(message.deck), deadline: message.time > 0 ? Date.now() + message.time * 1000 : null, submitted: false,
       };
       this.#invalidate();
     });
@@ -279,11 +279,11 @@ export class PlaymatEngineSeat {
     const own = view?.players?.find((player) => player.playerId === state?.playerId);
     const priority = own?.hasPriority || view?.priorityPlayerName === this.engineName ? 'self'
       : view?.priorityPlayerName ? 'opponent' : 'none';
-    const decision = this.#decision(state);
     const status = !this.#connected && this.rpc.getStatus() !== 'idle' ? 'disconnected'
       : this.#sideboard ? 'sideboarding' : state?.gameOver
         ? Math.max(state.endInfo?.wins ?? 0, state.endInfo?.loses ?? 0) >= (state.endInfo?.winsNeeded ?? 2) ? 'match_over' : 'game_over'
         : state ? 'active' : 'lobby';
+    const decision = status === 'active' ? this.#decision(state) : null;
     return {
       gameId: state?.gameId ?? null, tableId: this.#tableId, status, epoch: this.#epoch, cursor: this.#cursor,
       turn: view?.turn ?? null, phase: view?.phase ?? null, step: view?.step ?? null, priority,
@@ -463,13 +463,19 @@ export class PlaymatEngineSeat {
 
   async searchCards(criteria) {
     await this.open();
-    return (await this.api.searchCards(criteria)).map(cardCatalogEntry);
+    return (await this.api.searchCards(criteria, { legalOnly: !!criteria.format })).map(cardCatalogEntry);
   }
 
-  async getCard({ name, setCode = '', cardNumber = '' }) {
+  async getCard({ name, setCode = '', cardNumber = '', format }) {
     await this.open();
     const [card] = await this.api.lookupCards([{ cardName: name, setCode, cardNumber, amount: 1 }]);
-    return { card: cardCatalogEntry(card), engineAvailable: !!card };
+    const legalPrintings = card && format ? await this.api.searchCards({
+      format: formatTag(format), name: card.name, count: 1, uniqueNames: true,
+    }, { legalOnly: true }) : null;
+    return {
+      card: cardCatalogEntry(card), engineAvailable: !!card,
+      formatLegal: legalPrintings ? legalPrintings.length > 0 : null,
+    };
   }
 
   async validateDeck({ format, deck }) {

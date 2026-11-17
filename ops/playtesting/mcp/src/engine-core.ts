@@ -4,4 +4,3 @@ export { EventBus } from '../../../../Mage.Web.Client/src/core/rpc/EventBus';
 export { GameSession } from '../../../../Mage.Web.Client/src/core/game/gameSession';
 export { PROMPT_EVENTS, stripMarkup } from '../../../../Mage.Web.Client/src/core/game/prompt';
 export { pregameChoice } from '../../../../Mage.Web.Client/src/core/game/pregame';
-export { assignmentAnswer, parseDamageAssignment } from '../../../../Mage.Web.Client/src/core/game/damageAssignment';

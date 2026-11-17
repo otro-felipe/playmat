@@ -59,14 +59,23 @@ test('[PM-AC-08] joins a private real XMage Bo3 through two authenticated MCP cl
     clients.push(client);
   }
 
-  async function call(client, name, args = {}) {
+  async function call(client, name, args = {}, retryable = []) {
     const response = await client.callTool({ name, arguments: args });
     const result = JSON.parse(response.content[0].text);
+    if (response.isError && retryable.includes(result.code)) return null;
     if (response.isError) throw new Error(`${name}: ${JSON.stringify(result)}`);
     return result;
   }
 
   const [host, guest] = clients;
+  if (process.env.PLAYMAT_LIVE_LEGACY_ENGINE !== '1') {
+    const prohibited = await call(host, 'get_card', { name: 'Sorin, Imperious Bloodlord', format: 'Pioneer' });
+    assert.equal(prohibited.engineAvailable, true);
+    assert.equal(prohibited.formatLegal, false);
+    const legal = await call(host, 'get_card', { name: 'Forest', format: 'Pioneer' });
+    assert.equal(legal.engineAvailable, true);
+    assert.equal(legal.formatLegal, true);
+  }
   const { tableId } = await call(host, 'create_game', {
     name: 'MCP Bo3 integration fixture', format: 'Pioneer', deck: DECK, guestEngineName: NAME_TWO,
   });
@@ -87,14 +96,16 @@ test('[PM-AC-08] joins a private real XMage Bo3 through two authenticated MCP cl
   async function playOpenDecision(client, landPlayed) {
     const state = await read(client);
     const decision = state.decision;
-    if (!state.gameId || !decision) return false;
+    if (state.status !== 'active' || !state.gameId || !decision) return false;
     const pick = (pattern) => decision.choices.find((choice) => pattern.test(choice.label));
     const land = !landPlayed.value && decision.kind === 'priority' && decision.choices.find((choice) =>
       choice.card?.types.includes('LAND') && state.ownHand.some((card) => card.id === choice.card.id));
     const chosen = land || pick(/^Keep\b|^Play first\b/) || decision.choices.find((choice) => choice.type === 'pass')
       || decision.choices.find((choice) => choice.type === 'button') || decision.choices[0];
     if (!chosen) return false;
-    const result = await call(client, 'submit_decision', { gameId: state.gameId, decisionId: decision.id, choiceId: chosen.id, idempotencyKey: decision.id });
+    const result = await call(client, 'submit_decision', { gameId: state.gameId, decisionId: decision.id, choiceId: chosen.id, idempotencyKey: decision.id },
+      ['not_actionable', 'stale_decision']);
+    if (!result) return false;
     assert.equal(result.submitted, true);
     if (land) landPlayed.value = true;
     return state;

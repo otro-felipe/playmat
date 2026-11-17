@@ -135,7 +135,7 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize }) {
   tool('search_cards', 'Filter the engine catalog by name/text, format, color, mana value or symbols, type and keywords.',
     Catalog, 'catalog', (args) => searchCards(getSeat().engine, args), true);
   tool('get_card', 'Read a known card by name or printing, including mana symbols and rules text.', {
-    name: z.string().min(1).max(250), setCode: z.string().max(12).optional(), cardNumber: z.string().max(20).optional(),
+    name: z.string().min(1).max(250), setCode: z.string().max(12).optional(), cardNumber: z.string().max(20).optional(), format: Format.optional(),
   }, 'catalog', (args) => getSeat().engine.getCard(args), true);
   tool('list_archetypes', 'List dated public metagame examples for the selected format.', { format: Format }, 'catalog',
     ({ format }) => listArchetypes(format), true);

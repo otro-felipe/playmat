@@ -65,8 +65,9 @@ export class GameSeat {
     const epoch = initial.epoch;
     const result = await waitFor(this.engine, (state) => {
       if (state.status === 'disconnected') return { event: 'disconnected' };
-      if ((gameId && state.gameId !== gameId) || state.epoch !== epoch) return { event: 'invalidated', state };
+      if (gameId && state.gameId !== gameId) return { event: 'invalidated', state };
       if (['game_over', 'sideboarding', 'match_over'].includes(state.status)) return { event: state.status, state };
+      if (state.epoch !== epoch) return { event: 'invalidated', state };
       if (args.afterCursor !== undefined && state.cursor <= args.afterCursor) return null;
       if (predicate ? reaches(state, predicate) : state.decision && state.decision.id !== args.afterDecisionId) {
         return { event: predicate ? 'reached' : 'decision', state };
@@ -148,7 +149,7 @@ export class GameSeat {
     const turn = initial.turn;
     let previousDecisionId = null;
     let passCount = 0;
-    let expectedStack = JSON.stringify(initial.stack);
+    const expectedStack = JSON.stringify(initial.stack);
     const stateForStep = async () => {
       signal.throwIfAborted();
       if (Date.now() >= deadline) throw new ToolError('timeout', 'The sequence ran out of time.');

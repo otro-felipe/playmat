@@ -212,6 +212,11 @@ public class Constructed extends DeckValidator {
         return setCodes;
     }
 
+    /** Whether this format bans the canonical card name irrespective of printing. */
+    public boolean isCardBanned(String name) {
+        return banned.contains(name);
+    }
+
     @Override
     public int getDeckMinSize() {
         return 60;
