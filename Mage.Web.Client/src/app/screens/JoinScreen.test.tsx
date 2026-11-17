@@ -56,7 +56,7 @@ test('[PM-AC-04] existing invites use Quiet and instructions can be copied manua
   const page = mount();
   expect(await page.findByText('Quiet', { exact: false })).toBeTruthy();
   fireEvent.click(page.getByRole('button', { name: 'Copy agent instructions' }));
-  const instructions = await page.findByRole<HTMLTextAreaElement>('textbox', { name: 'Agent instructions' });
+  const instructions = await page.findByRole('textbox', { name: 'Agent instructions' }) as HTMLTextAreaElement;
   expect(instructions.readOnly).toBe(true);
   expect(instructions.value).toContain(`${window.location.origin}${invitePath}`);
 });
