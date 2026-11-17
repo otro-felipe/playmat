@@ -2,6 +2,7 @@ import { useEffect, useState, type CSSProperties } from 'react';
 import { bundleAttacks, isTrunk, trunkJoin } from './attackArrows';
 import { useMatchUi } from './matchUi';
 import { toStagePoint, useObjectCenter, useStage } from './stageContext';
+import { stackTargetCurve, type StackTargetConnection } from './stackTargetArrows';
 import styles from './Arrows.module.css';
 
 interface Point {
@@ -58,10 +59,10 @@ function tintStyle(color: string | null): CSSProperties | undefined {
 }
 
 /**
- * Arrows on the table: attackers to what they attack (oxblood, or the attacking player's earned color), blockers to attackers: what the top of the stack targets (ink), and while choosing targets,
+ * Arrows on the table: attackers to what they attack (oxblood, or the attacking player's earned color), blockers to attackers, announced targets across the whole stack, and while choosing targets,
  * a live arrow from the spell to the pointer (amber).
  */
-export function Arrows({ sourceId, targetIds, live, links, attacks, leads, tints }: {
+export function Arrows({ sourceId, targetIds, live, links, attacks, leads, tints, stackTargets = [] }: {
   sourceId: string | null;
   targetIds: string[];
   live: boolean;
@@ -73,6 +74,8 @@ export function Arrows({ sourceId, targetIds, live, links, attacks, leads, tints
   leads: ReadonlyMap<string, string>;
   /** permanents whose controller earned an arrow color: their attacks are drawn in it */
   tints?: ReadonlyMap<string, string>;
+  /** Public announced targets for every object, in stack order. */
+  stackTargets?: readonly StackTargetConnection[];
 }) {
   const center = useObjectCenter();
   const stage = useStage();
@@ -82,7 +85,8 @@ export function Arrows({ sourceId, targetIds, live, links, attacks, leads, tints
   // a creature dragged toward an attacker to block it: a live line that snaps to the attacker under the pointer
   const blockDrag = useMatchUi((state) => state.blockDrag);
 
-  const targetKey = targetIds.join(',') + '|' + [...links, ...attacks].map((link) => link.join('>')).join(',');
+  const targetKey = targetIds.join(',') + '|' + [...links, ...attacks].map((link) => link.join('>')).join(',')
+    + '|' + stackTargets.map((item) => `${item.sourceId}:${item.targetIds.join(',')}:${item.emphasis}`).join('|');
   // positions change as cards fly in; re-measure for a moment after changes
   useEffect(() => {
     let frames = 0;
@@ -109,6 +113,19 @@ export function Arrows({ sourceId, targetIds, live, links, attacks, leads, tints
 
   const from = sourceId ? center(sourceId) : null;
   const targets = from ? targetIds.map(center).filter((point): point is Point => !!point) : [];
+  const stackAnchor = (id: string) => {
+    const anchor = stage.element?.querySelector(`[data-stack-arrow-origin="${CSS.escape(id)}"]`);
+    const box = anchor?.getBoundingClientRect();
+    return box ? toStagePoint(stage, box.left + box.width / 2, box.top + box.height / 2) : center(id);
+  };
+  const announced = stackTargets.flatMap((connection) => {
+    const start = stackAnchor(connection.sourceId);
+    if (!start) return [];
+    return connection.targetIds.flatMap((id, branch) => {
+      const end = stackAnchor(id) ?? (connection.targetAnchors?.[id] ? center(connection.targetAnchors[id]) : null);
+      return end ? [{ ...connection, targetId: id, start, ...stackTargetCurve(start, end, connection.depth, branch) }] : [];
+    });
+  }).sort((a, b) => Number(a.emphasis !== 'waiting') - Number(b.emphasis !== 'waiting') || Number(a.emphasis === 'focused') - Number(b.emphasis === 'focused'));
   const combat = links
     .map(([blocker, attacker]) => [center(blocker), center(attacker)] as const)
     .filter((pair): pair is readonly [Point, Point] => !!pair[0] && !!pair[1]);
@@ -140,11 +157,14 @@ export function Arrows({ sourceId, targetIds, live, links, attacks, leads, tints
   const blockTo = blockDrag?.attackerId ? center(blockDrag.attackerId) : pointer;
   const blockLine = blockFrom && blockTo ? [blockFrom, blockTo] as const : null;
   const attackCount = layers.reduce((sum, layer) => sum + layer.paths.length, 0);
-  if (dragging || (!blockLine && combat.length === 0 && attackCount === 0 && (!from || (targets.length === 0 && !(live && pointer))))) return null;
+  if ((dragging && announced.length === 0) || (!blockLine && combat.length === 0 && attackCount === 0 && announced.length === 0 && (!from || (targets.length === 0 && !(live && pointer))))) return null;
 
   return (
     <svg className={styles.arrows} width={stage.width} height={stage.height} aria-hidden="true">
       <defs>
+        <marker id="arrow-stack" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="var(--ink)" />
+        </marker>
         <marker id="arrow-ink" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
           <path d="M0 0 L10 5 L0 10 z" fill="var(--ink)" />
         </marker>
@@ -192,6 +212,16 @@ export function Arrows({ sourceId, targetIds, live, links, attacks, leads, tints
           {targets.map((to, index) => <path key={index} d={curve(from, to)} markerEnd="url(#arrow-ink)" />)}
         </g>
       )}
+      {announced.map((arrow) => (
+        <g key={`${arrow.sourceId}:${arrow.targetId}`} data-stack-source={arrow.sourceId} data-stack-target={arrow.targetId} data-emphasis={arrow.emphasis}
+          className={[styles.stackConnection, styles[`stack_${arrow.emphasis}`]].join(' ')}
+          style={{ '--stack-arrow': arrow.emphasis === 'waiting' ? ['#a7dcea', '#d5bdf1', '#a8dfbb'][arrow.depth % 3] : 'var(--ink)' } as CSSProperties}>
+          <path className={styles.stackOutline} d={arrow.path} />
+          <path className={styles.stackLine} d={arrow.path} markerEnd="url(#arrow-stack)" />
+          <circle className={styles.stackStart} cx={arrow.start.x} cy={arrow.start.y} r={arrow.emphasis === 'waiting' ? 6 : 9} />
+          <circle className={styles.stackEnd} cx={arrow.end.x} cy={arrow.end.y} r={arrow.emphasis === 'focused' ? 17 : 11} />
+        </g>
+      ))}
       {blockLine && (
         <line
           className={blockDrag?.attackerId ? styles.blockLive : styles.live}

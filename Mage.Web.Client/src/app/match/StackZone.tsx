@@ -33,16 +33,6 @@ export function StackZone({ items, view = null, seatDisplayNames, clickable, sel
   return (
     <section className={styles.zone} aria-label={`Stack, ${items.length} ${items.length === 1 ? 'object' : 'objects'}`}>
       <h2 className={styles.label}>Stack</h2>
-      {targets.some((labels) => labels.length > 0) && (
-        <ol className={styles.targetPanel} aria-label="Stack targets">
-          {items.map((item, index) => targets[index].length > 0 && (
-            <li key={keys[index]}>
-              <strong>{publicCardName(item)}</strong>
-              <span>Targets: {targets[index].join(' · ')}</span>
-            </li>
-          ))}
-        </ol>
-      )}
       <ol className={styles.list}>
         {items.map((item, index) => (
           <StackItem
@@ -77,6 +67,8 @@ function StackItem({ item, index, total, clickable, selected, sleeve, onClick, o
   const ref = useRef<HTMLLIElement>(null);
   const setZoom = useMatchUi((state) => state.setZoom);
   const setSourceHover = useMatchUi((state) => state.setSourceHover);
+  const setStackFocus = useMatchUi((state) => state.setStackFocus);
+  const focused = useMatchUi((state) => state.stackFocus === item.id);
   const ability = isStackAbility(item) ? item : null;
   const face = ability?.sourceCard ?? item;
   useFlip(ability ? item.id : (item.cardId ?? item.id), ref, { fallbackOrigin: origin });
@@ -84,23 +76,29 @@ function StackItem({ item, index, total, clickable, selected, sleeve, onClick, o
   return (
     <li
       ref={ref}
-      className={[styles.item, index === 0 ? styles.top : '', clickable ? styles.clickable : '', selected ? styles.selected : ''].join(' ')}
+      className={[styles.item, index === 0 ? styles.top : '', clickable ? styles.clickable : '', selected ? styles.selected : '', focused ? styles.focused : ''].join(' ')}
       style={{ zIndex: total - index, ['--i' as string]: index }}
       onPointerEnter={(event) => {
         setZoom({ card: item, x: event.clientX, y: event.clientY, sleeve });
         // an ability marks the permanent it comes from: which of two Guiding Hydras it belongs to (#227)
         setSourceHover(stackSourceId(item));
+        setStackFocus(item.id ?? null);
       }}
       onPointerLeave={() => {
         setZoom(null);
         setSourceHover(null);
+        if (!ref.current?.contains(document.activeElement)) setStackFocus(null);
       }}
+      tabIndex={0}
+      onFocus={() => setStackFocus(item.id ?? null)}
+      onBlur={() => setStackFocus(null)}
       onClick={() => clickable && onClick(item.id!)}
       data-object-id={item.id}
       aria-label={`${publicCardName(item)}${index === 0 ? ', resolves next' : ''}${targets.length ? `, targets: ${targets.join(', ')}` : ''}`}
     >
       {ability ? <AbilityCard ability={item} sleeve={sleeve} /> : <CardFace card={face} sleeve={sleeve} size="normal" />}
       {index === 0 && <span className={styles.next}>Resolving next</span>}
+      <span className={styles.arrowOrigin} data-stack-arrow-origin={item.id} aria-hidden="true" />
     </li>
   );
 }

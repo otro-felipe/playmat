@@ -24,7 +24,9 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }
     });
     const receipt = page.getByRole('complementary', { name: 'Recent action' });
     await expect(receipt.getByText('Targets announced', { exact: true })).toBeVisible();
-    await expect(page.getByRole('list', { name: 'Stack targets' }).getByText('Targets: Opponent · Forest')).toBeVisible();
+    await expect(page.getByRole('list', { name: 'Stack targets' })).toHaveCount(0);
+    await expect(page.locator('[data-stack-source="spell"][data-stack-target="them"]')).toHaveCount(1);
+    await expect(page.locator('[data-stack-source="spell"][data-stack-target="opponentForest"]')).toHaveCount(1);
     expect(await receipt.evaluate((element) => getComputedStyle(element).pointerEvents)).toBe('none');
     await page.locator('[data-object-id="forest"]').click();
     await expect.poll(() => page.evaluate(() => (window as unknown as { paymentFixture: { calls: string[] } }).paymentFixture.calls)).toEqual(['forest']);

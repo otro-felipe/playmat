@@ -21,7 +21,7 @@ describe('[READ-AC-003] recent action receipts', () => {
     });
     expect(session.getState().view?.stack).toEqual({});
     expect(screen.getByLabelText('Recent action').textContent).toContain('On the stack');
-    expect(screen.getByText('Targets: Spell Pilot')).toBeTruthy();
+    expect(screen.queryByText(/Targets:/)).toBeNull();
     expect(screen.queryByRole('button')).toBeNull();
     act(() => vi.advanceTimersByTime(ACTION_BEAT_MS));
     expect(screen.getByText('Left the stack')).toBeTruthy();

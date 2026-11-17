@@ -6,6 +6,24 @@
   overflow: visible;
 }
 
+/* Announced stack targets remain visible below the top card. Pattern/weight supplement colour and opacity. */
+.stackConnection { --stack-width: 7px; opacity: 0.96; }
+.stackConnection path { fill: none; stroke-linecap: round; }
+.stackOutline { stroke: var(--mat-950); stroke-width: calc(var(--stack-width) + 5px); opacity: 0.8; }
+.stackLine { stroke: var(--stack-arrow); stroke-width: var(--stack-width); }
+.stackStart { fill: var(--stack-arrow); stroke: var(--mat-950); stroke-width: 3px; }
+.stackEnd { fill: none; stroke: var(--stack-arrow); stroke-width: 3px; }
+.stack_waiting { --stack-width: 4px; opacity: 0.68; }
+.stack_waiting .stackLine { stroke-dasharray: 12 10; }
+.stack_waiting .stackStart { fill: var(--mat-950); }
+.stack_waiting .stackEnd { stroke-dasharray: 6 5; }
+.stack_focused { --stack-width: 9px; opacity: 1; }
+.stack_focused .stackEnd { stroke-width: 5px; }
+
+:global([data-touch]) .stackConnection { --stack-width: 8px; }
+:global([data-touch]) .stack_waiting { --stack-width: 6px; }
+:global([data-touch]) .stack_focused { --stack-width: 11px; }
+
 /* the layers below are groups: the filter sits on the group, the strokes are inherited by its paths */
 .ink {
   opacity: 0.85;

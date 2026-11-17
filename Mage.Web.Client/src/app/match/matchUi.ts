@@ -23,6 +23,8 @@ interface MatchUiState {
   detail: { id: string; card: CardView } | null;
   /** the permanent a hovered stack ability comes from, marked on the table (#227) */
   sourceHover: string | null;
+  /** Stack item whose announced target arrows are emphasized; presentation only. */
+  stackFocus: string | null;
   /** the permanent the open prompt is asked for (its ability is resolving), marked on the table (#227) */
   promptSource: string | null;
   setZoom(zoom: MatchUiState['zoom']): void;
@@ -35,6 +37,7 @@ interface MatchUiState {
   toggleLog(open?: boolean): void;
   openDetail(detail: MatchUiState['detail']): void;
   setSourceHover(id: string | null): void;
+  setStackFocus(id: string | null): void;
 }
 
 export const useMatchUi = create<MatchUiState>((set) => ({
@@ -48,6 +51,7 @@ export const useMatchUi = create<MatchUiState>((set) => ({
   logOpen: false,
   detail: null,
   sourceHover: null,
+  stackFocus: null,
   promptSource: null,
   setZoom: (zoom) => set({ zoom }),
   setPointer: (pointer) => set({ pointer }),
@@ -60,4 +64,5 @@ export const useMatchUi = create<MatchUiState>((set) => ({
   // the zoomed copy would sit on top of the detail view
   openDetail: (detail) => set({ detail, zoom: null }),
   setSourceHover: (sourceHover) => set({ sourceHover }),
+  setStackFocus: (stackFocus) => set({ stackFocus }),
 }));

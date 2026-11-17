@@ -51,9 +51,9 @@ export function Piles({ player, sleeve, isMe, commanders = [], clickable, onCast
         <span className={styles.label}>Library</span>
       </button>
 
-      <PileOfCards title={`${name} graveyard`} label="Graveyard" cards={graveyard} sleeve={sleeve} inHand={inHand} onOpen={() => openViewer({ title: `${name} graveyard`, cards: [...graveyard].reverse() })} />
+      <PileOfCards objectId={`graveyard:${player.playerId}`} title={`${name} graveyard`} label="Graveyard" cards={graveyard} sleeve={sleeve} inHand={inHand} onOpen={() => openViewer({ title: `${name} graveyard`, cards: [...graveyard].reverse() })} />
       {exile.length > 0 && (
-        <PileOfCards title={`${name} exile`} label="Exile" cards={exile} sleeve={sleeve} inHand={inHand} onOpen={() => openViewer({ title: `${name} exile`, cards: exile })} />
+        <PileOfCards objectId={`exile:${player.playerId}`} title={`${name} exile`} label="Exile" cards={exile} sleeve={sleeve} inHand={inHand} onOpen={() => openViewer({ title: `${name} exile`, cards: exile })} />
       )}
       {waiting.map((commander) => (
         <CommanderPile key={commander.id} commander={commander} sleeve={sleeve} castable={!!clickable?.has(commander.id)} onCast={onCast} owner={name} />
@@ -133,12 +133,12 @@ function usePileZoom(card: CardView | undefined, sleeve: string) {
   };
 }
 
-function PileOfCards({ title, label, cards, sleeve, onOpen, inHand }: { title: string; label: string; cards: CardView[]; sleeve: string; onOpen(): void; inHand?: ReadonlySet<string> }) {
+function PileOfCards({ title, label, cards, sleeve, onOpen, inHand, objectId }: { title: string; label: string; cards: CardView[]; sleeve: string; onOpen(): void; inHand?: ReadonlySet<string>; objectId?: string }) {
   const t = useT();
   const top = cards[cards.length - 1];
   const zoom = usePileZoom(top, sleeve);
   return (
-    <button type="button" className={styles.pile} aria-label={t('match.cards', { label: title, count: cards.length })} onClick={onOpen} disabled={cards.length === 0} {...zoom}>
+    <button type="button" className={styles.pile} data-object-id={objectId} aria-label={t('match.cards', { label: title, count: cards.length })} onClick={onOpen} disabled={cards.length === 0} {...zoom}>
       {/* a new top card is a new element: it lands on the pile from wherever that card was */}
       <PileTop key={top ? cardKey(top) : 'empty'} top={top} count={cards.length} sleeve={sleeve} inHand={!!top && !!inHand?.has(cardKey(top))} />
       <span className={styles.count}>{cards.length}</span>

@@ -61,6 +61,7 @@ import { useRevealedHands } from './useRevealedHands';
 import { setCardMotion, useFlipOrigin } from './flip';
 import { GameLog } from './GameLog';
 import { RecentActions } from './RecentActions';
+import { stackTargetConnections } from './stackTargetArrows';
 import { seatDisplayName, type SeatDisplayNames } from './seatDisplayNames';
 import { useMatchZoomKeys } from './matchZoomKeys';
 import { Hand } from './Hand';
@@ -244,7 +245,7 @@ export function MatchStage({ session, state, replayLog, onLeave, seatDisplayName
 
   useEffect(() => setCardMotion(animations), [animations]);
   // a new game starts with a clean table
-  useEffect(() => () => useMatchUi.setState({ zoom: null, dragging: null, viewer: null, logOpen: false, detail: null, sourceHover: null, promptSource: null }), []);
+  useEffect(() => () => useMatchUi.setState({ zoom: null, dragging: null, viewer: null, logOpen: false, detail: null, sourceHover: null, stackFocus: null, promptSource: null }), []);
 
   // a click's likely outcome (a land tapped for mana) shows at once; the server's next view replaces it
   const board = useMemo(() => buildBoard(withPrediction(view, prediction), playerId), [view, prediction, playerId]);
@@ -446,8 +447,10 @@ export function MatchStage({ session, state, replayLog, onLeave, seatDisplayName
   const arrowSource = stack[0]?.id ?? null;
   const arrowTargets = useMemo(() => {
     if (choosingTargets) return [...interaction.selected];
-    return (stack[0]?.targets ?? []).filter(Boolean) as string[];
-  }, [choosingTargets, interaction.selected, stack]);
+    return [];
+  }, [choosingTargets, interaction.selected]);
+  const stackFocus = useMatchUi((ui) => ui.stackFocus);
+  const stackTargets = useMemo(() => stackTargetConnections(stack, view, stackFocus, interaction.selected, choosingTargets ? arrowSource : null), [stack, view, stackFocus, interaction.selected, choosingTargets, arrowSource]);
 
   const prompt = interaction.prompt;
   // the permanent a question is asked for stays marked while it's open (#227)
@@ -776,7 +779,7 @@ export function MatchStage({ session, state, replayLog, onLeave, seatDisplayName
             )}
             {defenders && (attackDrop.manualDefender || !(automation.attackPlayerByDefault && defaultDefender(defenders))) && <DefenderPicker attacker={attackerName} options={defenders} onPick={onClick} />}
             <Vfx key={state.gameId} view={view} myPlayerId={myId} liveDraws={mode === 'play' && !state.resyncing && !state.gameOver} simpleOnly />
-            <Arrows sourceId={arrowSource} targetIds={arrowTargets} live={choosingTargets} links={links} attacks={attacks} leads={leads} tints={arrowTint} />
+            <Arrows sourceId={arrowSource} targetIds={arrowTargets} live={choosingTargets} links={links} attacks={attacks} leads={leads} tints={arrowTint} stackTargets={stackTargets} />
             <EmoteBubbles view={view} gameId={state.gameId} />
             {mode === 'play' && <Coach view={view ?? null} mode={choosingStarter ? 'panel' : interaction.mode} awaiting={awaitingServer} gameOver={!!state.gameOver} />}
             {mode === 'play' && <LessonCoach gameId={state.gameId} view={view ?? null} mode={choosingStarter ? 'panel' : interaction.mode} awaiting={awaitingServer} gameOver={!!state.gameOver} />}
