@@ -80,9 +80,10 @@ describe('autoAnswer', () => {
     const blocking: GameView = { ...view({}), combat: [{ defenderId: 'me', attackers: { ogre: { controllerId: 'them' } }, blockers: { bear: { controllerId: 'me' } } }] };
     expect(autoAnswer(blocking, noBlockersLeft, on)).toBeNull();
   });
-  it('lets the rest of combat go by when nobody attacks, unless something is on the stack', () => {
+  it('[PM-AC-02] keeps legal response windows even during combat without attackers', () => {
     const instant = view({ roar: { basicCastAbilities: record } });
-    expect(autoAnswer({ ...instant, step: 'DECLARE_ATTACKERS', combat: [] }, priority, on)).toBe('pass');
+    expect(autoAnswer({ ...view({}), step: 'DECLARE_ATTACKERS', combat: [] }, priority, on)).toBe('pass');
+    expect(autoAnswer({ ...instant, step: 'DECLARE_ATTACKERS', combat: [] }, priority, on)).toBeNull();
     expect(autoAnswer({ ...instant, step: 'DECLARE_ATTACKERS', combat: [{ attackers: { bear: {} } }] } as GameView, priority, on)).toBeNull();
     expect(autoAnswer({ ...instant, step: 'END_COMBAT', stack: { bolt: {} } } as GameView, priority, on)).toBeNull();
     expect(autoAnswer({ ...instant, step: 'BEGIN_COMBAT' }, priority, on)).toBeNull();
@@ -149,12 +150,13 @@ describe('beginning of combat on your turn', () => {
     expect(autoAnswer(combat({ vehicle: crew }), priority, on)).toBeNull();
     expect(autoAnswer(combat({ land: { other: [{ value: '{1}{G}: Until end of turn, Treetop Village becomes a 3/3...' }] } }), priority, on)).toBeNull();
   });
-  it('passes the stop the player did not ask for when only spells or other abilities are available', () => {
-    expect(autoAnswer(combat({ bolt: { basicCastAbilities: record }, map: { other: [{ value: '{T}, Sacrifice: search...' }] } }), priority, on)).toBe('pass');
+  it('[PM-AC-02] stops for legal spells and abilities at the beginning of combat', () => {
+    expect(autoAnswer(combat({ bolt: { basicCastAbilities: record }, map: { other: [{ value: '{T}, Sacrifice: search...' }] } }), priority, on)).toBeNull();
   });
-  it('passes it with auto-pass off too, and keeps it for a Vehicle', () => {
+  it('keeps priority at the beginning of combat with auto-pass disabled', () => {
     const off = { ...on, autoPass: false };
-    expect(autoAnswer(combat({ bolt: { basicCastAbilities: record } }), priority, off)).toBe('pass');
+    expect(autoAnswer(combat({}), priority, off)).toBeNull();
+    expect(autoAnswer(combat({ bolt: { basicCastAbilities: record } }), priority, off)).toBeNull();
     expect(autoAnswer(combat({ vehicle: crew }), priority, off)).toBeNull();
     // anywhere else, auto-pass off answers nothing
     expect(autoAnswer({ ...combat({}), step: 'PRECOMBAT_MAIN' }, priority, off)).toBeNull();

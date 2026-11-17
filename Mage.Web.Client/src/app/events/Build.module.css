@@ -1,6 +1,7 @@
 .screen {
   position: fixed;
-  inset: 0;
+  inset: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+    env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--space-3);
@@ -249,6 +250,41 @@
   background: transparent;
   cursor: pointer;
   transition: transform var(--dur-quick) var(--ease-lift);
+}
+
+@media (max-width: 600px) {
+  .screen {
+    --build-card-step: 44px;
+    gap: var(--space-2);
+    padding: var(--space-3);
+  }
+
+  .top,
+  .topRight {
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .title {
+    font-size: var(--text-xl);
+  }
+
+  .zone {
+    padding: var(--space-2);
+  }
+
+  .zoneHead {
+    gap: var(--space-2);
+  }
+
+  .pip {
+    width: 44px;
+    height: 44px;
+  }
+
+  .tip {
+    margin-inline-start: 0;
+  }
 }
 
 .card:hover {

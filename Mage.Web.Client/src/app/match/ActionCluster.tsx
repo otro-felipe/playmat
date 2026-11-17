@@ -1,5 +1,5 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { ChevronsRight, ChevronUp } from 'lucide-react';
+import { ChevronsRight, ChevronUp, Shield } from 'lucide-react';
 import { useEffect, useMemo, type ReactNode } from 'react';
 import type { Command, Interaction, PromptButton } from '../../core/game/interaction';
 import type { CardView, PlayerAction } from '../../protocol/generated/views';
@@ -16,6 +16,7 @@ import styles from './ActionCluster.module.css';
 
 export interface ActionClusterProps {
   interaction: Interaction;
+  phases?: ReactNode;
   awaiting: boolean;
   status: string | null;
   canAct: boolean;
@@ -58,7 +59,7 @@ const UNDO: PromptButton = { label: 'Undo tap', command: { type: 'action', actio
 
 /** The decision corner: what the game is asking, and the one big button that answers it. */
 export function ActionCluster({
-  interaction, awaiting, status, canAct, special, holdingPriority, undoable = false, autoPassing = false, fullControl = false, onFullControl,
+  interaction, phases, awaiting, status, canAct, special, holdingPriority, undoable = false, autoPassing = false, fullControl = false, onFullControl,
   passTurn = false, onPassTurn, extra,
   stalled = false, onResend, onResync, conceding = null, warning = null, cards = null, onCommand,
 }: ActionClusterProps) {
@@ -142,13 +143,14 @@ export function ActionCluster({
   // the answered prompt stays up while the server works (see the session's hold), so nothing blinks between decisions
   const deciding = interaction.mode !== 'waiting';
   // every decision is asked here, next to its buttons, so the question never covers the cards it is about
-  const headline = deciding ? interaction.headline : status ?? interaction.headline;
+  const headline = deciding && interaction.mode !== 'priority' ? interaction.headline
+    : (interaction.mode === 'priority' || phases) ? status : status ?? interaction.headline;
   const passAhead = canAct && (interaction.mode === 'priority' || interaction.mode === 'waiting');
 
   return (
     <section className={styles.cluster} aria-label="Your decision" aria-live="polite">
       {headline && <p className={[styles.headline, deciding ? styles.deciding : ''].join(' ')}><PromptText text={headline} /></p>}
-      {fullControl && canAct && (
+      {!phases && fullControl && canAct && (
         <button type="button" className={styles.fullControl} onClick={() => onFullControl?.(false)} title="Turn full control off (Ctrl+Shift)">
           Full control
         </button>
@@ -202,6 +204,7 @@ export function ActionCluster({
           ))}
         </div>
       )}
+      {phases}
       <div className={styles.mainRow}>
         {passAhead && (
           <DropdownMenu.Root>
@@ -234,6 +237,11 @@ export function ActionCluster({
                     <kbd>Ctrl+Shift</kbd>
                   </DropdownMenu.CheckboxItem>
                 )}
+                {phases && onPassTurn && (
+                  <DropdownMenu.Item className={styles.menuItem} onSelect={() => onPassTurn(!passTurn)}>
+                    {t(passTurn ? 'match.hud.cancelPassTurn' : 'match.hud.passTurn')}<kbd>Shift+Enter</kbd>
+                  </DropdownMenu.Item>
+                )}
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
@@ -248,6 +256,7 @@ export function ActionCluster({
             // while the last answer is on its way a click can't be taken (one answer per question): show it
             aria-keyshortcuts={primaryShortcut ? 'Space Enter' : undefined}
             aria-disabled={awaiting || undefined}
+            title={interaction.mode === 'priority' ? t('match.hud.passHint') : undefined}
             onKeyDown={(event) => {
               if (event.repeat && (event.key === 'Enter' || event.key === ' ')) event.preventDefault();
             }}
@@ -259,7 +268,19 @@ export function ActionCluster({
         ) : deciding ? null : (
           <div className={styles.waiting}>{awaiting ? 'Sending…' : 'Waiting'}</div>
         )}
-        {onPassTurn && canAct && (
+        {phases && onFullControl && canAct && (
+          <button
+            type="button"
+            className={styles.control}
+            aria-pressed={fullControl}
+            aria-label={t('match.hud.fullControl')}
+            title={t('match.hud.fullControl')}
+            onClick={() => onFullControl(!fullControl)}
+          >
+            <Shield aria-hidden="true" />
+          </button>
+        )}
+        {onPassTurn && canAct && (!phases || passTurn) && (
           <button
             type="button"
             className={[styles.passTurn, passTurn ? styles.passTurnOn : ''].join(' ')}

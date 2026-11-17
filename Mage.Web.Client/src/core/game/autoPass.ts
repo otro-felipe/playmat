@@ -50,10 +50,7 @@ export interface AutoPassSettings {
   passTurn?: boolean;
   /** combat steps where the player wants to stop */
   combatStops?: TurnCombatStops;
-  /**
-   * the player's own stop at their beginning of combat; without it the client still gets that stop from the server
-   * (core/game/stops) and keeps it only to crew a Vehicle or animate a permanent before attackers are declared
-   */
+  /** the player's own stop at the beginning of combat */
   beginCombatStop?: boolean;
 }
 
@@ -110,12 +107,6 @@ export function attackEnablers(view: GameView | null | undefined): string[] {
 /** Combat steps after attackers are declared: with nobody attacking there is nothing to respond to in them. */
 const AFTER_ATTACKS = new Set(['DECLARE_ATTACKERS', 'DECLARE_BLOCKERS', 'FIRST_COMBAT_DAMAGE', 'COMBAT_DAMAGE', 'END_COMBAT']);
 
-function noCombat(view: GameView): boolean {
-  return AFTER_ATTACKS.has(view.step ?? '')
-    && Object.keys(view.stack ?? {}).length === 0
-    && !(view.combat ?? []).some((group) => Object.keys(group.attackers ?? {}).length > 0);
-}
-
 /**
  * The moments on the opponent's turn when a permanent's ability is a real answer even with abilitiesOnTheirTurn off:
  * creatures are attacking, or something is on the stack (Circle of Protection, a regenerator, a sacrifice outlet).
@@ -140,15 +131,9 @@ export function autoAnswer(view: GameView | null | undefined, prompt: Prompt | n
     case 'priority':
     {
       const myTurn = !!view.myPlayerId && view.activePlayerId === view.myPlayerId;
-      // a stop the player did not ask for (core/game/stops), auto-pass on or off: only a Vehicle to crew or a land
-      // to animate keeps it
-      if (myTurn && view.step === 'BEGIN_COMBAT' && !settings.beginCombatStop && Object.keys(view.stack ?? {}).length === 0) {
-        return attackEnablers(view).length === 0 ? 'pass' : null;
-      }
       if (!settings.autoPass) return null;
+      if (myTurn && view.step === 'BEGIN_COMBAT' && settings.beginCombatStop) return null;
       if (combatStopHere(view, settings.combatStops)) return null;
-      // like Arena: when no creature attacks, the rest of combat goes by even with instants in hand
-      if (settings.autoSkipCombat && noCombat(view)) return 'pass';
       return meaningfulPlays(view, myTurn || settings.abilitiesOnTheirTurn || underThreat(view)).length === 0 ? 'pass' : null;
     }
     // the server stops listing creatures once they are declared: with everything chosen the list is empty too, and

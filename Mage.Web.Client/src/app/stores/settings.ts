@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 import { api } from '../connection';
 import type { TurnCombatStops } from '../../core/game/autoPass';
+import type { PhaseStop } from '../../core/game/phases';
 import type { BroadcastDelay } from '../../core/game/broadcastDelay';
 import { serverStops } from '../../core/game/stops';
 import type { UserData, UserSkipPrioritySteps } from '../../protocol/generated/views';
@@ -222,6 +223,8 @@ export const DEFAULT_SETTINGS: PlaySettings = {
 
 interface SettingsState {
   settings: PlaySettings;
+  turnStops: { side: 'yourTurn' | 'opponentTurn'; stops: readonly PhaseStop[] } | null;
+  setTurnStops(stops: SettingsState['turnStops']): void;
   /**
    * Arena's full control, for this visit: the game stops at every step, nothing is passed for the player and priority
    * comes back after each spell. Not saved, like on Arena.
@@ -233,12 +236,21 @@ interface SettingsState {
 }
 
 /** The complete preference object the server keeps per user (every field is required server side). */
-export function toUserData(settings: PlaySettings, fullControl = false): UserData {
+export function toUserData(settings: PlaySettings, fullControl = false, temporary: SettingsState['turnStops'] = null): UserData {
+  const stops = temporary ? {
+    ...settings.stops,
+    [temporary.side]: {
+      ...settings.stops[temporary.side],
+      ...Object.fromEntries(temporary.stops.filter((stop) => stop !== 'attackers' && stop !== 'blockers').map((stop) => [stop, true])),
+    },
+    ...(temporary.stops.includes('attackers') ? { stopOnDeclareAttackers: true } : {}),
+    ...(temporary.stops.includes('blockers') ? { stopOnDeclareBlockersWithAnyPermanents: true, stopOnDeclareBlockersWithZeroPermanents: true } : {}),
+  } : settings.stops;
   return {
     groupId: 0,
     avatarId: settings.avatarId,
     allowRequestShowHandCards: settings.allowHandRequests,
-    userSkipPrioritySteps: serverStops(settings.stops, fullControl),
+    userSkipPrioritySteps: serverStops(stops, fullControl),
     flagName: `${settings.flag || 'world'}.png`,
     askMoveToGraveOrder: false,
     manaPoolAutomatic: !fullControl && (settings.autoPayMana || !settings.autoPayRestricted),
@@ -258,6 +270,13 @@ export function toUserData(settings: PlaySettings, fullControl = false): UserDat
 export const useSettings = create<SettingsState>((set, get) => ({
   settings: { ...DEFAULT_SETTINGS, ...readJson<Partial<PlaySettings>>(SETTINGS_KEY, {}) },
   fullControl: false,
+  turnStops: null,
+
+  setTurnStops(stops) {
+    if (get().turnStops === stops) return;
+    set({ turnStops: stops });
+    void get().syncToServer();
+  },
 
   setFullControl(on) {
     if (get().fullControl === on) return;
@@ -274,7 +293,8 @@ export const useSettings = create<SettingsState>((set, get) => ({
 
   async syncToServer() {
     if (useSession.getState().phase !== 'signedIn') return;
-    await api.connectSetUserData(null, toUserData(get().settings, get().fullControl), 'web', '').catch(() => undefined);
+    const { settings, fullControl, turnStops } = get();
+    await api.connectSetUserData(null, toUserData(settings, fullControl, turnStops), 'web', '').catch(() => undefined);
   },
 }));
 

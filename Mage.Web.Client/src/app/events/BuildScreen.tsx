@@ -38,6 +38,8 @@ export function BuildScreen() {
 
 function Builder({ construct }: { construct: ConstructState }) {
   const submit = useEvents((state) => state.submit);
+  const t = useT();
+  const sideboarding = construct.kind === 'sideboard' && !construct.limited;
   const pool = useMemo(
     () => [...Object.values(construct.deck.cards ?? {}), ...Object.values(construct.deck.sideboard ?? {})] as PoolCard[],
     [construct.deck],
@@ -61,6 +63,8 @@ function Builder({ construct }: { construct: ConstructState }) {
   const poolColumns = useMemo(() => curveColumns(inPool, info), [inPool, info]);
   const landCount = Object.values(basics).reduce((sum, value) => sum + value, 0);
   const total = inDeck.length + (construct.limited ? landCount : 0);
+  // A color filter changes what's shown, not the number of cards actually in the sideboard.
+  const sideboardCount = pool.length - inDeck.length;
   // sideboarding a constructed deck: the server took it at its starting size, so it can always go back to that, even
   // when a format allows fewer than 60 (a 59-card Freeform deck, #168)
   const [startSize] = useState(() => Object.keys(construct.deck.cards ?? {}).length);
@@ -92,7 +96,7 @@ function Builder({ construct }: { construct: ConstructState }) {
     <div className={[styles.screen, lesson ? styles.screenLesson : ''].join(' ')}>
       <header className={styles.top}>
         <div>
-          <h1 className={styles.title}>{construct.kind === 'construct' ? 'Build your deck' : 'Adjust your deck'}</h1>
+          <h1 className={styles.title}>{sideboarding ? t('match.sideboard.title') : construct.kind === 'construct' ? 'Build your deck' : 'Adjust your deck'}</h1>
           {construct.kind === 'sideboard' && <MatchScore tableId={construct.tableId} />}
         </div>
         <div className={styles.topRight}>
@@ -132,9 +136,11 @@ function Builder({ construct }: { construct: ConstructState }) {
         />
       )}
 
-      <section className={styles.zone} aria-label={`Card pool, ${inPool.length} cards`}>
+      <section className={styles.zone} aria-label={sideboarding
+        ? t(sideboardCount === 1 ? 'match.sideboard.countOne' : 'match.sideboard.count', { count: sideboardCount })
+        : `Card pool, ${inPool.length} cards`}>
         <div className={styles.zoneHead}>
-          <h2>Pool <span>{inPool.length}</span></h2>
+          <h2>{sideboarding ? t('match.sideboard.title') : 'Pool'} <span>{sideboarding ? sideboardCount : inPool.length}</span></h2>
           <div className={styles.pips} role="group" aria-label="Show colors">
             {BASICS.map((basic) => {
               const on = colors.includes(basic.color);
@@ -152,9 +158,9 @@ function Builder({ construct }: { construct: ConstructState }) {
               );
             })}
           </div>
-          <p className={styles.tip}>Click a card to move it between the pool and your deck.</p>
+          <p className={styles.tip}>{sideboarding ? t('match.sideboard.move') : 'Click a card to move it between the pool and your deck.'}</p>
         </div>
-        <Columns columns={poolColumns} info={info} onClick={toggle} empty="Every card is in your deck." />
+        <Columns columns={poolColumns} info={info} onClick={toggle} disabled={busy || construct.submitted} empty="Every card is in your deck." />
       </section>
 
       <section className={[styles.zone, styles.deckZone].join(' ')} aria-label={`Deck, ${inDeck.length} cards`}>
@@ -176,16 +182,17 @@ function Builder({ construct }: { construct: ConstructState }) {
             </div>
           )}
         </div>
-        <Columns columns={deckColumns} info={info} onClick={toggle} empty="Click cards in the pool to add them." />
+        <Columns columns={deckColumns} info={info} onClick={toggle} disabled={busy || construct.submitted} empty="Click cards in the pool to add them." />
       </section>
     </div>
   );
 }
 
-function Columns({ columns, info, onClick, empty }: {
+function Columns({ columns, info, onClick, disabled, empty }: {
   columns: { label: string; cards: PoolCard[] }[];
   info: ReadonlyMap<string, CardView>;
   onClick(card: PoolCard): void;
+  disabled: boolean;
   empty: string;
 }) {
   if (columns.length === 0) return <p className={styles.note}>{empty}</p>;
@@ -194,14 +201,15 @@ function Columns({ columns, info, onClick, empty }: {
       {columns.map((column) => (
         <div key={column.label} className={styles.column}>
           <span className={styles.columnLabel}>{column.label} <small>{column.cards.length}</small></span>
-          <div className={styles.columnCards} style={{ height: 176 + (column.cards.length - 1) * 30 }}>
+          <div className={styles.columnCards} style={{ height: `calc(176px + ${column.cards.length - 1} * var(--build-card-step, 30px))` }}>
             {column.cards.map((card, index) => (
               <button
                 key={card.id}
                 type="button"
                 className={styles.card}
-                style={{ top: index * 30, zIndex: index }}
+                style={{ top: `calc(${index} * var(--build-card-step, 30px))`, zIndex: index }}
                 onClick={() => onClick(card)}
+                disabled={disabled}
                 aria-label={card.name}
               >
                 <CardFace card={faceOf(card, info)} size="small" />

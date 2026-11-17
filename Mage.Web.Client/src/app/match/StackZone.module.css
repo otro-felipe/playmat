@@ -78,11 +78,10 @@
   box-shadow: 0 2px 8px rgb(var(--shade-rgb) / 0.5);
 }
 
-/* tall: over the left end of the opponent's creatures, its top card just above the seam */
+/* On a portrait table the stack stays to the right and above the decision corner. */
 :global([data-layout='tall']) .zone {
-  left: 24px;
-  right: auto;
-  top: calc(var(--seam) - 340px);
+  right: 34px;
+  top: calc(var(--seam) - 210px);
   width: 190px;
 }
 

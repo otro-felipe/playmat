@@ -87,15 +87,17 @@ function lunge(element: Element | null, from: { x: number; y: number }, to: { x:
   );
 }
 
-export function Vfx({ view, myPlayerId, sparks }: {
+export function Vfx({ view, myPlayerId, sparks, simpleOnly = false }: {
   view: GameView | null;
   myPlayerId: string | null;
   /** players who earned hit sparks: player id to the spark's color */
   sparks?: ReadonlyMap<string, string>;
+  simpleOnly?: boolean;
 }) {
   const [effects, setEffects] = useState<Effect[]>([]);
   const [signatures, setSignatures] = useState<SignatureEffect[]>([]);
-  const cardEffects = useSettings((state) => state.settings.cardEffects);
+  const effectPreference = useSettings((state) => state.settings.cardEffects);
+  const cardEffects = simpleOnly && effectPreference === 'signature' ? 'simple' : effectPreference;
   // where each stack object was drawn on the last view: a resolved spell's effect starts there
   const stackSpots = useRef(new Map<string, Point>());
   // read when a view arrives: a look arriving later doesn't replay the last view's effects

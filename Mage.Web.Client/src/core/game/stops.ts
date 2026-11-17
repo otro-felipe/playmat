@@ -4,9 +4,8 @@ const EVERY_STEP = { upkeep: true, draw: true, main1: true, beforeCombat: true, 
 
 /**
  * The stops the server should use: the player's own, or every one of them under full control. The server also stops
- * at the player's own beginning of combat, auto-pass on or off: the server skips steps without looking at the board,
- * so only the client can see a Vehicle to crew there (Greasefang returns one at that very moment). Unless the player
- * set that stop themselves, core/game/autoPass passes it when there is nothing to crew or animate.
+ * at the player's own beginning of combat because only the client looks for playable spells and abilities
+ * before passing an empty window.
  */
 export function serverStops(stops: UserSkipPrioritySteps, fullControl: boolean): UserSkipPrioritySteps {
   if (!fullControl) {

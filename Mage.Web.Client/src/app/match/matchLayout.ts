@@ -112,7 +112,7 @@ const WIDE_MAX_FRONT_GROWTH = Math.floor(WIDE_TOP_SLACK / 2 / (88 / 63));
 const TALL_MARGIN = 24;
 const TALL_TOP_BAND = 215;
 /** your seat, piles and decision corner, above the hand */
-const TALL_BOTTOM_BAND = 180;
+const TALL_BOTTOM_BAND = 365;
 /** the hand's visible edge at the bottom of the stage */
 const TALL_HAND = 130;
 const TALL_ROW_GAP = 10;
@@ -230,11 +230,11 @@ function tallLayout(width: number, height: number): MatchLayout {
     seam,
     playLine: bandTop,
     myPlate: { left: TALL_MARGIN, top: bandTop + 20 },
-    myPiles: { left: 290, top: bandTop + 8 },
+    myPiles: { left: TALL_MARGIN, top: bandTop + 128 },
     theirPlate: (index, count) => ({ left: fieldLeft + column(index, count), top: count === 1 ? 24 : 16 }),
     theirPiles: { left: 290, top: 52 },
     hiddenHandX: (index, count) => (count === 1 ? width - 330 : fieldLeft + column(index + 1, count) - 120),
-    stackPoint: { x: TALL_MARGIN + 95, y: seam - 180 },
+    stackPoint: { x: width - 138, y: seam - 48 },
     handRaise,
     handClearRight: 0,
     handCard: HAND_CARD_WIDTH,

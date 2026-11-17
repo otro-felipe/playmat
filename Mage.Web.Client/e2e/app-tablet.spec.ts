@@ -1,14 +1,14 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { keepOpeningHand, playerName, requireServer, signIn, startAiGame } from './helpers/app';
+import { decisionCluster, keepOpeningHand, playerName, requireServer, signIn, startAiGame } from './helpers/app';
 
 /**
- * The match on a tablet held upright, played by touch: the tall layout, a long press that opens a card's detail
- * instead of playing it, a tap that plays, and the stops menu behind the turn ladder. Needs the local server
+ * The match on a phone held upright, played by touch: the tall layout, a long press that opens a card's detail
+ * instead of playing it, a tap that plays, and an independent stop on the phase strip. Needs the local server
  * (MAGE_E2E_REQUIRE_SERVER=1).
  */
-test.describe('app: the match on a tablet, by touch', () => {
+test.describe('app: the match on a phone, by touch', () => {
   test.skip(!requireServer, 'needs the local server (MAGE_E2E_REQUIRE_SERVER=1)');
-  test.use({ viewport: { width: 768, height: 1024 }, hasTouch: true, isMobile: true });
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 
   /** Holds a finger on the element for a while, through the DevTools protocol (Playwright only taps). */
   async function longPress(page: Page, target: Locator, ms = 700) {
@@ -22,7 +22,7 @@ test.describe('app: the match on a tablet, by touch', () => {
     await cdp.detach();
   }
 
-  test('long press reads a card, tap plays it, the ladder opens the stops', async ({ page }) => {
+  test('[PM-AC-03] card inspection, play and phase stops fit on a phone', async ({ page }) => {
     test.setTimeout(180_000);
     await signIn(page, playerName('tablet'));
     await startAiGame(page);
@@ -47,10 +47,24 @@ test.describe('app: the match on a tablet, by touch', () => {
     await playable.first().tap();
     await expect(hand.getByRole('listitem')).toHaveCount(count - 1, { timeout: 20_000 });
 
-    // the whole ladder is one target on touch; the stops open as full-size rows
-    await page.getByRole('button', { name: /^Stops on your turn$/ }).tap();
-    await expect(page.getByRole('menuitemcheckbox', { name: /^Upkeep/ })).toBeVisible();
-    const box = await page.getByRole('menuitemcheckbox').first().boundingBox();
+    const corner = decisionCluster(page);
+    const phases = corner.getByRole('navigation', { name: /^Turn \d+/ });
+    const combat = phases.getByRole('button', { name: 'Combat', exact: true });
+    await expect(combat).toBeVisible();
+    const box = await combat.boundingBox();
+    expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
     expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+    await combat.tap();
+    await expect(combat).toHaveAttribute('aria-pressed', 'true');
+
+    // A space typed into chat must not answer the current priority prompt.
+    await page.getByRole('button', { name: 'Open log and chat' }).tap();
+    const chat = page.getByRole('textbox', { name: 'Chat message' });
+    const step = await phases.locator('[aria-current="step"]').first().getAttribute('aria-label');
+    await chat.fill('Testing');
+    await chat.press('Space');
+    await chat.press('a');
+    await expect(chat).toHaveValue('Testing a');
+    await expect(phases.locator('[aria-current="step"]').first()).toHaveAttribute('aria-label', step!);
   });
 });

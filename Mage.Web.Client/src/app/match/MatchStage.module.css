@@ -3,6 +3,19 @@
   display: contents;
 }
 
+.viewPhases {
+  position: absolute;
+  right: 40px;
+  bottom: 120px;
+  width: max(420px, calc(5 * var(--touch-target, 0px) + 40px));
+  z-index: var(--z-ladder);
+}
+
+:global([data-layout='tall']) .viewPhases {
+  right: 24px;
+  bottom: calc(210px + var(--hand-raise, 0px));
+}
+
 /* two mats meet at a stitched seam across the middle of the table */
 .mat {
   position: absolute;
@@ -178,11 +191,14 @@
   row-gap: 10px;
 }
 
-/* tall: they stand in a row in the band beside the seat */
-:global([data-layout='tall']) .myPiles > *,
+/* The opponent's zones stand beside their seat. Your zones stay to the left of the turn controls. */
 :global([data-layout='tall']) .theirPiles > * {
   flex-wrap: nowrap;
   width: auto;
+}
+
+:global([data-layout='tall']) .myPiles > * {
+  width: max(240px, calc(2 * var(--touch-target, 0px) + 16px));
 }
 
 .hiddenHand {

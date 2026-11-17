@@ -292,7 +292,12 @@
 
 /* touch: a tablet shows the stage small; the log's text and drawer grow with the scale (--touch-target is 44px in stage pixels) */
 :global([data-touch]) .drawer {
-  width: max(440px, calc(var(--touch-target, 0px) * 7.5));
+  width: min(calc(100% - 48px), max(440px, calc(var(--touch-target, 0px) * 7.5)));
+}
+
+:global([data-touch]) .toggle > button {
+  width: var(--touch-target);
+  height: var(--touch-target);
 }
 
 :global([data-touch]) .lines {

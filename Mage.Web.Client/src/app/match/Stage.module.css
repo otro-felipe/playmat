@@ -1,6 +1,7 @@
 .frame {
   position: fixed;
-  inset: 0;
+  inset: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+    env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
   /* clip, not hidden: a focused card near the edge must never scroll the table */
   overflow: clip;
   background:
