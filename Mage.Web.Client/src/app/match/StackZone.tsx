@@ -1,5 +1,6 @@
 import { useMemo, useRef } from 'react';
-import type { CardView } from '../../protocol/generated/views';
+import type { CardView, GameView } from '../../protocol/generated/views';
+import { publicCardName, publicTargetLabels } from '../../core/game/publicTargets';
 import { isStackAbility } from '../../core/game/cards';
 import { stackSourceId } from '../../core/game/promptSource';
 import { AbilityCard } from '../ui/AbilityCard';
@@ -7,11 +8,14 @@ import { CardFace } from '../ui/CardFace';
 import { zoneKeys } from './boardModel';
 import { useFlip } from './flip';
 import { useMatchUi } from './matchUi';
+import { seatDisplayName, type SeatDisplayNames } from './seatDisplayNames';
 import styles from './StackZone.module.css';
 
 export interface StackZoneProps {
   /** top of the stack first */
   items: CardView[];
+  view?: GameView | null;
+  seatDisplayNames?: SeatDisplayNames;
   clickable: ReadonlySet<string>;
   selected: ReadonlySet<string>;
   sleeveOf(card: CardView): string;
@@ -21,13 +25,24 @@ export interface StackZoneProps {
 }
 
 /** Spells and abilities waiting to resolve, stacked at the right of the table; the top one resolves first. */
-export function StackZone({ items, clickable, selected, sleeveOf, onClick, originOf }: StackZoneProps) {
+export function StackZone({ items, view = null, seatDisplayNames, clickable, selected, sleeveOf, onClick, originOf }: StackZoneProps) {
   // a spell keeps its card's identity (abilities have no card of their own): it is the card that left the hand
   const keys = useMemo(() => zoneKeys(items.map((item) => (isStackAbility(item) ? { id: item.id } : item))), [items]);
+  const targets = useMemo(() => items.map((item) => publicTargetLabels(item, view).map((label) => seatDisplayName(label, seatDisplayNames))), [items, view, seatDisplayNames]);
   if (items.length === 0) return null;
   return (
     <section className={styles.zone} aria-label={`Stack, ${items.length} ${items.length === 1 ? 'object' : 'objects'}`}>
       <h2 className={styles.label}>Stack</h2>
+      {targets.some((labels) => labels.length > 0) && (
+        <ol className={styles.targetPanel} aria-label="Stack targets">
+          {items.map((item, index) => targets[index].length > 0 && (
+            <li key={keys[index]}>
+              <strong>{publicCardName(item)}</strong>
+              <span>Targets: {targets[index].join(' · ')}</span>
+            </li>
+          ))}
+        </ol>
+      )}
       <ol className={styles.list}>
         {items.map((item, index) => (
           <StackItem
@@ -40,6 +55,7 @@ export function StackZone({ items, clickable, selected, sleeveOf, onClick, origi
             sleeve={sleeveOf(item)}
             onClick={onClick}
             origin={originOf(item)}
+            targets={targets[index]}
           />
         ))}
       </ol>
@@ -47,7 +63,7 @@ export function StackZone({ items, clickable, selected, sleeveOf, onClick, origi
   );
 }
 
-function StackItem({ item, index, total, clickable, selected, sleeve, onClick, origin }: {
+function StackItem({ item, index, total, clickable, selected, sleeve, onClick, origin, targets }: {
   item: CardView;
   index: number;
   total: number;
@@ -56,6 +72,7 @@ function StackItem({ item, index, total, clickable, selected, sleeve, onClick, o
   sleeve: string;
   onClick(id: string): void;
   origin: string | undefined;
+  targets: string[];
 }) {
   const ref = useRef<HTMLLIElement>(null);
   const setZoom = useMatchUi((state) => state.setZoom);
@@ -80,7 +97,7 @@ function StackItem({ item, index, total, clickable, selected, sleeve, onClick, o
       }}
       onClick={() => clickable && onClick(item.id!)}
       data-object-id={item.id}
-      aria-label={`${ability ? 'Ability of ' : ''}${face.name}${index === 0 ? ', resolves next' : ''}`}
+      aria-label={`${ability ? 'Ability of ' : ''}${face.name}${index === 0 ? ', resolves next' : ''}${targets.length ? `, targets: ${targets.join(', ')}` : ''}`}
     >
       {ability ? <AbilityCard ability={item} sleeve={sleeve} /> : <CardFace card={face} sleeve={sleeve} size="normal" />}
       {index === 0 && <span className={styles.next}>Resolving next</span>}

@@ -1,0 +1,25 @@
+.receipt {
+  position: absolute;
+  left: 260px;
+  top: calc(var(--seam, 540px) - 100px);
+  z-index: var(--z-rail);
+  display: grid;
+  gap: 5px;
+  width: 290px;
+  padding: 12px 16px;
+  border: 1px solid var(--ink-dim);
+  border-radius: 10px;
+  background: var(--mat-900);
+  color: var(--ink);
+  font: 500 max(22px, calc(var(--touch-target, 44px) * 0.32))/1.25 var(--font-print);
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+
+.receipt small { color: var(--ink-dim); font-size: max(18px, calc(var(--touch-target, 44px) * 0.28)); }
+
+:global([data-layout='tall']) .receipt {
+  left: 34px;
+  top: calc(var(--seam) - 150px);
+  width: 300px;
+}

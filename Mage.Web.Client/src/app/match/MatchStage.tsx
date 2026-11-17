@@ -60,6 +60,7 @@ import { useOpponentVoice } from './useOpponentVoice';
 import { useRevealedHands } from './useRevealedHands';
 import { setCardMotion, useFlipOrigin } from './flip';
 import { GameLog } from './GameLog';
+import { RecentActions } from './RecentActions';
 import { seatDisplayName, type SeatDisplayNames } from './seatDisplayNames';
 import { useMatchZoomKeys } from './matchZoomKeys';
 import { Hand } from './Hand';
@@ -703,7 +704,8 @@ export function MatchStage({ session, state, replayLog, onLeave, seatDisplayName
             )}
 
             <Reveals groups={reveals} myPlayerId={myId} opponentIds={opponentIds} autoDismiss={autoDismissReveals} />
-            <StackZone items={stack} clickable={clickable} selected={interaction.selected} sleeveOf={sleeveOf} onClick={onClick} originOf={originOf} />
+            <StackZone items={stack} view={view} seatDisplayNames={seatDisplayNames} clickable={clickable} selected={interaction.selected} sleeveOf={sleeveOf} onClick={onClick} originOf={originOf} />
+            {mode !== 'replay' && <RecentActions key={`actions:${state.gameId}`} session={session} seatDisplayNames={seatDisplayNames} />}
             {board.me && seatHand && (
               <Hand
                 cards={seatHand.cards}
