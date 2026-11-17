@@ -97,8 +97,9 @@ docker compose -f ops/web/docker-compose.yml --env-file ops/web/.env up -d</code
         <p>Private Java PvP and MCP matches can use optional durable recovery when the service enables
           <code>PLAYMAT_PVP_RECOVERY=on</code> before the match starts. Both reserved participants agree to the last
           confirmed boundary at their stable <code>/recover/</code> link. Recovery is off by default and requires the
-          same engine image and private data volume, with one service replica. Arrange private, consistent SQLite backups
-          before enabling recovery; the existing backup script does not include its new database. Keep snapshots out of
+          same engine image and private data volume, with one service replica. The all-in-one image makes private, consistent
+          SQLite recovery backups on that volume every fifteen minutes and retains four completed copies. Monitor their
+          private status and free disk space; these copies do not protect against volume loss. Keep snapshots out of
           replay storage and public exports. Let unprotected matches finish before maintenance.
           Match history and replay archives preserve review material; they do not reconstruct a running game.
           See <a href="updates.html#active-matches">active matches during updates</a>.</p>

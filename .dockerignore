@@ -2,6 +2,8 @@
 rust/target
 .git
 .local
+**/__pycache__
+**/*.pyc
 */target
 Mage.Plugins/*/target
 Mage.Server.Plugins/*/target

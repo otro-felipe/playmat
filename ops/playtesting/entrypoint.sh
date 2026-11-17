@@ -24,6 +24,9 @@ trap stop_children TERM INT EXIT
 
 node /opt/playtesting/product/main.mjs & children+=("$!")
 unset PLAYMAT_PROVISION_ONCE DATABASE_URL AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+if [[ "${PLAYMAT_PVP_RECOVERY:-}" == on ]]; then
+    python3 /opt/playtesting/recovery-backup.py daemon & children+=("$!")
+fi
 /usr/local/bin/xmage-server & children+=("$!")
 node /opt/playtesting/mcp/src/main.mjs & children+=("$!")
 caddy run --config /etc/caddy/Caddyfile --adapter caddyfile & children+=("$!")

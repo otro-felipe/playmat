@@ -1,0 +1,32 @@
+name: Private recovery image acceptance
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - ops/playtesting/recovery-backup.py
+      - ops/playtesting/entrypoint.sh
+      - ops/playtesting/test/**
+      - .github/workflows/recovery-acceptance.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: private-recovery-image-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  image-backup-restore:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Build image and verify isolated backup, restore and match recovery
+        env:
+          PLAYMAT_RECOVERY_IMAGE_TEST: 'yes'
+        run: bash ops/playtesting/test/verify-recovery-image.sh

@@ -14,7 +14,7 @@ Open http://127.0.0.1:8794. Provision users with the command below. The local st
 
 Private Java PvP/MCP matches started with `PLAYMAT_PVP_RECOVERY=on` can return through their stable `/recover/<match-id>` link after restarting the same engine image with its private durable volume. Both actual participants must agree to the last confirmed boundary before play resumes. The feature is off by default and cannot protect matches already running without checkpoints. Let those matches finish before updating or restarting a server.
 
-Read the [private recovery guide](../../docs/recovery/pvp-recovery.md) before enabling it: exact engine compatibility, two-seat identity, claims, clock policy, sideboarding, backup and single-replica requirements are explicit there. The older `PLAYMAT_PVP_CHECKPOINTS=capture` flag remains capture-only and does not enable reconnect recovery. An interrupted replay is never used as an engine replay journal.
+Read the [private recovery guide](../../docs/recovery/pvp-recovery.md) before enabling it: exact engine compatibility, two-seat identity, claims, clock policy, sideboarding, backup and single-replica requirements are explicit there. The all-in-one image also starts consistent owner-only recovery backups on the existing volume (four copies, fifteen-minute interval); read the private status and restore procedure in that guide. The older `PLAYMAT_PVP_CHECKPOINTS=capture` flag remains capture-only and does not enable reconnect recovery. An interrupted replay is never used as an engine replay journal.
 
 ## Railway
 

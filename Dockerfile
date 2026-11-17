@@ -41,7 +41,7 @@ RUN npm run build && npm prune --omit=dev
 FROM caddy:2.11-alpine AS caddy
 FROM eclipse-temurin:17-jre
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates xmlstarlet \
+    && apt-get install -y --no-install-recommends ca-certificates xmlstarlet python3 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --home /opt/xmage xmage
 WORKDIR /opt/xmage
@@ -54,6 +54,7 @@ COPY Mage.Server/src/main/resources/career /opt/xmage/career-content
 COPY ops/web/server-entrypoint.sh /usr/local/bin/xmage-server
 COPY ops/web/log4j-docker.properties /opt/xmage/config/log4j-docker.properties
 COPY ops/playtesting/entrypoint.sh /usr/local/bin/playtesting
+COPY ops/playtesting/recovery-backup.py /opt/playtesting/recovery-backup.py
 COPY ops/playtesting/Caddyfile /etc/caddy/Caddyfile
 ARG PLAYMAT_COMMIT
 RUN chmod +x /usr/local/bin/playtesting /usr/local/bin/xmage-server \
