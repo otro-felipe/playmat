@@ -94,6 +94,9 @@ docker compose -f ops/web/docker-compose.yml --env-file ops/web/.env up -d</code
           <code>logs/heap-oom.hprof</code> in the logs volume. <code>XMAGE_MEMORY</code> sets the memory size.</p>
 
         <h2 id="mcp-oauth">MCP clients in the private playtesting service</h2>
+        <p>Active PvP and MCP games cannot yet resume after the engine restarts. Let them finish before maintenance.
+          Match history and replay archives preserve review material; they do not restore a running game.
+          See <a href="updates.html#active-matches">active matches during updates</a>.</p>
         <p>The private playtesting service accepts compatible public OAuth clients from any vendor. Add the server's
           <code>/mcp</code> URL in your client, sign in with your Playmat account and approve the displayed client,
           destination and permissions. Disconnect clients at <code>/oauth/connections</code>.</p>

@@ -775,6 +775,8 @@ public class TableController {
             }
             // a solo game against the AI saves itself at every turn, and may carry on from a save
             mage.server.solo.SoloGames.get().prepareGame(this, gameOptions);
+            // Opt-in private PvP checkpoint capture only; no recovery endpoint is enabled by this pilot.
+            mage.server.recovery.PvpCheckpoints.prepareGame(this, gameOptions);
             // the Rust AI plays the AI's seat, when the game qualifies (docs/rust/Ai.md)
             if (RustAi.enabled()) {
                 Map<UUID, String> humans = new HashMap<>();
@@ -930,6 +932,7 @@ public class TableController {
         ThreadUtils.setGameThreadStatus(game.getId(), ThreadUtils.THREAD_GAME_STATUS_AFTER_GAME);
         UUID choosingPlayerId = match.getChooser();
         match.endGame();
+        mage.server.recovery.PvpCheckpoints.gameEnded(match, game);
         if (managerFactory.configSettings().isSaveGameActivated() && !game.isSimulation()) {
             if (managerFactory.gameManager().saveGame(game.getId())) {
                 match.setReplayAvailable(true);

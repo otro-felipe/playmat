@@ -54,6 +54,11 @@
           backups and settings.</p>
 
         <h2 id="check">Is there a new version?</h2>
+        <p id="active-matches"><strong>Finish active PvP and MCP matches before restarting or updating the engine.</strong>
+          These matches cannot currently resume after a restart. A saved replay or an interrupted entry in match history
+          does not restore a running game. The experimental private checkpoint capture pilot is off by default and
+          does not enable player recovery; see the
+          <a href="https://github.com/arcanite24/playmat/blob/master/docs/recovery/pvp-checkpoints.md">capture scope and recovery requirements</a>.</p>
         <p><strong>Admin → Updates</strong> (admins and the owner) shows the version the server runs and whether a newer
           one is out, with the list of changes. The Overview says so too. The server asks GitHub only when staff open
           the console, at most once an hour; <code>XMAGE_UPDATE_CHECK=off</code> in <code>.env</code> turns that off.</p>
