@@ -3,6 +3,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 const RESPONSE_TIMEOUT_MS = 18_000;
 const SEQUENCE_TIMEOUT_MS = 60_000;
+const MAX_SEQUENCE_WALL_MS = 15 * 60_000;
 const MAX_OUTCOMES = 256;
 
 export class ToolError extends Error {
@@ -43,7 +44,8 @@ export function waitFor(engine, condition, timeoutMs, signal) {
 export function reaches(state, target) {
   return (target.phase === undefined || state.phase === target.phase)
     && (target.step === undefined || state.step === target.step)
-    && (target.priority === undefined || state.priority === target.priority);
+    && (target.priority === undefined || state.priority === target.priority)
+    && (target.stackEmpty !== true || state.stack.length === 0);
 }
 
 function visibleDecision(state) {
@@ -78,8 +80,10 @@ export class GameSeat {
   #inFlight = false;
   #uncertain = null;
 
-  constructor(engine) {
+  constructor(engine, { sequenceTimeoutMs = SEQUENCE_TIMEOUT_MS, maxSequenceWallMs = MAX_SEQUENCE_WALL_MS } = {}) {
     this.engine = engine;
+    this.sequenceTimeoutMs = sequenceTimeoutMs;
+    this.maxSequenceWallMs = maxSequenceWallMs;
   }
 
   snapshot(gameId) { return gameState(this.engine, gameId); }
@@ -136,7 +140,7 @@ export class GameSeat {
     return outcome;
   }
 
-  startSequence({ gameId, cursor, steps }, authorize) {
+  startSequence({ gameId, cursor, steps }, authorize, responsePolicy = 'interrupt') {
     const initial = this.snapshot(gameId);
     if (initial.cursor !== cursor || initial.status !== 'active') throw new ToolError('stale_decision', 'Plan from the latest game state.');
     if (this.#current || this.#inFlight) throw new ToolError('sequence_running', 'Finish or cancel the current decision or sequence first.');
@@ -147,7 +151,7 @@ export class GameSeat {
     this.#current = sequence;
     this.#sequences.set(sequence.id, sequence);
     if (this.#sequences.size > 40) this.#sequences.delete(this.#sequences.keys().next().value);
-    void this.#runSequence(sequence, initial, steps, authorize);
+    void this.#runSequence(sequence, initial, steps, authorize, responsePolicy);
     return this.sequenceStatus({ gameId, sequenceId: sequence.id });
   }
 
@@ -169,15 +173,69 @@ export class GameSeat {
     this.#current?.controller.abort(new ToolError(reason, 'The active game changed.'));
   }
 
-  async #runSequence(sequence, initial, steps, authorize) {
+  async #runSequence(sequence, initial, steps, authorize, responsePolicy) {
     const { signal } = sequence.controller;
-    const deadline = Date.now() + SEQUENCE_TIMEOUT_MS;
+    const wallDeadline = Date.now() + this.maxSequenceWallMs;
+    let deadline = Date.now() + this.sequenceTimeoutMs;
+    let suspendedAt = null;
+    const opponentWaiting = (state) => state.priority === 'opponent' && !visibleDecision(state);
+    const accountTime = (state) => {
+      const now = Date.now();
+      if (suspendedAt !== null) deadline = Math.min(wallDeadline, deadline + now - suspendedAt);
+      suspendedAt = opponentWaiting(state) ? now : null;
+      sequence.waitingFor = suspendedAt !== null ? 'opponent' : null;
+    };
+    accountTime(initial);
+    const opponentState = (state) => {
+      const opponents = (state.players ?? []).filter((player) => !player.yourSeat);
+      const opponentIds = new Set(opponents.map((player) => player.id));
+      const opponentObjects = new Set(opponents.flatMap((player) => player.battlefield ?? []).map((card) => card.id));
+      const ownObjects = new Set((state.players ?? []).filter((player) => player.yourSeat)
+        .flatMap((player) => player.battlefield ?? []).map((card) => card.id));
+      // Face-down projections omit controllerId. Their public battlefield object
+      // IDs still establish ownership; unknown combat objects stop conservatively.
+      const opposingCombatCard = (card) => opponentIds.has(card.controllerId) || opponentObjects.has(card.id)
+        || (!card.controllerId && !ownObjects.has(card.id));
+      return JSON.stringify({
+        players: opponents.map(({ id, life, handCount, libraryCount, battlefield, graveyard, exile }) =>
+          ({ id, life, handCount, libraryCount, battlefield, graveyard, exile })),
+        combat: (state.combat ?? []).flatMap((group, index) => {
+          const attackers = (group.attackers ?? []).filter(opposingCombatCard);
+          const blockers = (group.blockers ?? []).filter(opposingCombatCard);
+          return attackers.length || blockers.length
+            ? [{ index, attackerIds: (group.attackers ?? []).map((card) => card.id), attackers, blockers }] : [];
+        }),
+      });
+    };
+    const expectedOpponentState = opponentState(initial);
     const turn = initial.turn;
     let previousDecisionId = null;
     let passCount = 0;
+    let expectedStackCards = initial.stack;
     let expectedStack = stackIdentity(initial.stack);
+    const plannedStackIds = new Set();
+    const initiallyKnownCards = new Set([
+      ...(initial.ownHand ?? []), ...initial.stack,
+      ...(initial.players ?? []).flatMap((player) => [
+        ...(player.battlefield ?? []), ...(player.exile ?? []), ...(player.graveyard ?? []),
+      ]),
+    ].map((card) => card.cardId ?? card.id));
+    let allowPlannedResolutions = false;
     let pendingCast = null;
     const checkStack = (state) => {
+      if (responsePolicy === 'ignore') return;
+      // Without actor-tagged engine events, conservatively hand control back for
+      // any public opponent-state mutation, even one caused by our own effect.
+      if (opponentState(state) !== expectedOpponentState) {
+        throw new ToolError('opponent_state_changed', 'Public opponent state changed; inspect before continuing.');
+      }
+      if (allowPlannedResolutions) {
+        const own = state.players?.find((player) => player.yourSeat);
+        if ([...(state.ownHand ?? []), ...(own?.exile ?? [])].some((card) =>
+          !initiallyKnownCards.has(card.cardId ?? card.id))) {
+          throw new ToolError('new_information', 'A new hand or exile card needs a fresh plan.');
+        }
+      }
       const currentStack = stackIdentity(state.stack);
       if (currentStack === expectedStack) return;
       if (pendingCast) {
@@ -186,13 +244,29 @@ export class GameSeat {
           && card.name === pendingCast.name && card.id !== card.cardId);
         if (item && stackIdentity(state.stack.filter((card) => card !== item)) === expectedStack) {
           expectedStack = currentStack;
+          expectedStackCards = state.stack;
+          plannedStackIds.add(item.id);
           pendingCast = null;
+          return;
+        }
+      }
+      if (allowPlannedResolutions) {
+        const remaining = new Set(state.stack.map((card) => card.id));
+        const removed = expectedStackCards.filter((card) => !remaining.has(card.id));
+        // Only removal of this sequence's exact spells is expected. New spells,
+        // abilities/triggers, controller changes and reordered stacks interrupt.
+        if (removed.length && removed.every((card) => plannedStackIds.has(card.id))
+          && stackIdentity(expectedStackCards.filter((card) => remaining.has(card.id))) === currentStack) {
+          expectedStack = currentStack;
+          expectedStackCards = state.stack;
+          for (const card of removed) plannedStackIds.delete(card.id);
           return;
         }
       }
       throw new ToolError('state_changed', 'The stack changed outside the sequence.');
     };
     const checkGame = (state) => {
+      accountTime(state);
       if (state.gameId !== sequence.gameId || state.status !== 'active' || state.epoch !== initial.epoch) {
         throw new ToolError('invalidated', 'The game state changed.');
       }
@@ -211,7 +285,10 @@ export class GameSeat {
     });
     const stateForStep = async () => {
       signal.throwIfAborted();
-      if (Date.now() >= deadline) throw new ToolError('timeout', 'The sequence ran out of time.');
+      accountTime(this.snapshot());
+      if (Date.now() >= wallDeadline || (!opponentWaiting(this.snapshot()) && Date.now() >= deadline)) {
+        throw new ToolError('timeout', 'The sequence ran out of active time or reached its maximum waiting lifetime.');
+      }
       if (!await authorize()) throw new ToolError('authorization_expired', 'The seat authorization expired.');
       signal.throwIfAborted();
       const state = this.snapshot();
@@ -224,9 +301,22 @@ export class GameSeat {
       if (decision && decision.id !== previousDecisionId) return state;
       return null;
     };
-    const waitForNext = () => waitFor(this.engine, observable, Math.max(1, deadline - Date.now()), signal);
+    const waitForState = async (condition) => {
+      for (;;) {
+        const state = await stateForStep();
+        const matched = condition(state);
+        if (matched) return matched;
+        const waiting = opponentWaiting(state);
+        const observed = await waitFor(this.engine, (updated) =>
+          condition(updated) || (opponentWaiting(updated) !== waiting ? updated : null),
+        Math.max(1, (waiting ? wallDeadline : Math.min(deadline, wallDeadline)) - Date.now()), signal);
+        if (!observed) return null;
+      }
+    };
+    const waitForNext = () => waitForState(observable);
     try {
       for (const step of steps) {
+        allowPlannedResolutions = step.allowPlannedResolutions === true;
         let state = await stateForStep();
         if (step.kind === 'hold') {
           if (!visibleDecision(state) || state.decision.id === previousDecisionId) throw new ToolError('not_actionable', 'A hold requires a current decision.');
@@ -269,13 +359,41 @@ export class GameSeat {
           }, sequence.id);
           sequence.appliedDecisions++;
           previousDecisionId = decision.id;
+        } else if (step.kind === 'yield_priority') {
+          // A yield is one deliberate pass, never an unbounded auto-pass policy.
+          while (!visibleDecision(state) || state.decision.id === previousDecisionId) {
+            if (!await waitForNext()) throw new ToolError('timeout', 'The priority decision did not arrive.');
+            state = await stateForStep();
+          }
+          const decision = state.decision;
+          const choice = decision.choices.find((item) => item.type === 'pass');
+          if (decision.kind !== 'priority' || state.priority !== 'self' || !choice || pendingCast || state.stop) {
+            throw new ToolError('response_available', 'Yield requires your ordinary priority decision.');
+          }
+          await this.submit({ gameId: sequence.gameId, cursor: state.cursor, decisionId: decision.id,
+            choiceId: choice.id, idempotencyKey: `${sequence.id}:yield:${sequence.completedSteps}` }, sequence.id);
+          sequence.appliedDecisions++;
+          previousDecisionId = decision.id;
+          const destination = step.until ?? 'self';
+          const observed = await waitForState((updated) => {
+            const next = visibleDecision(updated);
+            // Resolution prompts belong to this seat even when the priority
+            // display still names the opponent (or nobody). Never wait them out.
+            if (next && next.id !== decision.id && next.kind !== 'priority') return updated;
+            if (destination === 'opponent') return updated.priority === 'opponent' ? updated : null;
+            return updated.priority === 'self' && next && next.id !== decision.id ? updated : null;
+          });
+          if (!observed) throw new ToolError('timeout', 'Priority did not return before the sequence deadline.');
+          if (visibleDecision(observed) && observed.decision.id !== decision.id && observed.decision.kind !== 'priority') {
+            throw new ToolError('response_available', 'A mandatory prompt needs a fresh decision.');
+          }
+          await stateForStep();
         } else if (step.kind === 'pass_until') {
           for (;;) {
             state = await stateForStep();
             if (reaches(state, step)) break;
             if (!visibleDecision(state) || state.decision.id === previousDecisionId) {
-              const observed = await waitFor(this.engine, (updated) => reaches(updated, step) ? updated : observable(updated),
-                Math.max(1, deadline - Date.now()), signal);
+              const observed = await waitForState((updated) => reaches(updated, step) ? updated : observable(updated));
               if (!observed) throw new ToolError('timeout', 'The destination did not arrive.');
               continue;
             }

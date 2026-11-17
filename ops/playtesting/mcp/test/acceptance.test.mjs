@@ -222,3 +222,40 @@ test('[PM-AC-10] filters by format, color, mana value and keywords', async (t) =
   assert.ok(hints.provenance.source);
   assert.deepEqual(hints.cards.map((card) => card.name), ['Consider']);
 });
+
+
+test('MCP accepts explicit yield and empty-stack conditions with safe defaults', async (t) => {
+  const { url } = await start(t);
+  const client = await connect(t, url, 'fixture-player');
+  const first = await call(client, 'play_sequence', { gameId: TEST_GAME, cursor: 1,
+    steps: [{ kind: 'yield_priority', until: 'opponent' }] });
+  assert.equal(first.error, false);
+  let status;
+  for (let i = 0; i < 20; i++) {
+    status = (await call(client, 'get_sequence_status', { gameId: TEST_GAME, sequenceId: first.value.sequenceId })).value;
+    if (status.status !== 'running') break;
+    await sleep(5);
+  }
+  assert.equal(status.status, 'completed');
+  const second = await call(client, 'play_sequence', { gameId: TEST_GAME, cursor: status.cursor,
+    steps: [{ kind: 'pass_until', stackEmpty: true, allowPlannedResolutions: true }] });
+  assert.equal(second.error, false);
+});
+
+
+test('standalone pass_until is exposed separately from guarded play_sequence', async (t) => {
+  const { url, fixtures } = await start(t);
+  const client = await connect(t, url, 'fixture-player');
+  const reply = await call(client, 'pass_until', { gameId: TEST_GAME, cursor: 1, priority: 'opponent' });
+  assert.equal(reply.error, false);
+  for (let i = 0; i < 20; i++) {
+    const status = (await call(client, 'get_sequence_status', { gameId: TEST_GAME, sequenceId: reply.value.sequenceId })).value;
+    if (status.status !== 'running') {
+      assert.equal(status.status, 'completed');
+      assert.deepEqual(fixtures.get('Agent-A').played, ['pass']);
+      return;
+    }
+    await sleep(5);
+  }
+  assert.fail('Standalone pass did not finish');
+});

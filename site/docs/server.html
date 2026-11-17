@@ -153,6 +153,12 @@ docker compose -f ops/web/docker-compose.yml -f ops/web/docker-compose.proxy.yml
           at a turn boundary. Read the sequence status and fresh game state before planning again. On older servers,
           pass one visible decision at a time and inspect the next state. See the
           <a href="https://github.com/arcanite24/playmat/blob/master/ops/playtesting/mcp/guides/turn-planning.md">turn planning guide</a>.</p>
+        <p>The standalone <code>pass_until</code> tool deliberately declines optional plays through responses;
+          steps inside <code>play_sequence</code> remain guarded. <code>yield_priority</code> passes exactly once
+          and waits for a new decision. Plans can opt into resolving only their expected spells and waiting for an
+          empty stack. Opponent thinking time pauses the sixty-second execution budget, within a fifteen-minute
+          maximum lifetime. Plans expire on restart; these changes do not restore interrupted games. Refresh your
+          client's tool schema after updating the server.</p>
 
         <h2 id="faq">Questions</h2>
         <h3 id="image-cache">How big does the card picture cache get?</h3>

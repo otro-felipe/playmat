@@ -69,7 +69,7 @@ After paying, inspect the next priority and stack before passing or committing a
 
 Append these to the same `steps` only if you intend to pass after that spell's payment and no unplanned target, mode or additional-cost prompt is needed. The guarded `answer` waits for the next priority decision and passes exactly once; it does not keep skipping your other optional plays. The last step stops on opponent priority. If the spell resolves or the opponent changes the stack before that state is observed, the sequence interrupts instead; read the fresh state. It does not promise to run through a resolution and return to your next priority window.
 
-To advance to a known phase after completing your plays, use a `pass_until` with that exact destination and `skipOptionalResponses: false`. For example, your own first main phase → `BEGIN_COMBAT` can stop for a newly available play or a response. Do not use `priority: "self"` alone to mean “the next time I have priority”: if you already have it, the condition is already satisfied. There is no special “wait for the next occurrence” step.
+To advance to a known phase after completing your plays, use a `pass_until` with that exact destination and `skipOptionalResponses: false`. For example, your own first main phase → `BEGIN_COMBAT` can stop for a newly available play or a response. Do not use `priority: "self"` alone to mean “the next time I have priority”: if you already have it, the condition is already satisfied. Use `yield_priority` below when you mean an actual handoff, not an already-matching state.
 
 To pause before deciding, start a plan from a fresh current decision with `{"kind":"hold","delayMs":1000}` and then a guarded answer. Holds are bounded by ten seconds, the sequence timeout and your remaining clock; they do not stop the game clock. A hold immediately after another action requires a new decision to have arrived already, so do not rely on it to wait for the next prompt. Use brief pauses sparingly; they do not reveal whether the opponent has a response. Use `wait_for_decision` for observation while the other player decides.
 
@@ -80,3 +80,40 @@ Use `get_sequence_status` to learn where a background plan ended. A changed stac
 XMage can automatically select a sole legal target or omit a prompt. Do not assume every conceptual choice produces a separate decision. For example, a Reckless Rage line targeting the opponent and then your own creature may jump directly to `payMana` if your own target is unique. A mismatching target guard safely interrupts; read the fresh decision and plan only the remaining payment, never repeat the already accepted target.
 
 A live Heroes' Hangout line completed three decisions: cast from hand with `expectCast: true`, choose the exact mode with its own guard, then pay using Shivan Reef. The mode itself must not carry `expectCast`. Local regression tests also cover cast-from-exile and cast-from-graveyard followed by payment, while rejecting lands, non-priority modes and unrelated stack controllers.
+
+## Continue a conditional line, not an unconditional script
+
+A longer plan may include multiple cast → mode/target → payment → resolution segments and then advance toward the end step. Every answer still uses an exact visible choice or a guard and semantic selector. Do not invent future choice IDs. The same limits apply: twelve steps, sixty seconds of active execution, at most thirty automatic passes, and never beyond the observed turn. Split larger plans at meaningful decisions, not merely at every card click.
+
+### Yield once and regain control
+
+`{"kind":"yield_priority","until":"self","allowPlannedResolutions":true}` waits for your next ordinary priority prompt, submits **exactly one** deliberate pass, and waits for a different decision belonging to you. It never mistakes the old priority snapshot for a return, even if the engine acknowledges before publishing its update. A mandatory target/mode prompt returns control for replanning rather than being passed. `until: "opponent"` ends on the observed opponent handoff instead. If the handoff is too brief to observe, the plan may interrupt or time out; it does not submit another pass to manufacture it.
+
+This is an intentional yield, including when you could play something else. It is not the automatic “I have no action” policy. To bluff or probe, deliberately yield and inspect the resulting public state; a pass or delay does not establish what is in the opponent's hand. Use a brief `hold` before yielding only from a fresh decision and account for your clock.
+
+### Wait through only the resolutions you planned
+
+After the known cast and payment steps, this step can advance through ordinary pass-only windows until your stack is empty and you have priority:
+
+```json
+{"kind":"pass_until","stackEmpty":true,"priority":"self","allowPlannedResolutions":true}
+```
+
+`allowPlannedResolutions` defaults to false and applies only during that step. It permits removal of the exact stack objects previously introduced by this sequence's `expectCast` answers. It does not approve other spells, abilities, triggers, changed controllers or reordered stacks. An opponent response or any unexpected addition interrupts with `state_changed` before the next queued action. Drawn/newly visible cards in your hand or exile interrupt with `new_information`. A turn boundary still interrupts with `turn_changed`. This is a conservative no-response continuation, not a general branching language or a guarantee that every effect is predictable. A change in the opponent's public life/counts/battlefield/graveyard/exile or combat attackers/blockers also interrupts with `opponent_state_changed`, including a visible mana-source tap. Without actor-tagged engine events, the same conservative stop may happen when your own spell causes that change. It does not infer hidden actions or inspect an opponent's hand.
+
+After that step, add the next guarded play if it remains justified, or `{"kind":"pass_until","step":"END_TURN"}` after deliberately finishing your plays. If there is another available non-mana play, automatic passing stops with `response_available`: choose the play or explicitly decline it. Never guess “no action” from zero mana, empty hand or tapped lands; free spells, alternate costs and abilities may still be legal. The engine's current choices are the authority. Automatic passing skips only ordinary pass/mana-only windows by default, never mandatory choices or configured stops. `skipOptionalResponses: true` remains an explicit decision to decline all optional plays during that pass step, not a resource detector.
+
+Inspect `get_sequence_status` after each plan. On interruption, keep accepted steps, read the new decision and replan only the remainder; cancellation does not undo actions. These new fields require an updated server/client tool schema. If your connector still exposes only the older schema, use bounded supported steps rather than sending unsupported arguments or assuming the feature is deployed.
+
+### Explicit commitment versus guarded passing
+
+These are deliberately different operations:
+
+- The standalone **`pass_until` tool** means “I have decided not to make any optional play before this destination.” It continues through opponent responses and declines optional responses until the supplied phase/step/priority is observed. It still never chooses targets, modes, payments, attacks or other mandatory answers, and never crosses the current turn. A destination already matching completes without passing. It returns a sequence ID for monitoring/cancellation.
+- A **`pass_until` step inside `play_sequence` / `submit_sequence`** belongs to a conditional plan. Even if you set `skipOptionalResponses: true` to deliberately decline your optional actions, an opponent response or public opponent-state change interrupts and returns control before the next queued choice. The setting does not disable the plan's interruption guard.
+
+For example, a guarded line can pass to `DECLARE_ATTACKERS`, select the known attackers, confirm the attack, and pass to `POSTCOMBAT_MAIN`. A live four-step line completed six decisions and stopped in the same turn. Queue only attackers/choices justified by the current public position; on interruption, reassess combat rather than replaying it. The standalone pass tool, in contrast, is only for a real commitment to decline optional responses, not a substitute for such a conditional attack line.
+
+### Waiting for the opponent
+
+A running plan reports `waitingFor: "opponent"` while the opponent has priority and you have no visible decision. That interval does not consume the sixty-second active-execution budget. The plan resumes on engine events, without repeated passes or polling actions. A hard fifteen-minute wall lifetime, game/turn boundaries, authorization checks, explicit cancellation and disconnect/rewind invalidation still bound it. It is durable across a slow opponent's decision **within the current server process**, not across process restart/deployment. Continue using status/event notifications to learn when control returns. If a plan expires, inspect state and start a fresh plan rather than replaying accepted moves.

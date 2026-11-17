@@ -29,7 +29,7 @@ const guideList = guides.map(({ text, ...guide }) => guide);
 
 export const guideBootstrap = 'Before creating, joining or playing a match, load all four guides with get_guide: getting-started, turn-planning, card-catalog and rules (one call per guideId). Repeat after losing conversation context. Listing guides alone does not load their contents.';
 
-export const sequenceInstructions = 'pass_until actively passes; END_TURN is an end-step name, not a command to wait for your next turn. Sequences stop with turn_changed at a turn boundary. Read get_sequence_status and get_game_state before replanning. Keep skipOptionalResponses false to preserve land drops and other plays.';
+export const sequenceInstructions = 'The standalone pass_until tool intentionally declines optional plays through opponent responses; a pass_until step inside play_sequence is guarded and interrupts on unexpected responses/public opponent changes. pass_until actively passes; END_TURN is an end-step name, not a command to wait for your next turn. Sequences stop with turn_changed at a turn boundary. Read get_sequence_status and get_game_state before replanning. Keep skipOptionalResponses false to preserve land drops and other plays. yield_priority deliberately passes exactly once and waits for a new self decision or opponent handoff. allowPlannedResolutions is opt-in and only tolerates removal of this sequence’s expected spells; unexpected responses still interrupt.';
 
 export const guideInstructions = [
   guideBootstrap,

@@ -7,6 +7,8 @@ Worktree: `playmat-one-shot`, branch `feat/private-playtesting`.
 - `0af681cb`: cherry-pick of OAuth client registry `19f8176fba13d27de707beff3e9abceca413e5b5`.
 - The turn-planning guide also documents spell/payment batching, an explicit pass followed by opponent priority, bounded holds and their actual limitations.
 - The final cast-zone patch permits a currently legal visible spell from hand, exile or graveyard, including another player's public zone. It preserves the selected physical card, casting controller and stack checks. Eight new regressions cover supported zones and rejected non-cast expectations.
+- Follow-up `e1145119` preserves legal selection across every public battlefield, with six regressions covering opposing targets, duplicate names, exact card IDs, illegal objects and hand isolation.
+- Conditional-line integration adds deliberate standalone passing, `yield_priority`, opt-in expected-spell resolutions, empty-stack conditions and conservative public-opponent interruption guards. Opponent waits pause the active budget within a fifteen-minute wall limit. Restart persistence and PvP game recovery are not included.
 
 ## Local verification
 
@@ -15,7 +17,8 @@ All project commands ran in Docker on the personal MacBook Pro. No production cr
 | Check | Result |
 | --- | --- |
 | Product suite with disposable PostgreSQL 17, official MCP SDK and Chromium enabled | 35 passed, 0 skipped |
-| MCP build and full fixture suite after final cast-zone integration | 33 passed, 2 live tests skipped |
+| MCP build and full fixture suite after conditional lines and selector integration | 62 passed, 2 live tests skipped |
+| Independent two-spell regression | Passed: exact mana-source selection, separate source taps, both expected resolutions, final end step in the same turn |
 | Frontend build with private-playtesting flags | Passed; existing large-chunk warning |
 | Modal, invitation bootstrap and deck-sync component/store regressions | 7 passed |
 | Chromium rollback UI fixture | 2 passed: Escape, outside mouse/touch, focus, both votes and queued requests |

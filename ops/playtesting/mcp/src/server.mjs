@@ -33,11 +33,17 @@ const Answer = z.object({
   .refine(({ choiceId, select }) => !!choiceId !== !!select, 'Use one exact choice ID or one semantic selector.')
   .refine((value) => value.decisionId || (value.guard && hasDestination(value.guard)),
   'A planned answer needs the exact decision ID or a guard with its expected kind and destination.');
+const YieldPriority = z.object({
+  kind: z.literal('yield_priority'), until: z.enum(['self', 'opponent']).default('self').describe('Pass exactly once, then wait for a new self decision or the observed opponent handoff.'),
+  allowPlannedResolutions: z.boolean().default(false).describe('Allow only removal of this plan’s expected spell objects; unexpected responses and public opponent changes still interrupt.'),
+}).strict();
 const PassUntil = z.object({
   kind: z.literal('pass_until').describe(sequenceInstructions), ...GameCondition,
+  stackEmpty: z.literal(true).optional().describe('Require an empty stack in addition to other destination conditions.'),
+  allowPlannedResolutions: z.boolean().default(false).describe('Allow only removal of this plan’s expected spell objects; unexpected responses and public opponent changes still interrupt.'),
   skipOptionalResponses: z.boolean().default(false).describe('Keep false unless intentionally declining every optional play, including land drops. Never use this to wait for your next turn.'),
-}).strict().refine(hasDestination, 'A pass needs a phase, step or priority destination.');
-const Sequence = { gameId: Uuid, cursor: Cursor, steps: z.array(z.union([Hold, Answer, PassUntil])).min(1).max(12) };
+}).strict().refine((value) => hasDestination(value) || value.stackEmpty === true, 'A pass needs a phase, step, priority or empty-stack destination.');
+const Sequence = { gameId: Uuid, cursor: Cursor, steps: z.array(z.union([Hold, Answer, PassUntil, YieldPriority])).min(1).max(12) };
 const Catalog = {
   format: Format.optional(), query: z.string().trim().min(1).max(160).optional(),
   colors: z.array(z.enum(['W', 'U', 'B', 'R', 'G', 'C'])).min(1).max(6).optional(),
@@ -72,7 +78,7 @@ function readToken(req) {
 
 function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedOrigins }) {
   function tool(name, description, inputSchema, scope, run, readOnlyHint = false) {
-    if (['create_game', 'join_game', 'start_match', 'get_game_state', 'submit_decision', 'play_sequence', 'submit_sequence'].includes(name)) {
+    if (['create_game', 'join_game', 'start_match', 'get_game_state', 'submit_decision', 'pass_until', 'play_sequence', 'submit_sequence'].includes(name)) {
       description += ` ${guideBootstrap}`;
     }
     if (['play_sequence', 'submit_sequence'].includes(name)) description += ` ${sequenceInstructions}`;
@@ -113,6 +119,15 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
   tool('submit_decision', 'Apply one visible choice for the current decision once. Use a new idempotency key for a different decision.', {
     gameId: Uuid, cursor: Cursor.optional(), decisionId: StringId, choiceId: StringId, idempotencyKey: StringId, value: Value.optional(),
   }, 'play', (args) => getSeat().submit(args));
+  tool('pass_until', 'Intentionally decline all optional plays until a destination in the observed turn. Continues through opponent responses, but never answers mandatory prompts or crosses turns. Use play_sequence for a guarded line that returns control on a response.', {
+    gameId: Uuid, cursor: Cursor, ...GameCondition,
+  }, 'play', (args) => {
+    if (!hasDestination(args)) throw new ToolError('missing_destination', 'Choose a phase, step or priority destination.');
+    const { gameId, cursor, ...destination } = args;
+    return getSeat().startSequence({ gameId, cursor,
+      steps: [{ kind: 'pass_until', ...destination, skipOptionalResponses: true }],
+    }, reauthorize, 'ignore');
+  });
   const playSequence = (args) => getSeat().startSequence(args, reauthorize);
   tool('play_sequence', 'Queue guarded choices by exact ID, card or label. Mark a planned cast with expectCast to let later steps pay for that same spell.', Sequence, 'play', playSequence);
   tool('submit_sequence', 'Start a conditional, bounded sequence of choices, waits on your decision clock and ordinary passes.', Sequence, 'play', playSequence);
