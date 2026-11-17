@@ -61,6 +61,18 @@ function replayMetadata(raw, gameId) {
   }
 }
 
+function deckSignature(deck) {
+  if (!deck) return null
+  const entries = new Map()
+  for (const zone of ['cards', 'sideboard']) {
+    for (const card of deck[zone] ?? []) {
+      const key = JSON.stringify([zone, card.cardName ?? card.name ?? card, card.setCode ?? card.set ?? null, card.cardNumber ?? card.number ?? null])
+      entries.set(key, (entries.get(key) ?? 0) + (card.amount ?? card.quantity ?? 1))
+    }
+  }
+  return digest(JSON.stringify([...entries].sort(([left], [right]) => left.localeCompare(right))))
+}
+
 async function recordMetadata(pool, info, status) {
   await transaction(pool, async db => {
     await db.query(
@@ -74,8 +86,12 @@ async function recordMetadata(pool, info, status) {
     )
     for (const player of info.players) {
       await db.query(
-        'INSERT INTO game_players(game_id,engine_key,engine_name,human,deck_snapshot,mulligans) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(game_id,engine_key) DO UPDATE SET mulligans=COALESCE(EXCLUDED.mulligans,game_players.mulligans),deck_snapshot=COALESCE(game_players.deck_snapshot,EXCLUDED.deck_snapshot)',
-        [info.gameId, normalize(player.name), player.name, player.human, player.deck, player.mulligans],
+        `INSERT INTO game_players(game_id,engine_key,engine_name,human,deck_snapshot,mulligans,deck_signature)
+         VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(game_id,engine_key)
+         DO UPDATE SET mulligans=COALESCE(EXCLUDED.mulligans,game_players.mulligans),
+                       deck_snapshot=COALESCE(game_players.deck_snapshot,EXCLUDED.deck_snapshot),
+                       deck_signature=COALESCE(game_players.deck_signature,EXCLUDED.deck_signature)`,
+        [info.gameId, normalize(player.name), player.name, player.human, player.deck, player.mulligans, deckSignature(player.deck)],
       )
     }
   })
@@ -189,7 +205,7 @@ export function createArchive(pool, stage, backend) {
         if (markInterrupted) continue
         const interrupted = variant === '.interrupted'
         const eventPath = join(stage, id + '.ndjson.gz' + (interrupted ? '.part' : ''))
-        await recordMetadata(pool, info, interrupted ? 'interrupted' : 'completed')
+        await recordMetadata(pool, info, interrupted ? 'interrupted' : info.result || info.winner ? 'completed' : 'abandoned')
         const previous = (await pool.query('SELECT checksum FROM games WHERE id=$1', [id])).rows[0]
         if (previous?.checksum) {
           await removeStaging(join(stage, file), eventPath)
@@ -297,6 +313,31 @@ export function createArchive(pool, stage, backend) {
     return { info: gameView(game), total: events.length, start: from, events: events.slice(from, from + take) }
   }
 
+  async function statistics(actor, requestedFormat) {
+    const format = requestedFormat ? normalizeFormat(requestedFormat) : null
+    if (requestedFormat && !format) throw new ProductError(400, 'Unsupported format')
+    const { rows } = await pool.query(
+      `WITH eligible AS (
+         SELECT m.format, g.winner, g.start_player, g.turns, p.engine_key, p.mulligans,
+           p.deck_snapshot->>'name' AS deck_name, COALESCE(p.deck_signature, md5(p.deck_snapshot::text)) AS signature
+         FROM games g JOIN matches m ON m.id=g.match_id
+         JOIN LATERAL (
+           SELECT * FROM game_players seat WHERE seat.game_id=g.id AND seat.engine_key=ANY($1::text[])
+           ORDER BY array_position($1::text[],seat.engine_key) LIMIT 1
+         ) p ON TRUE
+         WHERE g.status='completed' AND m.status='completed' AND ($2::text IS NULL OR m.format=$2)
+       )
+       SELECT format, MAX(deck_name) AS "deckName", signature AS "deckVersion",
+         COUNT(*)::integer AS games, COUNT(*) FILTER (WHERE lower(winner)=engine_key)::integer AS wins,
+         COUNT(*) FILTER (WHERE lower(start_player)=engine_key)::integer AS "onPlay",
+         COUNT(*) FILTER (WHERE lower(start_player)<>engine_key)::integer AS "onDraw",
+         AVG(mulligans)::float AS "averageMulligans", AVG(turns)::float AS "averageTurns"
+       FROM eligible GROUP BY format, signature ORDER BY games DESC, format, signature LIMIT 100`,
+      [viewerNames(actor), format],
+    )
+    return { groups: rows }
+  }
+
   async function authorizeExport(actor, ids) {
     if (!Array.isArray(ids) || !ids.length || ids.length > maxEntries || ids.some(id => !isUuid(id))) {
       throw new ProductError(400, 'Select up to ' + maxEntries + ' valid replay game IDs')
@@ -330,5 +371,5 @@ export function createArchive(pool, stage, backend) {
     return zipSync(all, { level: 4 })
   }
 
-  return { archiveGames, matchList, replayPage, exportReplays, authorizeExport }
+  return { archiveGames, matchList, replayPage, exportReplays, authorizeExport, statistics }
 }

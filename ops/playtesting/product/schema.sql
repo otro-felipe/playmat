@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS game_players (
   mulligans integer,
   PRIMARY KEY (game_id, engine_key)
 );
+ALTER TABLE game_players ADD COLUMN IF NOT EXISTS deck_signature text;
 
 CREATE INDEX IF NOT EXISTS game_players_by_engine
   ON game_players(engine_key, game_id);

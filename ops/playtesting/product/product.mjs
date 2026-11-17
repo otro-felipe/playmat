@@ -288,6 +288,10 @@ export async function createProduct({
       requireScope(actor, 'history')
       return send(res, 200, await archive.matchList(actor, Object.fromEntries(url.searchParams)))
     }
+    if (endpoint === 'stats' && req.method === 'GET') {
+      requireScope(actor, 'history')
+      return send(res, 200, await archive.statistics(actor, url.searchParams.get('format')))
+    }
     if (endpoint.startsWith('matches/') && req.method === 'GET') {
       requireScope(actor, 'history')
       const id = endpoint.slice('matches/'.length)

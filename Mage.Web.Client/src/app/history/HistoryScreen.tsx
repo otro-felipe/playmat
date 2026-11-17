@@ -67,6 +67,18 @@ interface PracticeHistoryPage {
   cursor: string | null;
 }
 
+interface PracticeStat {
+  format: string;
+  deckName: string | null;
+  deckVersion: string | null;
+  games: number;
+  wins: number;
+  onPlay: number;
+  onDraw: number;
+  averageMulligans: number | null;
+  averageTurns: number | null;
+}
+
 const practiceStatus = { active: 'En curso', completed: 'Terminado', interrupted: 'Interrumpido' };
 
 function PrivateHistoryScreen() {
@@ -91,6 +103,16 @@ function PrivateHistoryScreen() {
     refetchInterval: 15_000,
   });
   const matches = (history.data?.pages ?? []).flatMap((page) => page.matches);
+  const stats = useQuery({
+    queryKey: ['playtesting-stats', account, format],
+    queryFn: async () => {
+      const response = await fetch('/api/playtesting/stats?' + new URLSearchParams({ format }));
+      if (!response.ok) throw new Error('No se pudieron cargar las estadísticas.');
+      return await response.json() as { groups: PracticeStat[] };
+    },
+    enabled: !!account,
+    refetchInterval: 15_000,
+  });
 
   async function exportSelected() {
     setExportState('downloading');
@@ -127,6 +149,28 @@ function PrivateHistoryScreen() {
         </div>
       </header>
       {exportState === 'error' && <p role="alert">No se pudo descargar la selección.</p>}
+      {!!stats.data?.groups.length && (
+        <Zone label="Resultados por mazo" className={styles.zone}>
+          <ul className={styles.list}>
+            {stats.data.groups.map((group) => (
+              <li className={styles.row} key={`${group.format}-${group.deckVersion}`}>
+                <div className={styles.main}>
+                  <p className={styles.name}>{group.deckName ?? 'Mazo sin nombre'} · {group.format}</p>
+                  <p className={styles.meta}>
+                    {[
+                      group.deckVersion ? `Versión ${group.deckVersion.slice(0, 6)}` : null,
+                      `${group.wins} de ${group.games} juegos ganados`,
+                      `Play ${group.onPlay} · Draw ${group.onDraw}`,
+                      group.averageMulligans !== null ? `Mulligans ${new Intl.NumberFormat('es', { maximumFractionDigits: 1 }).format(group.averageMulligans)}` : null,
+                      group.averageTurns !== null ? `Turnos ${new Intl.NumberFormat('es', { maximumFractionDigits: 1 }).format(group.averageTurns)}` : null,
+                    ].filter(Boolean).join(' · ')}
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </Zone>
+      )}
       <Zone label="Tus partidas" className={styles.zone}>
         {history.isPending && <p className={styles.empty}>Cargando…</p>}
         {history.isError && <p role="alert" className={styles.empty}>No se pudo abrir el historial.</p>}
