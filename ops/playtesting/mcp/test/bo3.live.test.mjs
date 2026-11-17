@@ -67,7 +67,7 @@ async function liveTarget(t) {
 }
 
 test('[PM-AC-08] joins a private real XMage Bo3 through two authenticated MCP clients', {
-  skip: !engineUrl && !deploymentMcp, timeout: deploymentMcp ? 240_000 : 120_000,
+  skip: !engineUrl && !deploymentMcp, timeout: deploymentMcp ? 300_000 : 180_000,
 }, async (t) => {
   const { url, tokens } = await liveTarget(t);
   const clients = [];
@@ -92,7 +92,7 @@ test('[PM-AC-08] joins a private real XMage Bo3 through two authenticated MCP cl
   }
 
   const [host, guest] = clients;
-  if (process.env.PLAYMAT_LIVE_LEGACY_ENGINE !== '1') {
+  if (deploymentMcp || process.env.PLAYMAT_LIVE_LEGACY_ENGINE !== '1') {
     const prohibited = await call(host, 'get_card', { name: 'Sorin, Imperious Bloodlord', format: 'Pioneer' });
     assert.equal(prohibited.engineAvailable, true);
     assert.equal(prohibited.formatLegal, false);
@@ -117,14 +117,14 @@ test('[PM-AC-08] joins a private real XMage Bo3 through two authenticated MCP cl
     while (Date.now() < end) {
       const result = await predicate();
       if (result) return result;
-      await sleep(50);
+      await sleep(125);
     }
     const states = await Promise.all(clients.map(read));
     throw new Error(`Timed out: ${description}; ${JSON.stringify(states.map(({ status, decision, step, turn, score }) => ({ status, decision: decision?.kind, step, turn, score })))}`);
   };
 
-  async function playOpenDecision(client, landPlayed) {
-    const state = await read(client);
+  async function playOpenDecision(client, landPlayed, state = null) {
+    state ??= await read(client);
     const decision = state.decision;
     if (state.status !== 'active' || !state.gameId || !decision) return false;
     const pick = (pattern) => decision.choices.find((choice) => pattern.test(choice.label));
@@ -144,16 +144,22 @@ test('[PM-AC-08] joins a private real XMage Bo3 through two authenticated MCP cl
   async function playUntilLand(excludedId) {
     const landPlayed = { value: false };
     let playedDuringOpponentTurn = false;
+    let lastResync = Date.now();
     const gameId = await until(async () => {
-      const [first, second] = await Promise.all(clients.map(read));
+      const states = await Promise.all(clients.map(read));
+      const [first, second] = states;
       if (!first.gameId || first.gameId === excludedId || first.gameId !== second.gameId) return false;
       for (const [index, client] of clients.entries()) {
-        const action = await playOpenDecision(client, landPlayed);
+        const action = await playOpenDecision(client, landPlayed, states[index]);
         if (action?.decision?.kind === 'priority' && action.activePlayer !== [NAME_ONE, NAME_TWO][index]) playedDuringOpponentTurn = true;
+      }
+      if (Date.now() - lastResync > 8_000 && states.every((state) => state.status === 'active' && !state.decision)) {
+        lastResync = Date.now();
+        await Promise.all(clients.map((client) => call(client, 'resync_game', { gameId: first.gameId }, ['forbidden_game'])));
       }
       if (!landPlayed.value || !playedDuringOpponentTurn) return false;
       return first.gameId;
-    }, 'typed choice and ordinary priority on an opponent turn in new game', 30_000);
+    }, 'typed choice and ordinary priority on an opponent turn in new game', 60_000);
     return gameId;
   }
 

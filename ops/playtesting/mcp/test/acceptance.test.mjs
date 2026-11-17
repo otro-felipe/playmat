@@ -18,6 +18,7 @@ const SIDES = new Map([
 class EngineFixture {
   listeners = new Set();
   played = [];
+  appliedAt = null;
   constructor(actor) {
     this.view = actor.engineName === 'Agent-A'
       ? { status: 'active', gameId: TEST_GAME, tableId: TEST_TABLE, cursor: 1, turn: 2, phase: 'PRECOMBAT_MAIN',
@@ -36,6 +37,7 @@ class EngineFixture {
   async respond(id, choiceId) {
     assert.equal(id, this.view.decision?.id);
     this.played.push(choiceId);
+    this.appliedAt = Date.now();
     this.update({ decision: null, priority: 'opponent' });
     return { submitted: true };
   }
@@ -111,11 +113,9 @@ test('[PM-AC-09] checks an explicit hold and stops on a new meaningful response'
       { kind: 'pass_until', step: 'BEGIN_COMBAT' }],
   });
   assert.match(sequence.sequenceId, /^[0-9a-f-]+$/);
-  await sleep(50);
-  assert.deepEqual(engine.played, []);
   for (let i = 0; i < 25 && engine.played.length === 0; i++) await sleep(15);
-  assert.ok(Date.now() - started >= 100);
   assert.deepEqual(engine.played, ['pass']);
+  assert.ok(engine.appliedAt - started >= 100);
   engine.update({ priority: 'self', decision: { id: 'decision-3', kind: 'priority', choices: [PASS, SPELL] },
     stack: [{ name: 'Opposing spell' }] });
   const ids = { gameId: TEST_GAME, sequenceId: sequence.sequenceId };
