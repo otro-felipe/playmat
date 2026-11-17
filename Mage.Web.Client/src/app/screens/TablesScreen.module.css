@@ -182,6 +182,12 @@
   color: var(--ink-strong);
 }
 
+.selectionHint {
+  margin: 6px 0 0;
+  color: var(--ink-dim);
+  font-size: var(--text-sm);
+}
+
 .error {
   color: var(--danger-text);
   font-size: var(--text-sm);

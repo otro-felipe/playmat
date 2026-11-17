@@ -1,6 +1,6 @@
-import { Bot, Eye, Link2, Lock, MessageSquare, Plus, UserRound } from 'lucide-react';
+import { BookOpen, Bot, Eye, Link2, Lock, MessageSquare, Plus, UserRound } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../connection';
 import { toWire } from '../decks/deckModel';
 import { refreshTables, useServerState, useTables } from '../queries';
@@ -25,8 +25,12 @@ import { joinTable } from './joinTable';
 import { TableAdvancedFields } from './TableAdvancedFields';
 import styles from './TablesScreen.module.css';
 import { PUBLIC_ORIGIN } from '../brand';
-import { createPlaytestingInvite, PRIVATE_PLAYTESTING, type PlaytestingInvitationView } from '../playtesting';
+import { createPlaytestingInvite, MCP_CHAT_MODES, PRIVATE_PLAYTESTING, type McpChatMode, type PlaytestingInvitationView } from '../playtesting';
 import { usePlaytestingInvitation } from '../usePlaytestingInvitation';
+import { registerMessages, useT } from '../i18n';
+import messages from '../i18n/en/social';
+
+registerMessages(messages);
 
 const FREEFORM = 'Constructed - Freeform';
 const PRIVATE_FORMATS = ['Constructed - Standard', 'Constructed - Pioneer', 'Constructed - Modern'];
@@ -218,6 +222,8 @@ function TableRow({ table, mcpInvite, children }: {
 }
 
 function MyTable({ table }: { table: TableView }) {
+  const t = useT();
+  const navigate = useNavigate();
   const roomId = useSession((state) => state.roomId);
   const userName = useSession((state) => state.userName);
   const [chatOpen, setChatOpen] = useState(false);
@@ -226,19 +232,25 @@ function MyTable({ table }: { table: TableView }) {
   const ready = table.tableState === 'READY_TO_START';
   const { data: invitation } = usePlaytestingInvitation(table.tableId, table.tableState);
   const mcpInvite = invitation?.mode === 'mcp' ? invitation : undefined;
-  const copyInvite = () => {
+  async function copyInvite() {
     if (!table.tableId) return;
     const link = inviteLink(PRIVATE_PLAYTESTING ? window.location.origin : PUBLIC_ORIGIN, table.tableId);
-    navigator.clipboard.writeText(link)
-      .then(() => notify('Invite link copied', mcpInvite ? 'Share the private link with your MCP agent.'
-        : !PRIVATE_PLAYTESTING && table.passworded ? 'Send it to a friend, with the table password.' : 'Send it to the invited player.'))
-      .catch(() => notify('Invite link', link));
-  };
+    try {
+      await navigator.clipboard.writeText(link);
+      notify('Invite link copied', mcpInvite ? 'Share the private link with your MCP agent.'
+        : !PRIVATE_PLAYTESTING && table.passworded ? 'Send it to a friend, with the table password.' : 'Send it to the invited player.');
+    } catch {
+      notify('Invite link', link);
+    }
+  }
   return (
     <>
       <TableRow table={table} mcpInvite={mcpInvite}>
         {table.tableState === 'WAITING' && (
-          <Button size="sm" variant="quiet" icon={<Link2 size={16} />} onClick={copyInvite}>{mcpInvite ? 'Copy MCP link' : 'Invite'}</Button>
+          <Button size="sm" variant="quiet" icon={<Link2 size={16} />} onClick={() => void copyInvite()}>{mcpInvite ? 'Copy MCP link' : 'Invite'}</Button>
+        )}
+        {isOwner && mcpInvite && table.tableId && (table.tableState === 'WAITING' || ready) && (
+          <IconButton label={t('mcpInvite.guide')} icon={<BookOpen size={16} />} onClick={() => navigate(`/join/${table.tableId}`)} />
         )}
         <IconButton label={chatOpen ? 'Hide table chat' : 'Table chat'} icon={<MessageSquare size={16} />} pressed={chatOpen} onClick={() => setChatOpen(!chatOpen)} />
         {isOwner && table.tableState !== 'DUELING' && (
@@ -269,6 +281,7 @@ function TableChat({ tableId }: { tableId: string }) {
 }
 
 function HostDialog({ open, onOpenChange, deckId }: { open: boolean; onOpenChange(open: boolean): void; deckId: string | null }) {
+  const t = useT();
   const { data: serverState } = useServerState();
   const roomId = useSession((state) => state.roomId);
   const userName = useSession((state) => state.userName);
@@ -281,6 +294,7 @@ function HostDialog({ open, onOpenChange, deckId }: { open: boolean; onOpenChang
   const [wins, setWins] = useState(2);
   const [aiSeats, setAiSeats] = useState(0);
   const [opponent, setOpponent] = useState<'friend' | 'mcp' | 'ai'>('friend');
+  const [chatMode, setChatMode] = useState<McpChatMode>('quiet');
   const [password, setPassword] = useState('');
   const [guest, setGuest] = useState('');
   const [advanced, setAdvanced] = useState<TableAdvanced>(DEFAULT_ADVANCED);
@@ -311,6 +325,11 @@ function HostDialog({ open, onOpenChange, deckId }: { open: boolean; onOpenChang
   const listed = menu.some((group) => group.types.includes(deckType));
   const aiCount = PRIVATE_PLAYTESTING ? (opponent === 'ai' ? 1 : 0) : aiSeats;
   const needsGuest = PRIVATE_PLAYTESTING && opponent === 'friend';
+
+  function closeDialog() {
+    setChatMode('quiet');
+    onOpenChange(false);
+  }
 
   async function host() {
     if (!roomId || !deckId) return;
@@ -343,7 +362,7 @@ function HostDialog({ open, onOpenChange, deckId }: { open: boolean; onOpenChang
       }
       if (PRIVATE_PLAYTESTING && opponent !== 'ai') {
         await createPlaytestingInvite({ tableId: table.tableId, roomId, format: deckType, password: tablePassword },
-          opponent === 'mcp' ? { mode: 'mcp' } : { mode: 'friend', guestEngineName: guest.trim() });
+          opponent === 'mcp' ? { mode: 'mcp', chatMode } : { mode: 'friend', guestEngineName: guest.trim() });
       }
       if (aiCount > 0) {
         // the AI brings the format's own decks, or starter decks of the right kind; a deck that doesn't fit gets a copy of yours
@@ -358,7 +377,7 @@ function HostDialog({ open, onOpenChange, deckId }: { open: boolean; onOpenChang
         }
       }
       refreshTables();
-      onOpenChange(false);
+      closeDialog();
     } catch (reason) {
       if (PRIVATE_PLAYTESTING && createdTableId) {
         await api.tableRemove(roomId, createdTableId).catch(() => undefined);
@@ -373,13 +392,13 @@ function HostDialog({ open, onOpenChange, deckId }: { open: boolean; onOpenChang
   return (
     <Dialog
       open={open}
-      onOpenChange={onOpenChange}
+      onOpenChange={(next) => next ? onOpenChange(true) : closeDialog()}
       title="Host a table"
       description={PRIVATE_PLAYTESTING ? undefined : 'Friends on this server will see it under Open tables.'}
       width="lg"
       footer={
         <>
-          <Button variant="quiet" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button variant="quiet" onClick={closeDialog}>Cancel</Button>
           <Button variant="decision" busy={busy} disabled={!deckId || (needsGuest && !guest.trim())} onClick={() => void host()}>Host</Button>
         </>
       }
@@ -439,6 +458,17 @@ function HostDialog({ open, onOpenChange, deckId }: { open: boolean; onOpenChang
         </div>
         {PRIVATE_PLAYTESTING ? (needsGuest && <Field label="Invited player" value={guest} onChange={(event) => setGuest(event.target.value)} />)
           : <Field label="Password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} hint="Leave empty for an open table." />}
+        {PRIVATE_PLAYTESTING && opponent === 'mcp' && (
+          <div>
+            <label className={styles.selectField}>
+              <span>{t('mcpInvite.chat.label')}</span>
+              <select value={chatMode} aria-describedby="mcp-chat-description" onChange={(event) => setChatMode(event.target.value as McpChatMode)}>
+                {MCP_CHAT_MODES.map((mode) => <option key={mode} value={mode}>{t(`mcpInvite.chat.${mode}`)}</option>)}
+              </select>
+            </label>
+            <p id="mcp-chat-description" className={styles.selectionHint}>{t(`mcpInvite.chat.${chatMode}.description`)}</p>
+          </div>
+        )}
         <TableAdvancedFields
           value={advanced}
           onChange={(patch) => setAdvanced((current) => ({ ...current, ...patch }))}

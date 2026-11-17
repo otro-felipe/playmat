@@ -73,7 +73,12 @@ test('[PM-AC-04] the claimed guest and actual table host control admission', { s
     tableId, roomId, guestEngineName: 'Bob', format: 'Pioneer', password,
   }))
   assert.equal(invite.status, 201)
-  assert.equal(Object.hasOwn(await invite.json(), 'password'), false)
+  const friendInvitation = await invite.json()
+  assert.equal(Object.hasOwn(friendInvitation, 'password'), false)
+  assert.equal(Object.hasOwn(friendInvitation, 'chatMode'), false)
+  assert.equal((await f.path(route, json('POST', alice, {
+    tableId: randomUUID(), roomId, guestEngineName: 'Bob', format: 'Pioneer', password, chatMode: 'coach',
+  }))).status, 400)
   assert.deepEqual((await (await f.path(route, { headers: alice })).json()).invites, [])
   assert.deepEqual((await (await f.path(route, { headers: carol })).json()).invites, [])
   assert.deepEqual((await (await f.path(route + '?limit=1', { headers: bob })).json()).invites.map(row => row.tableId), [tableId])
@@ -103,11 +108,12 @@ test('[PM-AC-04] a private MCP link admits exactly one delegated identity with a
   const invitations = '/api/playtesting/invites'
   const invitation = `${invitations}/${tableId}`
   const created = await f.path(invitations, json('POST', host, {
-    tableId, roomId: randomUUID(), format: 'Pioneer', password, mode: 'mcp',
+    tableId, roomId: randomUUID(), format: 'Pioneer', password, mode: 'mcp', chatMode: 'coach',
   }))
   assert.equal(created.status, 201)
   const createdInfo = await created.json()
   assert.equal(createdInfo.mode, 'mcp')
+  assert.equal(createdInfo.chatMode, 'coach')
   assert.equal(createdInfo.guestEngineName, null)
   assert.equal(Object.hasOwn(createdInfo, 'password'), false)
   assert.deepEqual((await (await f.path(invitations, { headers: grants[0] })).json()).invites, [])
@@ -125,12 +131,16 @@ test('[PM-AC-04] a private MCP link admits exactly one delegated identity with a
   const claimed = await responses[winner].json()
   assert.equal(claimed.guestEngineName, engineNames[winner])
   assert.equal(claimed.guestDisplayName, 'The Angel')
-  const repeated = await f.path(invitation + '/claim', json('POST', grants[winner], { displayName: 'Different alias' }))
+  assert.equal(claimed.chatMode, 'coach')
+  const repeated = await f.path(invitation + '/claim', json('POST', grants[winner], { displayName: 'Different alias', chatMode: 'chatty' }))
   assert.equal(repeated.status, 200)
-  assert.equal((await repeated.json()).guestDisplayName, 'The Angel')
+  const repeatedInfo = await repeated.json()
+  assert.equal(repeatedInfo.guestDisplayName, 'The Angel')
+  assert.equal(repeatedInfo.chatMode, 'coach')
   assert.equal((await claim(grants[1 - winner])).status, 404)
   const shownToHost = await (await f.path(invitation, { headers: host })).json()
   assert.equal(shownToHost.guestDisplayName, 'The Angel')
+  assert.equal(shownToHost.chatMode, 'coach')
   assert.equal(Object.hasOwn(shownToHost, 'password'), false)
   const gate = `/internal/invites/${tableId}?host=Host&guest=`
   assert.equal((await f.path(gate + engineNames[winner])).status, 200)
@@ -144,8 +154,18 @@ test('[PM-AC-04] a private MCP link admits exactly one delegated identity with a
   }))).status, 201)
   const selfDelegation = await f.path(`${invitations}/${ownSeat}/claim`, json('POST', grants[0], {}))
   assert.equal(selfDelegation.status, 200)
-  assert.equal((await selfDelegation.json()).guestEngineName, engineNames[0])
+  const ownSeatInfo = await selfDelegation.json()
+  assert.equal(ownSeatInfo.guestEngineName, engineNames[0])
+  assert.equal(ownSeatInfo.chatMode, 'quiet')
   assert.equal((await f.path(`/internal/invites/${ownSeat}?host=Host&guest=HostAgent`)).status, 200)
+
+  for (const [chatMode, status] of [['chatty', 201], ['quiet', 201], ['invalid', 400], [null, 400]]) {
+    const response = await f.path(invitations, json('POST', host, {
+      tableId: randomUUID(), roomId: randomUUID(), format: 'Pioneer', password, mode: 'mcp', chatMode,
+    }))
+    assert.equal(response.status, status)
+    if (status === 201) assert.equal((await response.json()).chatMode, chatMode)
+  }
 
   const { default: pg } = await import('pg')
   const db = new pg.Client({ connectionString: databaseUrl, options: `-c search_path=${f.schema}` })

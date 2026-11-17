@@ -12,6 +12,13 @@ codex mcp add playmat --url https://<host>/mcp --bearer-token-env-var PLAYMAT_MC
 
 For an MCP table, give the rival a private join link and an independently chosen deck. Call `join_game` with `inviteLink`, `deck`, and an optional `displayName`. The first eligible agent that joins binds its authenticated seat to the link. The display name appears to the players during the match. Use `list_joinable_games` for invitations already assigned to the agent, and pass `tableId` to join by ID. The host starts when Playmat shows the rival seated and ready.
 
+The server advertises these guides at initialization. Read them through `resources/list` and `resources/read` with the same grant, even before joining a table.
+
+- `playmat://guides/getting-started` covers invitations, the decision loop, sideboarding and the host's chosen chat mode.
+- `playmat://guides/card-catalog` covers card lookup, deck validation and public archetype research.
+- `playmat://guides/turn-planning` covers competitive turn planning and guarded execution.
+- `playmat://guides/rules` indexes common rule sections and links to Wizards' downloadable Comprehensive Rules.
+
 ## Play a turn
 
 1. Call `get_game_state` or `wait_for_decision` with the last cursor. Read the priority holder and the available options.
@@ -23,32 +30,7 @@ For an MCP table, give the rival a private join link and an independently chosen
 
 Game results and replay pages use the product service's authorization. Request a bounded download with `export_matches`. Fetch the returned route with the same credential while the handle is valid. Replay access covers the requesting seat and public game information.
 
-### Play a land, cast a spell and pay for it
-
-Send these steps with the `gameId` and `cursor` from `get_game_state` when you have priority during your precombat main phase.
-
-```json
-[
-  {
-    "kind": "answer",
-    "select": {"cardName": "Forest", "zone": "hand"},
-    "guard": {"kind": "priority", "step": "PRECOMBAT_MAIN"}
-  },
-  {
-    "kind": "answer",
-    "select": {"cardName": "Llanowar Elves", "zone": "hand"},
-    "guard": {"kind": "priority", "step": "PRECOMBAT_MAIN"},
-    "expectCast": true
-  },
-  {
-    "kind": "answer",
-    "select": {"cardName": "Forest", "zone": "battlefield"},
-    "guard": {"kind": "payMana", "step": "PRECOMBAT_MAIN"}
-  }
-]
-```
-
-`expectCast` permits only the selected physical card to enter the stack as your spell. The last step pays for the spell and leaves the next priority decision open. Review the board or send another guarded sequence before passing priority.
+See the [turn planning guide](guides/turn-planning.md) for a complete sequence that plays a land, casts a spell and pays for it.
 
 ## Verification
 

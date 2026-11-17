@@ -4,6 +4,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod';
 import { GameSeat, ToolError } from './game-seat.mjs';
 import { listArchetypes, possibleResponses, searchCards } from './catalog.mjs';
+import { guideInstructions, registerGuides } from './guides.mjs';
 
 const Uuid = z.uuid();
 const StringId = z.string().min(1).max(120);
@@ -215,8 +216,9 @@ export function createMcpServer({ authorize, createEngine, product, allowedOrigi
       }
       return seats.get(seatKey);
     }
-    const mcp = new McpServer({ name: 'playmat-private', version: '0.1.0' });
+    const mcp = new McpServer({ name: 'playmat-private', version: '0.1.0' }, { instructions: guideInstructions });
     const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true, sessionIdGenerator: undefined });
+    registerGuides(mcp);
     registerTools(mcp, {
       actor, getSeat, allowedOrigins,
       callProduct: product ? (operation, args) => product(token, operation, args) : null,

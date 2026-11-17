@@ -101,6 +101,39 @@ test('[PM-AC-08] authenticates every MCP request and binds decisions to one seat
   await assert.rejects(() => player.listTools(), /401|Unauthorized/i);
 });
 
+test('an invited agent can discover and read the Playmat guides before joining a game', async (t) => {
+  const { url, fixtures, tokens } = await start(t);
+  const rival = await connect(t, url, 'fixture-other');
+  assert.ok(rival.getServerCapabilities()?.resources);
+  const gettingStarted = 'playmat://guides/getting-started';
+  const cardCatalog = 'playmat://guides/card-catalog';
+  const turnPlanning = 'playmat://guides/turn-planning';
+  const rules = 'playmat://guides/rules';
+  const expected = new Map([
+    [gettingStarted, /join_game[\s\S]*wait_for_decision[\s\S]*send_chat/],
+    [cardCatalog, /search_cards[\s\S]*find_possible_responses/],
+    [turnPlanning, /play_sequence[\s\S]*expectCast/],
+    [rules, /magic\.wizards\.com\/en\/rules[\s\S]*media\.wizards\.com\/\d{4}\/downloads\/MagicCompRules.*\.txt[\s\S]*117/],
+  ]);
+  const { resources } = await rival.listResources();
+  assert.deepEqual(new Set(resources.map(({ uri }) => uri)), new Set(expected.keys()));
+  for (const { uri, mimeType } of resources) {
+    assert.ok(rival.getInstructions()?.includes(uri));
+    assert.equal(mimeType, 'text/markdown');
+    const { contents } = await rival.readResource({ uri });
+    assert.equal(contents.length, 1);
+    assert.equal(contents[0].uri, uri);
+    assert.equal(contents[0].mimeType, 'text/markdown');
+    assert.match(contents[0].text, expected.get(uri));
+  }
+  assert.equal(fixtures.size, 0);
+  await assert.rejects(() => rival.readResource({ uri: 'playmat://guides/nonexistent' }), /not found/i);
+
+  tokens.delete('fixture-other');
+  await assert.rejects(() => rival.listResources(), /401|Unauthorized/i);
+  await assert.rejects(() => rival.readResource({ uri: rules }), /401|Unauthorized/i);
+});
+
 test('[PM-AC-09] checks an explicit hold and stops on a new meaningful response', async (t) => {
   const { url, fixtures } = await start(t);
   const player = await connect(t, url, 'fixture-player');

@@ -3,6 +3,8 @@ import { once } from 'node:events';
 import { test } from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { WebSocketServer } from 'ws';
+import { PlaymatEngineSeat } from '../src/engine-seat.mjs';
 import { createMcpServer } from '../src/server.mjs';
 
 test('[PM-AC-08] join_game uses a private Playmat link, validates before claim, and conveys an optional alias', async (t) => {
@@ -52,4 +54,79 @@ test('[PM-AC-08] join_game uses a private Playmat link, validates before claim, 
   assert.deepEqual(JSON.parse(result.content[0].text), { state: 'seated' });
   assert.deepEqual(inspected, [{ tableId }]);
   assert.deepEqual(claimed, [{ tableId, displayName: 'Angels' }]);
+});
+
+test('[PM-AC-08] the MCP seat receives the host chat mode for its invited match', { timeout: 5_000 }, async (t) => {
+  const origin = 'https://playmat.example';
+  const tableId = '22222222-2222-4222-8222-222222222222';
+  const roomId = '33333333-3333-4333-8333-333333333333';
+  const deck = { name: 'Fixture deck', cards: [{ cardName: 'Forest', amount: 60 }] };
+  const engineName = 'FixtureAgent';
+  const engineServer = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+  await once(engineServer, 'listening');
+  const connected = once(engineServer, 'connection');
+  const reply = { connectUser: true, serverGetMainRoomId: roomId, deckValidate: { valid: true }, roomJoinTable: true, gameJoin: true };
+  engineServer.on('connection', (socket) => {
+    socket.on('message', (raw) => {
+      const { method, id } = JSON.parse(raw);
+      socket.send(JSON.stringify({ jsonrpc: '2.0', id, result: reply[method] ?? null }));
+    });
+  });
+  const invite = { tableId, roomId, format: 'Pioneer', mode: 'mcp', chatMode: 'coach' };
+  const engine = new PlaymatEngineSeat({
+    engineUrl: `ws://127.0.0.1:${engineServer.address().port}`, engineName, trustedHeader: 'x-fixture-user',
+  });
+  const server = createMcpServer({
+    allowedOrigins: [origin],
+    authorize: async (token) => token === 'fixture' ? { accountId: 'owner', engineName, scopes: ['play', 'chat'] } : null,
+    createEngine: () => engine,
+    product: async (_token, operation) => {
+      if (operation === 'inspect_game_invite') return invite;
+      assert.equal(operation, 'get_game_invite');
+      return { ...invite, password: 'synthetic-table-fixture' };
+    },
+  });
+  t.after(() => {
+    server.closeAllConnections();
+    server.close();
+    for (const socket of engineServer.clients) socket.terminate();
+    engineServer.close();
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const client = new Client({ name: 'chat-mode-fixture', version: '1' });
+  await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${server.address().port}/mcp`), {
+    requestInit: { headers: { Authorization: 'Bearer fixture' } },
+  }));
+  t.after(() => client.close());
+  async function call(name, args = {}) {
+    const response = await client.callTool({ name, arguments: args });
+    const value = JSON.parse(response.content[0].text);
+    assert.equal(response.isError ?? false, false, value.code);
+    return value;
+  }
+
+  const join = await call('join_game', { inviteLink: `${origin}/join/${tableId}`, deck });
+  assert.equal(join.chatMode, 'coach');
+  assert.equal((await call('get_game_state')).chatMode, 'coach');
+  const [socket] = await connected;
+  const starts = [
+    { gameId: '11111111-1111-4111-8111-111111111111', currentTableId: tableId, expectedMode: 'coach' },
+    { gameId: '55555555-5555-4555-8555-555555555555', currentTableId: tableId, expectedMode: 'coach' },
+    { gameId: '66666666-6666-4666-8666-666666666666', currentTableId: '77777777-7777-4777-8777-777777777777' },
+  ];
+  for (const [index, { gameId, currentTableId, expectedMode }] of starts.entries()) {
+    const started = new Promise(resolve => {
+      const unsubscribe = engine.subscribe(() => {
+        if (engine.snapshot().gameId !== gameId) return;
+        unsubscribe();
+        resolve();
+      });
+    });
+    socket.send(JSON.stringify({ method: 'START_GAME', messageId: index + 1, objectId: gameId,
+      data: { gameId, playerId: engineName, currentTableId } }));
+    await started;
+    const state = await call('get_game_state', { gameId });
+    assert.equal(state.chatMode, expectedMode);
+  }
 });

@@ -45,7 +45,7 @@ function mount() {
   return { page, update: () => page.rerender(screen()) };
 }
 
-test('[PM-AC-04] the host creates a Rival MCP table without entering a player account', async () => {
+test.each(['quiet', 'chatty', 'coach'])('[PM-AC-04] the host creates a Rival MCP table in %s mode without a rival account', async (chatMode) => {
   tables = [];
   calls.create.mockResolvedValue({ tableId });
   calls.join.mockResolvedValue(true);
@@ -55,13 +55,17 @@ test('[PM-AC-04] the host creates a Rival MCP table without entering a player ac
   fireEvent.click(page.getByRole('button', { name: 'Host a table' }));
   const dialog = within(await page.findByRole('dialog', { name: 'Host a table' }));
   expect(dialog.getByLabelText('Invited player')).toBeTruthy();
+  expect(dialog.queryByLabelText('MCP chat style')).toBeNull();
   fireEvent.change(dialog.getByLabelText('Opponent'), { target: { value: 'mcp' } });
   expect(dialog.queryByLabelText('Invited player')).toBeNull();
+  const chatStyle = dialog.getByLabelText<HTMLSelectElement>('MCP chat style');
+  expect(chatStyle.value).toBe('quiet');
+  if (chatMode !== 'quiet') fireEvent.change(chatStyle, { target: { value: chatMode } });
   fireEvent.click(dialog.getByRole('button', { name: /^Host$/ }));
   await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
   const [, request] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
   const invite = JSON.parse(String(request.body));
-  expect(invite).toMatchObject({ mode: 'mcp', tableId });
+  expect(invite).toMatchObject({ mode: 'mcp', tableId, chatMode });
   expect(invite).not.toHaveProperty('guestEngineName');
 });
 
@@ -70,7 +74,10 @@ test('[PM-AC-04] the MCP alias is visible when seated and Start follows the engi
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({ tableId, mode: 'mcp', guestEngineName: 'FixtureAgent', guestDisplayName: 'Angels' })));
   const { page, update } = mount();
   await page.findByText('Waiting for Rival MCP');
-  expect(page.getByRole('button', { name: 'Copy MCP link' })).toBeTruthy();
+  const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined);
+  fireEvent.click(page.getByRole('button', { name: 'Copy MCP link' }));
+  expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/join/${tableId}`);
+  expect(page.getByRole('button', { name: 'Agent guide' })).toBeTruthy();
   expect((page.getByRole('button', { name: 'Start' }) as HTMLButtonElement).disabled).toBe(true);
   tables = [{ ...tables[0], tableState: 'READY_TO_START', seats: [{ playerName: 'Host', playerType: 'HUMAN' }, { playerName: 'FixtureAgent', playerType: 'HUMAN' }] }];
   update();

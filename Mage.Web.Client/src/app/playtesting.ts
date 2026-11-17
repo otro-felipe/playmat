@@ -7,12 +7,16 @@ export interface PlaytestingInvite {
   password: string;
 }
 
-export type PlaytestingOpponent = { mode: 'friend'; guestEngineName: string } | { mode: 'mcp' };
+export const MCP_CHAT_MODES = ['quiet', 'chatty', 'coach'] as const;
+export type McpChatMode = typeof MCP_CHAT_MODES[number];
+
+export type PlaytestingOpponent = { mode: 'friend'; guestEngineName: string } | { mode: 'mcp'; chatMode: McpChatMode };
 
 export interface PlaytestingInvitationView {
   mode: 'friend' | 'mcp';
   guestEngineName: string | null;
   guestDisplayName: string | null;
+  chatMode?: McpChatMode;
 }
 
 async function sendInviteRequest(path: string, input?: Record<string, unknown>): Promise<Response> {

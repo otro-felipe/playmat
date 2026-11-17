@@ -1,9 +1,12 @@
 import { isUuid, normalize, normalizeFormat, ProductError } from './decks.mjs'
 
+const CHAT_MODES = new Set(['quiet', 'chatty', 'coach'])
+
 function invitationView(row) {
   if (!row) throw new ProductError(404, 'Invitation not found')
   return {
     tableId: row.table_id, roomId: row.room_id, format: row.format, mode: row.mode,
+    ...(row.mode === 'mcp' ? { chatMode: row.chat_mode } : {}),
     guestEngineName: row.invitee_name, guestDisplayName: row.guest_display_name, expiresAt: row.expires_at,
   }
 }
@@ -33,6 +36,10 @@ export function createInvitations(pool, identity) {
       || data.password.length < 12 || data.password.length > 100) throw new ProductError(400, 'Provide a valid protected table')
     const mode = data.mode ?? 'friend'
     if (mode !== 'friend' && mode !== 'mcp') throw new ProductError(400, 'Invalid invitation mode')
+    if (data.chatMode !== undefined && (mode !== 'mcp' || !CHAT_MODES.has(data.chatMode))) {
+      throw new ProductError(400, 'Choose quiet, chatty, or coach for an MCP invitation')
+    }
+    const chatMode = data.chatMode ?? 'quiet'
     let invitee = null
     if (mode === 'friend') {
       invitee = await identity.fromEngine(data.guestEngineName)
@@ -42,10 +49,10 @@ export function createInvitations(pool, identity) {
     } else if (data.guestEngineName !== undefined) {
       throw new ProductError(400, 'An MCP invitation cannot name a guest account')
     }
-    const { rows: [invite] } = await pool.query(`INSERT INTO invitations(table_id,room_id,format,creator_key,invitee_key,invitee_name,table_password,expires_at,mode)
-      VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '48 hours',$8) ON CONFLICT (table_id) DO NOTHING RETURNING *`,
+    const { rows: [invite] } = await pool.query(`INSERT INTO invitations(table_id,room_id,format,creator_key,invitee_key,invitee_name,table_password,expires_at,mode,chat_mode)
+      VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '48 hours',$8,$9) ON CONFLICT (table_id) DO NOTHING RETURNING *`,
     [data.tableId, data.roomId, format, normalize(actor.engineName), invitee ? normalize(invitee.engineName) : null,
-      invitee?.engineName ?? null, data.password, mode])
+      invitee?.engineName ?? null, data.password, mode, chatMode])
     if (!invite) throw new ProductError(409, 'This table already has an invitation')
     return invitationView(invite)
   }

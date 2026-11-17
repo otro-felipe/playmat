@@ -139,12 +139,14 @@ export class PlaymatEngineSeat {
   #connecting = null;
   #roomId = null;
   #tableId = null;
+  #gameTableId = null;
   #session = null;
   #boardUnsubscribe = null;
   #sideboard = null;
   #vote = null;
   #chatId = null;
   #chat = [];
+  #chatPreference = null;
 
   constructor({ engineUrl, engineName, trustedHeader, guardedPrompts = true }) {
     this.engineUrl = engineUrl;
@@ -264,6 +266,7 @@ export class PlaymatEngineSeat {
     this.#chatId = null;
     this.#chat = [];
     this.#tableId = currentTableId ?? this.#tableId;
+    this.#gameTableId = this.#tableId;
     this.#session = new GameSession(this.api, this.bus, { gameId, playerId, mode: 'play' });
     this.#boardUnsubscribe = this.#session.store.subscribe(() => this.#publish());
     this.#invalidate();
@@ -291,8 +294,11 @@ export class PlaymatEngineSeat {
         ? Math.max(state.endInfo?.wins ?? 0, state.endInfo?.loses ?? 0) >= (state.endInfo?.winsNeeded ?? 2) ? 'match_over' : 'game_over'
         : state ? 'active' : 'lobby';
     const decision = status === 'active' ? this.#decision(state) : null;
+    const chatPreference = this.#chatPreference;
+    const chatTableId = state ? this.#gameTableId : this.#tableId;
     return {
       gameId: state?.gameId ?? null, tableId: this.#tableId, status, epoch: this.#epoch, cursor: this.#cursor,
+      ...(chatPreference?.tableId === chatTableId ? { chatMode: chatPreference.mode } : {}),
       turn: view?.turn ?? null, phase: view?.phase ?? null, step: view?.step ?? null, priority,
       activePlayer: view?.activePlayerName ?? null, priorityPlayer: view?.priorityPlayerName ?? null,
       secondsRemaining: own?.timerActive && own.priorityTimeLeftSecs > 0 ? own.priorityTimeLeftSecs : null,
@@ -378,9 +384,15 @@ export class PlaymatEngineSeat {
       const table = await this.api.roomGetTableById(roomId, tableId).catch(() => null);
       if (!table?.seats?.some((seat) => seat.playerName === this.engineName)) throw error;
       this.#tableId = tableId;
-      this.#publish();
     }
-    return { tableId, state: 'seated', gameId, ...(grant.guestDisplayName ? { displayName: grant.guestDisplayName } : {}) };
+    const chatMode = grant.mode === 'mcp' ? grant.chatMode ?? 'quiet' : null;
+    this.#chatPreference = chatMode ? { tableId, mode: chatMode } : null;
+    this.#publish();
+    return {
+      tableId, state: 'seated', gameId,
+      ...(grant.guestDisplayName ? { displayName: grant.guestDisplayName } : {}),
+      ...(chatMode ? { chatMode } : {}),
+    };
   }
 
   async #validateForSeat(format, deck) {
