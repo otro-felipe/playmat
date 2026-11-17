@@ -102,6 +102,18 @@ class RecoveryBackupTest(unittest.TestCase):
         self.assertEqual(expected, self.read_all(self.source))
         self.assertEqual(1, len(list(volume.glob("before-recovery-restore-*"))))
 
+    def test_restore_does_not_create_an_ephemeral_database_when_the_volume_is_missing(self):
+        expected = self.read_all(self.source)
+        saved = backup.backup(self.engine, self.backups)
+        self.db.close()
+        directory = self.engine / "db"
+        preserved = self.root / "preserved-volume-db"
+        directory.rename(preserved)
+        with self.assertRaises(ValueError):
+            backup.restore(self.engine, saved)
+        self.assertFalse(directory.exists())
+        self.assertEqual(expected, self.read_all(preserved / "pvp-recovery.db"))
+
     def test_restore_rejects_live_process_lock_without_changing_database(self):
         saved = backup.backup(self.engine, self.backups)
         lock = self.engine / "db/pvp-recovery.db.lock"

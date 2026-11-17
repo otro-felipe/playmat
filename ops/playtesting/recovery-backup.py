@@ -170,7 +170,8 @@ def restore(engine, saved):
         raise ValueError("Incompatible or damaged backup")
     check_database(source)
     database = engine / "db"
-    database.mkdir(parents=True, exist_ok=True)
+    if not database.is_dir():
+        raise ValueError("Mount and link the private database volume before restoration")
     # The image deliberately links this directory to its private persistent volume. Resolve that
     # configured directory once; database, lock and backup files still reject symlinks individually.
     database = database.resolve(strict=True)
