@@ -84,7 +84,7 @@ public class GameView implements Serializable {
     private List<GameEventView> events;
     private SequenceEvidenceView sequenceEvidence;
     /** Receiving player only; absent for watchers and older engines. */
-    private ResponseIdleView responseIdle;
+    private volatile ResponseIdleView responseIdle;
 
     public ResponseIdleView getResponseIdle() { return responseIdle; }
     public void setResponseIdle(ResponseIdleView responseIdle) { this.responseIdle = responseIdle; }
