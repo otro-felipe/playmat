@@ -48,6 +48,7 @@ public final class WebClientApi {
         groups.put("CareerProgress", CareerProgressApi.methods(ctx));
         groups.put("CareerModes", CareerModesApi.methods(ctx));
         groups.put("Solo", SoloApi.methods(ctx));
+        groups.put("Recovery", RecoveryApi.methods(ctx));
         return groups;
     }
 }

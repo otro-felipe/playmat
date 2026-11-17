@@ -253,7 +253,40 @@ export function createIdentity(pool, insecureCookie, resolveOAuth = async () => 
     return agent ? actor(agent.id, agent.username, agent.engine_name, agent.scopes, true) : null
   }
 
-  return { provisionHuman, provisionAgent, revokeAgent, importProvisionBundle, signIn, signOut, resolve, fromEngine }
+  async function recoveryPrincipal(actor) {
+    if (!actor?.accountId || !actor.scopes.includes('play')) return null
+    if (!actor.agent) return { accountId: actor.accountId, seatId: 'human:' + actor.accountId }
+    const { rows: [grant] } = await pool.query(
+      'SELECT recovery_id FROM agent_grants WHERE account_id=$1 AND engine_key=$2 AND revoked_at IS NULL',
+      [actor.accountId, normalize(actor.engineName)],
+    )
+    return grant ? { accountId: actor.accountId, seatId: 'agent:' + grant.recovery_id,
+      ...(actor.connectionId ? { connectionId: actor.connectionId } : {}) } : null
+  }
+
+  async function validateRecoveryPrincipal(principal) {
+    if (!principal || !/^[\da-f-]{36}$/i.test(principal.accountId ?? '') || typeof principal.seatId !== 'string') return false
+    const { rows: [account] } = await pool.query('SELECT id FROM accounts WHERE id=$1 AND enabled', [principal.accountId])
+    if (!account) return false
+    if (principal.seatId === 'human:' + principal.accountId) return true
+    const match = /^agent:([\da-f-]{36})$/i.exec(principal.seatId)
+    if (!match) return false
+    const { rows: [grant] } = await pool.query(
+      "SELECT engine_key,oauth_managed FROM agent_grants WHERE account_id=$1 AND recovery_id=$2 AND revoked_at IS NULL AND 'play'=ANY(scopes)",
+      [principal.accountId, match[1]],
+    )
+    if (!grant) return false
+    if (!grant.oauth_managed) return true
+    if (!/^[\da-f-]{36}$/i.test(principal.connectionId ?? '')) return false
+    const { rowCount } = await pool.query(
+      "SELECT 1 FROM oauth_connections WHERE id=$1 AND account_id=$2 AND engine_key=$3 AND revoked_at IS NULL AND expires_at>now() AND 'play'=ANY(scopes_approved)",
+      [principal.connectionId, principal.accountId, grant.engine_key],
+    )
+    return rowCount === 1
+  }
+
+  return { provisionHuman, provisionAgent, revokeAgent, importProvisionBundle, signIn, signOut, resolve, fromEngine,
+    recoveryPrincipal, validateRecoveryPrincipal }
 }
 
 function actor(accountId, username, engineName, scopes, agent = false) {

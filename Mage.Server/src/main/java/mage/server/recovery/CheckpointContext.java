@@ -21,15 +21,28 @@ final class CheckpointContext implements Serializable {
     final UUID gameId;
     final int gameNumber;
     final int draws;
+    final int turn;
     final MatchOptions options;
     final List<Seat> seats = new ArrayList<>();
+    String phase = "turn";
+    UUID chooser;
 
     CheckpointContext(UUID tableId, Match match, Map<UUID, UUID> users, GameSnapshot snapshot) throws IOException {
+        this(tableId, match, users, snapshot.restore().state);
+    }
+
+    CheckpointContext(UUID tableId, Match match, Map<UUID, UUID> users, mage.game.GameState frozen) throws IOException {
+        this(tableId, match, users, frozen, match.getGame().getId(), match.getNumGames());
+    }
+
+    CheckpointContext(UUID tableId, Match match, Map<UUID, UUID> users, mage.game.GameState frozen,
+                      UUID gameId, int gameNumber) throws IOException {
         this.matchId = match.getId();
         this.tableId = tableId;
-        this.gameId = match.getGame().getId();
-        this.gameNumber = match.getNumGames();
+        this.gameId = gameId;
+        this.gameNumber = gameNumber;
         this.draws = match.getDraws();
+        this.turn = frozen.getTurnNum();
         try {
             // Copy before redaction: never mutate the live table's password/configuration.
             this.options = (MatchOptions) read(bytes(match.getOptions()));
@@ -37,9 +50,8 @@ final class CheckpointContext implements Serializable {
             throw new IOException("Cannot copy checkpoint configuration", e);
         }
         options.setPassword("");
-        GameSnapshot.Restored frozen = snapshot.restore();
         for (MatchPlayer player : match.getPlayers()) {
-            Player atTurn = frozen.state.getPlayer(player.getPlayer().getId());
+            Player atTurn = frozen.getPlayer(player.getPlayer().getId());
             UUID user = users.entrySet().stream()
                     .filter(e -> e.getValue().equals(player.getPlayer().getId()))
                     .map(Map.Entry::getKey).findFirst().orElse(null);
@@ -61,6 +73,7 @@ final class CheckpointContext implements Serializable {
         final int prioritySeconds;
         final int bufferSeconds;
         final int matchPrioritySeconds;
+        RecoveryPrincipal principal;
 
         Seat(UUID user, MatchPlayer matchPlayer, Player frozenPlayer) {
             playerId = frozenPlayer.getId();

@@ -119,6 +119,8 @@ const router = createBrowserRouter([
           { path: '/tables', lazy: () => import('./screens/TablesScreen').then((m) => ({ Component: m.TablesScreen })) },
           // an invite link; signing in first comes back here
           { path: '/join/:tableId', lazy: () => import('./screens/JoinScreen').then((m) => ({ Component: m.JoinScreen })) },
+          { path: '/recover', lazy: () => import('./screens/RecoveryScreen').then((m) => ({ Component: m.RecoveryScreen })) },
+          { path: '/recover/:matchId', lazy: () => import('./screens/RecoveryScreen').then((m) => ({ Component: m.RecoveryScreen })) },
           // Career: opt-in single player with its own collection, offered by servers with accounts
           // Career: opt-in single player with its own collection, offered by servers with accounts. Its screens share one
           // full-bleed shell (the scene, the HUD, menu navigation, the music), so the app's own header steps aside

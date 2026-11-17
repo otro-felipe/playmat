@@ -234,7 +234,7 @@ public class CheckpointStoreTest {
         new java.util.concurrent.CountDownLatch(1).await();
     }
 
-    static void fixture(CheckpointStore store) throws Exception {
+    static UUID fixture(CheckpointStore store) throws Exception {
         MatchOptions options = new MatchOptions("private fixture", "Two Player Duel", false);
         options.setWinsNeeded(2);
         options.setPassword("fixture-table-secret");
@@ -285,6 +285,7 @@ public class CheckpointStoreTest {
         capture.turnSnapshots.accept(GameSnapshot.of(state, cards, Collections.emptyMap(), state.getActivePlayerId()));
         assertEquals("fixture-table-secret", options.getPassword(), "live configuration remains unchanged");
         verify(store.inspect(match.getId(), ENGINE));
+        return match.getId();
     }
 
     private static CardSetInfo info(String name) { return new CardSetInfo(name, "TST", "1", Rarity.COMMON); }

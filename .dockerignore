@@ -1,6 +1,7 @@
 # the Rust build output (gigabytes); the image builds the gateway itself
 rust/target
 .git
+.local
 */target
 Mage.Plugins/*/target
 Mage.Server.Plugins/*/target

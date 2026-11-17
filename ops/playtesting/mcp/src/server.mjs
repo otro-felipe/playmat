@@ -108,6 +108,13 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
   };
   tool('get_game_state', 'Read the public battlefield and your own seat, hand, current decision and timing. secondsRemaining is a last reported cumulative match clock, not an inactivity countdown. A null clock or unknown inactivity deadline never means unlimited decision time; answer pending legal choices promptly.', { gameId: Uuid.optional() },
     'play', ({ gameId }) => getSeat().snapshot(gameId), true);
+  tool('list_recoverable_matches', 'List matches reserved to this exact account or agent grant, with stable participant links and confirmed boundaries.', {},
+    'play', () => getSeat().engine.recoveryList(), true);
+  tool('get_recovery_status', 'Read only the confirmed recovery boundary and current engine ID mapping; no hidden checkpoint state.', { matchId: Uuid },
+    'play', ({ matchId }) => getSeat().engine.recoveryStatus(matchId), true);
+  tool('recover_match', 'Explicitly agree to replay from the displayed durable boundary. Both original participants must agree and reconnect before clocks run. Read status first.', {
+    matchId: Uuid, revision: z.number().int().positive(), agree: z.boolean(),
+  }, 'play', (args) => getSeat().engine.recoveryJoin(args));
   tool('resync_game', 'Ask XMage for the current decision after a lost or uncertain acknowledgement.', { gameId: Uuid },
     'play', ({ gameId }) => getSeat().engine.resync(gameId));
   tool('wait_for_decision', 'Wait for a new engine-issued decision, sideboarding or game end. A timeout includes the current state and may still have an unanswered decision. Polling does not answer it or pause inactivity; resolve a pending choice before waiting for another.', {
@@ -173,7 +180,7 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
   tool('get_sideboard_state', 'Read the private eligible card pool and state of your sideboarding step.', { gameId: Uuid.optional() }, 'play',
     ({ gameId }) => getSeat().engine.sideboardState(gameId), true);
   tool('submit_sideboard', 'Submit an engine-validated deck drawn from the registered card pool for the next game.', {
-    gameId: Uuid, decisionId: StringId, deck: Deck,
+    gameId: Uuid.optional(), decisionId: StringId, deck: Deck,
   }, 'play', (args) => getSeat().engine.submitSideboard(args));
   tool('request_rollback', 'Ask the other player to approve a rewind to the start of a turn.', { gameId: Uuid, turnsBack: z.number().int().min(0).max(1) },
     'play', (args) => getSeat().engine.requestRollback(args));

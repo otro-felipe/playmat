@@ -34,6 +34,9 @@ import java.util.concurrent.TimeUnit;
  * @author BetaSteward_at_googlemail.com, JayDi85
  */
 public class User {
+    private volatile mage.server.recovery.RecoveryPrincipal recoveryPrincipal;
+    public mage.server.recovery.RecoveryPrincipal getRecoveryPrincipal() { return recoveryPrincipal; }
+    public void setRecoveryPrincipal(mage.server.recovery.RecoveryPrincipal principal) { recoveryPrincipal = principal; }
 
     private static final Logger logger = Logger.getLogger(User.class);
 

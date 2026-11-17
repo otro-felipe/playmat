@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS agent_grants (
 );
 
 ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS oauth_managed boolean NOT NULL DEFAULT false;
+ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS recovery_id uuid NOT NULL DEFAULT gen_random_uuid();
+CREATE UNIQUE INDEX IF NOT EXISTS agent_grants_recovery_id ON agent_grants(recovery_id);
 CREATE UNIQUE INDEX IF NOT EXISTS agent_grants_account_oauth
   ON agent_grants(account_id) WHERE oauth_managed AND revoked_at IS NULL;
 

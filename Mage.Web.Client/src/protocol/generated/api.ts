@@ -549,6 +549,12 @@ export function createApi(rpc: RpcCaller) {
       rpc.call('inbox'),
     inboxSeen: () =>
       rpc.call('inboxSeen'),
+    recoveryList: () =>
+      rpc.call('recoveryList'),
+    recoveryStatus: (matchId: string) =>
+      rpc.call('recoveryStatus', matchId),
+    recoveryJoin: (matchId: string, revision: number, agree: boolean) =>
+      rpc.call('recoveryJoin', matchId, revision, agree),
   };
 }
 

@@ -101,6 +101,14 @@ public abstract class MatchImpl implements Match {
     }
 
     @Override
+    public void restoreProgress(UUID originalMatchId, int gamesBeforeNext, int restoredDraws) {
+        if (hasStarted() || originalMatchId == null || gamesBeforeNext < 0 || restoredDraws < 0) throw new IllegalStateException("Invalid match restore");
+        id = originalMatchId;
+        startedGames = gamesBeforeNext;
+        draws = restoredDraws;
+    }
+
+    @Override
     public String getName() {
         return options.getName();
     }
@@ -203,7 +211,7 @@ public abstract class MatchImpl implements Match {
                 game.addPlayer(matchPlayer.getPlayer(), matchPlayer.getDeck()); // TODO: keeps old player?!
                 // time limits
                 matchPlayer.getPlayer().setBufferTimeLeft(options.getMatchBufferTime().getBufferSecs());
-                if (games.isEmpty()) {
+                if (startedGames == 1) {
                     // first game
                     matchPlayer.getPlayer().setPriorityTimeLeft(options.getMatchTimeLimit().getPrioritySecs());
                 } else {

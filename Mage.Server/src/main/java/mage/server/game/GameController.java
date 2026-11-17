@@ -104,6 +104,7 @@ public class GameController implements GameCallback {
         this.tableId = tableId;
         this.choosingPlayerId = choosingPlayerId;
         this.gameOptions = gameOptions;
+        this.gameOptions.beforeTurnSnapshot = this::updatePriorityTimers;
         this.useResponseIdleTimeout = game.getPlayers().values().stream().filter(Player::isHuman).count() > 1;
         // what happens in the game, for web clients to animate (see GameEventRecorder)
         GameEventFeed.open(game.getId());
@@ -483,6 +484,10 @@ public class GameController implements GameCallback {
     }
 
     private void sendInfoAboutPlayersNotJoinedYetAndTryToFixIt() {
+        if (gameOptions.durableRecoveryBarrier) {
+            checkJoinAndStart();
+            return;
+        }
         // TODO: need code and feature review - is it useful? 2024-06-23
         // runs every 10 secs until all players join
         // runs BEFORE game start, so it's safe to call player.leave here
@@ -1096,6 +1101,7 @@ public class GameController implements GameCallback {
                 PriorityTimer timer = timers.get(player.getId());
                 if (timer != null) {
                     player.setPriorityTimeLeft(timer.getCount());
+                    player.setBufferTimeLeft(timer.getBufferCount());
                 }
             }
         }

@@ -12,9 +12,9 @@ Open http://127.0.0.1:8794. Provision users with the command below. The local st
 
 ## Engine restarts and active matches
 
-PvP and MCP matches cannot yet be resumed after restarting the engine. A stable archive match ID or an interrupted replay does not restore a running game. Let active matches finish before updating or restarting a server.
+Private Java PvP/MCP matches started with `PLAYMAT_PVP_RECOVERY=on` can return through their stable `/recover/<match-id>` link after restarting the same engine image with its private durable volume. Both actual participants must agree to the last confirmed boundary before play resumes. The feature is off by default and cannot protect matches already running without checkpoints. Let those matches finish before updating or restarting a server.
 
-The [private checkpoint capture pilot](../../docs/recovery/pvp-checkpoints.md) is disabled by default. Setting `PLAYMAT_PVP_CHECKPOINTS=capture` on an isolated assembled engine captures eligible two-human Java games privately on the existing db volume. It exposes no resume endpoint and does not enable reconnect recovery. Do not enable it on a live service as a substitute for the missing participant identity, recovery claim, sideboard and clock integration described in that guide.
+Read the [private recovery guide](../../docs/recovery/pvp-recovery.md) before enabling it: exact engine compatibility, two-seat identity, claims, clock policy, sideboarding, backup and single-replica requirements are explicit there. The older `PLAYMAT_PVP_CHECKPOINTS=capture` flag remains capture-only and does not enable reconnect recovery. An interrupted replay is never used as an engine replay journal.
 
 ## Railway
 

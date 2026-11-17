@@ -103,6 +103,9 @@ final class SessionApi {
                                     : connectUser(ctx, call, serverVersion);
                             if (ok) {
                                 bindOidcToken(ctx, call);
+                                ctx.managers.sessionManager().getSession(call.sessionId())
+                                        .flatMap(session -> ctx.managers.userManager().getUser(session.getUserId()))
+                                        .ifPresent(user -> user.setRecoveryPrincipal(call.getConnection().getRecoveryPrincipal()));
                             }
                             // the name the server knows the user by: a later login as it elsewhere ends this session
                             call.getConnection().setUserName(ok ? ctx.sessions.userName(call.sessionId()).orElse(null) : null);

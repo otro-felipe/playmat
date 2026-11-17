@@ -31,6 +31,16 @@ public final class ProductGateway {
         return ENABLED;
     }
 
+    public static boolean recoveryPrincipalValid(mage.server.recovery.RecoveryPrincipal principal) {
+        if (!enabled() || principal == null) return false;
+        JsonObject body = new JsonObject();
+        body.addProperty("accountId", principal.accountId.toString());
+        body.addProperty("seatId", principal.seatId);
+        if (principal.connectionId != null) body.addProperty("connectionId", principal.connectionId.toString());
+        try { return request("/internal/recovery/validate", 2000, "", body, false).status == 200; }
+        catch (IOException | RuntimeException e) { return false; }
+    }
+
     private static String parameter(String value) throws IOException {
         return URLEncoder.encode(value, StandardCharsets.UTF_8.name());
     }

@@ -38,7 +38,8 @@ public class GameEventRecorder extends Watcher {
         if (game.isSimulation()) {
             return;
         }
-        GameEventFeed feed = GameEventFeed.of(gameId);
+        // A durable snapshot carries this watcher into a new physical game; its runtime feed belongs to that game.
+        GameEventFeed feed = GameEventFeed.of(game.getId());
         if (feed == null) {
             return;
         }

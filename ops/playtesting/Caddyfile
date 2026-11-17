@@ -9,6 +9,8 @@
 	route {
 		request_header -X-Playmat-User
 		request_header -X-Playmat-Account
+		request_header -X-Playmat-Seat
+		request_header -X-Playmat-Connection
 
 		handle /healthz {
 			forward_auth 127.0.0.1:8790 {
@@ -20,7 +22,7 @@
 		handle /ws {
 			forward_auth 127.0.0.1:8790 {
 				uri /internal/verify?scope=play
-				copy_headers X-Playmat-User
+				copy_headers X-Playmat-User X-Playmat-Account X-Playmat-Seat X-Playmat-Connection
 			}
 			reverse_proxy 127.0.0.1:17172 {
 				stream_timeout 15m

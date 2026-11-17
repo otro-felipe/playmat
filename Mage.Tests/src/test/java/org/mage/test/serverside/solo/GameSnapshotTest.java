@@ -96,6 +96,28 @@ public class GameSnapshotTest {
     }
 
     @Test
+    public void endViewIncludesRestoredMatchLossesAndExcludesDraws() throws Exception {
+        Game game = play(77L, 2, null).game;
+        MatchOptions options = new MatchOptions("recovered score", "Two Player Duel", false);
+        options.setWinsNeeded(2);
+        Match match = new TwoPlayerMatch(options);
+        List<Player> players = new ArrayList<>(game.getPlayers().values());
+        for (Player player : players) match.addPlayer(player, new Deck());
+        match.restoreProgress(UUID.randomUUID(), 3, 1); // two actual wins plus a draw, including prior processes
+        match.getPlayer(players.get(1).getId()).addWin();
+        match.getPlayer(players.get(1).getId()).addWin();
+        Assert.assertTrue(match.checkIfMatchEnds());
+        mage.game.Table table = new mage.game.Table(UUID.randomUUID(), "Two Player Duel", "score", "One", null,
+                java.util.Arrays.asList(mage.players.PlayerType.HUMAN, mage.players.PlayerType.HUMAN), null,
+                match, java.util.Collections.emptySet(), false);
+        mage.view.GameEndView lost = new mage.view.GameEndView(game.getState(), game, players.get(0).getId(), table);
+        mage.view.GameEndView won = new mage.view.GameEndView(game.getState(), game, players.get(1).getId(), table);
+        Assert.assertEquals(0, lost.getWins()); Assert.assertEquals(2, lost.getLoses());
+        Assert.assertEquals(2, won.getWins()); Assert.assertEquals(0, won.getLoses());
+        Assert.assertNotNull(lost.getMatchView().getEndTime());
+    }
+
+    @Test
     public void newTableCarriesOnFromASnapshot() throws Exception {
         Run original = play(77L, 6, null);
         GameSnapshot saved = original.snapshots.stream().filter(s -> s.getTurnNum() == 4).findFirst().orElse(null);
@@ -123,6 +145,24 @@ public class GameSnapshotTest {
             Assert.assertEquals(savedPlayer.getGraveyard().size(), now.getGraveyard().size());
         }
         Assert.assertTrue("and plays on past it", resumed.game.getTurnNum() > 4);
+    }
+
+    @Test
+    public void durableRecoveryRestoresTheAgreedClockBoundary() throws Exception {
+        GameSnapshot source = play(77L, 2, null).snapshots.get(0);
+        GameSnapshot.Restored frozen = source.restore();
+        for (Player player : frozen.state.getPlayers().values()) {
+            player.setPriorityTimeLeft(123);
+            player.setBufferTimeLeft(7);
+        }
+        GameSnapshot timed = GameSnapshot.of(frozen.state, frozen.gameCards, frozen.meldCards, frozen.startingPlayerId);
+        Run resumed = play(null, 2, timed, true);
+        Assert.assertNull(resumed.failure);
+        GameState boundary = resumed.snapshots.get(0).restore().state;
+        for (Player player : boundary.getPlayers().values()) {
+            Assert.assertEquals("priority clock is restored, not reset to a new game's allowance", 123, player.getPriorityTimeLeft());
+            Assert.assertEquals("buffer belongs to the same durable boundary", 7, player.getBufferTimeLeft());
+        }
     }
 
     @Test
@@ -192,6 +232,10 @@ public class GameSnapshotTest {
     }
 
     private Run play(Long seed, int stopOnTurn, GameSnapshot resumeFrom) throws Exception {
+        return play(seed, stopOnTurn, resumeFrom, false);
+    }
+
+    private Run play(Long seed, int stopOnTurn, GameSnapshot resumeFrom, boolean durableRecovery) throws Exception {
         Run run = new Run();
         Game game = new TwoPlayerDuel(MultiplayerAttackOption.LEFT, RangeOfInfluence.ALL,
                 MulliganType.GAME_DEFAULT.getMulligan(0), 60, 20, 7);
@@ -206,6 +250,8 @@ public class GameSnapshotTest {
         options.stopOnTurn = stopOnTurn;
         options.stopAtStep = PhaseStep.UNTAP;
         options.seed = seed;
+        options.durableRecoveryBarrier = durableRecovery;
+        if (durableRecovery) game.setPriorityTime(300);
         options.turnSnapshots = run.snapshots::add;
         if (resumeFrom != null) {
             // the saved players were seated in the same order

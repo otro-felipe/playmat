@@ -269,7 +269,12 @@ public class TableController {
 
         // table - already joined
         User user = _user.get();
+        if (mage.server.recovery.PvpRecovery.reserved(table.getId())
+                && !mage.server.recovery.PvpRecovery.mayJoin(table.getId(), user.getRecoveryPrincipal(), playerType)) {
+            return false;
+        }
         if (mage.server.playtesting.ProductGateway.enabled() && playerType == PlayerType.HUMAN && !isOwner(userId)
+                && !mage.server.recovery.PvpRecovery.reserved(table.getId())
                 && !mage.server.playtesting.ProductGateway.canJoin(table.getId(), controllerName, user.getName())) {
             user.showUserMessage("Join Table", "An invitation is required for this seat.");
             return false;
@@ -554,7 +559,10 @@ public class TableController {
 
     private void submitDeck(UUID userId, UUID playerId, Deck deck) {
         if (table.getState() == TableState.SIDEBOARDING) {
-            match.submitDeck(playerId, deck);
+            synchronized (match) {
+                match.submitDeck(playerId, deck);
+                mage.server.recovery.PvpRecovery.sideboardChanged(this);
+            }
             managerFactory.userManager().getUser(userId).ifPresent(user -> user.removeSideboarding(table.getId()));
         } else {
             managerFactory.tournamentManager().submitDeck(tournament.getId(), playerId, deck);
@@ -574,7 +582,10 @@ public class TableController {
                 logger.fatal("Tournament == null  table: " + table.getId() + " userId: " + userId);
             }
         } else if (table.getState() == TableState.SIDEBOARDING) {
-            match.updateDeck(playerId, deck, ignoreMainBasicLands);
+            synchronized (match) {
+                match.updateDeck(playerId, deck, ignoreMainBasicLands);
+                mage.server.recovery.PvpRecovery.sideboardChanged(this);
+            }
         } else {
             // deck was meanwhile submitted so the autoupdate can be ignored
             // TODO: need research
@@ -733,6 +744,7 @@ public class TableController {
     }
 
     public synchronized void startMatch() {
+        if (!mage.server.recovery.PvpRecovery.mayStart(table.getId())) return;
         if (table.getState() == TableState.STARTING) {
             try {
                 if (table.isTournamentSubTable()) {
@@ -759,6 +771,7 @@ public class TableController {
      */
     private boolean startGame(UUID choosingPlayerId) throws GameException {
         try {
+            mage.server.recovery.PvpRecovery.beforeGame(this, managerFactory);
             match.startGame();
             table.initGame();
             GameOptions gameOptions = new GameOptions();
@@ -775,8 +788,10 @@ public class TableController {
             }
             // a solo game against the AI saves itself at every turn, and may carry on from a save
             mage.server.solo.SoloGames.get().prepareGame(this, gameOptions);
+            mage.server.recovery.PvpRecovery.prepareGame(this, gameOptions, choosingPlayerId, managerFactory);
             // Opt-in private PvP checkpoint capture only; no recovery endpoint is enabled by this pilot.
-            mage.server.recovery.PvpCheckpoints.prepareGame(this, gameOptions);
+            if (!mage.server.recovery.PvpRecovery.enabled()) mage.server.recovery.PvpCheckpoints.prepareGame(this, gameOptions);
+            choosingPlayerId = mage.server.recovery.PvpRecovery.chooser(table.getId(), choosingPlayerId);
             // the Rust AI plays the AI's seat, when the game qualifies (docs/rust/Ai.md)
             if (RustAi.enabled()) {
                 Map<UUID, String> humans = new HashMap<>();
@@ -932,6 +947,7 @@ public class TableController {
         ThreadUtils.setGameThreadStatus(game.getId(), ThreadUtils.THREAD_GAME_STATUS_AFTER_GAME);
         UUID choosingPlayerId = match.getChooser();
         match.endGame();
+        mage.server.recovery.PvpRecovery.gameEnded(this, game, choosingPlayerId, managerFactory);
         mage.server.recovery.PvpCheckpoints.gameEnded(match, game);
         if (managerFactory.configSettings().isSaveGameActivated() && !game.isSimulation()) {
             if (managerFactory.gameManager().saveGame(game.getId())) {
@@ -1106,6 +1122,25 @@ public class TableController {
         }
     }
 
+    /** Recovery resumes a real sideboard phase, with no fabricated active game/session. */
+    public void resumeSideboarding(UUID chooser) {
+        managerFactory.threadExecutor().getGameExecutor().submit(() -> {
+            String oldName = Thread.currentThread().getName();
+            Thread.currentThread().setName(ThreadUtils.THREAD_PREFIX_GAME + " recovery-sideboard " + table.getId());
+            try {
+                sideboard();
+                if (!match.hasEnded()) {
+                    if (!startGame(chooser)) throw new IllegalStateException("Recovered next game did not start");
+                }
+                else closeTable();
+            } catch (Exception e) {
+                logger.warn("Recovered sideboard could not continue at table=" + table.getId());
+                mage.server.recovery.PvpRecovery.failed(this);
+                managerFactory.tableManager().removeTableByStaff(table.getId());
+            } finally { Thread.currentThread().setName(oldName); }
+        });
+    }
+
     /**
      * Tables of normal matches or tournament sub tables are no longer needed,
      * if the match ends.
@@ -1194,6 +1229,7 @@ public class TableController {
     }
 
     public void swapSeats(int seatNum1, int seatNum2) {
+        if (mage.server.recovery.PvpRecovery.reserved(table.getId())) return;
         if (table.getState() == TableState.READY_TO_START) {
             if (seatNum1 >= 0 && seatNum2 >= 0 && seatNum1 < table.getSeats().length && seatNum2 < table.getSeats().length) {
                 Player swapPlayer = table.getSeats()[seatNum1].getPlayer();

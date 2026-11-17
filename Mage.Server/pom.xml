@@ -431,6 +431,7 @@
                                 <class>mage.server.solo.SoloViews$BatchStatus</class>
                                 <class>mage.server.solo.SoloViews$Assists</class>
                                 <class>mage.server.solo.SoloViews$SoloTurn</class>
+                                <class>mage.server.recovery.PvpRecovery$RecoveryView</class>
                                 <class>mage.server.solo.BatchRunner$JobSpec</class>
                                 <class>mage.server.solo.Leaderboards$Leaderboard</class>
                                 <class>mage.server.solo.ContentPacks$ContentPackView</class>

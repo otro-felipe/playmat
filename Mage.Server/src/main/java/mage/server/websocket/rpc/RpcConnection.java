@@ -37,6 +37,8 @@ public interface RpcConnection {
         return null;
     }
 
+    default mage.server.recovery.RecoveryPrincipal getRecoveryPrincipal() { return null; }
+
     /**
      * @return remote IP address, used by the server to identify anonymous users on reconnect
      */

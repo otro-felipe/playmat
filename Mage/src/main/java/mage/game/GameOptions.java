@@ -94,6 +94,8 @@ public class GameOptions implements Serializable, Copyable<GameOptions> {
      * null for none. Not part of a saved game.
      */
     public transient Consumer<GameSnapshot> turnSnapshots = null;
+    public transient Runnable beforeTurnSnapshot = null;
+    public boolean durableRecoveryBarrier = false;
 
     /**
      * Records state fingerprints as the game goes (see {@link mage.game.trace.GameTrace}); null for none. Not part of a
@@ -134,6 +136,8 @@ public class GameOptions implements Serializable, Copyable<GameOptions> {
         this.resumeFrom = options.resumeFrom;
         this.hostedLine = options.hostedLine;
         this.turnSnapshots = options.turnSnapshots;
+        this.beforeTurnSnapshot = options.beforeTurnSnapshot;
+        this.durableRecoveryBarrier = options.durableRecoveryBarrier;
         this.trace = options.trace;
         this.decisions = options.decisions;
     }

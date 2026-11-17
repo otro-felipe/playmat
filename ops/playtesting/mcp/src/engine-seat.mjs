@@ -73,11 +73,15 @@ export class PlaymatEngineSeat {
   #chat = [];
   #invitePresentation = null;
 
-  constructor({ engineUrl, engineName, trustedHeader, guardedPrompts = true }) {
+  constructor({ engineUrl, engineName, trustedHeader, accountId, recoverySeatId, connectionId, authenticationHeaders = {}, guardedPrompts = true }) {
     this.engineUrl = engineUrl;
     this.engineName = engineName;
     this.rpc = new RpcClient({
-      createSocket: (url) => new WebSocket(url, { headers: { [trustedHeader]: engineName }, maxPayload: 4 * 1024 * 1024 }),
+      createSocket: (url) => new WebSocket(url, { headers: { [trustedHeader]: engineName,
+        ...authenticationHeaders,
+        ...(accountId && recoverySeatId ? { 'X-Playmat-Account': accountId, 'X-Playmat-Seat': recoverySeatId } : {}),
+        ...(connectionId ? { 'X-Playmat-Connection': connectionId } : {}),
+      }, maxPayload: 4 * 1024 * 1024 }),
       requestTimeoutMs: 12_000, heartbeatTimeoutMs: 30_000, maxReconnectAttempts: 4, stateDiffs: false,
     });
     this.bus = new EventBus(this.rpc);
@@ -183,6 +187,9 @@ export class PlaymatEngineSeat {
   #joinStartedGame(message) {
     const { gameId, playerId, currentTableId } = message ?? {};
     if (!gameId || !playerId) return;
+    // Repeated recovery/reconnect notifications must not discard the already initialized view or open decision.
+    const existing = this.#session?.getState();
+    if (existing?.gameId === gameId && existing.playerId === playerId) return;
     this.#boardUnsubscribe?.();
     this.#session?.dispose();
     this.#enginePromptMessageId = null;
@@ -265,13 +272,14 @@ export class PlaymatEngineSeat {
     return { requested: await this.#session.resync() };
   }
 
-  async createGame({ name, format, deck }, register) {
+  async createGame({ name, format, deck, matchTimeLimit, seed }, register) {
     await this.open();
     const password = randomBytes(24).toString('base64url');
     await this.#validateForSeat(format, deck);
     const table = await this.api.roomCreateTable(this.#roomId, {
       name, gameType: 'Two Player Duel', deckType: formatTag(format), playerTypes: ['HUMAN', 'HUMAN'],
       winsNeeded: 2, rollbackTurnsAllowed: true, rated: false, spectatorsAllowed: false, password,
+      ...(matchTimeLimit ? { matchTimeLimit } : {}), ...(seed === undefined ? {} : { seed }),
     });
     if (!table?.tableId) throw new ToolError('table_failed', 'XMage could not create the table.');
     const { tableId } = table;
@@ -336,6 +344,13 @@ export class PlaymatEngineSeat {
     return { tableId, started: true };
   }
 
+  async recoveryList() { await this.open(); return this.api.recoveryList(); }
+  async recoveryStatus(matchId) { await this.open(); return this.api.recoveryStatus(matchId); }
+  async recoveryJoin({ matchId, revision, agree }) {
+    await this.open();
+    return this.api.recoveryJoin(matchId, revision, agree);
+  }
+
   #requireGame(gameId) {
     const current = this.#session?.getState();
     if (!this.#connected || !current || (gameId && current.gameId !== gameId)) {
@@ -353,7 +368,7 @@ export class PlaymatEngineSeat {
   }
 
   sideboardState(gameId) {
-    this.#requireGame(gameId);
+    if (gameId) this.#requireGame(gameId);
     if (!this.#sideboard) throw new ToolError('not_sideboarding', 'This seat is not sideboarding.');
     return this.#sideboard;
   }

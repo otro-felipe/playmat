@@ -74,6 +74,12 @@ test('[PM-AC-08] selects or cancels the engine ability panel through guarded MCP
     ['Cancel', 'button'],
   ]);
   assert.ok(decision.choices.every((choice) => !Object.hasOwn(choice, 'command')));
+  event('START_GAME', 100, { gameId, playerId });
+  // An RPC round trip fences delivery of the duplicate notification on the same WebSocket.
+  await engine.api.serverGetMainRoomId();
+  const repeated = await call('get_game_state', { gameId });
+  assert.deepEqual(repeated.result.decision, decision, 'duplicate recovery START_GAME preserves the issued decision');
+  assert.equal(repeated.result.step, 'PRECOMBAT_MAIN');
 
   const action = { gameId, decisionId: decision.id, choiceId: decision.choices[1].id, idempotencyKey: 'back-face' };
   const unprojected = await call('submit_decision', { ...action, choiceId: back, idempotencyKey: 'raw-choice' });

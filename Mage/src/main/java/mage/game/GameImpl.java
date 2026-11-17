@@ -1280,6 +1280,13 @@ public abstract class GameImpl implements Game {
         gameStatesRollBack.clear();
         for (Player player : getPlayers().values()) {
             player.abortReset();
+            if (gameOptions.durableRecoveryBarrier) {
+                // Ordinary rollback deliberately keeps spent time. Durable recovery has a different, agreed policy:
+                // decisions AND time after the confirmed boundary are discarded; downtime never consumes a clock.
+                Player frozen = restored.state.getPlayer(player.getId());
+                player.setPriorityTimeLeft(frozen.getPriorityTimeLeft());
+                player.setBufferTimeLeft(frozen.getBufferTimeLeft());
+            }
             if (priorityTime > 0 && player.getPriorityTimeLeft() == Integer.MAX_VALUE) {
                 initTimer(player.getId());
             }
@@ -1302,6 +1309,7 @@ public abstract class GameImpl implements Game {
             return;
         }
         try {
+            if (gameOptions.beforeTurnSnapshot != null) gameOptions.beforeTurnSnapshot.run();
             gameOptions.turnSnapshots.accept(GameSnapshot.of(state, gameCards, meldCards, startingPlayerId));
         } catch (Throwable e) {
             // a game that can't be saved still plays on
@@ -1415,6 +1423,7 @@ public abstract class GameImpl implements Game {
             if (executingRollback) {
                 rollbackTurnsExecution(turnToGoToForRollback);
                 player = getPlayer(state.getActivePlayerId());
+                offerTurnSnapshot();
             } else {
                 state.setActivePlayerId(player.getId());
                 saveRollBackGameState();

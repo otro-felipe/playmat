@@ -265,5 +265,8 @@
   "soloTableMark": {"group": "Solo", "access": "session"},
   "soloAdaptive": {"group": "Solo", "access": "session"},
   "inbox": {"group": "Solo", "access": "session"},
-  "inboxSeen": {"group": "Solo", "access": "session"}
+  "inboxSeen": {"group": "Solo", "access": "session"},
+  "recoveryList": {"group": "Recovery", "access": "session"},
+  "recoveryStatus": {"group": "Recovery", "access": "session"},
+  "recoveryJoin": {"group": "Recovery", "access": "session"}
 }

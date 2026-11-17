@@ -1,6 +1,6 @@
 import { BookOpen, Bot, Eye, Link2, Lock, MessageSquare, Plus, UserRound } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../connection';
 import { toWire } from '../decks/deckModel';
 import { refreshTables, useServerState, useTables } from '../queries';
@@ -103,6 +103,7 @@ export function TablesScreen() {
 
   return (
     <div className={styles.page}>
+      {PRIVATE_PLAYTESTING && <p><Link to="/recover">Return to your saved private matches</Link></p>}
       <div className={styles.columns}>
         <Zone
           label="Open tables"

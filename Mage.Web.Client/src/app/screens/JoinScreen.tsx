@@ -1,6 +1,7 @@
 import { Bot, Lock, UserRound } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { api } from '../connection';
 import { formatRules } from '../../core/decks/formats';
 import { inviteLink } from '../../core/social/chatLine';
 import { registerMessages, useT } from '../i18n';
@@ -27,6 +28,18 @@ const JOIN_MATCH = {
   description: 'Accept the invitation on this page as the signed-in player using the deck currently selected.',
   inputSchema: NO_INPUT,
 };
+
+function RecoveryFromInvite({ tableId }: { tableId: string }) {
+  const [link, setLink] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    if (PRIVATE_PLAYTESTING) void api.recoveryList().then((rows) => {
+      if (active) setLink(rows.find((row) => row.originalTableId === tableId)?.link ?? null);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [tableId]);
+  return link ? <p><Link to={link}>Return to this match from its confirmed saved boundary</Link></p> : null;
+}
 
 const MCP_GUIDES = [
   'playmat://guides/getting-started',
@@ -157,6 +170,7 @@ export function JoinScreen() {
           {!fresh || (PRIVATE_PLAYTESTING && invitationPending) ? <p className={styles.note} role="status">Looking for the table…</p> : (
             <>
               <p className={styles.note}>This table is gone: the game may have started, or the host closed it.</p>
+              <RecoveryFromInvite tableId={tableId} />
               <Button variant="print" onClick={() => navigate('/tables')}>See open tables</Button>
             </>
           )}

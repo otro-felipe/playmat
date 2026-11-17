@@ -54,6 +54,47 @@ async function withTestDatabase(f, run) {
   }
 }
 
+test('recovery binds immutable account and grant IDs and rechecks grant revocation without trusting names', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const alice = await signIn(f, 'RecoveryOwner')
+  const other = await signIn(f, 'RecoveryOther')
+  const token = await f.product.provisionAgent('RecoveryOwner', 'RecoveryAgent', ['play'])
+  const human = await f.path('/internal/verify?scope=play', { headers: alice })
+  const accountId = human.headers.get('X-Playmat-Account')
+  const seatId = human.headers.get('X-Playmat-Seat')
+  assert.equal(seatId, 'human:' + accountId)
+  const agent = await f.path('/internal/verify?scope=play', { headers: { Authorization: 'Bearer ' + token } })
+  const grant = { accountId, seatId: agent.headers.get('X-Playmat-Seat') }
+  assert.match(grant.seatId, /^agent:[a-f0-9-]{36}$/)
+  const validate = principal => f.path('/internal/recovery/validate', json('POST', {}, principal))
+  assert.equal((await validate(grant)).status, 200)
+  const otherId = (await f.path('/internal/verify', { headers: other })).headers.get('X-Playmat-Account')
+  assert.equal((await validate({ ...grant, accountId: otherId })).status, 403)
+  assert.equal((await validate({ accountId, seatId: 'agent:' + randomUUID(), engineName: 'RecoveryAgent' })).status, 403)
+  await f.product.revokeAgent(token)
+  assert.equal((await validate(grant)).status, 403)
+  await withTestDatabase(f, db => db.query('UPDATE accounts SET enabled=false WHERE id=$1', [accountId]))
+  assert.equal((await validate({ accountId, seatId })).status, 403)
+})
+
+test('recovery revalidates the current OAuth connection independently of its durable grant identity', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const cookie = await signIn(f, 'RecoveryOAuth')
+  await f.product.provisionAgent('RecoveryOAuth', 'RecoveryOA', ['play'])
+  const accountId = (await f.path('/internal/verify', { headers: cookie })).headers.get('X-Playmat-Account')
+  const connectionId = randomUUID()
+  const seatId = await withTestDatabase(f, async db => {
+    const { rows: [grant] } = await db.query("UPDATE agent_grants SET oauth_managed=true WHERE engine_key='recoveryoa' RETURNING recovery_id")
+    await db.query("INSERT INTO oauth_connections(id,account_id,engine_key,client_id,audience,scopes_approved,refresh_digest,expires_at) VALUES($1,$2,'recoveryoa','fixture-client','fixture-resource',ARRAY['play'],$3,now()+interval '1 hour')", [connectionId, accountId, randomUUID()])
+    return 'agent:' + grant.recovery_id
+  })
+  const validate = principal => f.path('/internal/recovery/validate', json('POST', {}, principal))
+  assert.equal((await validate({ accountId, seatId })).status, 403)
+  assert.equal((await validate({ accountId, seatId, connectionId })).status, 200)
+  await withTestDatabase(f, db => db.query('UPDATE oauth_connections SET revoked_at=now() WHERE id=$1', [connectionId]))
+  assert.equal((await validate({ accountId, seatId, connectionId })).status, 403)
+})
+
 test('[PM-AC-04] password sign-in and scoped forward auth reject forged or revoked identities', { skip: !databaseUrl }, async t => {
   const f = await fixture(t)
   assert.equal((await f.path('/internal/verify', { headers: { 'X-Playmat-User': 'Alice' } })).status, 401)

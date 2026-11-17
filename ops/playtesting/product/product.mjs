@@ -195,6 +195,11 @@ export async function createProduct({
       return res.writeHead(303, { 'Set-Cookie': await id.signOut(req), Location: '/login' }).end()
     }
     if (enableInternal && path === '/internal/legacy' && req.method === 'POST') return legacy(req, res)
+    if (enableInternal && path === '/internal/recovery/validate' && req.method === 'POST') {
+      const principal = await body(req, 'json', 1024)
+      const valid = await id.validateRecoveryPrincipal(principal)
+      return send(res, valid ? 200 : 403, { valid })
+    }
     if (enableInternal && path === '/internal/invites' && req.method === 'GET') {
       const result = await pool.query('SELECT table_id FROM invitations WHERE invitee_key=$1 AND expires_at>now()', [
         normalize(url.searchParams.get('guest')),
@@ -242,7 +247,10 @@ export async function createProduct({
       if (url.searchParams.get('scope') === 'play') requireScope(actor, 'play')
       res.setHeader('X-Playmat-User', actor.engineName)
       res.setHeader('X-Playmat-Account', actor.accountId)
-      return send(res, 200, identityView(actor))
+      const principal = await id.recoveryPrincipal(actor)
+      if (principal) res.setHeader('X-Playmat-Seat', principal.seatId)
+      if (principal?.connectionId) res.setHeader('X-Playmat-Connection', principal.connectionId)
+      return send(res, 200, { ...identityView(actor), ...(principal ? { recoverySeatId: principal.seatId } : {}) })
     }
     const endpoint = path.slice('/api/playtesting/'.length)
     if (endpoint === 'me' && req.method === 'GET') return send(res, 200, identityView(actor))

@@ -1,5 +1,7 @@
 # Capture pilot verification — 2026-11-17
 
+Historical record for the capture-only commit. The later authenticated recovery work is documented separately in [recovery-verification.md](recovery-verification.md).
+
 Scope: isolated local worktree `feat/durable-pvp-checkpoints`, based on `1f0b1edf2d72aad264ce56a1746654507c8a6d3c`. No deployment, push, production restart, real match interaction or other computer was used.
 
 All dependency/build/test commands ran in `maven:3.9-eclipse-temurin-17` containers. An existing dependency cache was mounted read-only once and copied into the dedicated `playmat-recovery-maven` volume; no existing application container or data volume was used. The source mount was this worktree. Tests expose no ports and use fixture-only temporary SQLite files. Final affected-suite runs used `--network none --hostname localhost`.

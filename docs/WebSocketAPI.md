@@ -204,11 +204,11 @@ Generated from the server's method registry (`mage.server.websocket.api`). Do no
 | `replayPage` | `gameId: UUID`, `start: number`, `count: number` | `ReplayPage \| null` | session | Events of a recorded game, in order: board snapshots ({t, view, myHand?}) and game log lines ({t, log}). At most 200 per page; myHand is the caller's own hand in games they played. Null when there is no such replay. |
 | `gameWatchers` | `gameId: UUID` | `string[]` | session | Names of the users spectating a running game (empty when the game is over or unknown). |
 | `gameWatchStop` | `gameId: UUID`, `sessionId: string` | `boolean` | session | Stop spectating a game. |
-| `sendPlayerUUID` | `gameId: UUID`, `sessionId: string`, `data?: UUID` | `boolean` | session | Answer a prompt with an object or player id (targets, choices, attackers, blockers). |
-| `sendPlayerString` | `gameId: UUID`, `sessionId: string`, `data: string` | `boolean` | session | Answer a prompt with text (choices, "special" mana payment). |
-| `sendPlayerBoolean` | `gameId: UUID`, `sessionId: string`, `data: boolean` | `boolean` | session | Answer a yes/no prompt, pass priority (false) or cancel mana payment (any value). |
-| `sendPlayerInteger` | `gameId: UUID`, `sessionId: string`, `data: number` | `boolean` | session | Answer an amount prompt. |
-| `sendPlayerManaType` | `gameId: UUID`, `playerId: UUID`, `sessionId: string`, `manaType: ManaType` | `boolean` | session | Pay from the mana pool with one mana type. |
+| `sendPlayerUUID` | `gameId: UUID`, `sessionId: string`, `data?: UUID`, `expectedPrompt?: number` | `boolean` | session | Answer a prompt with an object or player id (targets, choices, attackers, blockers). |
+| `sendPlayerString` | `gameId: UUID`, `sessionId: string`, `data: string`, `expectedPrompt?: number` | `boolean` | session | Answer a prompt with text (choices, "special" mana payment). |
+| `sendPlayerBoolean` | `gameId: UUID`, `sessionId: string`, `data: boolean`, `expectedPrompt?: number` | `boolean` | session | Answer a yes/no prompt, pass priority (false) or cancel mana payment (any value). |
+| `sendPlayerInteger` | `gameId: UUID`, `sessionId: string`, `data: number`, `expectedPrompt?: number` | `boolean` | session | Answer an amount prompt. |
+| `sendPlayerManaType` | `gameId: UUID`, `playerId: UUID`, `sessionId: string`, `manaType: ManaType`, `expectedPrompt?: number` | `boolean` | session | Pay from the mana pool with one mana type. |
 | `sendPlayerAction` | `action: PlayerAction`, `gameId: UUID`, `sessionId: string`, `data?: unknown` | `boolean` | session | Send a player action: pass modes (F-keys), concede, undo, rollback, auto-answer and trigger-order settings. |
 | `cheatShow` | `gameId: UUID`, `sessionId: string`, `playerId: UUID` | `boolean` | session | Test mode only: reveal a player's library. |
 | `gamePractice` | `gameId: UUID`, `sessionId: string`, `tool: string`, `cardName?: string`, `amount?: number` | `boolean` | session | Practice tools in a game against the AI only: tool HAND or BATTLEFIELD (cardName, amount cards), DRAW (amount), UNTAP_ALL, LIFE (amount). Runs the next time you are asked something; announced in the game log. |
@@ -402,6 +402,9 @@ Generated from the server's method registry (`mage.server.websocket.api`). Do no
 | `soloAdaptive` | `format: string` | `AdaptiveView` | session | Your adaptive skill for a format ("career", "constructed", "commander"...): the skill the next game plays at and how it's going, as a sentence. |
 | `inbox` | - | `InboxNote[]` | session | Your latest notes, newest first: how your ghost decks did. |
 | `inboxSeen` | - | `boolean` | session | Mark every note in your inbox seen. |
+| `recoveryList` | - | `RecoveryView[]` | session | Your durable private PvP matches and stable recovery links, authorized to this exact account or agent grant. |
+| `recoveryStatus` | `matchId: string` | `RecoveryView` | session | Only confirmed recovery metadata and ID mapping. No checkpoint payload or opponent hidden information. |
+| `recoveryJoin` | `matchId: string`, `revision: number`, `agree: boolean` | `RecoveryView` | session | Explicitly agree to the displayed durable boundary. Restores once both exact admitted participants agree and connect. Repeated calls reuse one table. |
 <!-- END GENERATED: methods -->
 
 ## Server events
@@ -438,6 +441,7 @@ Generated from `ClientCallbackMethod`. Do not edit the table by hand.
 | `HOST_GAME` | `unknown` | TABLE_CHANGE (ordered) | Lifecycle event: open, switch or close a screen. |
 | `HOST_GAME_QUIT` | `unknown` | TABLE_CHANGE (ordered) | Lifecycle event: open, switch or close a screen. |
 | `GAME_INIT` | `GameView` | TABLE_CHANGE (ordered) | Lifecycle event: open, switch or close a screen. |
+| `GAME_ROLLBACK` | `number` | TABLE_CHANGE (ordered) | Lifecycle event: open, switch or close a screen. |
 | `GAME_UPDATE_AND_INFORM` | `GameClientMessage` | UPDATE (may be dropped when outdated) | State snapshot; newer ones replace older ones. |
 | `GAME_INFORM_PERSONAL` | `GameClientMessage` | MESSAGE (may be dropped when outdated) | Message for the player or a log. |
 | `GAME_ERROR` | `string` | MESSAGE (may be dropped when outdated) | Message for the player or a log. |

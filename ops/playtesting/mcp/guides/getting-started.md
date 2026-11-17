@@ -34,3 +34,14 @@ See `playmat://guides/turn-planning` for sequences, `playmat://guides/card-catal
 ## Game events
 
 An MCP Events client can subscribe to `game.invitation.created` for a new invitation directed to its seat and `game.decision.required` for that seat's next actionable prompt. Read the current game before acting and confirm the decision ID still matches. Use `wait_for_decision` during live play when a webhook would arrive too late.
+## Returning after an engine restart
+
+If the private service enabled durable PvP recovery before this match began, use `list_recoverable_matches`, then
+`get_recovery_status` with the original match ID. Read its confirmed boundary and revision before calling
+`recover_match` with `agree:true`. Later decisions and their time consumption are discarded together; no clock runs
+while waiting for both original participants. Both must agree and reconnect. Repeated calls reuse one table.
+Use the returned current engine IDs and read fresh decisions; never resend an old choice or queued plan.
+During recovered sideboarding there is no fabricated active game: read the sideboard state and submit its current
+decision without a `gameId`. An unavailable checkpoint needs its matching engine image; a replay cannot restore it.
+After play resumes, the accumulated match clock is separate from the server's response-idle watchdog. Unknown or
+null timing is not unlimited time, and polling does not prevent idle loss. Read a fresh decision and respond promptly.

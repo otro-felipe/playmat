@@ -163,6 +163,7 @@ public final class RustHost {
                         GameOptions options, UUID chooser, java.util.function.Function<UUID, Integer> skillOf) {
         try {
             Game game = match.getGame();
+            if (options.durableRecoveryBarrier) return false;
             if (!enabled() || game == null || userPlayerMap.isEmpty() || userPlayerMap.size() > 2) {
                 return false;
             }

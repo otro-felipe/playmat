@@ -165,6 +165,17 @@ public class WebSocketServerImpl extends WebSocketServer {
         String clientIp = clientIp(conn, handshake);
         ConnectionState state = new ConnectionState(conn, workers, clientIp, limits.maxOutgoingBytes);
         state.setSignedOnUser(signedOnUser(conn, handshake));
+        if (state.getSignedOnUser() != null && mage.server.playtesting.ProductGateway.enabled()) {
+            try {
+                state.setRecoveryPrincipal(new mage.server.recovery.RecoveryPrincipal(
+                        java.util.UUID.fromString(handshake.getFieldValue("X-Playmat-Account")),
+                        handshake.getFieldValue("X-Playmat-Seat"),
+                        handshake.getFieldValue("X-Playmat-Connection").isEmpty() ? null
+                                : java.util.UUID.fromString(handshake.getFieldValue("X-Playmat-Connection"))));
+            } catch (IllegalArgumentException e) {
+                // Old clients may play, but cannot opt a match into durable authenticated recovery.
+            }
+        }
         InetSocketAddress peer = conn.getRemoteSocketAddress();
         state.setTrustedPeer(peer != null && peer.getAddress() != null && limits.addressResolver.isTrusted(peer.getAddress()));
         conn.setAttachment(state);

@@ -1,6 +1,6 @@
 # PvP checkpoint capture pilot
 
-This branch implements **private checkpoint capture**, disabled by default. It does **not** implement player recovery after a restart. Do not deploy it to preserve an active match or restart a server on the assumption that players can reconnect. The existing private product archive still marks interrupted matches as interrupted.
+This document describes the original **capture-only pilot**, disabled by default. Its flag does not enable player recovery. The subsequent [private PvP recovery implementation](pvp-recovery.md) has a separate opt-in flag, authenticated participant binding and reconnection flow. Neither feature can protect an already running match that started without checkpoints.
 
 ## Delivered behavior
 
@@ -28,7 +28,9 @@ The read helper is package-private, used only by trusted tests/diagnostics. It r
 
 The normal game-end hook marks the row `between_games` or `completed` before the next game/sideboarding begins. Checkpoints from a completed match cannot overwrite that terminal row, and an old game's end notification cannot invalidate a newer game's checkpoint. Sideboarding, mulligan decisions before the first turn, turn rollback and a crash between the final game decision and this lifecycle write remain outside recovery guarantees. A future restore adapter must not infer resumability merely from this pilot's status.
 
-## Integration still required before enabling recovery
+## Integration checklist recorded at the capture-only milestone
+
+The following historical design checklist motivated the later [recovery implementation](pvp-recovery.md). Consult that guide for current behavior and limits.
 
 1. **Participant identity at seat admission.** Persist immutable product `accountId` plus the precise admitted browser seat or agent grant/connection identity for both seats, bound to the engine session that actually joined. Resolve this during authenticated admission, not by looking up display names after a restart. Existing `User` IDs are process-local; `viewerNames()` and the archive's name-based access checks are insufficient. This branch changes no OAuth rules or product identity interfaces.
 2. **Stable private match route.** Use the original product/engine match ID for a route such as `/matches/:id`, authorized against those immutable participants. Keep original public table/game IDs in an explicit mapping to newly allocated engine IDs; never reuse a public ID as proof of access. Replays and game numbering must include recovery generations without double-counting results. No such route or mapping adapter is supplied here.

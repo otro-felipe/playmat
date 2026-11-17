@@ -93,6 +93,7 @@ public class GameEndView implements Serializable {
             }
         }
 
+        loses = Math.max(0, match.getNumGames() - wins - match.getDraws());
         if (matchWinner != null) {
             if (matchWinner.getPlayer().equals(you)) {
                 matchInfo = "You won the match!";

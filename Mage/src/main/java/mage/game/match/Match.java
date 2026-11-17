@@ -23,6 +23,10 @@ public interface Match {
 
     UUID getId();
 
+    default void restoreProgress(UUID originalMatchId, int gamesBeforeNext, int draws) {
+        throw new UnsupportedOperationException("This match type cannot restore progress");
+    }
+
     String getName();
 
     boolean hasEnded();
