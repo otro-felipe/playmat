@@ -30,7 +30,7 @@ async function signInPrivate(page: Page, account: Account) {
   await password.waitFor();
   await setPrivateInput(page.locator('input[autocomplete="username"]'), account.username);
   await setPrivateInput(password, account.password);
-  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await page.getByRole('button', { name: 'Entrar', exact: true }).click();
   await page.waitForURL((url) => url.pathname === '/decks', { timeout: 30_000 });
 }
 
@@ -45,6 +45,8 @@ test.describe('Private playtesting browser acceptance', () => {
 
   test('[PM-AC-04, PM-AC-06] a provisioned friend takes the invited seat and plays a Pioneer Bo3', async ({ browser }) => {
     test.setTimeout(240_000);
+    // Playwright also takes an accessibility snapshot on failure independently of its trace setting.
+    process.env.PLAYWRIGHT_NO_COPY_PROMPT = '1';
     const hostAccount = qaAccount('A');
     const guestAccount = qaAccount('B');
     if (hostAccount.username.toLowerCase() === guestAccount.username.toLowerCase()) {
