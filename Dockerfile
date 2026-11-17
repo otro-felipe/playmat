@@ -7,8 +7,7 @@ WORKDIR /source
 ENV MAVEN_OPTS="-Xmx1500m -XX:+UseSerialGC"
 COPY . .
 COPY --from=cards /opt/xmage/lib/mage-sets-1.4.62.jar /tmp/mage-sets.jar
-RUN --mount=type=cache,id=playmat-maven,target=/root/.m2 \
-    mvn -B -q -N install \
+RUN mvn -B -q -N install \
     && mvn -B -q install:install-file -Dfile=/tmp/mage-sets.jar -DpomFile=Mage.Sets/pom.xml \
     && mvn -B -q -pl 'Mage.Server,!Mage.Sets' -am install -DskipTests \
     && mvn -B -q -f Mage.Server/pom.xml package assembly:single -DskipTests \
