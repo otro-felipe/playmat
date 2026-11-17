@@ -12,6 +12,7 @@ import org.junit.Test;
 
 import java.lang.reflect.Proxy;
 import java.util.Map;
+import java.util.HashMap;
 import java.util.UUID;
 
 import static org.junit.Assert.*;
@@ -22,10 +23,16 @@ public class GameEventRecorderEvidenceTest {
     private final UUID stackId = UUID.randomUUID(), abilityId = UUID.randomUUID();
     private final GameEventFeed feed = GameEventFeed.open(gameId);
     private final SpellStack stack = new SpellStack();
-    private final Game game = stub(Game.class, Map.of("getId", gameId, "getStack", stack, "isSimulation", false));
+    private final Game game = stub(Game.class, values("getId", gameId, "getStack", stack, "isSimulation", false));
     private final GameEventRecorder recorder = new GameEventRecorder(gameId);
 
     @After public void close() { GameEventFeed.close(gameId); }
+
+    private static Map<String, Object> values(Object... pairs) {
+        Map<String, Object> result = new HashMap<>();
+        for (int i = 0; i < pairs.length; i += 2) result.put((String) pairs[i], pairs[i + 1]);
+        return result;
+    }
 
     @SuppressWarnings("unchecked")
     private static <T> T stub(Class<T> type, Map<String, Object> values) {
@@ -40,8 +47,8 @@ public class GameEventRecorderEvidenceTest {
         return new GameEvent(type, target, (Ability) null, actor);
     }
     private void resolvingOwn() {
-        Ability ability = stub(Ability.class, Map.of("getOriginalId", abilityId));
-        StackObject object = stub(StackObject.class, Map.of("getId", stackId, "getControllerId", own, "getStackAbility", ability));
+        Ability ability = stub(Ability.class, values("getOriginalId", abilityId));
+        StackObject object = stub(StackObject.class, values("getId", stackId, "getControllerId", own, "getStackAbility", ability));
         stack.add(object);
         recorder.watch(event(GameEvent.EventType.RESOLVING_ABILITY, abilityId, own), game);
     }
