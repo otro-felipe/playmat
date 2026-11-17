@@ -14,7 +14,7 @@ Open http://127.0.0.1:8794. Provision users with the command below. The local st
 
 Run one app replica, a private PostgreSQL service, and an S3 bucket. Mount the engine/replay spool volume at `/var/lib/playmat` and expose only the app port. Point Railway's health check to `/healthz`. It checks both PostgreSQL and the XMage server. The app contains Caddy, the private product service, the separate MCP transport, and XMage. The only public ingress is Caddy. Do not expose the internal HTTP or engine ports as Railway domains or TCP proxies.
 
-Bind `DATABASE_URL` by reference to the private Postgres service. Set `PLAYMAT_PUBLIC_URL` and `XMAGE_ALLOWED_ORIGINS` to the public HTTPS origin. Configure `PLAYMAT_S3_BUCKET`, optional `PLAYMAT_S3_ENDPOINT`, and AWS region and credentials through runtime secret variables. Railway Buckets use virtual-hosted requests. Set `PLAYMAT_S3_FORCE_PATH_STYLE=true` only for providers that need path style. Replay objects have content-addressed keys regardless of the bucket's provider versioning features.
+Bind `DATABASE_URL` by reference to the private Postgres service. Set `PLAYMAT_PUBLIC_URL` to the canonical public HTTPS origin. List the allowed HTTPS origins in `XMAGE_ALLOWED_ORIGINS`, separated by commas. WebSocket and MCP requests use this list. Configure `PLAYMAT_S3_BUCKET`, optional `PLAYMAT_S3_ENDPOINT`, and AWS region and credentials through runtime secret variables. Railway Buckets use virtual-hosted requests. Set `PLAYMAT_S3_FORCE_PATH_STYLE=true` only for providers that need path style. Replay objects have content-addressed keys regardless of the bucket's provider versioning features.
 
 ## Provisioning
 

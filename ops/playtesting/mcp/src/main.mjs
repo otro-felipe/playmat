@@ -8,12 +8,14 @@ const trustedHeader = process.env.AUTH_TRUSTED_HEADER ?? 'X-Playmat-User';
 const publicUrl = process.env.PLAYMAT_PUBLIC_URL;
 const product = createProductClient(productUrl, publicUrl);
 const port = Number(process.env.PLAYMAT_MCP_PORT ?? 8791);
+const allowedOrigins = (process.env.XMAGE_ALLOWED_ORIGINS ?? '').split(',').map((origin) => origin.trim()).filter(Boolean);
+if (publicUrl) allowedOrigins.push(new URL(publicUrl).origin);
 
 const server = createMcpServer({
   authorize: product.authorize,
   product: product.operation,
   createEngine: ({ engineName }) => new PlaymatEngineSeat({ engineUrl, engineName, trustedHeader }),
-  allowedOrigins: publicUrl ? [new URL(publicUrl).origin] : [],
+  allowedOrigins,
 });
 
 server.listen(port, '127.0.0.1', () => console.log('Playmat MCP listening on loopback.'));
