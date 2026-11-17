@@ -269,6 +269,11 @@ public class TableController {
 
         // table - already joined
         User user = _user.get();
+        if (mage.server.playtesting.ProductGateway.enabled() && playerType == PlayerType.HUMAN && !isOwner(userId)
+                && !mage.server.playtesting.ProductGateway.canJoin(table.getId(), controllerName, user.getName())) {
+            user.showUserMessage("Join Table", "An invitation is required for this seat.");
+            return false;
+        }
         if (userPlayerMap.containsKey(userId) && playerType == PlayerType.HUMAN) {
             user.showUserMessage("Join Table", new StringBuilder("You can join a table only one time.").toString());
             return false;
@@ -497,6 +502,12 @@ public class TableController {
         if (table.getState() == TableState.SIDEBOARDING && table.getMatch() != null) {
             MatchPlayer mPlayer = table.getMatch().getPlayer(playerId);
             if (mPlayer != null) {
+                if (mPlayer.isDoneSideboarding()) {
+                    return false;
+                }
+                if (!table.isTournamentSubTable() && !mPlayer.hasSameSideboardPool(deck, false)) {
+                    throw new MageException("Sideboarding can only move cards within the registered card pool.");
+                }
                 deck.setName(mPlayer.getDeck().getName());
             }
         }
@@ -521,7 +532,7 @@ public class TableController {
         return true;
     }
 
-    public void updateDeck(UUID userId, DeckCardLists deckList) throws MageException {
+    public synchronized void updateDeck(UUID userId, DeckCardLists deckList) throws MageException {
         UUID playerId = userPlayerMap.get(userId);
         // TODO: need refactor, many duplicated code like state check
         if (table.getState() != TableState.SIDEBOARDING
@@ -529,6 +540,15 @@ public class TableController {
             return;
         }
         Deck deck = Deck.load(deckList, false, false);
+        if (table.getState() == TableState.SIDEBOARDING && !table.isTournament() && !table.isTournamentSubTable()) {
+            MatchPlayer seat = match.getPlayer(playerId);
+            if (seat == null || seat.hasQuit() || seat.isDoneSideboarding()) {
+                return;
+            }
+            if (!seat.hasSameSideboardPool(deck, false)) {
+                throw new MageException("Sideboarding can only move cards within the registered card pool.");
+            }
+        }
         updateDeck(userId, playerId, deck);
     }
 
@@ -1089,6 +1109,7 @@ public class TableController {
      */
     private void closeTable() {
         this.matchEnd();
+        mage.server.replay.ReplayRecorder.onMatchEnded(table);
         table.closeTable();
     }
 

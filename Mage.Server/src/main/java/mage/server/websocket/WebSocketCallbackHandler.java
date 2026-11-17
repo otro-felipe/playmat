@@ -222,7 +222,7 @@ public class WebSocketCallbackHandler implements ClientChannel {
         }
         if (PROMPTS.contains(method)) {
             pendingPrompts.put(gameId, json);
-        } else if (method == ClientCallbackMethod.GAME_OVER) {
+        } else if (method == ClientCallbackMethod.GAME_OVER || method == ClientCallbackMethod.GAME_ROLLBACK) {
             pendingPrompts.remove(gameId);
         }
     }

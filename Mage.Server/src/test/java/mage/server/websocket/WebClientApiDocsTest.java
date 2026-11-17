@@ -72,6 +72,7 @@ public class WebClientApiDocsTest {
         CALLBACK_DATA.put(ClientCallbackMethod.HOST_GAME, "unknown");
         CALLBACK_DATA.put(ClientCallbackMethod.HOST_GAME_QUIT, "unknown");
         CALLBACK_DATA.put(ClientCallbackMethod.GAME_INIT, "GameView");
+        CALLBACK_DATA.put(ClientCallbackMethod.GAME_ROLLBACK, "number");
         CALLBACK_DATA.put(ClientCallbackMethod.GAME_UPDATE_AND_INFORM, "GameClientMessage");
         CALLBACK_DATA.put(ClientCallbackMethod.GAME_INFORM_PERSONAL, "GameClientMessage");
         CALLBACK_DATA.put(ClientCallbackMethod.GAME_ERROR, "string");

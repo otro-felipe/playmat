@@ -6,6 +6,7 @@ import { NavLink, Outlet, useMatch, useNavigate } from 'react-router-dom';
 import { APP_NAME } from './brand';
 import { api } from './connection';
 import { useT, type MessageKey } from './i18n';
+import { PRIVATE_PLAYTESTING } from './playtesting';
 import type { ReleaseNotes } from '../core/util/releaseNotes';
 import { useServerInfo } from './queries';
 import { Avatar } from './social/Avatar';
@@ -31,6 +32,7 @@ const NAV: { to: string; label: MessageKey; end?: boolean }[] = [
   { to: '/train', label: 'shell.nav.train' },
   { to: '/history', label: 'shell.nav.history' },
 ];
+const PRIVATE_NAV = NAV.filter((item) => ['/', '/decks', '/tables', '/history'].includes(item.to));
 
 // the import sheet loads the first time it opens, then stays mounted so it can animate out
 const ImportSheet = lazy(() => import('./decks/import/ImportSheet').then((module) => ({ default: module.ImportSheet })));
@@ -150,7 +152,7 @@ export function AppShell() {
             <span>{APP_NAME}</span>
           </NavLink>
           <nav className={styles.nav} aria-label={t('shell.nav')}>
-            {NAV.filter((item) => career || item.to !== '/career').map((item) => (
+            {(PRIVATE_PLAYTESTING ? PRIVATE_NAV : NAV.filter((item) => career || item.to !== '/career')).map((item) => (
               <NavLink
                 key={item.to}
                 to={item.to}

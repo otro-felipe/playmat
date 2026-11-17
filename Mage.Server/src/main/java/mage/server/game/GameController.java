@@ -37,6 +37,7 @@ import org.apache.log4j.Logger;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.*;
 import java.util.Map.Entry;
 import java.util.concurrent.*;
@@ -88,9 +89,8 @@ public class GameController implements GameCallback {
     private ConcurrentHashMap<UUID, GameView> defaultGameViews = new ConcurrentHashMap<>(); // default game views on first connect
     private volatile ReplayRecorder replayRecorder; // null when the game isn't recorded for replay
 
-    private UUID userRequestingRollback;
-    private int turnsToRollback;
-    private int requestsOpen;
+    private final Object rollbackLock = new Object();
+    private RollbackVote rollbackVote;
 
     public GameController(ManagerFactory managerFactory, Game game, ConcurrentMap<UUID, UUID> userPlayerMap, UUID tableId, UUID choosingPlayerId, GameOptions gameOptions) {
         this.managerFactory = managerFactory;
@@ -99,7 +99,6 @@ public class GameController implements GameCallback {
         this.gameSessionId = UUID.randomUUID();
         this.userPlayerMap = userPlayerMap;
         this.chatId = managerFactory.chatManager().createGameChatSession(game);
-        this.userRequestingRollback = null;
         this.game = game;
         this.game.setSaveGame(managerFactory.configSettings().isSaveGameActivated());
         this.tableId = tableId;
@@ -153,6 +152,11 @@ public class GameController implements GameCallback {
                         UUID playerId;
                         switch (event.getEventType()) {
                             case UPDATE:
+                                updateGame();
+                                break;
+                            case ROLLBACK_COMMITTED:
+                                ReplayRecorder.onRollbackCommitted(game);
+                                getGameSessions().forEach(session -> session.rollbackCommitted(game.getTurnNum()));
                                 updateGame();
                                 break;
                             case INFO:
@@ -652,64 +656,15 @@ public class GameController implements GameCallback {
                 break;
             case ROLLBACK_TURNS: // basic request of a player to rollback
                 if (data instanceof Integer) {
-                    turnsToRollback = (Integer) data;
-                    if (game.canRollbackTurns(turnsToRollback)) {
-                        UUID playerId = getPlayerId(userId);
-                        if (game.getPriorityPlayerId().equals(playerId)) {
-                            // rollback request on own priority - can stop current choose dialog
-                            // TODO: make it async on any priority like concede
-                            requestsOpen = requestPermissionToRollback(userId, turnsToRollback);
-                            if (requestsOpen == 0) {
-                                game.rollbackTurns(turnsToRollback);
-                                turnsToRollback = -1;
-                                requestsOpen = -1;
-                            } else {
-                                userRequestingRollback = userId;
-                            }
-                        } else {
-                            Player player = game.getPlayer(playerId);
-                            if (player != null) {
-                                game.informPlayer(player, "You can only request a rollback if you have priority.");
-                            }
-                        }
-                    } else {
-                        UUID playerId = getPlayerId(userId);
-                        if (playerId != null) {
-                            Player player = game.getPlayer(playerId);
-                            if (player != null) {
-                                game.informPlayer(player, "That turn is not available for rollback.");
-                            }
-                        }
-                    }
+                    requestRollback(userId, (Integer) data);
                 }
                 break;
             case ADD_PERMISSION_TO_ROLLBACK_TURN:
-                if (userRequestingRollback != null && requestsOpen > 0 && !userId.equals(userRequestingRollback)) {
-                    requestsOpen--;
-                    if (requestsOpen == 0) {
-                        game.rollbackTurns(turnsToRollback);
-                        turnsToRollback = -1;
-                        userRequestingRollback = null;
-                        requestsOpen = -1;
-                    }
-                }
+                voteOnRollback(userId, data, true);
                 break;
-            case DENY_PERMISSION_TO_ROLLBACK_TURN: // one player has denied - so cancel the request
-            {
-                UUID playerId = getPlayerId(userId);
-                if (playerId != null) {
-                    Player player = game.getPlayer(playerId);
-                    if (player != null) {
-                        if (userRequestingRollback != null && requestsOpen > 0 && !userId.equals(userRequestingRollback)) {
-                            turnsToRollback = -1;
-                            userRequestingRollback = null;
-                            requestsOpen = -1;
-                            game.informPlayers("Rollback request denied by " + player.getLogName());
-                        }
-                    }
-                }
-            }
-            break;
+            case DENY_PERMISSION_TO_ROLLBACK_TURN:
+                voteOnRollback(userId, data, false);
+                break;
             case CONCEDE: {
                 UUID playerId = getPlayerId(userId);
                 if (playerId != null) {
@@ -782,21 +737,72 @@ public class GameController implements GameCallback {
         }
     }
 
-    private int requestPermissionToRollback(UUID userIdRequester, int numberTurns) {
-        int requests = 0;
-        for (Player player : game.getState().getPlayers().values()) {
-            Optional<User> requestedUser = getUserByPlayerId(player.getId());
-            if (player.isInGame() && player.isHuman()
-                    && requestedUser.isPresent()
-                    && !requestedUser.get().getId().equals(userIdRequester)) {
-                requests++;
-                GameSessionPlayer gameSession = gameSessions.get(player.getId());
-                if (gameSession != null) {
-                    gameSession.requestPermissionToRollbackTurn(userIdRequester, numberTurns);
+    private void requestRollback(UUID userId, int turnsBack) {
+        UUID playerId = getPlayerId(userId);
+        if (playerId == null) {
+            return;
+        }
+        Player requester = game.getPlayer(playerId);
+        if (requester == null || !requester.isInGame() || game.hasEnded()) {
+            return;
+        }
+        synchronized (rollbackLock) {
+            int turn = game.getTurnNum();
+            Instant now = Instant.now();
+            if (!gameOptions.rollbackTurnsAllowed || game.executingRollback() || turnsBack < 0 || !game.canRollbackTurns(turnsBack)) {
+                game.informPlayer(requester, "That turn is not available for rollback.");
+                return;
+            }
+            if (!playerId.equals(game.getPriorityPlayerId())) {
+                game.informPlayer(requester, "You can only request a rollback if you have priority.");
+                return;
+            }
+            if (rollbackVote != null && rollbackVote.isOpen(turn, now)) {
+                game.informPlayer(requester, "A rollback request is already pending.");
+                return;
+            }
+            Map<UUID, GameSessionPlayer> voters = new HashMap<>();
+            for (Player player : game.getState().getPlayers().values()) {
+                if (!player.isInGame() || !player.isHuman() || playerId.equals(player.getId())) {
+                    continue;
                 }
+                GameSessionPlayer session = gameSessions.get(player.getId());
+                Optional<User> user = getUserByPlayerId(player.getId());
+                if (session == null || !user.isPresent()) {
+                    game.informPlayer(requester, "The other player must be connected to approve a rollback.");
+                    return;
+                }
+                voters.put(user.get().getId(), session);
+            }
+            if (voters.isEmpty()) {
+                game.rollbackToTurn(turn - turnsBack);
+                return;
+            }
+            RollbackVote vote = new RollbackVote(turn, turn - turnsBack, voters.keySet(), now.plusSeconds(30));
+            rollbackVote = vote;
+            for (GameSessionPlayer voter : voters.values()) {
+                voter.requestPermissionToRollbackTurn(userId, vote.id, vote.targetTurn);
             }
         }
-        return requests;
+    }
+
+    private void voteOnRollback(UUID userId, Object requestId, boolean accepted) {
+        synchronized (rollbackLock) {
+            RollbackVote vote = rollbackVote;
+            if (vote == null || game.hasEnded() || !vote.accept(requestId, userId, game.getTurnNum(), Instant.now())) {
+                return;
+            }
+            if (!accepted) {
+                rollbackVote = null;
+                Player player = game.getPlayer(getPlayerId(userId));
+                if (player != null) {
+                    game.informPlayers("Rollback request denied by " + player.getLogName());
+                }
+            } else if (vote.isApproved()) {
+                rollbackVote = null;
+                game.rollbackToTurn(vote.targetTurn);
+            }
+        }
     }
 
     private void requestPermissionToSeeHandCards(UUID userIdRequester, UUID userIdGranter) {
@@ -865,7 +871,7 @@ public class GameController implements GameCallback {
             // sideboard data already sent in PlayerView, so no need to re-sent it TODO: re-sent deck instead?
             user.ccViewSideboard(table.getId(), game.getId(), targetPlayerId);
         } else {
-            user.ccViewLimitedDeck(deckSource.getDeckForViewer(), table.getId(), table.getParentTableId(), requestsOpen, true);
+            user.ccViewLimitedDeck(deckSource.getDeckForViewer(), table.getId(), table.getParentTableId(), 0, true);
         }
     }
 

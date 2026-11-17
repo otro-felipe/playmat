@@ -3,6 +3,7 @@ import { api, DEFAULT_SERVER_URL, rpc } from '../connection';
 import { ConnectionError, RpcError, type ConnectionStatus } from '../../core/rpc/RpcClient';
 import { forgetOpenGames } from './openGames';
 import { readJson, writeJson } from './persist';
+import { PRIVATE_PLAYTESTING } from '../playtesting';
 
 export type SessionPhase = 'signedOut' | 'signingIn' | 'signedIn';
 
@@ -329,7 +330,12 @@ export const useSession = create<SessionState>((set, get) => ({
     set({ phase: 'signedOut', roomId: null, signedInElsewhere: false, staleLogin: false, signedInViaOidc: false });
     // the provider bounces the browser back to the sign-in screen; when its session is gone, the next
     // "Sign in with <provider>" asks for the passkey again instead of silently re-creating the person
-    if (logoutUrl) window.location.assign(logoutUrl);
+    if (PRIVATE_PLAYTESTING) {
+      await fetch('/logout', { method: 'POST' });
+      window.location.assign('/login');
+    } else if (logoutUrl) {
+      window.location.assign(logoutUrl);
+    }
   },
 }));
 

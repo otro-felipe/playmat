@@ -25,8 +25,10 @@ import { joinTable } from './joinTable';
 import { TableAdvancedFields } from './TableAdvancedFields';
 import styles from './TablesScreen.module.css';
 import { PUBLIC_ORIGIN } from '../brand';
+import { createPlaytestingInvite, PRIVATE_PLAYTESTING } from '../playtesting';
 
 const FREEFORM = 'Constructed - Freeform';
+const PRIVATE_FORMATS = ['Constructed - Standard', 'Constructed - Pioneer', 'Constructed - Modern'];
 
 const STATE_LABEL: Record<string, string> = {
   WAITING: 'Waiting for players',
@@ -65,6 +67,10 @@ export function TablesScreen() {
 
   async function join(table: TableView, password?: string) {
     if (!roomId || !table.tableId || !selectedDeck) return;
+    if (PRIVATE_PLAYTESTING) {
+      window.location.assign(`/join/${table.tableId}`);
+      return;
+    }
     if (table.passworded && password === undefined) {
       setTablePassword('');
       setLocked(table);
@@ -206,9 +212,9 @@ function MyTable({ table }: { table: TableView }) {
   const ready = table.tableState === 'READY_TO_START';
   const copyInvite = () => {
     if (!table.tableId) return;
-    const link = inviteLink(PUBLIC_ORIGIN, table.tableId);
+    const link = inviteLink(PRIVATE_PLAYTESTING ? window.location.origin : PUBLIC_ORIGIN, table.tableId);
     navigator.clipboard.writeText(link)
-      .then(() => notify('Invite link copied', table.passworded ? 'Send it to a friend, with the table password.' : 'Send it to a friend: it opens this table.'))
+      .then(() => notify('Invite link copied', !PRIVATE_PLAYTESTING && table.passworded ? 'Send it to a friend, with the table password.' : 'Send it to the invited player.'))
       .catch(() => notify('Invite link', link));
   };
   return (
@@ -252,12 +258,13 @@ function HostDialog({ open, onOpenChange, deckId }: { open: boolean; onOpenChang
   const loadForPlay = useDecks((state) => state.loadForPlay);
   const loadList = useDecks((state) => state.loadList);
   const [name, setName] = useState('');
-  const [deckType, setDeckType] = useState(FREEFORM);
+  const [deckType, setDeckType] = useState(PRIVATE_PLAYTESTING ? 'Constructed - Pioneer' : FREEFORM);
   const [gameType, setGameType] = useState('Two Player Duel');
   const [seats, setSeats] = useState(2);
   const [wins, setWins] = useState(2);
   const [aiSeats, setAiSeats] = useState(0);
   const [password, setPassword] = useState('');
+  const [guest, setGuest] = useState('');
   const [advanced, setAdvanced] = useState<TableAdvanced>(DEFAULT_ADVANCED);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -267,7 +274,7 @@ function HostDialog({ open, onOpenChange, deckId }: { open: boolean; onOpenChang
     if (!open || !deckId) return;
     let cancelled = false;
     void loadList(deckId).then((deck) => {
-      if (!cancelled && deck.format) setDeckType(deck.format);
+      if (!cancelled && deck.format && (!PRIVATE_PLAYTESTING || PRIVATE_FORMATS.includes(deck.format))) setDeckType(deck.format);
     }).catch(() => undefined);
     return () => {
       cancelled = true;
@@ -282,34 +289,40 @@ function HostDialog({ open, onOpenChange, deckId }: { open: boolean; onOpenChang
   const maxSeats = Math.min(type?.maxPlayers ?? 2, 6);
   const seatCount = Math.min(maxSeats, Math.max(minSeats, seats));
   const commander = isCommanderFormat(deckType);
-  const menu = formatMenu(serverState?.deckTypes ?? []);
+  const menu = formatMenu(PRIVATE_PLAYTESTING ? PRIVATE_FORMATS : serverState?.deckTypes ?? []);
   const listed = menu.some((group) => group.types.includes(deckType));
 
   async function host() {
     if (!roomId || !deckId) return;
     setBusy(true);
     setError(null);
+    let createdTableId: string | undefined;
     try {
       const { deck } = await loadForPlay(deckId);
       // the pictures download while the table fills, so the first hand lands with its art
       warmDeck(deck);
       const playerTypes = Array.from({ length: seatCount }, (_, index) => (index > 0 && index <= aiSeats ? 'COMPUTER_MAD' : 'HUMAN'));
+      const tablePassword = PRIVATE_PLAYTESTING ? crypto.randomUUID() : password;
       const table = await api.roomCreateTable(roomId, matchOptions({
         name: name.trim() || `${userName}'s table`,
         gameType: chosenGame,
         deckType,
         // a free-for-all is one game
         winsNeeded: seatCount > 2 ? 1 : wins,
-        password,
+        password: tablePassword,
         playerTypes,
         advanced,
         // players you ignore can't sit at your table or watch it
         bannedUsers: useSocial.getState().ignored,
       }));
       if (!table?.tableId) throw new Error('The server did not create the table.');
+      createdTableId = table.tableId;
       const wire = toWire(deck);
-      if (!await api.roomJoinTable(roomId, table.tableId, userName, 'HUMAN', 1, wire, password)) {
+      if (!await api.roomJoinTable(roomId, table.tableId, userName, 'HUMAN', 1, wire, tablePassword)) {
         throw new Error(`Your deck is not legal in ${formatRules(deckType).label}.`);
+      }
+      if (PRIVATE_PLAYTESTING && aiSeats === 0) {
+        await createPlaytestingInvite({ tableId: table.tableId, roomId, format: deckType, password: tablePassword }, guest.trim());
       }
       if (aiSeats > 0) {
         // the AI brings the format's own decks, or starter decks of the right kind; a deck that doesn't fit gets a copy of yours
@@ -317,13 +330,19 @@ function HostDialog({ open, onOpenChange, deckId }: { open: boolean; onOpenChang
         rivals.forEach(warmDeck);
         for (let seat = 1; seat <= aiSeats; seat++) {
           const rival = rivals[seat - 1] ? toWire(rivals[seat - 1]) : wire;
-          const joined = await api.roomJoinTable(roomId, table.tableId, `AI ${seat}`, 'COMPUTER_MAD', 4, rival, password);
-          if (!joined && rival !== wire) await api.roomJoinTable(roomId, table.tableId, `AI ${seat}`, 'COMPUTER_MAD', 4, wire, password);
+          const joined = await api.roomJoinTable(roomId, table.tableId, `AI ${seat}`, 'COMPUTER_MAD', 4, rival, tablePassword);
+          if (!joined && (rival === wire || !await api.roomJoinTable(roomId, table.tableId, `AI ${seat}`, 'COMPUTER_MAD', 4, wire, tablePassword))) {
+            throw new Error('The AI could not join with a legal deck.');
+          }
         }
       }
       refreshTables();
       onOpenChange(false);
     } catch (reason) {
+      if (PRIVATE_PLAYTESTING && createdTableId) {
+        await api.tableRemove(roomId, createdTableId).catch(() => undefined);
+        refreshTables();
+      }
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       setBusy(false);
@@ -335,12 +354,12 @@ function HostDialog({ open, onOpenChange, deckId }: { open: boolean; onOpenChang
       open={open}
       onOpenChange={onOpenChange}
       title="Host a table"
-      description="Friends on this server will see it under Open tables."
+      description={PRIVATE_PLAYTESTING ? 'Choose your format and invite one player.' : 'Friends on this server will see it under Open tables.'}
       width="lg"
       footer={
         <>
           <Button variant="quiet" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button variant="decision" busy={busy} disabled={!deckId} onClick={() => void host()}>Host</Button>
+          <Button variant="decision" busy={busy} disabled={!deckId || (PRIVATE_PLAYTESTING && aiSeats === 0 && !guest.trim())} onClick={() => void host()}>Host</Button>
         </>
       }
     >
@@ -377,9 +396,9 @@ function HostDialog({ open, onOpenChange, deckId }: { open: boolean; onOpenChang
             <label className={styles.selectField}>
               <span>Games to win</span>
               <select value={wins} onChange={(event) => setWins(Number(event.target.value))}>
-                <option value={1}>1 (single game)</option>
+                {!PRIVATE_PLAYTESTING && <option value={1}>1 (single game)</option>}
                 <option value={2}>2 (best of three)</option>
-                <option value={3}>3 (best of five)</option>
+                {!PRIVATE_PLAYTESTING && <option value={3}>3 (best of five)</option>}
               </select>
             </label>
           )}
@@ -390,7 +409,8 @@ function HostDialog({ open, onOpenChange, deckId }: { open: boolean; onOpenChang
             </select>
           </label>
         </div>
-        <Field label="Password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} hint="Leave empty for an open table." />
+        {PRIVATE_PLAYTESTING ? (aiSeats === 0 && <Field label="Invited player" value={guest} onChange={(event) => setGuest(event.target.value)} />)
+          : <Field label="Password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} hint="Leave empty for an open table." />}
         <TableAdvancedFields
           value={advanced}
           onChange={(patch) => setAdvanced((current) => ({ ...current, ...patch }))}

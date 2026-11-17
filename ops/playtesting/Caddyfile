@@ -1,0 +1,52 @@
+{
+	admin off
+	auto_https off
+}
+
+:{$PORT:8080} {
+	encode zstd gzip
+
+	route {
+		request_header -X-Playmat-User
+		request_header -X-Playmat-Account
+
+		handle /healthz {
+			forward_auth 127.0.0.1:8790 {
+				uri /healthz
+			}
+			reverse_proxy 127.0.0.1:17173
+		}
+
+		handle /ws {
+			forward_auth 127.0.0.1:8790 {
+				uri /internal/verify?scope=play
+				copy_headers X-Playmat-User
+			}
+			reverse_proxy 127.0.0.1:17172 {
+				stream_timeout 15m
+			}
+		}
+
+		handle /mcp {
+			reverse_proxy 127.0.0.1:8791
+		}
+
+		@product path /login /logout /api/playtesting/*
+		handle @product {
+			reverse_proxy 127.0.0.1:8790
+		}
+
+		handle /internal/* {
+			respond 404
+		}
+
+		handle {
+			forward_auth 127.0.0.1:8790 {
+				uri /internal/verify?redirect=1
+			}
+			root * /srv/playmat
+			try_files {path} /index.html
+			file_server
+		}
+	}
+}

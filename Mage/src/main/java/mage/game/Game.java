@@ -722,6 +722,8 @@ public interface Game extends MageItem, Serializable, Copyable<Game> {
 
     void rollbackTurns(int turnsToRollback);
 
+    boolean rollbackToTurn(int turn);
+
     boolean executingRollback();
 
     /**

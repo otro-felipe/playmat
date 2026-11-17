@@ -1,0 +1,48 @@
+name: playmat-testing
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: playmat
+      POSTGRES_DB: playmat
+      POSTGRES_PASSWORD: local-docker-fixture
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U playmat -d playmat"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  playmat:
+    build:
+      context: ../..
+      dockerfile: ops/playtesting/Dockerfile
+    image: playmat-oneshot-dev:local
+    environment:
+      DATABASE_URL: postgresql://playmat:local-docker-fixture@postgres:5432/playmat
+      PLAYMAT_INSECURE_COOKIE: "true"
+      PLAYMAT_PUBLIC_URL: http://127.0.0.1:8794
+      PLAYMAT_S3_BUCKET: ${PLAYMAT_S3_BUCKET:-}
+      PLAYMAT_S3_ENDPOINT: ${PLAYMAT_S3_ENDPOINT:-}
+      PLAYMAT_S3_FORCE_PATH_STYLE: ${PLAYMAT_S3_FORCE_PATH_STYLE:-false}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    ports:
+      - 127.0.0.1:8794:8080
+    volumes:
+      - playmat:/var/lib/playmat
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 4s
+      retries: 24
+
+volumes:
+  postgres:
+  playmat:

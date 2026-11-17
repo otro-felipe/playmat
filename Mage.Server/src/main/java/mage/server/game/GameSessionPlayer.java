@@ -139,30 +139,28 @@ public class GameSessionPlayer extends GameSessionWatcher {
         }
     }
 
-    public void requestPermissionToRollbackTurn(UUID requestingUserId, int numberTurns) {
+    public void requestPermissionToRollbackTurn(UUID requestingUserId, UUID requestId, int targetTurn) {
         if (!killed) {
             Optional<User> requestingUser = userManager.getUser(requestingUserId);
             Optional<User> requestedUser = userManager.getUser(userId);
             if (requestedUser.isPresent() && requestingUser.isPresent()) {
-                String message;
-                switch (numberTurns) {
-                    case 0:
-                        message = "Allow rollback to the start of the current turn?";
-                        break;
-                    case 1:
-                        message = "Allow rollback to the start of the previous turn?";
-                        break;
-                    default:
-                        message = "Allow to rollback " + numberTurns + " turns?";
-                }
                 UserRequestMessage userRequestMessage = new UserRequestMessage(
-                        "Request by " + requestedUser.get().getName(), message);
-                userRequestMessage.setRelatedUser(requestingUserId, requestingUser.get().getName());
+                        "Request by " + requestingUser.get().getName(),
+                        "Allow rollback to the start of turn " + targetTurn + "?");
+                // The rollback response carries the vote ID; hand-reveal requests still use a user ID.
+                userRequestMessage.setRelatedUser(requestId, requestingUser.get().getName());
                 userRequestMessage.setGameId(game.getId());
                 userRequestMessage.setButton1("Accept", PlayerAction.ADD_PERMISSION_TO_ROLLBACK_TURN);
                 userRequestMessage.setButton2("Deny", PlayerAction.DENY_PERMISSION_TO_ROLLBACK_TURN);
                 requestedUser.get().fireCallback(new ClientCallback(ClientCallbackMethod.USER_REQUEST_DIALOG, game.getId(), userRequestMessage));
             }
+        }
+    }
+
+    public void rollbackCommitted(int turn) {
+        if (!killed) {
+            userManager.getUser(userId).ifPresent(user ->
+                    user.fireCallback(new ClientCallback(ClientCallbackMethod.GAME_ROLLBACK, game.getId(), turn)));
         }
     }
 

@@ -57,6 +57,7 @@ public enum ClientCallbackMethod {
     // to the gateway only: the player leaves a hosted game (a solo save, "Try this turn again"), as matchQuit
     HOST_GAME_QUIT(ClientCallbackType.TABLE_CHANGE, "hostGameQuit"),
     GAME_INIT(ClientCallbackType.TABLE_CHANGE, "gameInit"),
+    GAME_ROLLBACK(ClientCallbackType.TABLE_CHANGE, "gameRollback"),
     GAME_UPDATE_AND_INFORM(ClientCallbackType.UPDATE, "gameInform"), // update game and feedback panel with current status (e.g. on non our priority)
     GAME_INFORM_PERSONAL(ClientCallbackType.MESSAGE, "gameInformPersonal"),
     GAME_ERROR(ClientCallbackType.MESSAGE, "gameError"),

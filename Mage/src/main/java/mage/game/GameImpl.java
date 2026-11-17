@@ -4421,7 +4421,6 @@ public abstract class GameImpl implements Game {
     private void rollbackTurnsExecution(int turnToGoToForRollback) {
         GameState restore = gameStatesRollBack.get(turnToGoToForRollback);
         if (restore != null) {
-            informPlayers(GameLog.getPlayerRequestColoredText("Player request: Rolling back to start of turn " + restore.getTurnNum()));
             state.restoreForRollBack(restore);
             playerList.setCurrent(state.getPlayerByOrderId());
             // Reset temporary created bookmarks because no longer valid after rollback
@@ -4429,6 +4428,11 @@ public abstract class GameImpl implements Game {
             gameStates.clear();
             // because restore uses the objects without copy each copy the state again
             gameStatesRollBack.put(getTurnNum(), state.copy());
+            gameStatesRollBack.keySet().removeIf(turn -> turn > turnToGoToForRollback);
+            if (!simulation) {
+                tableEventSource.fireTableEvent(EventType.ROLLBACK_COMMITTED, null, this);
+            }
+            informPlayers(GameLog.getPlayerRequestColoredText("Player request: Rolling back to start of turn " + getTurnNum()));
 
             for (Player playerObject : getPlayers().values()) {
                 if (playerObject.isInGame()) {
@@ -4441,27 +4445,31 @@ public abstract class GameImpl implements Game {
 
     @Override
     public synchronized void rollbackTurns(int turnsToRollback) {
-        // TODO: need async command
-        if (gameOptions.rollbackTurnsAllowed && !executingRollback) {
-            int turnToGoTo = getTurnNum() - turnsToRollback;
-            if (turnToGoTo < 1 || !gameStatesRollBack.containsKey(turnToGoTo)) {
-                informPlayers(GameLog.getPlayerRequestColoredText("Player request: It's not possible to rollback " + turnsToRollback + " turn(s)"));
-            } else {
-                executingRollback = true;
-                turnToGoToForRollback = turnToGoTo;
-                for (Player playerObject : getPlayers().values()) {
-                    if (playerObject.isHuman() && playerObject.canRespond()) {
-                        playerObject.resetStoredBookmark(this);
-                        playerObject.resetPlayerPassedActions();
-                        playerObject.abort();
-                    }
-                }
-                fireUpdatePlayersEvent();
-                if (gameOptions.testMode && gameStopped) { // in test mode execute rollback directly
-                    rollbackTurnsExecution(turnToGoToForRollback);
-                }
+        if (!rollbackToTurn(getTurnNum() - turnsToRollback) && gameOptions.rollbackTurnsAllowed && !executingRollback) {
+            informPlayers(GameLog.getPlayerRequestColoredText("Player request: It's not possible to rollback " + turnsToRollback + " turn(s)"));
+        }
+    }
+
+    @Override
+    public synchronized boolean rollbackToTurn(int turn) {
+        if (!gameOptions.rollbackTurnsAllowed || executingRollback || turn < 1 || turn > getTurnNum()
+                || !gameStatesRollBack.containsKey(turn)) {
+            return false;
+        }
+        executingRollback = true;
+        turnToGoToForRollback = turn;
+        for (Player playerObject : getPlayers().values()) {
+            if (playerObject.isHuman() && playerObject.canRespond()) {
+                playerObject.resetStoredBookmark(this);
+                playerObject.resetPlayerPassedActions();
+                playerObject.abort();
             }
         }
+        fireUpdatePlayersEvent();
+        if (gameOptions.testMode && gameStopped) {
+            rollbackTurnsExecution(turn);
+        }
+        return true;
     }
 
     @Override

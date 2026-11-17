@@ -7,6 +7,9 @@ import mage.players.Player;
 import org.apache.log4j.Logger;
 
 import java.io.Serializable;
+import java.util.List;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * @author BetaSteward_at_googlemail.com
@@ -97,6 +100,18 @@ public class MatchPlayer implements Serializable {
         this.doneSideboarding = true;
     }
 
+    public boolean hasSameSideboardPool(Deck proposedDeck, boolean allowBasicLands) {
+        return deck != null && pool(deck, allowBasicLands).equals(pool(proposedDeck, allowBasicLands));
+    }
+
+    private static List<String> pool(Deck deck, boolean allowBasicLands) {
+        return Stream.concat(deck.getCards().stream(), deck.getSideboard().stream())
+                .map(Card::getName)
+                .filter(name -> !allowBasicLands || !DeckValidator.MAIN_BASIC_LAND_NAMES.contains(name))
+                .sorted()
+                .collect(Collectors.toList());
+    }
+
     public boolean updateDeck(Deck newDeck, boolean ignoreMainBasicLands) {
         // used for auto-save by timeout from client side
 
@@ -106,16 +121,14 @@ public class MatchPlayer implements Serializable {
         }
 
         // make sure it's the same deck (player do not add or remove something)
-        boolean isGood = (this.deck.getDeckHash(ignoreMainBasicLands) == newDeck.getDeckHash(ignoreMainBasicLands));
-        if (!isGood) {
+        if (!hasSameSideboardPool(newDeck, ignoreMainBasicLands)) {
             logger.error("Found cheating player " + player.getName()
                     + " with changed deck, main " + newDeck.getCards().size() + ", side " + newDeck.getSideboard().size());
-            newDeck.getCards().clear();
-            newDeck.getSideboard().clear();
+            return false;
         }
 
         this.deck = newDeck;
-        return isGood;
+        return true;
     }
 
     public Deck autoCompleteDeck(DeckValidator deckValidator) {

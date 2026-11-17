@@ -581,6 +581,7 @@ export interface CallbackPayloads {
   HOST_GAME: unknown;
   HOST_GAME_QUIT: unknown;
   GAME_INIT: GameView;
+  GAME_ROLLBACK: number;
   GAME_UPDATE_AND_INFORM: GameClientMessage;
   GAME_INFORM_PERSONAL: GameClientMessage;
   GAME_ERROR: string;
@@ -636,6 +637,7 @@ export const CALLBACK_DELIVERY: { readonly [M in CallbackMethodName]: CallbackDe
   HOST_GAME: 'TABLE_CHANGE',
   HOST_GAME_QUIT: 'TABLE_CHANGE',
   GAME_INIT: 'TABLE_CHANGE',
+  GAME_ROLLBACK: 'TABLE_CHANGE',
   GAME_UPDATE_AND_INFORM: 'UPDATE',
   GAME_INFORM_PERSONAL: 'MESSAGE',
   GAME_ERROR: 'MESSAGE',

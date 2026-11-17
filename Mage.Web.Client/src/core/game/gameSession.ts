@@ -20,6 +20,7 @@ export interface GameNotice {
 
 export interface GameSessionState {
   gameId: string;
+  rollbackRevision: number;
   /** the player we control (null when watching) */
   playerId: string | null;
   mode: GameSessionMode;
@@ -97,6 +98,7 @@ export class GameSession {
     this.replyTimeoutMs = options.replyTimeoutMs ?? REPLY_TIMEOUT_MS;
     this.store = createStore<GameSessionState>(() => ({
       gameId: init.gameId,
+      rollbackRevision: 0,
       playerId: init.playerId,
       mode: init.mode,
       view: null,
@@ -126,6 +128,21 @@ export class GameSession {
 
     this.unsubscribers.push(
       bus.on('GAME_INIT', forThisGame<GameView>((view) => this.applyView(view))),
+      bus.on('GAME_ROLLBACK', forThisGame<number>(() => {
+        this.clearHold();
+        this.clearReplyTimer();
+        this.lastCommand = null;
+        this.cancelPending = false;
+        this.paymentCancelSent = false;
+        this.store.setState((state) => ({
+          rollbackRevision: state.rollbackRevision + 1,
+          prompt: null,
+          awaitingServer: false,
+          prediction: null,
+          stalled: false,
+        }));
+        this.refreshInteraction();
+      })),
       bus.on('GAME_UPDATE', forThisGame<GameView>((view) => this.applyView(view))),
       bus.on('REPLAY_INIT', forThisGame<GameView>((view) => this.applyView(view))),
       bus.on('REPLAY_UPDATE', forThisGame<GameView>((view) => this.applyView(view))),

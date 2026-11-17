@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { formatRules } from '../../core/decks/formats';
 import { useTables } from '../queries';
+import { claimPlaytestingInvite, PRIVATE_PLAYTESTING } from '../playtesting';
 import { useDecks } from '../stores/decks';
 import { useDeckRoster } from '../stores/useDeckRoster';
 import { useSession } from '../stores/session';
@@ -45,7 +46,8 @@ export function JoinScreen() {
     setBusy(true);
     setError(null);
     try {
-      await joinTable(table, chosen.id, password);
+      const tablePassword = PRIVATE_PLAYTESTING ? (await claimPlaytestingInvite(tableId)).password : password;
+      await joinTable(table, chosen.id, tablePassword);
       decks.select(chosen.id);
       navigate('/tables');
     } catch (reason) {
@@ -113,13 +115,13 @@ export function JoinScreen() {
                 {roster.map((deck) => <option key={deck.id} value={deck.id}>{deck.name}</option>)}
               </select>
             </label>
-            {table.passworded && (
+            {!PRIVATE_PLAYTESTING && table.passworded && (
               <Field label="Password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} hint="Ask the host for it." />
             )}
             {error && <p className={styles.error} role="alert">{error}</p>}
             <div className={styles.actions}>
               <Button variant="quiet" onClick={() => navigate('/tables')}>Not now</Button>
-              <Button type="submit" variant="decision" busy={busy} disabled={!chosen || (table.passworded && !password)}>Take a seat</Button>
+              <Button type="submit" variant="decision" busy={busy} disabled={!chosen || (!PRIVATE_PLAYTESTING && table.passworded && !password)}>Take a seat</Button>
             </div>
           </form>
         )}
