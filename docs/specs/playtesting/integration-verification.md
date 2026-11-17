@@ -1,8 +1,8 @@
 # Integrated candidate — 2026-11-17
 
-Worktree: `playmat-one-shot`, branch `feat/private-playtesting`.
+Worktree: `playmat-one-shot`, branch `main`.
 
-The finished branch through `24db7541` was subsequently integrated into a new `main` by fast-forward from the existing `origin/master` ancestor. No conflicting history was overwritten, and `master` remains the repository's default branch. PvP recovery from its separate worktree remains excluded; deployment waits for its completed integration and verification.
+The finished branch through `24db7541` was subsequently integrated into a new `main` by fast-forward from the existing `origin/master` ancestor. No conflicting history was overwritten, and `master` remains the repository's default branch. The finished PvP recovery commits were subsequently cherry-picked as `98195a0825b` and `6b269ec7373`, preserving the later OAuth, timing, trigger, sequence and guide changes. Deployment remains gated on independent security review, private backup readiness and a fresh zero-active-games check.
 
 - Base `ccdfe6807c4d195bfaccb7968d7a88d4589b570f`: Freeform drafts and independent deck updates preserved.
 - `6ccc55ca`: MCP guide bootstrap, turn-boundary protection and explicit rollback votes.
@@ -52,3 +52,25 @@ After the blockers are resolved, publish the branch, deploy the integrated candi
 ## Main publication safety check
 
 Before the `main` push, Railway's current service source had `repo: null`, and the successful deployment still identified `ccdfe680`. GitHub returned no configured repository webhooks and zero registered workflows. The checked-in production deployment workflow responds only to release publication or manual dispatch; push workflows accepting `main` run tests. The `master`-only image/site workflows are not triggered by creating `main`. No deploy source, default branch, hook, workflow or service setting was changed. Publishing `main` does not initiate a Railway deployment under this inspected configuration.
+
+## Combined recovery candidate verification
+
+The root Dockerfile built the complete combined image locally with engine/JARs, MCP core, frontend, product and Caddy. Its source stamp was `6b269ec7373`. Build output remains local; no production settings or processes were changed.
+
+| Check | Result |
+| --- | --- |
+| Clean Java selected recovery, identity, snapshot, event and API suites | 43 passed, zero failures/errors/skips |
+| Product with isolated PostgreSQL, official MCP SDK and Chromium OAuth | 37 passed, zero skipped |
+| Rebuilt MCP core and complete fixture suite | 78 passed, 3 opt-in live suites skipped |
+| Recovery/invitation component tests, TypeScript and affected-screen ESLint | 10 passed; static checks passed |
+| Full assembled image cold-restart acceptance | Three SIGKILLs and cold starts passed: turn 9 → restored turn 9 → restored turn 9 and actual modified sideboard → restored sideboard, game 2 and terminal 2–0 match |
+| Independent private checkpoint equality | Passed for ordered libraries, hands, RNG, exile, effects, score, sideboard and priority/buffer clocks |
+| Chromium on the combined image | 1 passed: original invitation → stable recovery link, no automatic vote, exactly one explicit agreement |
+
+The first Chromium invocation used the match UUID where the fixture required its distinct original-table UUID; it failed before reaching recovery, then passed with the actual fixture metadata. The first offline Java clean command lacked a cached clean plugin; the online clean run resolved public dependencies and produced the passing reports. Docker's environment-name lint warnings do not represent embedded credentials. The fixture uses dedicated local containers, private volumes, synthetic accounts and a network without host-published ports. No real game was queried or modified by the fixture. Private checkpoint files, tokens, hashes and screenshots remain untracked.
+
+The production read-only check during this integration still returned effective commit `ccdfe6807c4d195bfaccb7968d7a88d4589b570f`, healthy with one active/running game. Railway still showed successful deployment `f0849069-cb48-46c6-87d9-e9cf69a72261`, one replica, no connected source repository and the existing private `/var/lib/playmat` volume. OAuth discovery still lacked the new registration endpoint. No integrated fixes are claimed to be deployed.
+
+Before enabling `PLAYMAT_PVP_RECOVERY=on`, resolve the private consistent SQLite backup prerequisite in [the recovery operations contract](../../recovery/pvp-recovery.md). The existing backup script does not include `pvp-recovery.db`, and no suitable production backup configuration has been verified. A persistent volume alone does not establish a backup. Independent security approval and zero active games immediately before the full-image replacement are separate mandatory gates.
+
+After those gates pass, preserve the existing database, volume and private S3 replay configuration; use the single-replica topology, deploy the complete image with the final source stamp, await terminal Railway `SUCCESS`, then verify effective commit, health, OAuth discovery/registration, guide delivery and actual recovery configuration. Never place snapshots in the replay bucket or simulate a production crash. Recovery covers only newly opted-in eligible private unrated two-participant Java matches on the same exact compatible image; it does not recover old matches, cross builds or a lost volume. Queued MCP lines and authoritative inactivity deadlines remain outside its persistence contract.
