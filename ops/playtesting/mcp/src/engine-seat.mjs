@@ -12,6 +12,28 @@ function rejectOnFalse(value, code, message) {
   return value;
 }
 
+function seatTiming(view, own, decision) {
+  const configured = Number.isFinite(view?.priorityTime) && view.priorityTime >= 0;
+  const enabled = configured ? view.priorityTime > 0 : null;
+  const reported = own?.priorityTimeLeftSecs;
+  const matchClock = {
+    status: enabled === false ? 'disabled' : enabled === true && typeof own?.timerActive === 'boolean'
+      ? own.timerActive ? 'running' : 'paused' : 'unknown',
+    // A sample of the cumulative match clock, never a deadline for this decision.
+    lastReportedSecondsRemaining: enabled === true && Number.isFinite(reported) && reported >= 0 ? reported : null,
+    reportedAtEpochMs: enabled === true && Number.isFinite(own?.priorityTimeSavedTimeMs) && own.priorityTimeSavedTimeMs > 0
+      ? own.priorityTimeSavedTimeMs : null,
+  };
+  return {
+    matchClock,
+    // GameController's separate responseIdleTimeoutFuture is not sent to this client.
+    inactivity: { status: 'unknown', deadlineEpochMs: null, secondsRemaining: null },
+    warning: decision && decision.kind !== 'waiting' && decision.choices.length > 0
+      ? 'Your decision is pending. The inactivity deadline is unknown; null does not mean unlimited time. Submit a current legal choice promptly. Polling, chat and local analysis do not answer the engine prompt.'
+      : null,
+  };
+}
+
 function poolFromView(deck) {
   const pack = (cards) => {
     const entries = new Map();
@@ -197,6 +219,7 @@ export class PlaymatEngineSeat {
         ? Math.max(state.endInfo?.wins ?? 0, state.endInfo?.loses ?? 0) >= (state.endInfo?.winsNeeded ?? 2) ? 'match_over' : 'game_over'
         : state ? 'active' : 'lobby';
     const decision = status === 'active' ? this.#decision(state) : null;
+    const timing = seatTiming(view, own, decision);
     const tableId = state ? this.#gameTableId : this.#tableId;
     const presentation = this.#invitePresentation?.tableId === tableId ? this.#invitePresentation : null;
     return {
@@ -205,7 +228,9 @@ export class PlaymatEngineSeat {
       ...(presentation?.displayName ? { displayName: presentation.displayName } : {}),
       ...visibleAgentGame(state),
       priority,
-      secondsRemaining: own?.timerActive && own.priorityTimeLeftSecs > 0 ? own.priorityTimeLeftSecs : null,
+      // Compatibility alias: only the last reported running match clock, including zero.
+      secondsRemaining: timing.matchClock.status === 'running' ? timing.matchClock.lastReportedSecondsRemaining : null,
+      timing,
       score: state?.endInfo ? { wins: state.endInfo.wins, losses: state.endInfo.loses, winsNeeded: state.endInfo.winsNeeded } : null,
       rollbackRequest: this.#vote,
       sideboard: this.#sideboard ? { decisionId: this.#sideboard.decisionId, submitted: this.#sideboard.submitted } : null,

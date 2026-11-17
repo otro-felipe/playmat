@@ -101,11 +101,11 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
     if (!callProduct) throw new ToolError('unavailable', 'The product service is unavailable.');
     return callProduct(operation, args);
   };
-  tool('get_game_state', 'Read the public battlefield and your own seat, hand and current decision.', { gameId: Uuid.optional() },
+  tool('get_game_state', 'Read the public battlefield and your own seat, hand, current decision and timing. secondsRemaining is a last reported cumulative match clock, not an inactivity countdown. A null clock or unknown inactivity deadline never means unlimited decision time; answer pending legal choices promptly.', { gameId: Uuid.optional() },
     'play', ({ gameId }) => getSeat().snapshot(gameId), true);
   tool('resync_game', 'Ask XMage for the current decision after a lost or uncertain acknowledgement.', { gameId: Uuid },
     'play', ({ gameId }) => getSeat().engine.resync(gameId));
-  tool('wait_for_decision', 'Wait for a new engine-issued decision, sideboarding or game end.', {
+  tool('wait_for_decision', 'Wait for a new engine-issued decision, sideboarding or game end. A timeout includes the current state and may still have an unanswered decision. Polling does not answer it or pause inactivity; resolve a pending choice before waiting for another.', {
     gameId: Uuid.optional(), afterDecisionId: StringId.optional(), afterCursor: Cursor.optional(),
     timeoutMs: z.number().int().min(100).max(25_000).optional(),
   }, 'play', (args, signal) => getSeat().wait(args, signal), true);
@@ -130,7 +130,7 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
   });
   const playSequence = (args) => getSeat().startSequence(args, reauthorize);
   tool('play_sequence', 'Queue guarded choices by exact ID, card or label. Mark a planned cast with expectCast to let later steps pay for that same spell.', Sequence, 'play', playSequence);
-  tool('submit_sequence', 'Start a conditional, bounded sequence of choices, waits on your decision clock and ordinary passes.', Sequence, 'play', playSequence);
+  tool('submit_sequence', 'Start a conditional, bounded sequence of choices, brief waits and ordinary passes.', Sequence, 'play', playSequence);
   tool('get_sequence_status', 'Check the progress and interruption reason for one plan.', { gameId: Uuid, sequenceId: Uuid }, 'play',
     (args) => getSeat().sequenceStatus(args), true);
   tool('cancel_sequence', 'Cancel unapplied steps without undoing moves already accepted by XMage.', { gameId: Uuid, sequenceId: Uuid }, 'play',

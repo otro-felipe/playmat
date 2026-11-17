@@ -104,7 +104,10 @@ export class GameSeat {
       }
       return null;
     }, args.timeoutMs ?? RESPONSE_TIMEOUT_MS, signal);
-    return result ?? { event: 'timeout', cursor: this.snapshot().cursor };
+    if (result) return result;
+    // A wait can time out with the same unanswered decision still pending. Keep it visible.
+    const state = this.snapshot();
+    return { event: 'timeout', cursor: state.cursor, state };
   }
 
   async submit(args, sequenceId) {
