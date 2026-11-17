@@ -157,6 +157,58 @@ try {
     Object.assign(fixture, { matchId: row.matchId, originalTableId: created.tableId, originalGameId: state[0].gameId, revision: row.revision, link: row.link, oldDecision: state[1].decision, oldCursor: state[1].cursor })
     await save(fixture)
     console.log(JSON.stringify({ phase: 'prepared', matchId: row.matchId, turn: row.turn, link: row.link }))
+  } else if (mode === 'idle') {
+    assert.equal(process.env.PLAYMAT_PRIVATE_RESPONSE_IDLE_SECONDS, '60')
+    const fixture = JSON.parse(await readFile(file, 'utf8'))
+    await clients(fixture)
+    let inactiveConcede = false, gameEnded = false
+    browser.bus.on('CHATMESSAGE', message => { if (/has timed out .*Auto concede/.test(message?.message ?? '')) inactiveConcede = true })
+    browser.bus.on('GAME_OVER', () => { gameEnded = true })
+    const created = await browser.createGame({ name: 'Isolated idle acceptance', format: 'Modern', deck, matchTimeLimit: 'NONE', seed: 78 }, async record => {
+      const response = await fetch(base + '/api/playtesting/invites', { method: 'POST',
+        headers: { 'content-type': 'application/json', Cookie: browser.fixtureCookie },
+        body: JSON.stringify({ ...record, guestEngineName: fixture.engineName }) })
+      assert.equal(response.status, 201)
+      return response.json()
+    })
+    await call('join_game', { tableId: created.tableId, deck })
+    await browser.startMatch(created.tableId)
+    let pending = await until(state => state.some(s => s.status === 'active' && s.decision?.choices?.length && s.timing?.inactivity.status === 'running'), 'private own idle deadline')
+    const firstIndex = pending.findIndex(s => s.status === 'active' && s.decision?.choices?.length && s.timing.inactivity.status === 'running')
+    const first = pending[firstIndex]
+    assert.equal(first.timing.matchClock.status, 'disabled')
+    assert.equal(first.secondsRemaining, null)
+    assert.ok(first.timing.inactivity.secondsRemaining > 55 && first.timing.inactivity.secondsRemaining <= 60)
+    await sleep(1200)
+    assert.equal(await choose(firstIndex, first, false), true)
+    pending = await until(state => state.some(s => s.status === 'active' && s.decision?.choices?.length
+      && s.decision.id !== first.decision.id && s.timing?.inactivity.status === 'running'), 'new accepted-response window')
+    const idleIndex = pending.findIndex(s => s.status === 'active' && s.decision?.choices?.length
+      && s.decision.id !== first.decision.id && s.timing.inactivity.status === 'running')
+    const saved = pending[idleIndex]
+    assert.equal(saved.timing.matchClock.status, 'disabled')
+    assert.ok(saved.timing.inactivity.deadlineEpochMs > first.timing.inactivity.deadlineEpochMs + 500)
+    assert.ok(saved.timing.inactivity.secondsRemaining > 55 && saved.timing.inactivity.secondsRemaining <= 60)
+    const deadline = saved.timing.inactivity.deadlineEpochMs
+    const end = Date.now() + 70_000
+    let polls = 0, resyncs = 0
+    while (Date.now() < end && !(inactiveConcede && gameEnded)) {
+      const state = await states(); polls++
+      const observed = state[idleIndex]
+      if (observed.status === 'active' && observed.decision?.id === saved.decision.id) {
+        assert.equal(observed.timing.inactivity.deadlineEpochMs, deadline)
+        if (polls % 3 === 0) {
+          if (idleIndex === 0) await browser.resync(saved.gameId)
+          else await call('resync_game', { gameId: saved.gameId })
+          resyncs++
+        }
+      }
+      await sleep(500)
+    }
+    assert.equal(inactiveConcede, true)
+    assert.equal(gameEnded, true)
+    assert.ok(polls > 50 && resyncs > 10)
+    console.log(JSON.stringify({ phase: 'private-idle-expired', configuredSeconds: 60, matchClock: 'disabled', acceptedResponseReset: true, pollsDidNotRenew: true, cachedPromptResyncsDidNotRenew: true }))
   } else if (mode === 'advance') {
     const fixture = JSON.parse(await readFile(file, 'utf8'))
     await clients(fixture)

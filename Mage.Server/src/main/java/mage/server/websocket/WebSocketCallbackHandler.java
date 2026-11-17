@@ -131,15 +131,16 @@ public class WebSocketCallbackHandler implements ClientChannel {
             return false;
         }
         synchronized (states) {
+            JsonObject message = prompt.tree().deepCopy();
+            ResponseIdleClock.refresh(message, System.currentTimeMillis(), false);
             if (!states.isEnabled()) {
-                WebSocketServerImpl.sendText(conn, prompt.json());
+                WebSocketServerImpl.sendText(conn, JsonCodec.GSON.toJson(message));
                 return true;
             }
-            // the question's view becomes the client's latest state again
-            JsonObject message = prompt.tree();
+            // The same deadline, freshly sampled: resync never arms or extends the engine timer.
             ClientCallbackMethod method = ClientCallbackMethod.valueOf(message.get("method").getAsString());
             GameStates.Encoded encoded = states.encode(method, gameId, message);
-            sendState(encoded == null ? prompt.json() : encoded.json, encoded);
+            sendState(encoded == null ? JsonCodec.GSON.toJson(message) : encoded.json, encoded);
         }
         return true;
     }
@@ -151,7 +152,7 @@ public class WebSocketCallbackHandler implements ClientChannel {
      */
     boolean resendState(UUID gameId) {
         synchronized (states) {
-            String json = states.resync(gameId);
+            String json = states.resync(gameId, pendingPrompts.containsKey(gameId));
             if (json == null || !conn.isOpen()) {
                 return false;
             }
@@ -197,6 +198,7 @@ public class WebSocketCallbackHandler implements ClientChannel {
             return;
         }
         synchronized (states) {
+            ResponseIdleClock.refresh(message, System.currentTimeMillis(), false);
             // (null when the client turned patches off meanwhile)
             GameStates.Encoded encoded = states.isEnabled() ? states.encode(method, gameId, message) : null;
             String json = encoded == null ? JsonCodec.GSON.toJson(message) : encoded.json;
@@ -233,8 +235,12 @@ public class WebSocketCallbackHandler implements ClientChannel {
      */
     static String serialize(ClientCallback clientCallback) {
         ClientCallbackMethod method = clientCallback.getMethod();
+        Object data = clientCallback.getData();
+        mage.view.GameView view = data instanceof mage.view.GameView ? (mage.view.GameView) data
+                : data instanceof mage.view.GameClientMessage ? ((mage.view.GameClientMessage) data).getGameView()
+                : data instanceof mage.view.AbilityPickerView ? ((mage.view.AbilityPickerView) data).getGameView() : null;
         if (method != ClientCallbackMethod.GAME_ASK && method != ClientCallbackMethod.GAME_TARGET
-                && method != ClientCallbackMethod.END_GAME_INFO) {
+                && method != ClientCallbackMethod.END_GAME_INFO && (view == null || view.getResponseIdle() == null)) {
             return JsonCodec.GSON.toJson(clientCallback);
         }
         return JsonCodec.GSON.toJson(serializeTree(clientCallback));
@@ -251,6 +257,7 @@ public class WebSocketCallbackHandler implements ClientChannel {
         } else if (method == ClientCallbackMethod.END_GAME_INFO) {
             EndGameInfo.slim(json);
         }
+        ResponseIdleClock.refresh(json, System.currentTimeMillis(), false);
         return json;
     }
 

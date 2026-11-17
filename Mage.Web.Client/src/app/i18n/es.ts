@@ -6,6 +6,10 @@ import type { Catalog } from './locales';
  * Spanish. Card names, rules text and server messages stay in English.
  */
 const es: Catalog = {
+  'match.idle.remaining': 'Inactividad: {time}',
+  'match.idle.hint': 'Responde la decisión actual antes de perder por inactividad. Es independiente del reloj de la partida. Consultar el estado o abrir el chat no lo extiende.',
+  'match.idle.expiring': 'Queda menos de un minuto para responder esta decisión antes de perder por inactividad.',
+
   // match keyboard help
   'match.engine.rust': 'Motor Rust',
   'match.engine.beta': 'Beta',

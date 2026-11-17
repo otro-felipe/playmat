@@ -1477,6 +1477,14 @@ export interface GameTypeView extends Serializable {
     useRange?: boolean;
 }
 
+export interface ResponseIdleView extends Serializable {
+    status?: string;
+    deadlineEpochMs?: number;
+    sampledAtEpochMs?: number;
+    remainingMillis?: number;
+    timeoutSeconds?: number;
+}
+
 export interface GameView extends Serializable {
     activePlayerId?: string;
     activePlayerName?: string;
@@ -1501,6 +1509,7 @@ export interface GameView extends Serializable {
     rangeOfInfluence?: RangeOfInfluence;
     revealed?: RevealedView[];
     rollbackTurnsAllowed?: boolean;
+    responseIdle?: ResponseIdleView;
     special?: boolean;
     stack?: { [index: string]: CardView };
     step?: PhaseStep;

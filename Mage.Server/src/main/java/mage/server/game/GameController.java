@@ -65,6 +65,7 @@ public class GameController implements GameCallback {
 
     private ScheduledFuture<?> responseIdleTimeoutFuture;
     private UUID responseIdleTimeoutPlayerId;
+    private final ResponseIdleTimer responseIdleTimer;
     private final ManagerFactory managerFactory;
     protected final ScheduledExecutorService responseIdleTimeoutExecutor;
 
@@ -96,6 +97,7 @@ public class GameController implements GameCallback {
         this.managerFactory = managerFactory;
         this.gameExecutor = managerFactory.threadExecutor().getGameExecutor();
         this.responseIdleTimeoutExecutor = managerFactory.threadExecutor().getTimeoutIdleExecutor();
+        this.responseIdleTimer = new ResponseIdleTimer(responseIdleTimeoutExecutor, System::currentTimeMillis);
         this.gameSessionId = UUID.randomUUID();
         this.userPlayerMap = userPlayerMap;
         this.chatId = managerFactory.chatManager().createGameChatSession(game);
@@ -384,6 +386,7 @@ public class GameController implements GameCallback {
         String joinType;
         if (gameSession == null) {
             gameSession = new GameSessionPlayer(managerFactory, game, userId, playerId);
+            gameSession.setResponseIdleSupplier(() -> responseIdleTimer.view(playerId, useResponseIdleTimeout));
             gameSession.startWithGameView(null); // it's null here, real default view generates on game start
             final Lock w = gameSessionsLock.writeLock();
             w.lock();
@@ -468,7 +471,10 @@ public class GameController implements GameCallback {
     private void startChoosingPlayerIdleTimeout() {
         if (game.getState().getChoosingPlayerId() != null) {
             // start timer to force player to choose starting player otherwise loosing by being idle
-            startResponseIdleTimeout(game.getState().getChoosingPlayerId());
+            UUID chooser = game.getState().getChoosingPlayerId();
+            if (!"running".equals(responseIdleTimer.view(chooser, useResponseIdleTimeout).getStatus())) {
+                startResponseIdleTimeout(chooser);
+            }
         }
     }
 
@@ -1394,19 +1400,38 @@ public class GameController implements GameCallback {
         }
         stopResponseIdleTimeout();
         responseIdleTimeoutPlayerId = playerId;
-        responseIdleTimeoutFuture = responseIdleTimeoutExecutor.schedule(
-                () -> onResponseIdleTimeout(playerId),
-                getResponseIdleTimeoutSecs(),
-                TimeUnit.SECONDS
-        );
+        responseIdleTimeoutFuture = responseIdleTimer.start(playerId, getResponseIdleTimeoutSecs(), expiredGeneration -> {
+            Player waiting = game.getPlayer(playerId);
+            if (waiting == null) return;
+            // Expire on the game thread, fenced against a response/new prompt arriving after the scheduler fired.
+            if (waiting.isHuman()) {
+                waiting.queueGameThreadAction(g -> {
+                    if (responseIdleTimer.isExpired(expiredGeneration)) onResponseIdleTimeout(playerId);
+                });
+            } else if (responseIdleTimer.isExpired(expiredGeneration)) {
+                onResponseIdleTimeout(playerId);
+            }
+        });
     }
 
     private long getResponseIdleTimeoutSecs() {
-        return Main.isTestMode() ? 3600 : mage.server.admin.RuntimeSettings.get().maxSecondsIdle(managerFactory.configSettings().getMaxSecondsIdle());
+        long ordinary = Main.isTestMode() ? 3600 : mage.server.admin.RuntimeSettings.get().maxSecondsIdle(managerFactory.configSettings().getMaxSecondsIdle());
+        if (!mage.server.playtesting.ProductGateway.enabled()) return ordinary;
+        Optional<mage.server.TableController> controller = managerFactory.tableManager().getController(tableId);
+        boolean privateMatch = controller.isPresent() && PrivateMatchIdlePolicy.eligible(controller.get().getOptions(),
+                controller.get().getTable().isTournament(), controller.get().getTable().isTournamentSubTable(),
+                game.getPlayers().size(), (int) game.getPlayers().values().stream().filter(Player::isHuman).count(), userPlayerMap.size());
+        Set<mage.server.recovery.RecoveryPrincipal> principals = new HashSet<>();
+        for (UUID userId : userPlayerMap.keySet()) {
+            managerFactory.userManager().getUser(userId).map(User::getRecoveryPrincipal).ifPresent(principals::add);
+        }
+        return PrivateMatchIdlePolicy.seconds(mage.server.playtesting.ProductGateway.enabled(), privateMatch,
+                principals.size() == 2, ordinary, System.getenv("PLAYMAT_PRIVATE_RESPONSE_IDLE_SECONDS"));
     }
 
     private void stopResponseIdleTimeout() {
         logger.debug("cancelTimeout");
+        responseIdleTimer.cancel();
         if (responseIdleTimeoutFuture != null) {
             synchronized (responseIdleTimeoutFuture) {
                 responseIdleTimeoutFuture.cancel(false);
