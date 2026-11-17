@@ -179,6 +179,66 @@ test('[PM-AC-11] archive outage leaves the game visible and idempotent retry mar
   assert.doesNotMatch(text, /secret:Bob|private:Bob|private chat|objectKey/)
 })
 
+test('[PM-AC-11] restart interrupts sideboarding even after the prior game archive was collected', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const alice = await signIn(f, 'Alice')
+  await signIn(f, 'Bob')
+  const matchId = randomUUID()
+  const gameId = randomUUID()
+  const path = '/api/playtesting/matches/' + matchId
+  await addReplay(f, matchId, gameId, ['Alice', 'Bob'])
+  await f.product.archiveGames()
+  let match = await (await f.path(path, { headers: alice })).json()
+  assert.equal(match.status, 'active')
+  assert.equal(match.games[0].archiveState, 'ready')
+  await f.product.archiveGames({ markInterrupted: true })
+  match = await (await f.path(path, { headers: alice })).json()
+  assert.equal(match.status, 'interrupted')
+  assert.equal(match.games[0].status, 'completed')
+  assert.equal(match.games[0].archiveState, 'ready')
+})
+
+test('[PM-AC-11] startup ingests a finalized match before archiving and keeps its terminal status after retries', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const alice = await signIn(f, 'Alice')
+  await signIn(f, 'Bob')
+  const finishedMatch = '00000000-0000-0000-0000-000000000001'
+  const completedGame = 'ffffffff-ffff-ffff-ffff-fffffffffff1'
+  const abandonedMatch = randomUUID()
+  const abandonedGame = randomUUID()
+  await writeFile(join(f.replayDirectory, finishedMatch + '.match.json'), JSON.stringify({
+    matchId: finishedMatch, endedAt: Date.now(), winner: 'Alice',
+  }))
+  await addReplay(f, finishedMatch, completedGame, ['Alice', 'Bob'])
+  await addReplay(f, abandonedMatch, abandonedGame, ['Alice', 'Bob'])
+  const abandonedFile = join(f.replayDirectory, abandonedGame + '.json')
+  const { readFile } = await import('node:fs/promises')
+  const abandoned = JSON.parse(await readFile(abandonedFile, 'utf8'))
+  abandoned.result = null
+  abandoned.winner = null
+  await writeFile(abandonedFile, JSON.stringify(abandoned))
+
+  await f.product.archiveGames({ markInterrupted: true })
+  async function matches() {
+    const response = await f.path('/api/playtesting/matches', { headers: alice })
+    assert.equal(response.status, 200)
+    return (await response.json()).matches
+  }
+  let history = await matches()
+  assert.equal(history.find(match => match.id === finishedMatch)?.status, 'completed')
+  assert.equal(history.find(match => match.id === abandonedMatch)?.status, 'interrupted')
+  await f.product.archiveGames()
+  await f.product.archiveGames()
+  history = await matches()
+  const finished = history.find(match => match.id === finishedMatch)
+  assert.equal(finished.status, 'completed')
+  assert.equal(finished.games[0].archiveState, 'ready')
+  const interrupted = history.find(match => match.id === abandonedMatch)
+  assert.equal(interrupted.status, 'interrupted')
+  assert.equal(interrupted.games[0].status, 'abandoned')
+  assert.equal(interrupted.games[0].archiveState, 'partial')
+})
+
 test('[PM-AC-12] bounded batch export preserves only the requesting seat and rejects mixed ownership', { skip: !databaseUrl }, async t => {
   const f = await fixture(t)
   const alice = await signIn(f, 'Alice')

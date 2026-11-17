@@ -73,16 +73,19 @@ function deckSignature(deck) {
   return digest(JSON.stringify([...entries].sort(([left], [right]) => left.localeCompare(right))))
 }
 
-async function recordMetadata(pool, info, status) {
+async function recordMetadata(pool, info, status, recovering = false) {
+  const interrupted = recovering || status === 'interrupted' || status === 'abandoned'
   await transaction(pool, async db => {
     await db.query(
-      'INSERT INTO matches(id,table_id,name,format,wins_needed,started_at,status) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO UPDATE SET started_at=LEAST(matches.started_at,EXCLUDED.started_at), status=CASE WHEN matches.status = \'completed\' THEN matches.status ELSE EXCLUDED.status END',
-      [info.matchId, info.tableId, info.tableName, info.format, info.winsNeeded, info.startedAt, status === 'interrupted' ? 'interrupted' : 'active'],
+      `INSERT INTO matches(id,table_id,name,format,wins_needed,started_at,status) VALUES ($1,$2,$3,$4,$5,$6,$7)
+       ON CONFLICT(id) DO UPDATE SET started_at=LEAST(matches.started_at,EXCLUDED.started_at),
+         status=CASE WHEN matches.status='active' THEN EXCLUDED.status ELSE matches.status END`,
+      [info.matchId, info.tableId, info.tableName, info.format, info.winsNeeded, info.startedAt, interrupted ? 'interrupted' : 'active'],
     )
     await db.query(
       'INSERT INTO games(id,match_id,game_number,started_at,ended_at,result,winner,start_player,turns,events,status,archive_state,truncated) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT(id) DO UPDATE SET ended_at=EXCLUDED.ended_at,result=EXCLUDED.result,winner=EXCLUDED.winner,start_player=EXCLUDED.start_player,turns=EXCLUDED.turns,events=EXCLUDED.events,status=EXCLUDED.status,truncated=EXCLUDED.truncated WHERE games.status IN (\'active\',\'interrupted\') OR EXCLUDED.status=\'completed\'',
       [info.gameId, info.matchId, info.gameNumber, info.startedAt, info.endedAt, info.result, info.winner, info.startPlayer,
-        info.turns, info.events, status, status === 'interrupted' || info.truncated ? 'partial' : 'pending', info.truncated],
+        info.turns, info.events, status, status === 'interrupted' || status === 'abandoned' || info.truncated ? 'partial' : 'pending', info.truncated],
     )
     for (const player of info.players) {
       await db.query(
@@ -170,6 +173,14 @@ export function createArchive(pool, stage, backend) {
   let activeScan
 
   async function scan({ markInterrupted = false } = {}) {
+    if (markInterrupted) {
+      // The single application replica starts with ingress closed. Its previous engine process
+      // cannot still be playing. Sideboarding may leave no active game file to recover.
+      await transaction(pool, async db => {
+        await db.query("UPDATE matches SET status='interrupted' WHERE status='active'")
+        await db.query("UPDATE games SET status='interrupted', archive_state='partial' WHERE status='active'")
+      })
+    }
     let files
     try {
       files = await readdir(stage)
@@ -178,6 +189,9 @@ export function createArchive(pool, stage, backend) {
       throw error
     }
     const knownFiles = new Set(files)
+    // Ingest the game records first so a match's final marker can finalize even a match that
+    // never made it to PostgreSQL before process exit.
+    files.sort((left, right) => Number(left.endsWith('.match.json')) - Number(right.endsWith('.match.json')))
     for (const file of files) {
       const match = /^([\da-f-]+)(\.active|\.interrupted|\.match)?\.json$/i.exec(file)
       if (!match || !isUuid(match[1])) continue
@@ -191,7 +205,11 @@ export function createArchive(pool, stage, backend) {
           }
           continue
         }
-        if (raw.batchOwner || (variant === '.active' && knownFiles.has(id + '.json'))) continue
+        if (raw.batchOwner) continue
+        if (variant === '.active' && knownFiles.has(id + '.json')) {
+          await unlink(join(stage, file))
+          continue
+        }
         const info = replayMetadata(raw, id)
         if (variant === '.active') {
           if (markInterrupted) {
@@ -202,10 +220,11 @@ export function createArchive(pool, stage, backend) {
           }
           continue
         }
-        if (markInterrupted) continue
         const interrupted = variant === '.interrupted'
+        const status = interrupted ? 'interrupted' : (info.result || info.winner ? 'completed' : 'abandoned')
         const eventPath = join(stage, id + '.ndjson.gz' + (interrupted ? '.part' : ''))
-        await recordMetadata(pool, info, interrupted ? 'interrupted' : info.result || info.winner ? 'completed' : 'abandoned')
+        await recordMetadata(pool, info, status, markInterrupted)
+        if (markInterrupted) continue
         const previous = (await pool.query('SELECT checksum FROM games WHERE id=$1', [id])).rows[0]
         if (previous?.checksum) {
           await removeStaging(join(stage, file), eventPath)
@@ -229,7 +248,7 @@ export function createArchive(pool, stage, backend) {
         const uploaded = await store.get(key)
         if (!uploaded || digest(uploaded) !== hash) throw new Error('Archive verification failed')
         await pool.query('UPDATE games SET archive_state=$2, checksum=$3, object_key=$4 WHERE id=$1 AND checksum IS NULL', [
-          id, info.truncated || interrupted ? 'partial' : 'ready', hash, key,
+          id, info.truncated || status !== 'completed' ? 'partial' : 'ready', hash, key,
         ])
         await removeStaging(join(stage, file), eventPath)
       } catch (error) {
