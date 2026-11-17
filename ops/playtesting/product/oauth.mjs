@@ -31,7 +31,8 @@ function html(res, title, content, redirectOrigin = '') {
   res.writeHead(200, {
     'Content-Type': 'text/html; charset=utf-8',
     'Content-Security-Policy': `default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action ${formTargets}; frame-ancestors 'none'`,
-    'Referrer-Policy': 'no-referrer',
+    // A native consent POST needs its same-origin Origin header for CSRF validation.
+    'Referrer-Policy': 'same-origin',
   })
   res.end(`<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
     <title>${title} · Playmat</title><style>

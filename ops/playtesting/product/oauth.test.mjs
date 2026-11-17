@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import { once } from 'node:events'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
-import { request as httpRequest } from 'node:http'
+import { createServer, request as httpRequest } from 'node:http'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -122,6 +123,8 @@ test('[PM-AC-18] a Playmat account connects its library and rival without a prec
   assert.equal((await f.request('/oauth/authorize', bob, { request, decision: 'allow' })).status, 400)
   assert.equal((await f.request('/oauth/authorize', alice, { request, seat: 'AnotherDot', decision: 'allow' })).status, 400)
   assert.equal((await f.request('/oauth/authorize', { ...alice, Origin: 'https://untrusted.example' }, { request, decision: 'allow' })).status, 403)
+  assert.equal((await f.request('/oauth/authorize', { ...alice, Origin: 'null' }, { request, decision: 'allow' })).status, 403)
+  assert.equal((await f.request('/oauth/authorize', { Cookie: alice.Cookie }, { request, decision: 'allow' })).status, 403)
 
   const approved = await f.request('/oauth/authorize', alice, { request, decision: 'allow' })
   assert.equal(approved.status, 303)
@@ -203,6 +206,57 @@ test('[PM-AC-18] a Playmat account connects its library and rival without a prec
   assert.equal((await authenticate(next.access_token)).status, 401)
   assert.equal((await authenticate(originalGrant)).status, 200)
 })
+
+test('[PM-AC-19] the browser can approve OAuth and returns to the external client without a referrer',
+  { skip: !databaseUrl || process.env.PLAYMAT_OAUTH_BROWSER_TEST !== '1' }, async t => {
+    const requireWeb = createRequire(new URL('../../../Mage.Web.Client/package.json', import.meta.url))
+    const { chromium } = requireWeb('playwright')
+    let callback
+    const client = createServer((req, res) => {
+      const url = new URL(req.url, 'http://127.0.0.1')
+      if (url.pathname !== '/callback') return res.writeHead(404).end()
+      callback = {
+        method: req.method, hasBody: Boolean(Number(req.headers['content-length']) || req.headers['transfer-encoding']),
+        hasReferrer: Boolean(req.headers.referer), carriesCode: Boolean(url.searchParams.get('code')),
+        preservesState: url.searchParams.get('state') === state,
+      }
+      res.writeHead(200, { 'Content-Type': 'text/html' }).end('<title>OAuth callback received</title>')
+    })
+    client.listen(0, '127.0.0.1')
+    await once(client, 'listening')
+    t.after(() => { client.close(); client.closeAllConnections() })
+    const registered = { clientId: 'browser-fixture', redirectUri: `http://127.0.0.1:${client.address().port}/callback`, name: 'Browser fixture' }
+    const f = await fixture(t, [registered])
+    const alice = await f.login('Alice')
+    const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || undefined })
+    t.after(() => browser.close())
+    const page = await browser.newPage()
+    const [name, value] = alice.Cookie.split('=')
+    await page.context().addCookies([{ name, value, url: issuer, sameSite: 'Lax' }])
+
+    let submitted
+    // Bridge the virtual HTTPS issuer to the local product fixture, preserving browser-generated headers.
+    await page.route(issuer + '/oauth/authorize*', async route => {
+      const req = route.request()
+      const method = req.method()
+      const headers = await req.allHeaders()
+      const fields = {}
+      for (const key of ['cookie', 'origin', 'sec-fetch-site']) {
+        if (key in headers) fields[key] = headers[key]
+      }
+      const form = method === 'POST' ? new URLSearchParams(req.postData()) : undefined
+      const url = new URL(req.url())
+      const response = await f.request(url.pathname + url.search, fields, form, method)
+      if (method === 'POST') submitted = { status: response.status, origin: headers.origin }
+      await route.fulfill({ status: response.status, headers: Object.fromEntries(response.headers), body: await response.text() })
+    })
+
+    await page.goto(issuer + authPath({ client_id: registered.clientId, redirect_uri: registered.redirectUri }))
+    await page.getByRole('button', { name: 'Autorizar' }).click()
+    assert.deepEqual(submitted, { status: 303, origin: issuer })
+    await page.waitForFunction(() => document.title === 'OAuth callback received', null, { timeout: 5000 })
+    assert.deepEqual(callback, { method: 'GET', hasBody: false, hasReferrer: false, carriesCode: true, preservesState: true })
+  })
 
 test('[PM-AC-18] denial returns an issuer-bound error and sign-out invalidates pending consent', { skip: !databaseUrl }, async t => {
   const f = await fixture(t)

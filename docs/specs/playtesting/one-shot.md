@@ -100,6 +100,7 @@ Write failing integration tests before changing the feature code. Link test titl
 | PM-AC-16 | Given two accounts, when a signed-in host creates an MCP table, their own OAuth connection alone discovers and can claim the invitation. The table can be created before connecting a client. Any invitation notification is scoped to the host account. | [Playtesting product scenarios](../../../ops/playtesting/product/product.test.mjs) and table UI |
 | PM-AC-17 | Given a valid MCP play grant and a verified subscriber, when a targeted invite or an actionable decision appears, then its signed webhook uses the smallest useful payload and has a stable ID across retries. Superseded decisions and revoked subscriptions stop delivery. | [MCP HTTP](../../../ops/playtesting/mcp/test/events.test.mjs) and [provider delivery](../../../ops/playtesting/product/mcp-events.test.mjs) |
 | PM-AC-18 | Given a legitimate OAuth client and a Playmat user without a manually provisioned agent, account consent grants the requested access and the same deck library. The user does not select an agent identity. A single-use PKCE code and refresh rotation preserve the account and the internally assigned rival. Untrusted clients and redirects are rejected. | [OAuth HTTP scenarios](../../../ops/playtesting/product/oauth.test.mjs) and deployed self-play smoke |
+| PM-AC-19 | Given a signed-in Playmat user on the consent page for a registered client, clicking Autorizar submits from the Playmat origin and navigates to the registered callback with GET, without sharing the consent URL as a referrer. Consent submitted from an external or opaque origin is rejected. | [OAuth Chromium and HTTP scenarios](../../../ops/playtesting/product/oauth.test.mjs) |
 
 Trace requirements to scenarios when adding executable cases.
 
@@ -117,7 +118,9 @@ Trace requirements to scenarios when adding executable cases.
 - PM-MCP-05 → PM-AC-08, PM-AC-13.
 - PM-MCP-06 → PM-AC-15.
 - PM-MCP-07 → PM-AC-16, PM-AC-17.
-- PM-MCP-08 → PM-AC-18.
+- PM-MCP-08 → PM-AC-18, PM-AC-19.
+
+Run PM-AC-19 with `PLAYMAT_OAUTH_BROWSER_TEST=1` and `node --test ops/playtesting/product/oauth.test.mjs` in the Playwright container matching the frontend dependency. Use an isolated PostgreSQL database via `PLAYMAT_TEST_DATABASE_URL` and install both the product and frontend dependencies. The receiver in the test is simulated locally.
 
 ### Decisions applied as beta defaults
 
