@@ -106,7 +106,6 @@ test('[PM-AC-01] priority can change without moving the phase and the stack chan
 test('[PM-AC-03] a new live draw flies from the library once without animating opening hands and resyncs', () => {
   // Happy DOM does not perform layout; the stage needs a measurable frame and card bounds.
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 1440, 810));
-  vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => window.setTimeout(() => callback(performance.now()), 16));
   const game = match();
   const drawn = { id: 'drawn', name: 'Plains' };
   const draw = { kind: 'DRAW' as const, seq: 1, playerId: 'me', targetId: 'drawn' };
@@ -185,7 +184,9 @@ test('the own seat uses the local deck sleeve and cloth immediately, even while 
 
 test('watching uses the seated players server looks and contrasts identical sleeves', () => {
   rememberLook({ name: 'Alice', sleeve: '#1f2a44', cloth: 'navy' });
-  const { container, dispose } = match(true);
+  const { container, dispose, getByRole, queryByRole } = match(true);
+  expect(getByRole('button', { name: /^Log$/ })).toBeTruthy();
+  expect(queryByRole('button', { name: /^Chat$/ })).toBeNull();
   expect(container.querySelector('[data-cloth="navy"]')).toBeTruthy();
   expect(container.querySelector('[data-cloth="sand"]')).toBeNull();
   const ownPlate = container.querySelector('[data-object-id="me"]');

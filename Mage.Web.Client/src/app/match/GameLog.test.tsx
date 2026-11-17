@@ -58,16 +58,16 @@ describe('GameLog (#249)', () => {
     connection.api.chatJoin.mockResolvedValue(true);
     render(<GameLog gameId="g1" notices={[]} canChat view={null} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Chat', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: /^Chat$/ }));
     const drawer = within(screen.getByRole('complementary', { name: 'Game chat' }));
     const input = drawer.getByRole('textbox', { name: 'Chat message' }) as HTMLInputElement;
     await waitFor(() => expect(input.disabled).toBe(false));
     fireEvent.change(input, { target: { value: 'Nice play!' } });
-    fireEvent.click(drawer.getByRole('button', { name: 'Send', exact: true }));
+    fireEvent.click(drawer.getByRole('button', { name: /^Send$/ }));
     expect(connection.api.chatSendMessage).toHaveBeenCalledWith('chat1', expect.any(String), 'Nice play!');
     expect(input.value).toBe('');
 
-    fireEvent.click(drawer.getByRole('button', { name: 'Log', exact: true }));
+    fireEvent.click(drawer.getByRole('button', { name: /^Log$/ }));
     expect(screen.getByRole('complementary', { name: 'Game log' })).toBeTruthy();
     expect(screen.queryByRole('textbox', { name: 'Chat message' })).toBeNull();
     expect(connection.api.chatJoin).toHaveBeenCalledTimes(1);
