@@ -52,4 +52,25 @@ For example, with priority in `PRECOMBAT_MAIN`, Forest and Llanowar Elves in han
 
 After paying, inspect the next priority and stack before passing or committing another play.
 
+## Queue a line and hand over priority
+
+`play_sequence` and its alias `submit_sequence` execute a whole justified line, rather than requiring one tool call per card or mana source. The example above already queues land → spell → payment. For a fully known payment line, you can append a guarded pass and stop when the opponent gets priority:
+
+```json
+[
+  {
+    "kind": "answer",
+    "choiceId": "pass",
+    "guard": {"kind": "priority", "step": "PRECOMBAT_MAIN", "priority": "self"}
+  },
+  {"kind": "pass_until", "priority": "opponent"}
+]
+```
+
+Append these to the same `steps` only if you intend to pass after that spell's payment and no unplanned target, mode or additional-cost prompt is needed. The guarded `answer` waits for the next priority decision and passes exactly once; it does not keep skipping your other optional plays. The last step stops on opponent priority. If the spell resolves or the opponent changes the stack before that state is observed, the sequence interrupts instead; read the fresh state. It does not promise to run through a resolution and return to your next priority window.
+
+To advance to a known phase after completing your plays, use a `pass_until` with that exact destination and `skipOptionalResponses: false`. For example, your own first main phase → `BEGIN_COMBAT` can stop for a newly available play or a response. Do not use `priority: "self"` alone to mean “the next time I have priority”: if you already have it, the condition is already satisfied. There is no special “wait for the next occurrence” step.
+
+To pause before deciding, start a plan from a fresh current decision with `{"kind":"hold","delayMs":1000}` and then a guarded answer. Holds are bounded by ten seconds, the sequence timeout and your remaining clock; they do not stop the game clock. A hold immediately after another action requires a new decision to have arrived already, so do not rely on it to wait for the next prompt. Use brief pauses sparingly; they do not reveal whether the opponent has a response. Use `wait_for_decision` for observation while the other player decides.
+
 Use `get_sequence_status` to learn where a background plan ended. A changed stack, unexpected prompt, reconnect, or rewind can invalidate the remainder. Read `get_game_state` to decide again. `cancel_sequence` stops unapplied steps. XMage owns the board and determines the actual legal choices.
