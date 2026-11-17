@@ -87,6 +87,21 @@ class RecoveryBackupTest(unittest.TestCase):
             db.execute("UPDATE recovery_claims SET generation=4")
         self.assertEqual(4, self.read_all(self.source)["recovery_claims"][0][1])
 
+    def test_restore_supports_the_images_database_directory_link_to_its_private_volume(self):
+        expected = self.read_all(self.source)
+        self.db.close()
+        volume = self.root / "private-volume-db"
+        directory = self.engine / "db"
+        directory.rename(volume)
+        directory.symlink_to(volume, target_is_directory=True)
+        saved = backup.backup(self.engine, self.backups)
+        with sqlite3.connect(self.source) as db:
+            db.execute("UPDATE checkpoints SET context=X'99'")
+        backup.restore(self.engine, saved)
+        self.assertTrue(directory.is_symlink())
+        self.assertEqual(expected, self.read_all(self.source))
+        self.assertEqual(1, len(list(volume.glob("before-recovery-restore-*"))))
+
     def test_restore_rejects_live_process_lock_without_changing_database(self):
         saved = backup.backup(self.engine, self.backups)
         lock = self.engine / "db/pvp-recovery.db.lock"

@@ -171,6 +171,9 @@ def restore(engine, saved):
     check_database(source)
     database = engine / "db"
     database.mkdir(parents=True, exist_ok=True)
+    # The image deliberately links this directory to its private persistent volume. Resolve that
+    # configured directory once; database, lock and backup files still reject symlinks individually.
+    database = database.resolve(strict=True)
     lock_path = database / "pvp-recovery.db.lock"
     fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, PRIVATE_FILE)
     staged = None

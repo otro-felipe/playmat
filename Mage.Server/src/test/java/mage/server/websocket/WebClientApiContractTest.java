@@ -149,7 +149,14 @@ public class WebClientApiContractTest {
                         login(connection);
                     }
 
-                    dispatcher.dispatch(method.getName(), sampleParams(method, "client-chosen-session"), connection);
+                    JsonArray values = sampleParams(method, "client-chosen-session");
+                    for (int i = 0; i < method.getParams().size(); i++) {
+                        if ("expectedPrompt".equals(method.getParams().get(i).getName())) {
+                            connection.pendingGame = UUID.fromString(values.get(0).getAsString());
+                            connection.pendingPrompt = values.get(i).getAsInt();
+                        }
+                    }
+                    dispatcher.dispatch(method.getName(), values, connection);
 
                     String expected = SERVER_METHOD_OVERRIDES.getOrDefault(method.getName(),
                             method.getAliasOf() != null ? method.getAliasOf() : method.getName());
@@ -163,6 +170,27 @@ public class WebClientApiContractTest {
                                 .doesNotContain("client-chosen-session");
                     }
                 }));
+    }
+
+    @Test
+    void guardedResponseConsumesItsIssuedPromptAndRejectsARepeatBeforeCallingTheServer() throws Exception {
+        FakeConnection connection = new FakeConnection();
+        login(connection);
+        UUID game = UUID.randomUUID();
+        connection.pendingGame = game;
+        connection.pendingPrompt = 42;
+        JsonArray values = new JsonArray();
+        values.add(game.toString());
+        values.add("client-chosen-session");
+        values.add(true);
+        values.add(42);
+        dispatcher.dispatch("sendPlayerBoolean", values, connection);
+        assertThat(serverCalls).containsExactly("sendPlayerBoolean");
+        assertThat(Arrays.asList(serverArgs.get("sendPlayerBoolean"))).contains(connection.getSessionId());
+        serverCalls.clear();
+        assertThatThrownBy(() -> dispatcher.dispatch("sendPlayerBoolean", values, connection))
+                .isInstanceOf(RpcException.class).hasMessageContaining("no longer pending");
+        assertThat(serverCalls).isEmpty();
     }
 
     @Test
@@ -495,6 +523,8 @@ public class WebClientApiContractTest {
         private final String host;
         private String sessionId;
         private String userName;
+        private UUID pendingGame;
+        private Integer pendingPrompt;
 
         FakeConnection() {
             this("10.0.0.7");
@@ -532,6 +562,14 @@ public class WebClientApiContractTest {
         @Override
         public ClientChannel createChannel() {
             return null;
+        }
+
+        @Override
+        public boolean takePrompt(UUID gameId, int messageId) {
+            if (!gameId.equals(pendingGame) || pendingPrompt == null || pendingPrompt != messageId) return false;
+            pendingGame = null;
+            pendingPrompt = null;
+            return true;
         }
     }
 
