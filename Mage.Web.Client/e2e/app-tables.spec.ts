@@ -72,7 +72,8 @@ test.describe('app: tables', () => {
     const tableName = `Review ${Date.now() % 100000}`;
 
     try {
-      await Promise.all([registerSideboardDeck(host, 'host'), registerSideboardDeck(guest, 'guest')]);
+      await registerSideboardDeck(host, 'host');
+      await registerSideboardDeck(guest, 'guest');
       await host.getByRole('button', { name: 'Host a table' }).click();
       const dialog = host.getByRole('dialog', { name: 'Host a table' });
       await dialog.getByLabel('Table name').fill(tableName);
@@ -125,7 +126,7 @@ async function registerSideboardDeck(page: Page, name: string) {
   await importer.getByLabel('Format').selectOption('Constructed - Pioneer');
   await importer.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(importer).toBeHidden();
-  await page.getByRole('button', { name: 'Tables', exact: true }).click();
+  await page.getByRole('link', { name: 'Tables', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Host a table' })).toBeEnabled();
 }
 
