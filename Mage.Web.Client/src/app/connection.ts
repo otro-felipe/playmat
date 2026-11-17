@@ -1,6 +1,7 @@
 import { createApi } from '../protocol/generated/api';
 import { RpcClient } from '../core/rpc/RpcClient';
 import { EventBus } from '../core/rpc/EventBus';
+import { PRIVATE_PLAYTESTING } from './playtesting';
 
 /** One connection to the server for the whole app; game states come as patches. */
 export const rpc = new RpcClient({ stateDiffs: true });
@@ -13,5 +14,6 @@ export const DEFAULT_SERVER_URL = (() => {
   if (typeof window === 'undefined' || !window.location.hostname) return 'ws://localhost:17172';
   // served over HTTPS (a deployment behind the proxy): the game connection shares the origin, at /ws
   if (window.location.protocol === 'https:') return `wss://${window.location.host}/ws`;
+  if (PRIVATE_PLAYTESTING) return `ws://${window.location.host}/ws`;
   return `ws://${window.location.hostname}:17172`;
 })();

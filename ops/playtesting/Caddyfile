@@ -41,12 +41,14 @@
 		}
 
 		handle {
-			forward_auth 127.0.0.1:8790 {
-				uri /internal/verify?redirect=1
+			route {
+				forward_auth 127.0.0.1:8790 {
+					uri /internal/verify?redirect=1
+				}
+				root * /srv/playmat
+				try_files {path} /index.html
+				file_server
 			}
-			root * /srv/playmat
-			try_files {path} /index.html
-			file_server
 		}
 	}
 }
