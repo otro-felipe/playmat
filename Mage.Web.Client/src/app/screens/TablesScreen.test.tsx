@@ -57,7 +57,7 @@ test('[PM-AC-04] the host creates a Rival MCP table without entering a player ac
   expect(dialog.getByLabelText('Invited player')).toBeTruthy();
   fireEvent.change(dialog.getByLabelText('Opponent'), { target: { value: 'mcp' } });
   expect(dialog.queryByLabelText('Invited player')).toBeNull();
-  fireEvent.click(dialog.getByRole('button', { name: 'Host', exact: true }));
+  fireEvent.click(dialog.getByRole('button', { name: /^Host$/ }));
   await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
   const [, request] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
   const invite = JSON.parse(String(request.body));
