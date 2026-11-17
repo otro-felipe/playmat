@@ -21,6 +21,8 @@ All project commands ran in Docker on the personal MacBook Pro. No production cr
 | Product suite with disposable PostgreSQL 17, official MCP SDK and Chromium enabled | 35 passed, 0 skipped |
 | MCP build and full fixture suite after conditional lines and selector integration | 62 passed, 2 live tests skipped |
 | MCP core rebuild and full suite after opponent-range guide and decision-timing integration | 65 passed, 3 opt-in live tests skipped |
+| MCP core rebuild and full suite after planned-trigger integration | 78 passed, 3 opt-in live tests skipped |
+| Planned-trigger Java/controller integration | Offline `mvn -o -B -pl Mage.Common -am -DskipTests compile` and `package`: BUILD SUCCESS; updated local `mage`/`mage-common` JARs produced, Java tests skipped; frontend `tsc -b` and ESLint for `agentChoices.ts` passed |
 | Independent two-spell regression | Passed: exact mana-source selection, separate source taps, both expected resolutions, final end step in the same turn |
 | Frontend build with private-playtesting flags | Passed; existing large-chunk warning |
 | Modal, invitation bootstrap and deck-sync component/store regressions | 7 passed |
@@ -32,6 +34,8 @@ All project commands ran in Docker on the personal MacBook Pro. No production cr
 The final checks on `main` rebuilt the MCP core and passed 62 MCP tests (two live tests skipped), 1,529 frontend tests (42 skipped), accessibility coverage, TypeScript and ESLint for the final correction. Three portrait-layout assertions still reserved central space for the former phase ladder. They now check separation of the battlefield rows, with a separate component assertion requiring the phase navigation inside the decision region. Runtime layout behavior was not changed.
 
 The later opponent-range guide passed eight HTTP MCP acceptance cases, including delivery through `get_guide` and resource parity. Decision-timing integration preserved those cases and passed the expanded 65-test MCP suite. It reports cumulative match-clock samples separately from unknown inactivity timing, preserves zero and keeps pending decisions visible after wait timeouts. It does not implement an authoritative inactivity deadline, game persistence or recovery; see [the timing evidence](../../mcp-decision-timing.md) for that boundary and the author's separate local-engine test.
+
+Planned-trigger integration preserved all clock and range-guide changes. Tests cover exact own-trigger matching, simultaneous spell/trigger stack updates, prompt guards before stack arrival, rejected opponent/extra/ambiguous triggers, illegal targets, hidden-source redaction and interruption despite a successful final action acknowledgement. The future deployment must rebuild the engine distribution/JAR containing `StackAbilityView` as well as the MCP core; clients must refresh schemas. This is not a deployment or recovery acceptance result, and an instruction string alone is not causal proof of a trigger.
 
 ## Publication status
 

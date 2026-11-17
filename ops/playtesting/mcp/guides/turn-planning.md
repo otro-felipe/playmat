@@ -2,7 +2,7 @@
 
 Play to win from your seat's view. For a London mulligan, prioritize castable early plays, usable colors, and a plan for the matchup. At very low hand sizes, keep a functional line instead of chasing the ideal hand. If you kept after a mulligan, answer the engine's prompt for the cards to put on the bottom.
 
-At each meaningful priority window, decide who benefits if the game goes long. Check your mana, the opponent's available mana, life totals, combat math, immediate threats, and how your hand can use the next land drop. Consider how to make the opponent commit first, when to play around a likely response, and whether adding another threat exposes you to a sweeper. Compare the sequencing alternatives privately. Treat an inferred archetype or a possible response as a hypothesis.
+At each meaningful priority window, decide who benefits if the game goes long. Check your mana, the opponent's available mana, life totals, combat math, immediate threats, and how your hand can use the next land drop. Consider how to make the opponent commit first, when to play around a likely response, and whether adding another threat exposes you to a sweeper. Compare the sequencing alternatives privately. Treat an inferred archetype or a possible response as a hypothesis. Maintain and update the compact public-information response ledger described in the cards and matchups guide; a nonresponse reduces a hypothesis only when it was a meaningful legal opportunity, never proves absence.
 
 ## Execute a conditional line
 
@@ -99,7 +99,7 @@ After the known cast and payment steps, this step can advance through ordinary p
 {"kind":"pass_until","stackEmpty":true,"priority":"self","allowPlannedResolutions":true}
 ```
 
-`allowPlannedResolutions` defaults to false and applies only during that step. It permits removal of the exact stack objects previously introduced by this sequence's `expectCast` answers. It does not approve other spells, abilities, triggers, changed controllers or reordered stacks. An opponent response or any unexpected addition interrupts with `state_changed` before the next queued action. Drawn/newly visible cards in your hand or exile interrupt with `new_information`. A turn boundary still interrupts with `turn_changed`. This is a conservative no-response continuation, not a general branching language or a guarantee that every effect is predictable. A change in the opponent's public life/counts/battlefield/graveyard/exile or combat attackers/blockers also interrupts with `opponent_state_changed`, including a visible mana-source tap. Without actor-tagged engine events, the same conservative stop may happen when your own spell causes that change. It does not infer hidden actions or inspect an opponent's hand.
+`allowPlannedResolutions` defaults to false and applies only during that step. It permits removal of the exact stack objects previously introduced by this sequence's `expectCast` or `expectTriggers` answers. It does not approve other spells, abilities, triggers, changed controllers or reordered stacks. An opponent response or any unexpected addition interrupts with `state_changed` before the next queued action. Drawn/newly visible cards in your hand or exile interrupt with `new_information`. A turn boundary still interrupts with `turn_changed`. This is a conservative no-response continuation, not a general branching language or a guarantee that every effect is predictable. A change in the opponent's public life/counts/battlefield/graveyard/exile or combat attackers/blockers also interrupts with `opponent_state_changed`, including a visible mana-source tap. Without actor-tagged engine events, the same conservative stop may happen when your own spell causes that change. It does not infer hidden actions or inspect an opponent's hand.
 
 After that step, add the next guarded play if it remains justified, or `{"kind":"pass_until","step":"END_TURN"}` after deliberately finishing your plays. If there is another available non-mana play, automatic passing stops with `response_available`: choose the play or explicitly decline it. Never guess “no action” from zero mana, empty hand or tapped lands; free spells, alternate costs and abilities may still be legal. The engine's current choices are the authority. Automatic passing skips only ordinary pass/mana-only windows by default, never mandatory choices or configured stops. `skipOptionalResponses: true` remains an explicit decision to decline all optional plays during that pass step, not a resource detector.
 
@@ -117,3 +117,31 @@ For example, a guarded line can pass to `DECLARE_ATTACKERS`, select the known at
 ### Waiting for the opponent
 
 A running plan reports `waitingFor: "opponent"` while the opponent has priority and you have no visible decision. That interval does not consume the sixty-second active-execution budget. The plan resumes on engine events, without repeated passes or polling actions. A hard fifteen-minute wall lifetime, game/turn boundaries, authorization checks, explicit cancellation and disconnect/rewind invalidation still bound it. It is durable across a slow opponent's decision **within the current server process**, not across process restart/deployment. Continue using status/event notifications to learn when control returns. If a plan expires, inspect state and start a fresh plan rather than replaying accepted moves.
+
+## Preplan your own triggers, not arbitrary interruptions
+
+You can queue known trigger targets, modes or yes/no choices as guarded `answer` steps. Put `expectTriggers` on the action that will cause the trigger. Each expectation names one **visible own source object ID**, the exact public `abilityText`, and a bounded count (default one, maximum four). The server accepts only `TRIGGERED_NONMANA` objects controlled by your seat with that exact source and text. The same update may contain your planned spell and expected trigger, but an extra opponent spell, different trigger, changed controller, wrong source, exhausted count or duplicate expectation interrupts the whole remainder.
+
+This is a template, not literal engine IDs/text. Substitute data verified from the current public game/source or a previously observed public trigger; if you cannot identify it exactly, let the sequence stop and inspect it instead of guessing:
+
+```json
+[
+  {
+    "kind": "answer",
+    "decisionId": "CURRENT_DECISION_ID",
+    "choiceId": "CURRENT_ACTION_ID",
+    "expectTriggers": [{"sourceId": "VISIBLE_OWN_SOURCE_ID", "abilityText": "EXACT_PUBLIC_TRIGGER_TEXT", "count": 1}]
+  },
+  {
+    "kind": "answer",
+    "guard": {"kind": "target", "step": "PRECOMBAT_MAIN", "instruction": "EXACT_ENGINE_PROMPT_TEXT"},
+    "select": {"cardId": "INTENDED_LEGAL_TARGET_ID", "zone": "battlefield"}
+  }
+]
+```
+
+If the first action is casting a spell, add `expectCast: true` on that answer as well. The trigger source may be a visible card already on your battlefield/in your hand, or the legal spell selected by that cast. Do not predeclare a hidden/face-down source or an opponent source. Public stack projections expose `abilityType`, `sourceId`, `abilityText` and the actual stack controller, without copying private source-card details.
+
+A trigger's target prompt can arrive **before** its stack object appears. `guard.instruction` matches the exact visible prompt in addition to kind and timing; use it for preplanned mandatory choices to avoid treating an unrelated prompt as the expected trigger. It is not a causal trigger ID: a generic prompt alone cannot prove which effect caused it. If the prompt/source is uncertain, stop and decide from fresh state. Only currently legal engine choices can be answered. A vanished target, ambiguous selector, changed prompt or auto-selected/omitted prompt interrupts safely. Never replay already accepted actions.
+
+Expected trigger stack objects may resolve during an `allowPlannedResolutions: true` pass/yield step, just like the plan's expected spells. Undeclared triggers still interrupt. Newly revealed/drawn cards and public opponent-state changes still return control, even if caused by your trigger. This is not a general auto-target policy, and it never guesses random targets or accepts all triggers. Servers must have the new public trigger metadata and clients must expose the new schema before using it; otherwise use ordinary guarded steps and replan when interrupted.

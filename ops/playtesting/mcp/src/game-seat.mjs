@@ -53,7 +53,8 @@ function visibleDecision(state) {
 }
 
 function stackIdentity(stack) {
-  return JSON.stringify(stack.map(({ id, cardId, name, controllerId }) => [id, cardId, name, controllerId]));
+  return JSON.stringify(stack.map(({ id, cardId, name, controllerId, abilityType, sourceId, abilityText }) =>
+    [id, cardId, name, controllerId, abilityType, sourceId, abilityText]));
 }
 
 function plannedChoice(state, decision, step) {
@@ -225,6 +226,7 @@ export class GameSeat {
     ].map((card) => card.cardId ?? card.id));
     let allowPlannedResolutions = false;
     let pendingCast = null;
+    let pendingTriggers = [];
     const checkStack = (state) => {
       if (responsePolicy === 'ignore') return;
       // Without actor-tagged engine events, conservatively hand control back for
@@ -241,30 +243,40 @@ export class GameSeat {
       }
       const currentStack = stackIdentity(state.stack);
       if (currentStack === expectedStack) return;
-      if (pendingCast) {
-        const item = state.stack.find((card) =>
-          card.cardId === pendingCast.cardId && card.controllerId === pendingCast.playerId
-          && card.name === pendingCast.name && card.id !== card.cardId);
-        if (item && stackIdentity(state.stack.filter((card) => card !== item)) === expectedStack) {
-          expectedStack = currentStack;
-          expectedStackCards = state.stack;
-          plannedStackIds.add(item.id);
-          pendingCast = null;
-          return;
-        }
+      const priorIds = new Set(expectedStackCards.map((card) => card.id));
+      const currentIds = new Set(state.stack.map((card) => card.id));
+      const added = state.stack.filter((card) => !priorIds.has(card.id));
+      const removed = expectedStackCards.filter((card) => !currentIds.has(card.id));
+      const oldRetained = expectedStackCards.filter((card) => currentIds.has(card.id));
+      const newRetained = state.stack.filter((card) => priorIds.has(card.id));
+      if (stackIdentity(oldRetained) !== stackIdentity(newRetained)
+        || (removed.length && (!allowPlannedResolutions || removed.some((card) => !plannedStackIds.has(card.id))))) {
+        throw new ToolError('state_changed', 'The stack changed outside the sequence.');
       }
-      if (allowPlannedResolutions) {
-        const remaining = new Set(state.stack.map((card) => card.id));
-        const removed = expectedStackCards.filter((card) => !remaining.has(card.id));
-        // Only removal of this sequence's exact spells is expected. New spells,
-        // abilities/triggers, controller changes and reordered stacks interrupt.
-        if (removed.length && removed.every((card) => plannedStackIds.has(card.id))
-          && stackIdentity(expectedStackCards.filter((card) => remaining.has(card.id))) === currentStack) {
-          expectedStack = currentStack;
-          expectedStackCards = state.stack;
-          for (const card of removed) plannedStackIds.delete(card.id);
-          return;
+      let nextCast = pendingCast;
+      const nextTriggers = pendingTriggers.map((trigger) => ({ ...trigger }));
+      for (const item of added) {
+        if (nextCast && item.cardId === nextCast.cardId && item.controllerId === nextCast.playerId
+          && item.name === nextCast.name && item.id !== item.cardId && !item.abilityType?.startsWith('TRIGGERED')) {
+          nextCast = null;
+          continue;
         }
+        const expected = nextTriggers.filter((trigger) => trigger.remaining > 0
+          && item.abilityType === 'TRIGGERED_NONMANA' && item.sourceId === trigger.sourceId
+          && item.abilityText === trigger.abilityText && item.controllerId === trigger.playerId);
+        if (expected.length !== 1) throw new ToolError('state_changed', 'An unexpected or ambiguous stack object needs a fresh plan.');
+        expected[0].remaining--;
+      }
+      if (added.length || removed.length) {
+        // Commit budgets only after validating the complete stack delta: a known
+        // trigger must never hide an opponent response in the same update.
+        pendingCast = nextCast;
+        pendingTriggers = nextTriggers;
+        expectedStack = currentStack;
+        expectedStackCards = state.stack;
+        for (const card of added) plannedStackIds.add(card.id);
+        for (const card of removed) plannedStackIds.delete(card.id);
+        return;
       }
       throw new ToolError('state_changed', 'The stack changed outside the sequence.');
     };
@@ -336,11 +348,30 @@ export class GameSeat {
           }
           const decision = state.decision;
           if (pendingCast || state.turn !== turn || (step.decisionId ? decision.id !== step.decisionId :
-            !step.guard || step.guard.kind !== decision.kind || !reaches(state, step.guard))) {
+            !step.guard || step.guard.kind !== decision.kind || !reaches(state, step.guard)
+            || (step.guard.instruction !== undefined && step.guard.instruction !== decision.instruction))) {
             throw new ToolError('state_changed', 'The expected guarded decision changed.');
           }
           const choice = plannedChoice(state, decision, step);
           if (!choice) throw new ToolError('illegal_choice', 'The planned choice is unavailable in the current decision.');
+          if (step.expectTriggers?.length) {
+            const own = state.players?.find((player) => player.yourSeat);
+            const sources = [...(state.ownHand ?? []), ...(own?.battlefield ?? [])];
+            const additions = [];
+            for (const trigger of step.expectTriggers) {
+              const source = sources.find((card) => card.id === trigger.sourceId)
+                ?? (step.expectCast && choice.card?.id === trigger.sourceId ? choice.card : null);
+              if (!own?.id || !source || source.faceDown || source.name === 'Face-down card') {
+                throw new ToolError('bad_trigger_expectation', 'Predeclare only a visible own source or the spell you are casting.');
+              }
+              if ([...pendingTriggers.filter((item) => item.remaining > 0), ...additions]
+                .some((item) => item.sourceId === trigger.sourceId && item.abilityText === trigger.abilityText)) {
+                throw new ToolError('ambiguous_trigger_expectation', 'Use one bounded count for each exact source and ability.');
+              }
+              additions.push({ ...trigger, playerId: own.id, remaining: trigger.count ?? 1 });
+            }
+            pendingTriggers.push(...additions);
+          }
           if (step.expectCast) {
             // The engine's visible legal choice can cast from exile/graveyard too
             // (for example Wrenn's Resolve or flashback). Never infer permission
@@ -416,6 +447,9 @@ export class GameSeat {
         }
         sequence.completedSteps++;
         sequence.cursor = this.snapshot().cursor;
+        // An engine response may publish a stack change before its ACK returns.
+        // Preserve accepted-action counters, but never report that abort as success.
+        signal.throwIfAborted();
       }
       sequence.status = 'completed';
     } catch (error) {

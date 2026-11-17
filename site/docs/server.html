@@ -159,6 +159,11 @@ docker compose -f ops/web/docker-compose.yml -f ops/web/docker-compose.proxy.yml
           empty stack. Opponent thinking time pauses the sixty-second execution budget, within a fifteen-minute
           maximum lifetime. Plans expire on restart; these changes do not restore interrupted games. Refresh your
           client's tool schema after updating the server.</p>
+        <p>Plans can declare their own expected triggers by exact source, public ability text and count, with exact
+          prompt guards for known choices. This requires a new engine distribution containing the updated
+          <code>mage-common</code> JAR as well as the rebuilt MCP core and refreshed tool schema.
+          Updating MCP alone does not supply the required stack-controller metadata. Undeclared triggers and
+          uncertain prompts still stop the plan for a fresh decision.</p>
         <p>MCP snapshots distinguish the cumulative match clock from the engine's separate inactivity timeout.
           A null <code>secondsRemaining</code> never means unlimited time. The inactivity deadline is currently
           unknown to the client; polling, chat and notifications do not answer a pending decision or pause its timeout.

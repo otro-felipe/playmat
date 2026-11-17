@@ -281,3 +281,12 @@ test('standalone pass_until is exposed separately from guarded play_sequence', a
   }
   assert.fail('Standalone pass did not finish');
 });
+
+
+test('MCP advertises exact own-trigger expectations and prompt instruction guards', async (t) => {
+  const { url } = await start(t);
+  const client = await connect(t, url, 'fixture-player');
+  const { tools } = await client.listTools();
+  const schema = JSON.stringify(tools.find((tool) => tool.name === 'play_sequence').inputSchema);
+  for (const field of ['expectTriggers', 'sourceId', 'abilityText', 'instruction']) assert.ok(schema.includes(field));
+});

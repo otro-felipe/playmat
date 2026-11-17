@@ -27,20 +27,25 @@ const ChoiceSelector = z.object({
 }).strict().refine(({ cardName, cardId, label }) => cardName || cardId || label, 'Name the exact card or choice label.');
 const Answer = z.object({
   kind: z.literal('answer'), choiceId: StringId.optional(), select: ChoiceSelector.optional(), decisionId: StringId.optional(),
-  guard: z.object({ kind: StringId, ...GameCondition }).strict().optional(), value: Value.optional(),
+  guard: z.object({ kind: StringId, ...GameCondition, instruction: z.string().min(1).max(2000).optional() }).strict().optional(), value: Value.optional(),
   expectCast: z.boolean().default(false),
+  expectTriggers: z.array(z.object({
+    sourceId: StringId,
+    abilityText: z.string().min(1).max(2000),
+    count: z.number().int().min(1).max(4).default(1),
+  }).strict()).max(4).optional().describe('Predeclare exact own triggered abilities caused by this answer: public source object ID, exact public ability text and bounded count. Never matches opponent abilities.'),
 }).strict()
   .refine(({ choiceId, select }) => !!choiceId !== !!select, 'Use one exact choice ID or one semantic selector.')
   .refine((value) => value.decisionId || (value.guard && hasDestination(value.guard)),
   'A planned answer needs the exact decision ID or a guard with its expected kind and destination.');
 const YieldPriority = z.object({
   kind: z.literal('yield_priority'), until: z.enum(['self', 'opponent']).default('self').describe('Pass exactly once, then wait for a new self decision or the observed opponent handoff.'),
-  allowPlannedResolutions: z.boolean().default(false).describe('Allow only removal of this plan’s expected spell objects; unexpected responses and public opponent changes still interrupt.'),
+  allowPlannedResolutions: z.boolean().default(false).describe('Allow only removal of this plan’s expected spell/trigger objects; unexpected responses and public opponent changes still interrupt.'),
 }).strict();
 const PassUntil = z.object({
   kind: z.literal('pass_until').describe(sequenceInstructions), ...GameCondition,
   stackEmpty: z.literal(true).optional().describe('Require an empty stack in addition to other destination conditions.'),
-  allowPlannedResolutions: z.boolean().default(false).describe('Allow only removal of this plan’s expected spell objects; unexpected responses and public opponent changes still interrupt.'),
+  allowPlannedResolutions: z.boolean().default(false).describe('Allow only removal of this plan’s expected spell/trigger objects; unexpected responses and public opponent changes still interrupt.'),
   skipOptionalResponses: z.boolean().default(false).describe('Keep false unless intentionally declining every optional play, including land drops. Never use this to wait for your next turn.'),
 }).strict().refine((value) => hasDestination(value) || value.stackEmpty === true, 'A pass needs a phase, step, priority or empty-stack destination.');
 const Sequence = { gameId: Uuid, cursor: Cursor, steps: z.array(z.union([Hold, Answer, PassUntil, YieldPriority])).min(1).max(12) };

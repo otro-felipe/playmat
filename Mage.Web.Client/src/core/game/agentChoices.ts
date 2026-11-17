@@ -1,4 +1,4 @@
-import type { CardView, PermanentView } from '../../protocol/generated/views';
+import type { CardView, PermanentView, StackAbilityView } from '../../protocol/generated/views';
 import type { GameSessionState } from './gameSession';
 import type { Command } from './interaction';
 import { pregameChoice } from './pregame';
@@ -13,6 +13,11 @@ function cardOnBoard(card: CardView, id: string | undefined) {
     cardId: card.cardId,
     name: card.name ?? card.displayName ?? 'Unnamed card',
     controllerId: card.controllerId,
+    ...(card.abilityType === 'TRIGGERED_NONMANA' || card.abilityType === 'TRIGGERED_MANA' ? {
+      abilityType: card.abilityType,
+      sourceId: (card as StackAbilityView).sourceCard?.id,
+      abilityText: card.rules?.[0] ? stripMarkup(card.rules[0]) : undefined,
+    } : {}),
     types: card.cardTypes ?? [],
     rules: card.rules?.map(stripMarkup),
     manaCost: card.manaCostLeftStr,

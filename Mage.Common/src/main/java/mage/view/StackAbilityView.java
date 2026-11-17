@@ -32,6 +32,7 @@ public class StackAbilityView extends CardView {
 
     public StackAbilityView(Game game, StackAbility ability, String sourceName, MageObject sourceObject, CardView sourceView) {
         this.id = ability.getId();
+        this.controllerId = ability.getControllerId();
         this.mageObjectType = sourceView.getMageObjectType().isUseTokensRepository() ? MageObjectType.ABILITY_STACK_FROM_TOKEN : MageObjectType.ABILITY_STACK_FROM_CARD;
         this.abilityType = ability.getStackAbility().getAbilityType();
         this.sourceCard = sourceView;
