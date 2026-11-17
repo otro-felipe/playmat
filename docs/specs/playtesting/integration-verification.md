@@ -2,6 +2,30 @@
 
 Worktree: `playmat-one-shot`, branch `main`.
 
+## Current production and subsequent candidate
+
+The complete recovery release `a91940d78ba00db8539c8eed291db0b5d5ab5c44` reached Railway deployment `fa7b15ae-2e4d-4116-a601-2d8b0dd5682c` with terminal `SUCCESS`. Public health subsequently reported that exact commit. OAuth discovery exposes `/oauth/register`, CIMD and public PKCE clients; an invalid empty registration was rejected without creating a client. Runtime logs confirmed recovery backups configured at fifteen minutes/four copies and a completed private backup. Recovery is enabled for its documented private, unrated, two-participant, single-replica, compatible-image scope. Existing PostgreSQL, private S3 and the persistent volume were retained. This is distinct from the earlier historical observations below.
+
+The later mobile payment and stack/history changes are published on `main` but require their own final validation and rollout. They preserve explicit payment/cancel controls, mobile emotes, live clocks and manual responses alongside public targets and read-only recent-action receipts. The initial combined validation at `32505d8f` passed TypeScript, ESLint, 1,568 unit tests (42 skipped), accessibility, seven preview browser tests and eight isolated payment browser tests. The authors' previously unexecuted stack/history regressions are included in that passing unit suite. Full combined-image recovery/backup acceptance also passed. Browser coverage uses Chromium and synthetic accounts; physical Safari, a real mobile disconnect and production authenticated recovery UI have not been verified.
+
+The web run at `d51a0f54` failed only its unchanged app-size gate: deployed baseline 854.573 kB, combined candidate 857.656 kB, delta +3.083 kB against 840 kB. Inspection confirmed attempt 1, no later rerun and no stored artifacts; the completed job logs contain the functional results and baseline comparison. Both baseline and candidate used the same gzip/reachable-chunk measurement and build environment.
+
+The subsequent [web run at `086af8319dbfea5dde1088293af6059b02580ba1`](https://github.com/otro-felipe/playmat/actions/runs/44168445091) reached terminal `SUCCESS`. Vite 7's supported Terser minifier, pinned to 5.51.2 with two normal compression passes, reduces emitted JavaScript without unsafe transforms, feature removal, externalizing code or changing the metric/budgets. The original size script is unchanged:
+
+| Gzipped JavaScript | Before optimization | After optimization | Unchanged budget |
+| --- | --- | --- | --- |
+| Entry | 80.5 kB | 77.6 kB | 86 kB |
+| Initial load | 216.0 kB | 209.5 kB | 221 kB |
+| All reachable app chunks | 857.7 kB | 827.0 kB | 840 kB |
+
+All 133 emitted app JavaScript chunks remain included: the app total falls about 30.7 kB from the combined candidate and about 27.6 kB from the deployed baseline. TypeScript, ESLint, accessibility and 1,568 unit tests passed (42 declared skips). Chromium passed seven preview tests plus ten production-minified payment/presentation fixture cases, including portrait/landscape public target receipts, immediate manual land taps and cancel. Those fixtures are an explicit test-only build input and are absent from normal production builds.
+
+The separate [complete-image run on the same exact candidate](https://github.com/otro-felipe/playmat/actions/runs/44168444838) also reached terminal `SUCCESS`. It rebuilt the combined JAR/core/frontend/product/Caddy image, rejected restore under the actual Java engine lock, restored all four recovery tables exactly while preserving the prior private database, and passed three cold restarts through turn 9, changed sideboarding, game 2 and a terminal 2–0 match. The private daemon reported its effective fixture policy and success. The production policy remains fifteen minutes/four copies; synthetic fixture intervals are not production configuration.
+
+The last production health sample still had one active game, so no subsequent rollout was attempted. Require a fresh healthy zero-active/zero-running-games check immediately before any replacement.
+
+The following sections retain the chronological validation and earlier blockers; their former deployment/pending statements are superseded by this current-status section and the final backup evidence.
+
 The finished branch through `24db7541` was subsequently integrated into a new `main` by fast-forward from the existing `origin/master` ancestor. No conflicting history was overwritten, and `master` remains the repository's default branch. The finished PvP recovery commits were subsequently cherry-picked as `98195a0825b` and `6b269ec7373`, preserving the later OAuth, timing, trigger, sequence and guide changes. Deployment remains gated on independent security review, private backup readiness and a fresh zero-active-games check.
 
 - Base `ccdfe6807c4d195bfaccb7968d7a88d4589b570f`: Freeform drafts and independent deck updates preserved.

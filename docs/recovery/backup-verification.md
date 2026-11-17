@@ -1,6 +1,6 @@
 # Private recovery backup verification — 2026-11-17
 
-This follow-up integrates consistent private backups with the completed PvP recovery feature. Production changes are a separate operation: source publication, image build and this document alone do not prove deployment.
+This follow-up integrates consistent private backups with the completed PvP recovery feature. The full release `a91940d78ba00db8539c8eed291db0b5d5ab5c44` subsequently reached Railway deployment `fa7b15ae-2e4d-4116-a601-2d8b0dd5682c` with terminal `SUCCESS` after a fresh zero-game check. Public health reported the exact source hash. Actual runtime logs confirmed recovery backups configured at 900 seconds/four copies and a completed private backup on the retained persistent volume. Recovery is enabled within the scope below. No production crash or restore was simulated. Private backup-directory inspection requires an unavailable registered Railway SSH key; no key or access permission was added, and private status-file contents are not claimed as inspected.
 
 ## Executed validation
 
@@ -12,6 +12,7 @@ This follow-up integrates consistent private backups with the completed PvP reco
 | Backup tests inside that image | Eight passed; one separate compiled-Java helper case skipped because the runtime intentionally contains a JRE. The actual live Java engine lock was independently exercised below |
 | MCP suite inside that image | 78 passed, three opt-in live suites skipped |
 | Final missing-mount hardening, `0fa4b316` | [Full-image rerun passed](https://github.com/otro-felipe/playmat/actions/runs/44158811900), terminal SUCCESS; nine backup unit tests passed, one separate JRE-only helper skipped, with the real live Java lock checked by mandatory image acceptance |
+| Combined mobile, stack/history and production minifier candidate, `086af8319db` | [Full-image rerun passed](https://github.com/otro-felipe/playmat/actions/runs/44168444838), terminal SUCCESS; mandatory real-engine lock rejection, exact four-table offline restore, private prior-database retention, three cold restarts, changed sideboarding, game 2, terminal 2–0 and effective private daemon policy |
 
 Native validation used installed Python 3.14.5, SQLite 3.53.4 and OpenJDK 17.0.17. The JVM fixture used the repository-pinned public SQLite JDBC 3.53.2.0 and SLF4J API 2.0.17 artifacts staged in a private temporary directory; no host package installation was required. Docker became unavailable after host disk exhaustion, so a fresh GitHub-hosted Linux runner supplied actual image validation without production secrets or data.
 
@@ -37,4 +38,4 @@ Read [the exact backup and offline restore procedure](pvp-recovery.md#private-co
 
 These are same-volume copies and same-image recovery. They do not preserve a lost volume, archive the image binaries, back up PostgreSQL identities, reconstruct past replay segments or migrate snapshots across incompatible builds. Keep the product identities/grants, private volume and matching image intact. Current authorization and fresh participant agreement remain mandatory after an offline restore. New eligible private unrated two-participant Java matches are supported; old unprotected games cannot be recovered retroactively.
 
-The independent recovery security review was approved without blocking findings in authorization, privacy, claims and supported limits. It was a static review, distinct from the executed native and Linux process-restart checks above. The new mobile mana/Autopay work remains separate from this release.
+The independent recovery security review was approved without blocking findings in authorization, privacy, claims and supported limits. It was a static review, distinct from the executed native and Linux process-restart checks above. The subsequent mobile mana/Autopay and stack/history candidate is separate from this already deployed recovery release and must pass its own final checks before replacement.
