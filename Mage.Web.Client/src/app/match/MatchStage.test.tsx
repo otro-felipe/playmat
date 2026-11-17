@@ -86,6 +86,7 @@ test('[PM-AC-01] priority can change without moving the phase and the stack chan
   const game = match(false, { Bob: 'CodexRival' });
   game.updateView(BOARD, true);
   const phases = within(game.getByRole('navigation', { name: /turn 3/i }));
+  expect(within(game.getByRole('region', { name: 'Your decision' })).getByRole('navigation', { name: /turn 3/i })).toBeTruthy();
   expect(phases.getAllByRole('button')).toHaveLength(5);
   expect(phases.getByRole('button', { name: 'Main I' }).getAttribute('aria-current')).toBe('step');
   expect(game.getByRole('button', { name: /^Go to combat$/i })).toBeTruthy();

@@ -15,7 +15,7 @@ export interface RowsPlacement {
  * The match's zones in stage pixels, for the stage's layout. Wide (a desktop, a tablet on its side): seats on the
  * left, the stack and decision corner on the right, the battlefield between. Tall (a tablet held upright): both
  * players' rows span the stage; the opponent's seat and piles are a band along the top, yours a band above your hand
- * at the bottom, and the turn and stack sit between the two battlefields.
+ * at the bottom. The stack sits between the battlefields; turn controls share the decision corner.
  */
 export interface MatchLayout {
   tall: boolean;

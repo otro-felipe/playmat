@@ -58,16 +58,16 @@ describe('matchLayout', () => {
     expect(me.frontIdeal).toBe(Math.round(150 + (height - 1080) * 0.2));
   });
 
-  test.each([1440, 1554, 1728, 1920])('tall %i: top band, their rows, the turn, your rows, your band, the hand, in that order', (height) => {
+  test.each([1440, 1554, 1728, 1920])('tall %i: top band, their rows, the seam, your rows, your band, the hand, in that order', (height) => {
     const layout = matchLayout({ layout: 'tall', width: 1080, height });
     const them = layout.them(0, 1);
     const me = layout.me;
     expect(layout.fieldWidth).toBe(1080 - 48);
     expect(them.backTop).toBeGreaterThan(layout.theirPiles.top);
     expect(them.frontTop).toBeGreaterThanOrEqual(them.backTop + them.backIdeal * CARD_RATIO);
-    // the turn ladder (about 70 tall) fits between the creature rows, at the seam
-    expect(layout.seam - 35).toBeGreaterThan(them.frontTop + them.frontIdeal * CARD_RATIO);
-    expect(layout.seam + 35).toBeLessThan(me.frontTop);
+    // The seam separates the creature rows. Turn controls live in the decision corner.
+    expect(layout.seam).toBeGreaterThan(them.frontTop + them.frontIdeal * CARD_RATIO);
+    expect(layout.seam).toBeLessThan(me.frontTop);
     expect(me.backTop).toBeGreaterThanOrEqual(me.frontTop + me.frontIdeal * CARD_RATIO);
     expect(layout.myPlate.top).toBeGreaterThan(me.backTop + me.backIdeal * CARD_RATIO);
     expect(layout.playLine).toBeLessThan(height - 118 - layout.handRaise);
