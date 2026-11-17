@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { GameSeat, ToolError } from './game-seat.mjs';
 import { monitorSeatDecisions, registerEvents } from './events.mjs';
 import { listArchetypes, possibleResponses, searchCards } from './catalog.mjs';
-import { guideInstructions, registerGuides } from './guides.mjs';
+import { guideBootstrap, guideInstructions, registerGuides, sequenceInstructions } from './guides.mjs';
 import { registerMatchReviewPrompt, scoredPositions } from './match-review.mjs';
 
 const Uuid = z.uuid();
@@ -34,7 +34,8 @@ const Answer = z.object({
   .refine((value) => value.decisionId || (value.guard && hasDestination(value.guard)),
   'A planned answer needs the exact decision ID or a guard with its expected kind and destination.');
 const PassUntil = z.object({
-  kind: z.literal('pass_until'), ...GameCondition, skipOptionalResponses: z.boolean().default(false),
+  kind: z.literal('pass_until').describe(sequenceInstructions), ...GameCondition,
+  skipOptionalResponses: z.boolean().default(false).describe('Keep false unless intentionally declining every optional play, including land drops. Never use this to wait for your next turn.'),
 }).strict().refine(hasDestination, 'A pass needs a phase, step or priority destination.');
 const Sequence = { gameId: Uuid, cursor: Cursor, steps: z.array(z.union([Hold, Answer, PassUntil])).min(1).max(12) };
 const Catalog = {
@@ -71,6 +72,10 @@ function readToken(req) {
 
 function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedOrigins }) {
   function tool(name, description, inputSchema, scope, run, readOnlyHint = false) {
+    if (['create_game', 'join_game', 'start_match', 'get_game_state', 'submit_decision', 'play_sequence', 'submit_sequence'].includes(name)) {
+      description += ` ${guideBootstrap}`;
+    }
+    if (['play_sequence', 'submit_sequence'].includes(name)) description += ` ${sequenceInstructions}`;
     const scopes = scope === 'catalog' ? ['play', 'library'] : [scope === 'decks' ? 'library' : scope];
     mcp.registerTool(name, { description, inputSchema, annotations: { readOnlyHint },
       _meta: { securitySchemes: scopes.map(value => ({ type: 'oauth2', scopes: [value] })) },

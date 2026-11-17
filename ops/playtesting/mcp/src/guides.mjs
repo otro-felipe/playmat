@@ -27,9 +27,14 @@ const guides = [
 const GuideId = z.enum(guides.map(({ name }) => name));
 const guideList = guides.map(({ text, ...guide }) => guide);
 
+export const guideBootstrap = 'Before creating, joining or playing a match, load all four guides with get_guide: getting-started, turn-planning, card-catalog and rules (one call per guideId). Repeat after losing conversation context. Listing guides alone does not load their contents.';
+
+export const sequenceInstructions = 'pass_until actively passes; END_TURN is an end-step name, not a command to wait for your next turn. Sequences stop with turn_changed at a turn boundary. Read get_sequence_status and get_game_state before replanning. Keep skipOptionalResponses false to preserve land drops and other plays.';
+
 export const guideInstructions = [
+  guideBootstrap,
   'Call get_guide with no arguments to list the guides, then pass guideId to read one. You can also use resources/list and resources/read.',
-  'Before joining a match, read getting-started and turn-planning.',
+  sequenceInstructions,
   ...guideList.map(({ uri, description }) => `${uri} — ${description}`),
 ].join('\n');
 
@@ -38,7 +43,7 @@ export function registerGuides(mcp) {
     mcp.registerResource(name, uri, metadata, async () => ({ contents: [{ uri, mimeType, text }] }));
   }
   mcp.registerTool('get_guide', {
-    description: 'Discover Playmat’s guides or read one by ID. Read getting-started and turn-planning before joining. Use card-catalog for card lookup and rules for official Magic rules.',
+    description: `Discover Playmat’s guides or read one by ID. ${guideBootstrap}`,
     inputSchema: { guideId: GuideId.optional().describe('Omit to list every guide, or choose one ID to read its Markdown.') },
     annotations: { readOnlyHint: true, openWorldHint: false },
     _meta: { securitySchemes: [{ type: 'oauth2', scopes: [] }] },

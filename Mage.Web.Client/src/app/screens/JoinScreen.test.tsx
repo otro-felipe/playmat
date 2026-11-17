@@ -49,6 +49,8 @@ test('[PM-AC-04] an MCP invite shows and copies its endpoint, private link, reso
     `${window.location.origin}/mcp`, `${window.location.origin}${invitePath}`,
     'playmat://guides/getting-started', 'playmat://guides/card-catalog', 'playmat://guides/turn-planning', rules,
     'get_guide without arguments to list the guides', 'guideId', 'join_game', 'Coach',
+    'Before creating, joining or playing, load all four guides', 'Repeat after losing context',
+    'END_TURN', 'skipOptionalResponses', 'land drops',
   ]) expect(instructions).toContain(detail);
   expect(instructions.indexOf('get_guide')).toBeLessThan(instructions.indexOf('join_game'));
 });

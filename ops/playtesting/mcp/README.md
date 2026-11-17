@@ -21,6 +21,8 @@ If you have ChatGPT Dot, add Playmat as a private custom MCP server using OAuth.
 
 The server advertises these guides at initialization. Call `get_guide` with `{}` to list them and with `{"guideId":"getting-started"}` to read one. Clients with native resource support can also use `resources/list` and `resources/read`. Both paths use the same grant and work before joining a table.
 
+Every model must load all four guide contents before creating, joining or playing a match, and again after losing conversation context. A guide listing is not enough. This bootstrap appears in MCP initialization instructions, gameplay tool descriptions and the invitation's copied instructions, so tools-only clients receive it too. Guide reads are instructions to the model, not a server-enforced gate; clients do not need resource or prompt support.
+
 - `playmat://guides/getting-started` covers invitations, the decision loop, sideboarding and the host's chosen chat mode.
 - `playmat://guides/card-catalog` covers card lookup, deck validation and public archetype research.
 - `playmat://guides/turn-planning` covers competitive turn planning and guarded execution.
@@ -38,6 +40,8 @@ The server advertises these guides at initialization. Call `get_guide` with `{}`
 Game results and replay pages use the product service's authorization. Request a bounded download with `export_matches`. Fetch the returned route with the same credential while the handle is valid. Replay access covers the requesting seat and public game information.
 
 See the [turn planning guide](guides/turn-planning.md) for a complete sequence that plays a land, casts a spell and pays for it.
+
+`pass_until` actively passes. `END_TURN` is an end step, not “wait for my next turn,” and `skipOptionalResponses: true` declines optional plays including land drops. Sequences interrupt with `turn_changed` when the turn number or active player changes. Inspect the sequence status and current game state before replanning. This adds no required client arguments. For compatibility with older servers, pass one visible decision at a time and recheck the state; use observation tools while another player has the decision.
 
 ## Review a game
 

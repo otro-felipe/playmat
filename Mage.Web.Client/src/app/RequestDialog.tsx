@@ -35,6 +35,8 @@ export function RequestDialog() {
     if (request) setQueue((current) => [...current, request]);
   }), []);
   const request = queue[0];
+  const rollback = [request?.button1Action, request?.button2Action, request?.button3Action].some((action) =>
+    action === 'ADD_PERMISSION_TO_ROLLBACK_TURN' || action === 'DENY_PERMISSION_TO_ROLLBACK_TURN');
   const close = () => setQueue((current) => current.slice(1));
   const buttons = request
     ? ([
@@ -47,7 +49,8 @@ export function RequestDialog() {
   return (
     <Dialog
       open={!!request}
-      onOpenChange={(open) => !open && close()}
+      onOpenChange={(open) => !open && !rollback && close()}
+      dismissible={!rollback}
       title={stripMarkup(request?.title) || 'Request'}
       description={stripMarkup(request?.message)}
       width="sm"

@@ -194,6 +194,9 @@ export class GameSeat {
       if (state.gameId !== sequence.gameId || state.status !== 'active' || state.epoch !== initial.epoch) {
         throw new ToolError('invalidated', 'The game state changed.');
       }
+      if (state.turn !== turn || state.activePlayer !== initial.activePlayer) {
+        throw new ToolError('turn_changed', 'The observed turn ended. Read the current state and plan again before passing.');
+      }
     };
     const unwatch = this.engine.subscribe(() => {
       try {

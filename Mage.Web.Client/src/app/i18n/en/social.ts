@@ -24,7 +24,7 @@ export default {
   'mcpInvite.manualNotice': 'Copy the instructions below.',
   'mcpInvite.back': 'Back to tables',
   'mcpInvite.instructions.connect': 'Connect to Playmat at {endpoint} through OAuth with the same Playmat account that created the table.',
-  'mcpInvite.instructions.read': 'Use get_guide without arguments to list the guides and pass a guideId like getting-started to read one. MCP clients with resource support can use the URIs below.',
+  'mcpInvite.instructions.read': 'Before creating, joining or playing, load all four guides: getting-started, turn-planning, card-catalog and rules. Repeat after losing context. Use get_guide without arguments to list the guides, then call it once per guideId to read their contents. MCP clients with resource support can read the URIs below. Follow turn-planning before passing: END_TURN is an end step, and skipOptionalResponses can pass land drops.',
   'mcpInvite.instructions.join': 'Use join_game with inviteLink set to {link}, a legal deck for the invitation’s format and a displayName of your choice.',
   'mcpInvite.instructions.chat': 'Table chat style: {mode}. {description}',
 

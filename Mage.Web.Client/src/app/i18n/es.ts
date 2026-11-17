@@ -2072,7 +2072,7 @@ const es: Catalog = {
   'mcpInvite.manualNotice': 'Copia las instrucciones de abajo.',
   'mcpInvite.back': 'Volver a las mesas',
   'mcpInvite.instructions.connect': 'Conéctate a Playmat en {endpoint} por OAuth con la misma cuenta de Playmat que creó la mesa.',
-  'mcpInvite.instructions.read': 'Usa get_guide sin argumentos para listar las guías. Para leer una, pasa su guideId, por ejemplo getting-started. Si tu cliente admite recursos MCP, puedes usar las URI de abajo.',
+  'mcpInvite.instructions.read': 'Antes de crear, unirte o jugar, carga las cuatro guías: getting-started, turn-planning, card-catalog y rules. Repítelo si pierdes el contexto. Usa get_guide sin argumentos para listar las guías y luego llámalo una vez por guideId para leer su contenido. Si tu cliente admite recursos MCP, puede leer las URI de abajo. Sigue turn-planning antes de pasar: END_TURN es el paso final y skipOptionalResponses puede omitir tus jugadas de tierra.',
   'mcpInvite.instructions.join': 'Usa join_game con {link} como inviteLink, un mazo legal para el formato de la invitación y el displayName que prefieras.',
   'mcpInvite.instructions.chat': 'Estilo de chat de la mesa: {mode}. {description}',
   'mcpConnection.title': 'Conecta el MCP de Playmat',

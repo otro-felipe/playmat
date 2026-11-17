@@ -130,6 +130,17 @@ docker compose -f ops/web/docker-compose.yml -f ops/web/docker-compose.proxy.yml
           Keep <code>TLS_MODE=external</code> in <code>.env</code>: the <a href="updates.html#button">Update button</a>
           reads it to keep using the override.</p>
 
+        <h2 id="mcp-guides">Guides for MCP players</h2>
+        <p>On deployments with the private MCP service, every connected model should load <code>getting-started</code>,
+          <code>turn-planning</code>, <code>card-catalog</code> and <code>rules</code> before joining or playing.
+          Use <code>get_guide</code> once per <code>guideId</code>, or read the equivalent
+          <code>playmat://guides/</code> resources. Tools-only clients receive the same guides and bootstrap instructions.</p>
+        <p><code>pass_until</code> submits real passes. <code>END_TURN</code> names an end step;
+          <code>skipOptionalResponses: true</code> can decline land drops. Sequences now stop with <code>turn_changed</code>
+          at a turn boundary. Read the sequence status and fresh game state before planning again. On older servers,
+          pass one visible decision at a time and inspect the next state. See the
+          <a href="https://github.com/arcanite24/playmat/blob/master/ops/playtesting/mcp/guides/turn-planning.md">turn planning guide</a>.</p>
+
         <h2 id="faq">Questions</h2>
         <h3 id="image-cache">How big does the card picture cache get?</h3>
         <p>The <code>imgcache</code> service keeps every picture players have looked at, so it grows with use. It's

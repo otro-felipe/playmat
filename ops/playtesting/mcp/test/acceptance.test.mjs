@@ -144,6 +144,21 @@ test('[PM-AC-08] a tools-only connector can discover and read the same guides as
   assert.match(client.getInstructions(), /get_guide/);
 
   const ids = ['getting-started', 'card-catalog', 'turn-planning', 'rules'];
+  for (const id of ids) {
+    assert.ok(client.getInstructions().includes(id));
+    assert.ok(tool.description.includes(id));
+  }
+  assert.match(client.getInstructions(), /Before creating, joining or playing/);
+  assert.match(client.getInstructions(), /Listing guides alone does not load their contents/);
+  for (const name of ['join_game', 'create_game', 'submit_decision', 'play_sequence', 'submit_sequence']) {
+    const description = tools.find((tool) => tool.name === name).description;
+    assert.match(description, /get_guide/);
+    for (const id of ids) assert.ok(description.includes(id));
+  }
+  for (const name of ['play_sequence', 'submit_sequence']) {
+    assert.match(tools.find((tool) => tool.name === name).description, /turn_changed/);
+    assert.match(tools.find((tool) => tool.name === name).description, /land drops/);
+  }
   const { error, value: { guides } } = await call(client, 'get_guide');
   assert.equal(error, false);
   assert.deepEqual(new Set(guides.map(({ name }) => name)), new Set(ids));
