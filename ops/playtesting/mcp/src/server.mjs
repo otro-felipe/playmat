@@ -17,14 +17,23 @@ const GameCondition = {
 };
 const hasDestination = (value) => value.phase !== undefined || value.step !== undefined || value.priority !== undefined;
 const Hold = z.object({ kind: z.literal('hold'), delayMs: z.number().int().min(1).max(10_000) }).strict();
+const ChoiceSelector = z.object({
+  cardName: z.string().trim().min(1).max(250).optional(),
+  cardId: StringId.optional(), label: z.string().trim().min(1).max(500).optional(),
+  zone: z.enum(['hand', 'battlefield']).optional(),
+}).strict().refine(({ cardName, cardId, label }) => cardName || cardId || label, 'Name the exact card or choice label.');
 const Answer = z.object({
-  kind: z.literal('answer'), choiceId: StringId, decisionId: StringId.optional(),
+  kind: z.literal('answer'), choiceId: StringId.optional(), select: ChoiceSelector.optional(), decisionId: StringId.optional(),
   guard: z.object({ kind: StringId, ...GameCondition }).strict().optional(), value: Value.optional(),
-}).strict().refine((value) => value.decisionId || (value.guard && hasDestination(value.guard)),
+  expectCast: z.boolean().default(false),
+}).strict()
+  .refine(({ choiceId, select }) => !!choiceId !== !!select, 'Use one exact choice ID or one semantic selector.')
+  .refine((value) => value.decisionId || (value.guard && hasDestination(value.guard)),
   'A planned answer needs the exact decision ID or a guard with its expected kind and destination.');
 const PassUntil = z.object({
   kind: z.literal('pass_until'), ...GameCondition, skipOptionalResponses: z.boolean().default(false),
 }).strict().refine(hasDestination, 'A pass needs a phase, step or priority destination.');
+const Sequence = { gameId: Uuid, cursor: Cursor, steps: z.array(z.union([Hold, Answer, PassUntil])).min(1).max(12) };
 const Catalog = {
   format: Format.optional(), query: z.string().trim().min(1).max(160).optional(),
   colors: z.array(z.enum(['W', 'U', 'B', 'R', 'G', 'C'])).min(1).max(6).optional(),
@@ -93,9 +102,9 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize }) {
   tool('submit_decision', 'Apply one visible choice for the current decision once. Use a new idempotency key for a different decision.', {
     gameId: Uuid, cursor: Cursor.optional(), decisionId: StringId, choiceId: StringId, idempotencyKey: StringId, value: Value.optional(),
   }, 'play', (args) => getSeat().submit(args));
-  tool('submit_sequence', 'Start a conditional, bounded sequence of choices, waits on your decision clock and ordinary passes.', {
-    gameId: Uuid, cursor: Cursor, steps: z.array(z.union([Hold, Answer, PassUntil])).min(1).max(12),
-  }, 'play', (args) => getSeat().startSequence(args, reauthorize));
+  const playSequence = (args) => getSeat().startSequence(args, reauthorize);
+  tool('play_sequence', 'Queue guarded choices by exact ID, card or label. Mark a planned cast with expectCast to let later steps pay for that same spell.', Sequence, 'play', playSequence);
+  tool('submit_sequence', 'Start a conditional, bounded sequence of choices, waits on your decision clock and ordinary passes.', Sequence, 'play', playSequence);
   tool('get_sequence_status', 'Check the progress and interruption reason for one plan.', { gameId: Uuid, sequenceId: Uuid }, 'play',
     (args) => getSeat().sequenceStatus(args), true);
   tool('cancel_sequence', 'Cancel unapplied steps without undoing moves already accepted by XMage.', { gameId: Uuid, sequenceId: Uuid }, 'play',

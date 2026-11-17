@@ -46,6 +46,29 @@ export function reaches(state, target) {
     && (target.priority === undefined || state.priority === target.priority);
 }
 
+function visibleDecision(state) {
+  return state.decision?.kind === 'waiting' ? null : state.decision;
+}
+
+function stackIdentity(stack) {
+  return JSON.stringify(stack.map(({ id, cardId, name, controllerId }) => [id, cardId, name, controllerId]));
+}
+
+function plannedChoice(state, decision, step) {
+  if (step.choiceId) return decision.choices.find((choice) => choice.id === step.choiceId);
+  const { cardName, cardId, label, zone } = step.select;
+  const own = state.players?.find((player) => player.yourSeat);
+  const cards = zone === 'hand' ? state.ownHand : own?.battlefield;
+  const matches = decision.choices.filter((choice) => {
+    if (zone && !cards?.some((card) => card.id === choice.card?.id)) return false;
+    if (cardName !== undefined && choice.card?.name !== cardName) return false;
+    if (cardId !== undefined && choice.card?.id !== cardId && choice.card?.cardId !== cardId) return false;
+    return label === undefined || choice.label === label;
+  });
+  if (matches.length > 1) throw new ToolError('ambiguous_choice', 'Use the exact card ID when more than one choice matches.');
+  return matches[0];
+}
+
 export class GameSeat {
   #outcomes = new Map();
   #sequences = new Map();
@@ -69,7 +92,8 @@ export class GameSeat {
       if (['game_over', 'sideboarding', 'match_over'].includes(state.status)) return { event: state.status, state };
       if (state.epoch !== epoch) return { event: 'invalidated', state };
       if (args.afterCursor !== undefined && state.cursor <= args.afterCursor) return null;
-      if (predicate ? reaches(state, predicate) : state.decision && state.decision.id !== args.afterDecisionId) {
+      const decision = visibleDecision(state);
+      if (predicate ? reaches(state, predicate) : decision && decision.id !== args.afterDecisionId) {
         return { event: predicate ? 'reached' : 'decision', state };
       }
       return null;
@@ -149,19 +173,50 @@ export class GameSeat {
     const turn = initial.turn;
     let previousDecisionId = null;
     let passCount = 0;
-    const expectedStack = JSON.stringify(initial.stack);
+    let expectedStack = stackIdentity(initial.stack);
+    let pendingCast = null;
+    const checkStack = (state) => {
+      const currentStack = stackIdentity(state.stack);
+      if (currentStack === expectedStack) return;
+      if (pendingCast) {
+        const item = state.stack.find((card) =>
+          card.cardId === pendingCast.cardId && card.controllerId === pendingCast.playerId
+          && card.name === pendingCast.name && card.id !== card.cardId);
+        if (item && stackIdentity(state.stack.filter((card) => card !== item)) === expectedStack) {
+          expectedStack = currentStack;
+          pendingCast = null;
+          return;
+        }
+      }
+      throw new ToolError('state_changed', 'The stack changed outside the sequence.');
+    };
+    const checkGame = (state) => {
+      if (state.gameId !== sequence.gameId || state.status !== 'active' || state.epoch !== initial.epoch) {
+        throw new ToolError('invalidated', 'The game state changed.');
+      }
+    };
+    const unwatch = this.engine.subscribe(() => {
+      try {
+        const state = this.snapshot();
+        checkGame(state);
+        checkStack(state);
+      } catch (error) {
+        sequence.controller.abort(error);
+      }
+    });
     const stateForStep = async () => {
       signal.throwIfAborted();
       if (Date.now() >= deadline) throw new ToolError('timeout', 'The sequence ran out of time.');
       if (!await authorize()) throw new ToolError('authorization_expired', 'The seat authorization expired.');
       signal.throwIfAborted();
-      const state = this.snapshot(sequence.gameId);
-      if (state.status !== 'active' || (state.epoch !== initial.epoch)) throw new ToolError('invalidated', 'The game state changed.');
+      const state = this.snapshot();
+      checkGame(state);
+      checkStack(state);
       return state;
     };
     const observable = (state) => {
-      if (state.gameId !== sequence.gameId || state.status !== 'active' || state.epoch !== initial.epoch) return state;
-      if (state.decision && state.decision.id !== previousDecisionId) return state;
+      const decision = visibleDecision(state);
+      if (decision && decision.id !== previousDecisionId) return state;
       return null;
     };
     const waitForNext = () => waitFor(this.engine, observable, Math.max(1, deadline - Date.now()), signal);
@@ -169,7 +224,7 @@ export class GameSeat {
       for (const step of steps) {
         let state = await stateForStep();
         if (step.kind === 'hold') {
-          if (!state.decision || state.decision.id === previousDecisionId) throw new ToolError('not_actionable', 'A hold requires a current decision.');
+          if (!visibleDecision(state) || state.decision.id === previousDecisionId) throw new ToolError('not_actionable', 'A hold requires a current decision.');
           const id = state.decision.id;
           const effective = Math.min(step.delayMs, maxHold(state), Math.max(0, deadline - Date.now()));
           await sleep(effective, undefined, { signal });
@@ -177,18 +232,27 @@ export class GameSeat {
           if (state.decision?.id !== id) throw new ToolError('state_changed', 'The current decision changed while holding.');
           sequence.effectiveDelayMs = effective;
         } else if (step.kind === 'answer') {
-          if (!state.decision || state.decision.id === previousDecisionId) {
+          while (!visibleDecision(state) || state.decision.id === previousDecisionId) {
             if (!await waitForNext()) throw new ToolError('timeout', 'The expected decision did not arrive.');
             state = await stateForStep();
           }
           const decision = state.decision;
-          if (!decision || (step.decisionId ? decision.id !== step.decisionId :
-            !step.guard || (step.guard.kind !== decision.kind || !reaches(state, step.guard)
-              || state.turn !== turn || JSON.stringify(state.stack) !== expectedStack))) {
+          if (pendingCast || state.turn !== turn || (step.decisionId ? decision.id !== step.decisionId :
+            !step.guard || step.guard.kind !== decision.kind || !reaches(state, step.guard))) {
             throw new ToolError('state_changed', 'The expected guarded decision changed.');
           }
+          const choice = plannedChoice(state, decision, step);
+          if (!choice) throw new ToolError('illegal_choice', 'The planned choice is unavailable in the current decision.');
+          if (step.expectCast) {
+            const card = state.ownHand?.find((entry) => entry.id === choice.card?.id);
+            const playerId = state.players?.find((player) => player.yourSeat)?.id;
+            if (decision.kind !== 'priority' || !card?.cardId || !playerId || card.types.includes('LAND')) {
+              throw new ToolError('bad_cast_expectation', 'Expect a cast only for a spell in your hand during priority.');
+            }
+            pendingCast = { cardId: card.cardId, name: card.name, playerId };
+          }
           await this.submit({
-            gameId: sequence.gameId, decisionId: decision.id, choiceId: step.choiceId,
+            gameId: sequence.gameId, cursor: state.cursor, decisionId: decision.id, choiceId: choice.id,
             idempotencyKey: `${sequence.id}:${sequence.completedSteps}`, value: step.value,
           }, sequence.id);
           sequence.appliedDecisions++;
@@ -197,21 +261,20 @@ export class GameSeat {
           for (;;) {
             state = await stateForStep();
             if (reaches(state, step)) break;
-            if (!state.decision || state.decision.id === previousDecisionId) {
+            if (!visibleDecision(state) || state.decision.id === previousDecisionId) {
               const observed = await waitFor(this.engine, (updated) => reaches(updated, step) ? updated : observable(updated),
                 Math.max(1, deadline - Date.now()), signal);
               if (!observed) throw new ToolError('timeout', 'The destination did not arrive.');
               continue;
             }
             const choice = state.decision.choices.find((item) => item.type === 'pass');
-            const stackChanged = JSON.stringify(state.stack) !== expectedStack;
-            if (!choice || state.decision.kind !== 'priority' || stackChanged || state.stop
+            if (!choice || state.decision.kind !== 'priority' || pendingCast || state.stop
               || (!step.skipOptionalResponses && state.decision.choices.some((item) => item.type !== 'pass' && item.type !== 'manaAbility'))) {
-              throw new ToolError(stackChanged ? 'state_changed' : 'response_available', 'A new response or mandatory prompt needs a decision.');
+              throw new ToolError('response_available', 'A new response or mandatory prompt needs a decision.');
             }
             if (++passCount > 30) throw new ToolError('pass_limit', 'The sequence reached its priority window limit.');
             await this.submit({
-              gameId: sequence.gameId, decisionId: state.decision.id, choiceId: choice.id,
+              gameId: sequence.gameId, cursor: state.cursor, decisionId: state.decision.id, choiceId: choice.id,
               idempotencyKey: `${sequence.id}:pass:${passCount}`,
             }, sequence.id);
             sequence.appliedDecisions++;
@@ -228,6 +291,7 @@ export class GameSeat {
       sequence.reason = reason?.code ?? 'action_failed';
       sequence.cursor = this.snapshot().cursor;
     } finally {
+      unwatch();
       if (this.#current === sequence) this.#current = null;
     }
   }

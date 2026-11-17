@@ -16,7 +16,7 @@ function cardOnBoard(card, id) {
   if (!card) return null;
   if (card.faceDown || card.hideInfo) return { id, faceDown: true, name: 'Face-down card', tapped: !!card.tapped };
   return {
-    id, name: card.name ?? card.displayName ?? 'Unnamed card', controllerId: card.controllerId,
+    id, cardId: card.cardId, name: card.name ?? card.displayName ?? 'Unnamed card', controllerId: card.controllerId,
     types: card.cardTypes ?? [], rules: card.rules?.map(stripMarkup), manaCost: card.manaCostLeftStr,
     power: card.power, toughness: card.toughness, tapped: card.tapped, counters: card.counters,
     damage: card.damage, targets: card.targets, setCode: card.expansionSetCode, cardNumber: card.cardNumber,
@@ -51,7 +51,7 @@ function projectChoice(command, id, label, type, card) {
 
 function projectedChoices(state, promptId) {
   const { view, prompt, interaction } = state;
-  if (!view || !prompt || state.awaitingServer || state.resyncing || state.stalled) return null;
+  if (!view || !prompt || interaction.prompt !== prompt || state.awaitingServer || state.resyncing || state.stalled) return null;
 
   const playerNames = new Map((view.players ?? []).map((p) => [p.playerId, p.name]));
   const pregame = pregameChoice(prompt, {
