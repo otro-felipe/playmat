@@ -39,6 +39,7 @@ export function PhaseLadder({ step, myTurn, turn, activeName, status, stops = []
       'aria-current': current ? 'step' as const : undefined,
       'aria-pressed': onToggleStop ? marked : undefined,
       'aria-label': label,
+      'aria-description': persistent ? t('match.hud.persistent', { phase: label }) : undefined,
       'title': persistent ? t('match.hud.persistent', { phase: label }) : label,
       'data-stop': marked ? 'turn' : persistent || fullControl ? 'persistent' : undefined,
       'disabled': !onToggleStop || !started,

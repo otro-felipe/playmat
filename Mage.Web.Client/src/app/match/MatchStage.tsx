@@ -510,6 +510,9 @@ export function MatchStage({ session, state, replayLog, onLeave }: MatchStagePro
   else if (interaction.mode === 'declareBlockers') priorityLabel = t('match.hud.blockers');
   else if (interaction.mode === 'priority' && !awaitingServer) priorityLabel = t(myTurn ? 'match.hud.priority' : 'match.hud.canRespond');
   else if (priorityName) priorityLabel = t('match.hud.waiting', { name: priorityName });
+  const choosingStarter = pregamePick === 'startingPlayer';
+  // one decision, one set of controls: an overlay owns the choice while it's open
+  const overlayOpen = (interaction.mode === 'mulligan' || choosingStarter || !!pickerCards || interaction.mode === 'panel') && !awaitingServer;
   const phaseLadder = (
     <PhaseLadder
       step={view?.step}
@@ -518,12 +521,9 @@ export function MatchStage({ session, state, replayLog, onLeave }: MatchStagePro
       activeName={spectating ? view?.activePlayerName ?? null : null}
       status={!spectating && view?.step ? [turnLabel, priorityLabel].filter(Boolean).join(' · ') : undefined}
       stops={turnStops}
-      onToggleStop={canAct ? toggleStops : undefined}
+      onToggleStop={canAct && !overlayOpen ? toggleStops : undefined}
     />
   );
-  const choosingStarter = pregamePick === 'startingPlayer';
-  // one decision, one set of controls: an overlay owns the choice while it's open
-  const overlayOpen = (interaction.mode === 'mulligan' || choosingStarter || !!pickerCards || interaction.mode === 'panel') && !awaitingServer;
   const handHidden = (interaction.mode === 'mulligan' || choosingStarter || !!pickerCards) && !awaitingServer;
   // a choice among cards in hand (discard, reveal...): eligible cards take the decision edge
   const choosingInHand = interaction.mode === 'target' && !pickerCards && [...clickable].some((id) => handIds.has(id));
@@ -728,7 +728,7 @@ export function MatchStage({ session, state, replayLog, onLeave }: MatchStagePro
             )}
 
             {mode === 'play' ? (
-              !overlayOpen && <ActionCluster
+              overlayOpen ? <div className={styles.viewPhases}>{phaseLadder}</div> : <ActionCluster
                 interaction={cornerInteraction}
                 phases={phaseLadder}
                 awaiting={awaitingServer}
