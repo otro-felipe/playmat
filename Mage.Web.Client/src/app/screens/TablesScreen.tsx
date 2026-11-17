@@ -25,7 +25,8 @@ import { joinTable } from './joinTable';
 import { TableAdvancedFields } from './TableAdvancedFields';
 import styles from './TablesScreen.module.css';
 import { PUBLIC_ORIGIN } from '../brand';
-import { createPlaytestingInvite, PRIVATE_PLAYTESTING } from '../playtesting';
+import { createPlaytestingInvite, PRIVATE_PLAYTESTING, type PlaytestingInvitationView } from '../playtesting';
+import { usePlaytestingInvitation } from '../usePlaytestingInvitation';
 
 const FREEFORM = 'Constructed - Freeform';
 const PRIVATE_FORMATS = ['Constructed - Standard', 'Constructed - Pioneer', 'Constructed - Modern'];
@@ -176,7 +177,15 @@ export function TablesScreen() {
   );
 }
 
-function TableRow({ table, children }: { table: TableView; children?: React.ReactNode }) {
+function TableRow({ table, mcpInvite, children }: {
+  table: TableView;
+  mcpInvite?: PlaytestingInvitationView;
+  children?: React.ReactNode;
+}) {
+  const mcpSeated = !!mcpInvite?.guestEngineName && table.seats?.some((seat) => seat.playerName === mcpInvite.guestEngineName);
+  const seatStatus = mcpInvite && table.tableState === 'WAITING' ? 'Waiting for Rival MCP'
+    : mcpSeated && table.tableState === 'READY_TO_START' ? 'Rival MCP ready'
+      : STATE_LABEL[table.tableState ?? ''] ?? table.tableStateText;
   return (
     <article className={styles.row}>
       <div className={styles.rowMain}>
@@ -185,19 +194,24 @@ function TableRow({ table, children }: { table: TableView; children?: React.Reac
           {table.tableName}
         </h3>
         <p className={styles.tableMeta}>
-          {table.gameType} · {(table.deckType ?? '').replace(/^Constructed - /, '')} · {table.controllerName}
+          {table.gameType} · {(table.deckType ?? '').replace(/^Constructed - /, '')} · {mcpInvite ? table.controllerName?.split(', ')[0] : table.controllerName}
         </p>
       </div>
       <ul className={styles.seats} aria-label="Seats">
-        {(table.seats ?? []).map((seat, index) => (
-          <li key={index} className={seat.playerName ? styles.seatTaken : styles.seatOpen} title={seat.playerName || 'Open seat'}>
-            {seat.playerType && seat.playerType !== 'HUMAN' ? <Bot size={14} aria-hidden="true" /> : <UserRound size={14} aria-hidden="true" />}
-            <span className={styles.seatName}>{seat.playerName || 'Open'}</span>
-            {seat.playerName && (!seat.playerType || seat.playerType === 'HUMAN') && <NameLevel name={seat.playerName} className={styles.seatLevel} />}
-          </li>
-        ))}
+        {(table.seats ?? []).map((seat, index) => {
+          const mcpSeat = mcpInvite && (!seat.playerName || seat.playerName === mcpInvite.guestEngineName);
+          const label = (mcpSeat && seat.playerName ? mcpInvite.guestDisplayName : seat.playerName) || (mcpSeat ? 'Rival MCP' : 'Open');
+          return (
+            <li key={index} className={seat.playerName ? styles.seatTaken : styles.seatOpen} title={seat.playerName ? label : 'Open seat'}>
+              {mcpSeat || (seat.playerType && seat.playerType !== 'HUMAN') ? <Bot size={14} aria-hidden="true" /> : <UserRound size={14} aria-hidden="true" />}
+              <span className={styles.seatName}>{label}</span>
+              {mcpSeat && seat.playerName && <span className={styles.mcpSeatLabel}>MCP</span>}
+              {!mcpSeat && seat.playerName && (!seat.playerType || seat.playerType === 'HUMAN') && <NameLevel name={seat.playerName} className={styles.seatLevel} />}
+            </li>
+          );
+        })}
       </ul>
-      <span className={styles.state}>{STATE_LABEL[table.tableState ?? ''] ?? table.tableStateText}</span>
+      <span className={mcpSeated && table.tableState === 'READY_TO_START' ? styles.mcpReady : styles.state} role={mcpInvite ? 'status' : undefined}>{seatStatus}</span>
       <div className={styles.rowActions}>{children}</div>
     </article>
   );
@@ -210,18 +224,21 @@ function MyTable({ table }: { table: TableView }) {
   // the server lists the controller first, then the other seated players: "host, guest"
   const isOwner = (table.controllerName ?? '').split(', ')[0] === userName;
   const ready = table.tableState === 'READY_TO_START';
+  const { data: invitation } = usePlaytestingInvitation(table.tableId, table.tableState);
+  const mcpInvite = invitation?.mode === 'mcp' ? invitation : undefined;
   const copyInvite = () => {
     if (!table.tableId) return;
     const link = inviteLink(PRIVATE_PLAYTESTING ? window.location.origin : PUBLIC_ORIGIN, table.tableId);
     navigator.clipboard.writeText(link)
-      .then(() => notify('Invite link copied', !PRIVATE_PLAYTESTING && table.passworded ? 'Send it to a friend, with the table password.' : 'Send it to the invited player.'))
+      .then(() => notify('Invite link copied', mcpInvite ? 'Share the private link with your MCP agent.'
+        : !PRIVATE_PLAYTESTING && table.passworded ? 'Send it to a friend, with the table password.' : 'Send it to the invited player.'))
       .catch(() => notify('Invite link', link));
   };
   return (
     <>
-      <TableRow table={table}>
+      <TableRow table={table} mcpInvite={mcpInvite}>
         {table.tableState === 'WAITING' && (
-          <Button size="sm" variant="quiet" icon={<Link2 size={16} />} onClick={copyInvite}>Invite</Button>
+          <Button size="sm" variant="quiet" icon={<Link2 size={16} />} onClick={copyInvite}>{mcpInvite ? 'Copy MCP link' : 'Invite'}</Button>
         )}
         <IconButton label={chatOpen ? 'Hide table chat' : 'Table chat'} icon={<MessageSquare size={16} />} pressed={chatOpen} onClick={() => setChatOpen(!chatOpen)} />
         {isOwner && table.tableState !== 'DUELING' && (
@@ -263,6 +280,7 @@ function HostDialog({ open, onOpenChange, deckId }: { open: boolean; onOpenChang
   const [seats, setSeats] = useState(2);
   const [wins, setWins] = useState(2);
   const [aiSeats, setAiSeats] = useState(0);
+  const [opponent, setOpponent] = useState<'friend' | 'mcp' | 'ai'>('friend');
   const [password, setPassword] = useState('');
   const [guest, setGuest] = useState('');
   const [advanced, setAdvanced] = useState<TableAdvanced>(DEFAULT_ADVANCED);
@@ -291,6 +309,8 @@ function HostDialog({ open, onOpenChange, deckId }: { open: boolean; onOpenChang
   const commander = isCommanderFormat(deckType);
   const menu = formatMenu(PRIVATE_PLAYTESTING ? PRIVATE_FORMATS : serverState?.deckTypes ?? []);
   const listed = menu.some((group) => group.types.includes(deckType));
+  const aiCount = PRIVATE_PLAYTESTING ? (opponent === 'ai' ? 1 : 0) : aiSeats;
+  const needsGuest = PRIVATE_PLAYTESTING && opponent === 'friend';
 
   async function host() {
     if (!roomId || !deckId) return;
@@ -301,7 +321,7 @@ function HostDialog({ open, onOpenChange, deckId }: { open: boolean; onOpenChang
       const { deck } = await loadForPlay(deckId);
       // the pictures download while the table fills, so the first hand lands with its art
       warmDeck(deck);
-      const playerTypes = Array.from({ length: seatCount }, (_, index) => (index > 0 && index <= aiSeats ? 'COMPUTER_MAD' : 'HUMAN'));
+      const playerTypes = Array.from({ length: seatCount }, (_, index) => (index > 0 && index <= aiCount ? 'COMPUTER_MAD' : 'HUMAN'));
       const tablePassword = PRIVATE_PLAYTESTING ? crypto.randomUUID() : password;
       const table = await api.roomCreateTable(roomId, matchOptions({
         name: name.trim() || `${userName}'s table`,
@@ -321,14 +341,15 @@ function HostDialog({ open, onOpenChange, deckId }: { open: boolean; onOpenChang
       if (!await api.roomJoinTable(roomId, table.tableId, userName, 'HUMAN', 1, wire, tablePassword)) {
         throw new Error(`Your deck is not legal in ${formatRules(deckType).label}.`);
       }
-      if (PRIVATE_PLAYTESTING && aiSeats === 0) {
-        await createPlaytestingInvite({ tableId: table.tableId, roomId, format: deckType, password: tablePassword }, guest.trim());
+      if (PRIVATE_PLAYTESTING && opponent !== 'ai') {
+        await createPlaytestingInvite({ tableId: table.tableId, roomId, format: deckType, password: tablePassword },
+          opponent === 'mcp' ? { mode: 'mcp' } : { mode: 'friend', guestEngineName: guest.trim() });
       }
-      if (aiSeats > 0) {
+      if (aiCount > 0) {
         // the AI brings the format's own decks, or starter decks of the right kind; a deck that doesn't fit gets a copy of yours
-        const rivals = await (await import('../stores/aiDecks')).aiDecks([], aiSeats, commander, { format: deckType }).catch(() => []);
+        const rivals = await (await import('../stores/aiDecks')).aiDecks([], aiCount, commander, { format: deckType }).catch(() => []);
         rivals.forEach(warmDeck);
-        for (let seat = 1; seat <= aiSeats; seat++) {
+        for (let seat = 1; seat <= aiCount; seat++) {
           const rival = rivals[seat - 1] ? toWire(rivals[seat - 1]) : wire;
           const joined = await api.roomJoinTable(roomId, table.tableId, `AI ${seat}`, 'COMPUTER_MAD', 4, rival, tablePassword);
           if (!joined && (rival === wire || !await api.roomJoinTable(roomId, table.tableId, `AI ${seat}`, 'COMPUTER_MAD', 4, wire, tablePassword))) {
@@ -354,12 +375,12 @@ function HostDialog({ open, onOpenChange, deckId }: { open: boolean; onOpenChang
       open={open}
       onOpenChange={onOpenChange}
       title="Host a table"
-      description={PRIVATE_PLAYTESTING ? 'Choose your format and invite one player.' : 'Friends on this server will see it under Open tables.'}
+      description={PRIVATE_PLAYTESTING ? undefined : 'Friends on this server will see it under Open tables.'}
       width="lg"
       footer={
         <>
           <Button variant="quiet" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button variant="decision" busy={busy} disabled={!deckId || (PRIVATE_PLAYTESTING && aiSeats === 0 && !guest.trim())} onClick={() => void host()}>Host</Button>
+          <Button variant="decision" busy={busy} disabled={!deckId || (needsGuest && !guest.trim())} onClick={() => void host()}>Host</Button>
         </>
       }
     >
@@ -402,14 +423,21 @@ function HostDialog({ open, onOpenChange, deckId }: { open: boolean; onOpenChang
               </select>
             </label>
           )}
-          <label className={styles.selectField}>
+          {PRIVATE_PLAYTESTING ? <label className={styles.selectField}>
+            <span>Opponent</span>
+            <select value={opponent} onChange={(event) => setOpponent(event.target.value as typeof opponent)}>
+              <option value="friend">Friend</option>
+              <option value="mcp">Rival MCP</option>
+              <option value="ai">XMage AI</option>
+            </select>
+          </label> : <label className={styles.selectField}>
             <span>AI players</span>
             <select value={Math.min(aiSeats, seatCount - 1)} onChange={(event) => setAiSeats(Number(event.target.value))}>
               {Array.from({ length: seatCount }, (_, index) => <option key={index} value={index}>{index === 0 ? 'None' : index}</option>)}
             </select>
-          </label>
+          </label>}
         </div>
-        {PRIVATE_PLAYTESTING ? (aiSeats === 0 && <Field label="Invited player" value={guest} onChange={(event) => setGuest(event.target.value)} />)
+        {PRIVATE_PLAYTESTING ? (needsGuest && <Field label="Invited player" value={guest} onChange={(event) => setGuest(event.target.value)} />)
           : <Field label="Password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} hint="Leave empty for an open table." />}
         <TableAdvancedFields
           value={advanced}

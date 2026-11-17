@@ -25,7 +25,7 @@ async function fixture(t, store = new Map()) {
     await rm(replayDirectory, { recursive: true, force: true })
   })
   const endpoint = `http://127.0.0.1:${server.address().port}`
-  return { product, replayDirectory, endpoint, path: (route, init) => fetch(endpoint + route, init) }
+  return { product, replayDirectory, schema, endpoint, path: (route, init) => fetch(endpoint + route, init) }
 }
 
 async function signIn(f, name) {
@@ -86,6 +86,79 @@ test('[PM-AC-04] the claimed guest and actual table host control admission', { s
   assert.deepEqual(await accepted[0].json(), await accepted[1].json())
   assert.equal((await f.path(gate)).status, 200)
   assert.equal((await f.path(gate.replace('=Alice', '=Carol'))).status, 404)
+})
+
+test('[PM-AC-04] a private MCP link admits exactly one delegated identity with a display-only alias', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const host = await signIn(f, 'Host')
+  const guest = await signIn(f, 'Guest')
+  const engineNames = ['HostAgent', 'GuestAgent']
+  const tokens = await Promise.all([
+    f.product.provisionAgent('Host', engineNames[0], ['play']),
+    f.product.provisionAgent('Guest', engineNames[1], ['play']),
+  ])
+  const grants = tokens.map(token => ({ Authorization: `Bearer ${token}` }))
+  const restricted = { Authorization: `Bearer ${await f.product.provisionAgent('Guest', 'LibraryAgent', ['library'])}` }
+  const tableId = randomUUID()
+  const invitations = '/api/playtesting/invites'
+  const invitation = `${invitations}/${tableId}`
+  const created = await f.path(invitations, json('POST', host, {
+    tableId, roomId: randomUUID(), format: 'Pioneer', password, mode: 'mcp',
+  }))
+  assert.equal(created.status, 201)
+  const createdInfo = await created.json()
+  assert.equal(createdInfo.mode, 'mcp')
+  assert.equal(createdInfo.guestEngineName, null)
+  assert.equal(Object.hasOwn(createdInfo, 'password'), false)
+  assert.deepEqual((await (await f.path(invitations, { headers: grants[0] })).json()).invites, [])
+  assert.equal((await f.path(invitation, { headers: guest })).status, 404)
+  assert.equal((await f.path(invitation + '/claim', json('POST', guest, {}))).status, 404)
+  assert.equal((await f.path(invitation + '/claim', json('POST', restricted, {}))).status, 403)
+  assert.equal((await f.path(invitation, { headers: grants[0] })).status, 200)
+  assert.equal((await f.path(`${invitations}/${randomUUID()}`, { headers: grants[0] })).status, 404)
+
+  const claim = headers => f.path(invitation + '/claim', json('POST', headers, { displayName: 'The Angel' }))
+  assert.equal((await f.path(invitation + '/claim', json('POST', grants[0], { displayName: '<script>' }))).status, 400)
+  const responses = await Promise.all(grants.map(claim))
+  assert.deepEqual(responses.map(response => response.status).sort(), [200, 404])
+  const winner = responses.findIndex(response => response.status === 200)
+  const claimed = await responses[winner].json()
+  assert.equal(claimed.guestEngineName, engineNames[winner])
+  assert.equal(claimed.guestDisplayName, 'The Angel')
+  const repeated = await f.path(invitation + '/claim', json('POST', grants[winner], { displayName: 'Different alias' }))
+  assert.equal(repeated.status, 200)
+  assert.equal((await repeated.json()).guestDisplayName, 'The Angel')
+  assert.equal((await claim(grants[1 - winner])).status, 404)
+  const shownToHost = await (await f.path(invitation, { headers: host })).json()
+  assert.equal(shownToHost.guestDisplayName, 'The Angel')
+  assert.equal(Object.hasOwn(shownToHost, 'password'), false)
+  const gate = `/internal/invites/${tableId}?host=Host&guest=`
+  assert.equal((await f.path(gate + engineNames[winner])).status, 200)
+  assert.equal((await f.path(gate + encodeURIComponent('The Angel'))).status, 404)
+  assert.equal((await f.path(gate + engineNames[1 - winner])).status, 404)
+  assert.equal((await f.path('/api/playtesting/decks', { headers: grants[winner] })).status, 403)
+
+  const ownSeat = randomUUID()
+  assert.equal((await f.path(invitations, json('POST', host, {
+    tableId: ownSeat, roomId: randomUUID(), format: 'Pioneer', password, mode: 'mcp',
+  }))).status, 201)
+  const selfDelegation = await f.path(`${invitations}/${ownSeat}/claim`, json('POST', grants[0], {}))
+  assert.equal(selfDelegation.status, 200)
+  assert.equal((await selfDelegation.json()).guestEngineName, engineNames[0])
+  assert.equal((await f.path(`/internal/invites/${ownSeat}?host=Host&guest=HostAgent`)).status, 200)
+
+  const { default: pg } = await import('pg')
+  const db = new pg.Client({ connectionString: databaseUrl, options: `-c search_path=${f.schema}` })
+  await db.connect()
+  try {
+    await db.query("UPDATE invitations SET expires_at=now()-interval '1 minute' WHERE table_id=$1", [tableId])
+  } finally {
+    await db.end()
+  }
+  assert.equal((await claim(grants[winner])).status, 404)
+  assert.equal((await f.path(gate + engineNames[winner])).status, 404)
+  await f.product.revokeAgent(tokens[0])
+  assert.equal((await f.path(`/internal/invites/${ownSeat}?host=Host&guest=HostAgent`)).status, 404)
 })
 
 test('[PM-AC-04] a prehashed provisioning import is idempotent and cannot rotate an existing identity', { skip: !databaseUrl }, async t => {

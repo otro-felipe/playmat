@@ -7,6 +7,7 @@ import { claimPlaytestingInvite, PRIVATE_PLAYTESTING } from '../playtesting';
 import { useDecks } from '../stores/decks';
 import { useDeckRoster } from '../stores/useDeckRoster';
 import { useSession } from '../stores/session';
+import { usePlaytestingInvitation } from '../usePlaytestingInvitation';
 import { Button } from '../ui/Button';
 import { Field } from '../ui/Field';
 import { Zone } from '../ui/Zone';
@@ -18,6 +19,7 @@ export function JoinScreen() {
   const { tableId = '' } = useParams();
   const navigate = useNavigate();
   const { data: tables = [], dataUpdatedAt, refetch } = useTables();
+  const { data: invitation } = usePlaytestingInvitation(tableId);
   // the cached list may predate the table: only a list fetched after the link was opened can say it's gone
   const [openedAt] = useState(() => Date.now());
   useEffect(() => {
@@ -67,6 +69,18 @@ export function JoinScreen() {
               <Button variant="print" onClick={() => navigate('/tables')}>See open tables</Button>
             </>
           )}
+        </Zone>
+      </div>
+    );
+  }
+
+  if (invitation?.mode === 'mcp') {
+    return (
+      <div className={styles.page}>
+        <Zone label="Rival MCP" className={styles.card}>
+          <h2 className={styles.name}>{table.tableName}</h2>
+          <p className={styles.note}>Share this private link with your MCP agent so it can choose its deck and take the seat.</p>
+          <Button variant="print" onClick={() => navigate('/tables')}>Back to tables</Button>
         </Zone>
       </div>
     );

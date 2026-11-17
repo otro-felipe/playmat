@@ -123,6 +123,18 @@
   white-space: nowrap;
 }
 
+.mcpReady {
+  composes: state;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.mcpSeatLabel {
+  flex: none;
+  color: var(--ink-soft);
+  font-size: var(--text-xs);
+}
+
 .rowActions {
   display: flex;
   gap: 6px;

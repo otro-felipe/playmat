@@ -359,12 +359,28 @@ export class PlaymatEngineSeat {
     }
   }
 
-  async joinGame({ tableId, deck }, grant) {
-    if (!grant || grant.tableId !== tableId || !grant.format) throw new ToolError('not_invited', 'This agent has no available invitation to that table.');
+  async joinGame({ tableId, deck }, invitation, claim) {
+    if (!invitation || invitation.tableId !== tableId || !invitation.format) {
+      throw new ToolError('not_invited', 'This agent has no available invitation to that table.');
+    }
     await this.open();
-    await this.#validateForSeat(grant.format.replace('Constructed - ', ''), deck);
-    await this.#joinTable(grant.roomId ?? this.#roomId, tableId, deck, grant.password ?? null);
-    return { tableId, state: 'seated', gameId: this.#session?.getState().gameId ?? null };
+    await this.#validateForSeat(invitation.format.replace('Constructed - ', ''), deck);
+    const grant = await claim();
+    if (grant?.tableId !== tableId || grant.format !== invitation.format) {
+      throw new ToolError('not_invited', 'The requested invitation changed. Use the current link.');
+    }
+    const roomId = grant.roomId ?? this.#roomId;
+    const gameId = this.#tableId === tableId ? this.#session?.getState().gameId ?? null : null;
+    try {
+      await this.#joinTable(roomId, tableId, deck, grant.password ?? null);
+    } catch (error) {
+      // An uncertain acknowledgement or same-agent retry can already have filled this seat.
+      const table = await this.api.roomGetTableById(roomId, tableId).catch(() => null);
+      if (!table?.seats?.some((seat) => seat.playerName === this.engineName)) throw error;
+      this.#tableId = tableId;
+      this.#publish();
+    }
+    return { tableId, state: 'seated', gameId, ...(grant.guestDisplayName ? { displayName: grant.guestDisplayName } : {}) };
   }
 
   async #validateForSeat(format, deck) {

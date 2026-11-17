@@ -40,9 +40,12 @@ export function createProductClient(baseUrl, publicUrl) {
       case 'list_joinable_games':
         path = `${root}/invites?limit=${args.limit}`;
         break;
+      case 'inspect_game_invite':
+        path = `${root}/invites/${encode(args.tableId)}`;
+        break;
       case 'get_game_invite':
         path = `${root}/invites/${encode(args.tableId)}/claim`;
-        config = { method: 'POST' };
+        config = { method: 'POST', body: { displayName: args.displayName } };
         break;
       case 'create_game_invite':
         path = `${root}/invites`;

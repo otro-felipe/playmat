@@ -7,6 +7,14 @@ export interface PlaytestingInvite {
   password: string;
 }
 
+export type PlaytestingOpponent = { mode: 'friend'; guestEngineName: string } | { mode: 'mcp' };
+
+export interface PlaytestingInvitationView {
+  mode: 'friend' | 'mcp';
+  guestEngineName: string | null;
+  guestDisplayName: string | null;
+}
+
 async function sendInviteRequest(path: string, input?: Record<string, unknown>): Promise<Response> {
   const response = await fetch(`/api/playtesting/invites${path}`, {
     method: 'POST',
@@ -20,8 +28,15 @@ async function sendInviteRequest(path: string, input?: Record<string, unknown>):
   return response;
 }
 
-export async function createPlaytestingInvite(invite: PlaytestingInvite, guestEngineName: string): Promise<void> {
-  await sendInviteRequest('', { ...invite, guestEngineName });
+export async function createPlaytestingInvite(invite: PlaytestingInvite, opponent: PlaytestingOpponent): Promise<void> {
+  await sendInviteRequest('', { ...invite, ...opponent });
+}
+
+export async function getPlaytestingInvitation(tableId: string, signal: AbortSignal): Promise<PlaytestingInvitationView | null> {
+  const response = await fetch(`/api/playtesting/invites/${encodeURIComponent(tableId)}`, { signal });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error('This invitation could not be read.');
+  return response.json();
 }
 
 export async function claimPlaytestingInvite(tableId: string): Promise<PlaytestingInvite> {

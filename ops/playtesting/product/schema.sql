@@ -117,6 +117,12 @@ CREATE TABLE IF NOT EXISTS invitations (
 );
 CREATE INDEX IF NOT EXISTS invitations_by_invitee ON invitations(invitee_key, expires_at DESC);
 
+ALTER TABLE invitations
+  ADD COLUMN IF NOT EXISTS mode text NOT NULL DEFAULT 'friend' CHECK (mode IN ('friend', 'mcp')),
+  ADD COLUMN IF NOT EXISTS guest_display_name text,
+  ALTER COLUMN invitee_key DROP NOT NULL,
+  ALTER COLUMN invitee_name DROP NOT NULL;
+
 CREATE TABLE IF NOT EXISTS replay_exports (
   id uuid PRIMARY KEY,
   account_id uuid NOT NULL REFERENCES accounts(id),

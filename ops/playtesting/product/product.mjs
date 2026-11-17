@@ -6,7 +6,8 @@ import { fileURLToPath } from 'node:url'
 import pg from 'pg'
 import { createArchive } from './archive.mjs'
 import { createIdentity, identityView } from './identity.mjs'
-import { ProductError, deleteDeck, getDeck, isUuid, listDecks, normalize, normalizeFormat, putDeck } from './decks.mjs'
+import { createInvitations } from './invitations.mjs'
+import { ProductError, deleteDeck, getDeck, isUuid, listDecks, normalize, putDeck } from './decks.mjs'
 
 const maxBody = 300 * 1024
 const directory = dirname(fileURLToPath(import.meta.url))
@@ -79,6 +80,7 @@ async function body(req, parse = 'json', limit = maxBody) {
   }
   const raw = Buffer.concat(chunks).toString('utf8')
   if (parse === 'form') return new URLSearchParams(raw)
+  if (parse === 'optional-json' && !raw) return {}
   try {
     return JSON.parse(raw)
   } catch {
@@ -89,10 +91,6 @@ async function body(req, parse = 'json', limit = maxBody) {
 function rejectMissing(value, message) {
   if (!value) throw new ProductError(404, message)
   return value
-}
-
-function invitationView(row) {
-  return { tableId: row.table_id, roomId: row.room_id, format: row.format, guestEngineName: row.invitee_name, expiresAt: row.expires_at }
 }
 
 export async function createProduct({
@@ -111,6 +109,7 @@ export async function createProduct({
   }
   const id = createIdentity(pool, insecureCookie)
   const archive = createArchive(pool, replayDirectory, store)
+  const invitations = createInvitations(pool, id)
   const attempts = new Map()
 
   function throttle(key) {
@@ -121,37 +120,6 @@ export async function createProduct({
     const count = entry?.expiresAt > now ? entry : { attempts: 0, expiresAt: now + 60_000 }
     if (++count.attempts > 12) throw new ProductError(429, 'Too many sign-in attempts')
     attempts.set(key, count)
-  }
-
-  async function listInvites(actor, requestedLimit) {
-    const limit = Math.max(1, Math.min(50, Number.parseInt(requestedLimit, 10) || 25))
-    const { rows } = await pool.query(
-      'SELECT * FROM invitations WHERE invitee_key=$1 AND expires_at>now() ORDER BY expires_at DESC,table_id LIMIT $2',
-      [normalize(actor.engineName), limit],
-    )
-    return { invites: rows.map(invitationView) }
-  }
-
-  async function createInvite(actor, data) {
-    const format = normalizeFormat(data.format)
-    if (!isUuid(data.tableId) || !isUuid(data.roomId) || !format || typeof data.password !== 'string'
-      || data.password.length < 12 || data.password.length > 100) throw new ProductError(400, 'Provide a valid protected table')
-    const invitee = await id.fromEngine(data.guestEngineName)
-    if (!invitee || normalize(invitee.engineName) === normalize(actor.engineName) || !invitee.scopes.includes('play')) {
-      throw new ProductError(400, 'Provide a provisioned guest seat')
-    }
-    const { rows: [invite] } = await pool.query(`INSERT INTO invitations(table_id,room_id,format,creator_key,invitee_key,invitee_name,table_password,expires_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '48 hours') ON CONFLICT (table_id) DO NOTHING RETURNING *`,
-    [data.tableId, data.roomId, format, normalize(actor.engineName), normalize(invitee.engineName), invitee.engineName, data.password])
-    if (!invite) throw new ProductError(409, 'This table already has an invitation')
-    return invitationView(invite)
-  }
-
-  async function claimInvite(actor, tableId) {
-    if (!isUuid(tableId)) throw new ProductError(404, 'Invitation not found')
-    const { rows: [invite] } = await pool.query(`UPDATE invitations SET claimed_at=COALESCE(claimed_at,now())
-      WHERE table_id=$1 AND invitee_key=$2 AND expires_at>now() RETURNING *`, [tableId, normalize(actor.engineName)])
-    return { ...invitationView(rejectMissing(invite, 'Invitation not found')), password: invite.table_password }
   }
 
   async function legacy(req, res) {
@@ -226,10 +194,8 @@ export async function createProduct({
     if (enableInternal && path.startsWith('/internal/invites/') && req.method === 'GET') {
       const tableId = path.slice('/internal/invites/'.length)
       if (!isUuid(tableId)) throw new ProductError(404, 'Invitation not found')
-      const { rowCount } = await pool.query('SELECT 1 FROM invitations WHERE table_id=$1 AND creator_key=$2 AND invitee_key=$3 AND claimed_at IS NOT NULL AND expires_at>now()', [
-        tableId, normalize(url.searchParams.get('host')), normalize(url.searchParams.get('guest')),
-      ])
-      return send(res, rowCount ? 200 : 404, { allowed: Boolean(rowCount) })
+      const allowed = await invitations.admit(tableId, url.searchParams.get('host'), url.searchParams.get('guest'))
+      return send(res, allowed ? 200 : 404, { allowed })
     }
     if (!path.startsWith('/api/playtesting/') && !(enableInternal && path === '/internal/verify')) throw new ProductError(404, 'Not found')
     const actor = await id.resolve(req)
@@ -278,12 +244,16 @@ export async function createProduct({
     }
     if (endpoint === 'invites') {
       requireScope(actor, 'play')
-      if (req.method === 'GET') return send(res, 200, await listInvites(actor, url.searchParams.get('limit')))
-      if (req.method === 'POST') return send(res, 201, await createInvite(actor, await body(req)))
+      if (req.method === 'GET') return send(res, 200, await invitations.list(actor, url.searchParams.get('limit')))
+      if (req.method === 'POST') return send(res, 201, await invitations.create(actor, await body(req)))
     }
-    if (req.method === 'POST' && /^invites\/[a-f0-9-]+\/claim$/i.test(endpoint)) {
+    if (endpoint.startsWith('invites/')) {
       requireScope(actor, 'play')
-      return send(res, 200, await claimInvite(actor, endpoint.split('/')[1]))
+      const [, tableId, action, extra] = endpoint.split('/')
+      if (!extra && isUuid(tableId)) {
+        if (req.method === 'GET' && action === undefined) return send(res, 200, await invitations.inspect(actor, tableId))
+        if (req.method === 'POST' && action === 'claim') return send(res, 200, await invitations.claim(actor, tableId, await body(req, 'optional-json', 4096)))
+      }
     }
     if (endpoint === 'matches' && req.method === 'GET') {
       requireScope(actor, 'history')

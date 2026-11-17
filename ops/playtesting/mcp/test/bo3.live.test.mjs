@@ -52,7 +52,8 @@ async function liveTarget(t) {
         invitation = args;
         return {};
       }
-      if (token === 'fixture-two' && operation === 'get_game_invite' && args.tableId === invitation?.tableId) return invitation;
+      if (token === 'fixture-two' && ['inspect_game_invite', 'get_game_invite'].includes(operation)
+        && args.tableId === invitation?.tableId) return invitation;
       return null;
     },
   });

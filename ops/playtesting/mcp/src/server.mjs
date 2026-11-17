@@ -66,7 +66,7 @@ function readToken(req) {
   return /^Bearer ([0-9A-Za-z._~+\/=-]{1,256})$/i.exec(req.headers.authorization ?? '')?.[1] ?? null;
 }
 
-function registerTools(mcp, { actor, getSeat, callProduct, reauthorize }) {
+function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedOrigins }) {
   function tool(name, description, inputSchema, scope, run, readOnlyHint = false) {
     mcp.registerTool(name, { description, inputSchema, annotations: { readOnlyHint } }, async (args, extra) => {
       try {
@@ -117,10 +117,23 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize }) {
     guestEngineName: z.string().trim().min(1).max(36),
   }, 'play', async ({ guestEngineName, ...args }) => getSeat().engine.createGame(args,
     (record) => fromProduct('create_game_invite', { ...record, guestEngineName })));
-  tool('join_game', 'Redeem an invitation assigned to this account and register a legal deck on the agent seat.', { tableId: Uuid, deck: Deck },
-    'play', async (args) => {
-      const grant = await fromProduct('get_game_invite', { tableId: args.tableId });
-      return getSeat().engine.joinGame(args, grant);
+  tool('join_game', 'Join a private table from its Playmat invite link or table ID. Use a legal deck and an optional seat display name.', {
+    tableId: Uuid.optional(), inviteLink: z.url().max(2048).optional(),
+    displayName: z.string().trim().min(1).max(24).optional(), deck: Deck,
+  }, 'play', async ({ tableId, inviteLink, displayName, deck }) => {
+      if (Boolean(tableId) === Boolean(inviteLink)) throw new ToolError('invalid_invite', 'Provide either the invite link or the table ID.');
+      if (inviteLink) {
+        const url = new URL(inviteLink);
+        const [, , id] = url.pathname.split('/');
+        if (!allowedOrigins.includes(url.origin) || url.username || url.password || url.search || url.hash
+          || url.pathname !== `/join/${id}` || !Uuid.safeParse(id).success) {
+          throw new ToolError('invalid_invite', 'Provide the private link copied from this Playmat deployment.');
+        }
+        tableId = id;
+      }
+      const invitation = await fromProduct('inspect_game_invite', { tableId });
+      return getSeat().engine.joinGame({ tableId, deck }, invitation,
+        () => fromProduct('get_game_invite', { tableId, displayName }));
     });
   tool('start_match', 'Start your own private table when it is ready.', { tableId: Uuid }, 'play',
     (args) => getSeat().engine.startMatch(args.tableId));
@@ -205,7 +218,7 @@ export function createMcpServer({ authorize, createEngine, product, allowedOrigi
     const mcp = new McpServer({ name: 'playmat-private', version: '0.1.0' });
     const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true, sessionIdGenerator: undefined });
     registerTools(mcp, {
-      actor, getSeat,
+      actor, getSeat, allowedOrigins,
       callProduct: product ? (operation, args) => product(token, operation, args) : null,
       reauthorize: async () => {
         const fresh = await authorize(token);
