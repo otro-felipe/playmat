@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { concede, decisionCluster, gameOver, keepOpeningHand, playerName, requireServer, signIn } from './helpers/app';
+import { concede, decisionCluster, gameOver, importTestDeck, keepOpeningHand, playerName, requireServer, signIn } from './helpers/app';
 
 /**
  * Hosting and joining a table between two players, each in their own browser: the host opens a table, the guest
@@ -11,6 +11,7 @@ const tableRow = (page: Page, tableName: string) => page.getByRole('article').fi
 
 test.describe('app: tables', () => {
   test.skip(!requireServer, 'needs the local server (MAGE_E2E_REQUIRE_SERVER=1)');
+  test.use({ actionTimeout: 20_000 });
 
   test('host a table, a friend joins, the host starts it', async ({ browser }) => {
     test.setTimeout(240_000);
@@ -92,8 +93,11 @@ test.describe('app: tables', () => {
 
       const sideboard = winner.getByRole('region', { name: 'Sideboard, 15 cards' });
       await expect(sideboard.getByRole('button', { name: 'Island' })).toHaveCount(15);
-      await sideboard.getByRole('button', { name: 'Island' }).last().click();
-      await winner.getByRole('region', { name: 'Deck, 61 cards' }).getByRole('button', { name: 'Plains' }).last().click();
+      const titleStrip = { position: { x: 22, y: 12 } };
+      await sideboard.getByRole('button', { name: 'Island' }).first().click(titleStrip);
+      const editedDeck = winner.getByRole('region', { name: 'Deck, 61 cards' });
+      await expect(editedDeck.getByRole('button', { name: 'Island' })).toHaveCount(1);
+      await editedDeck.getByRole('button', { name: 'Plains' }).first().click(titleStrip);
       await expect(sideboard.getByRole('button', { name: 'Plains' })).toBeVisible();
       await expect(loser.getByRole('region', { name: 'Sideboard, 15 cards' }).getByRole('button', { name: 'Plains' })).toHaveCount(0);
       await winner.getByRole('button', { name: 'Submit deck' }).click();
@@ -117,15 +121,7 @@ test.describe('app: tables', () => {
 
 async function registerSideboardDeck(page: Page, name: string) {
   await signIn(page, playerName(name), '/decks');
-  await page.getByRole('button', { name: 'Import', exact: true }).click();
-  const importer = page.getByRole('dialog', { name: /import a deck/i });
-  await importer.getByLabel('Deck link or list').fill('60 Plains\n\nSideboard\n15 Island');
-  await importer.getByRole('button', { name: 'Continue' }).click();
-  await expect(importer.getByLabel('Deck name')).toBeVisible({ timeout: 30_000 });
-  await importer.getByLabel('Deck name').fill('Sideboard test deck');
-  await importer.getByLabel('Format').selectOption('Constructed - Pioneer');
-  await importer.getByRole('button', { name: 'Save', exact: true }).click();
-  await expect(importer).toBeHidden();
+  await importTestDeck(page, 'Sideboard test deck', '60 Plains\n\nSideboard\n15 Island');
   await page.getByRole('link', { name: 'Tables', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Host a table' })).toBeEnabled();
 }

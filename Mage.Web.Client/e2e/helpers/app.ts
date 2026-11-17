@@ -23,6 +23,18 @@ export async function signIn(page: Page, name: string, path = '/'): Promise<void
   await page.waitForURL((url) => !url.pathname.startsWith('/login'), { timeout: 20_000 });
 }
 
+export async function importTestDeck(page: Page, name: string, list: string): Promise<void> {
+  await page.getByRole('button', { name: 'Import', exact: true }).click();
+  const importer = page.getByRole('dialog', { name: /import a deck/i });
+  await importer.getByLabel('Deck link or list').fill(list);
+  await importer.getByRole('button', { name: 'Continue' }).click();
+  await expect(importer.getByLabel('Deck name')).toBeVisible({ timeout: 30_000 });
+  await importer.getByLabel('Deck name').fill(name);
+  await importer.getByLabel('Format').selectOption('Constructed - Pioneer');
+  await importer.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(importer).toBeHidden();
+}
+
 export const decisionCluster = (page: Page) => page.getByRole('region', { name: 'Your decision' });
 const openingHand = (page: Page) => page.getByRole('dialog', { name: /opening hand/i });
 const whoStarts = (page: Page) => page.getByRole('dialog', { name: /who starts/i });

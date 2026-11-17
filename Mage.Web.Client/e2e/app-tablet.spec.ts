@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { decisionCluster, keepOpeningHand, playerName, requireServer, signIn, startAiGame } from './helpers/app';
+import { decisionCluster, importTestDeck, keepOpeningHand, playerName, requireServer, signIn, startAiGame } from './helpers/app';
 
 /**
  * The match on a phone held upright, played by touch: the tall layout, a long press that opens a card's detail
@@ -24,8 +24,10 @@ test.describe('app: the match on a phone, by touch', () => {
 
   test('[PM-AC-03] card inspection, play and phase stops fit on a phone', async ({ page }) => {
     test.setTimeout(180_000);
-    await signIn(page, playerName('tablet'));
-    await startAiGame(page);
+    await signIn(page, playerName('tablet'), '/decks');
+    await importTestDeck(page, 'Touch test deck', '60 Plains');
+    await page.goto('/');
+    await startAiGame(page, 'Touch test deck');
     await keepOpeningHand(page);
 
     await expect(page.locator('[data-layout="tall"]')).toBeVisible();
