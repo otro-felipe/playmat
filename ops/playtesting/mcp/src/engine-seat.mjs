@@ -78,6 +78,13 @@ function projectedChoices(state, promptId) {
     choices.push(projectChoice(command, `object-${id}`, label, manaOnly ? 'manaAbility' : 'object', card));
   }
   const details = {};
+  if (prompt.kind === 'chooseAbility') {
+    prompt.choices.forEach(({ id, text }, index) => {
+      const label = stripMarkup(text).replace(/^\d+\.\s*/, '') || `Ability ${index + 1}`;
+      choices.push(projectChoice({ type: 'uuid', id }, `ability-${index}`, label, 'option'));
+    });
+    choices.push(projectChoice({ type: 'uuid', id: null }, 'cancel', 'Cancel', 'button'));
+  }
   if (prompt.kind === 'chooseChoice') {
     const keys = Object.entries(prompt.choice.keyChoices ?? {});
     const options = keys.length ? keys : (prompt.choice.choices ?? []).map((label) => [label, label]);
