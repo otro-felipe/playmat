@@ -49,7 +49,7 @@ api.sendPlayerUUID = async (_gameId, id) => {
   }, 300);
 };
 api.sendPlayerBoolean = async (_gameId, answer) => {
-  calls.push(answer ? 'confirm' : 'cancel');
+  calls.push(answer ? 'confirm' : params.get('scenario') === 'priority' ? 'pass' : 'cancel');
   view.stack = {};
   show(null);
 };

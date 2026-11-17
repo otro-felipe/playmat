@@ -65,7 +65,7 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
         await page.screenshot({ path: test.info().outputPath('stack-targets-rotated-back-portrait.png') });
       }
       await page.getByRole('button', { name: 'Pass', exact: true }).click();
-      await expect.poll(() => page.evaluate(() => (window as unknown as { paymentFixture: { calls: string[] } }).paymentFixture.calls)).toEqual(['confirm']);
+      await expect.poll(() => page.evaluate(() => (window as unknown as { paymentFixture: { calls: string[] } }).paymentFixture.calls)).toEqual(['pass']);
       await expect(arrows).toHaveCount(0);
     });
   });

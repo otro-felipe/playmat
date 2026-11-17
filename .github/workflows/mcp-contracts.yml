@@ -1,0 +1,85 @@
+name: MCP sequence contracts
+
+on:
+  push:
+    branches: [main, "codex/validate-*"]
+    paths: &mcp-paths
+      - "ops/playtesting/mcp/**"
+      - "ops/playtesting/product/sequence.local.mjs"
+      - "ops/playtesting/test/verify-sequence-image.sh"
+      - "Mage.Web.Client/src/core/game/**"
+      - "Mage.Web.Client/src/protocol/generated/**"
+      - "Mage/**"
+      - "Mage.Common/**"
+      - "Mage.Server/src/main/java/mage/server/game/**"
+      - "Mage.Server/src/test/java/mage/server/game/**"
+      - ".github/workflows/mcp-contracts.yml"
+  pull_request:
+    paths: *mcp-paths
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcp-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ops/playtesting/mcp
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ops/playtesting/mcp/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - name: Prove own-effect regressions fail on the deployed baseline
+        if: hashFiles('ops/playtesting/mcp/test/sequence-own-effects.test.mjs') != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          baseline=29bb603aa14c14529ac07159122f182d9f4ed463
+          evidence=$(mktemp -d)
+          cp src/game-seat.mjs "$evidence/current.mjs"
+          trap 'cp "$evidence/current.mjs" src/game-seat.mjs' EXIT
+          git fetch --no-tags --depth=1 origin "$baseline"
+          git show "$baseline:ops/playtesting/mcp/src/game-seat.mjs" > src/game-seat.mjs
+          set +e
+          node --test --test-name-pattern=OWN-DAMAGE-REGRESSION test/sequence-own-effects.test.mjs > "$evidence/baseline.log" 2>&1
+          baseline_status=$?
+          set -e
+          cp "$evidence/current.mjs" src/game-seat.mjs
+          trap - EXIT
+          python3 - "$baseline_status" "$evidence/baseline.log" <<'PY'
+          import pathlib, re, sys
+          log = pathlib.Path(sys.argv[2]).read_text()
+          cases = len(re.findall(r'not ok \d+ - OWN-DAMAGE-REGRESSION', log))
+          assert int(sys.argv[1]) != 0 and cases == 4, 'Expected four independently failing baseline regressions'
+          assert "'interrupted'" in log and "'completed'" in log, 'Expected a behavioral interruption assertion'
+          assert 'ERR_MODULE_NOT_FOUND' not in log, 'An import failure is not regression evidence'
+          print('Deployed baseline fails all four own-effect assertions; current complete suite passed above')
+          PY
+
+  real-engine:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify real Java sequence causality in an isolated image
+        if: hashFiles('ops/playtesting/test/verify-sequence-image.sh') != ''
+        env:
+          PLAYMAT_SEQUENCE_IMAGE_TEST: "yes"
+        run: bash ops/playtesting/test/verify-sequence-image.sh
