@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ResponseIdleView } from '../../protocol/generated/views';
 import { responseIdleSeconds } from '../../core/game/responseIdle';
 import { useT } from '../i18n';
@@ -9,12 +9,17 @@ import styles from './DecisionIdleNotice.module.css';
 export function DecisionIdleNotice({ timing, active }: { timing?: ResponseIdleView; active: boolean }) {
   const t = useT();
   const report = `${timing?.deadlineEpochMs}|${timing?.sampledAtEpochMs}|${timing?.remainingMillis}`;
+  const anchor = useRef<{ report: string; at: number } | null>(null);
   const [clock, setClock] = useState<{ report: string; at: number; now: number } | null>(null);
   useEffect(() => {
-    if (!active || timing?.status !== 'running') return;
-    const at = performance.now();
-    const interval = setInterval(() => setClock({ report, at, now: performance.now() }), 250);
-    return () => clearInterval(interval);
+    if (timing?.status !== 'running') { anchor.current = null; return; }
+    if (anchor.current?.report !== report) anchor.current = { report, at: performance.now() };
+    if (!active) return;
+    const at = anchor.current.at;
+    const update = () => setClock({ report, at, now: performance.now() });
+    const immediate = setTimeout(update, 0);
+    const interval = setInterval(update, 250);
+    return () => { clearTimeout(immediate); clearInterval(interval); };
   }, [active, report, timing?.status]);
   const left = responseIdleSeconds(timing, clock?.report === report ? clock.at : 0, clock?.report === report ? clock.now : 0);
   if (!active || left === null) return null;

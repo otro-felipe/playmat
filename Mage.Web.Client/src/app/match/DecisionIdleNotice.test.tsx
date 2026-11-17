@@ -35,3 +35,15 @@ test('zero is an urgent deadline, while unknown and inactive views do not manufa
   rerender(<DecisionIdleNotice timing={undefined} active />);
   expect(screen.queryByRole('timer')).toBeNull();
 });
+
+
+test('temporarily hiding controls cannot restart the same unanswered idle sample', () => {
+  const { rerender } = render(<DecisionIdleNotice timing={timing} active />);
+  act(() => { mono = 1000; vi.advanceTimersByTime(1000); });
+  expect(screen.getByRole('timer').textContent).toBe('Decision idle: 14:59');
+  rerender(<DecisionIdleNotice timing={timing} active={false} />);
+  act(() => { mono = 5000; vi.advanceTimersByTime(4000); });
+  rerender(<DecisionIdleNotice timing={timing} active />);
+  act(() => { mono = 5250; vi.advanceTimersByTime(250); });
+  expect(screen.getByRole('timer').textContent).toBe('Decision idle: 14:55');
+});
