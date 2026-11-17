@@ -207,19 +207,27 @@ final class GameStates {
      * @return null when nothing is remembered for the game (its next state goes out complete anyway)
      */
     String resync(UUID gameId) {
+        return resync(gameId, true);
+    }
+
+    String resync(UUID gameId, boolean responsePending) {
         Baseline baseline = gameId == null ? null : games.get(gameId);
         if (baseline == null) {
             return null;
         }
         long seq = nextSeq++;
-        games.put(gameId, new Baseline(seq, baseline.view, baseline.replay, baseline.fullChars, baseline.patchesSinceSizeCheck));
+        JsonObject freshView = baseline.view.deepCopy();
+        JsonObject wrapper = new JsonObject();
+        wrapper.add("data", freshView);
+        ResponseIdleClock.refresh(wrapper, System.currentTimeMillis(), !responsePending);
+        games.put(gameId, new Baseline(seq, freshView, baseline.replay, baseline.fullChars, baseline.patchesSinceSizeCheck));
         JsonObject state = new JsonObject();
         state.addProperty("seq", seq);
         JsonObject message = new JsonObject();
         message.addProperty("method", (baseline.replay ? ClientCallbackMethod.REPLAY_UPDATE : ClientCallbackMethod.GAME_UPDATE).name());
         message.addProperty("objectId", gameId.toString());
         message.addProperty("messageId", Math.max(0, lastMessageId));
-        message.add("data", baseline.view);
+        message.add("data", freshView);
         message.add("state", state);
         return JsonCodec.GSON.toJson(message);
     }

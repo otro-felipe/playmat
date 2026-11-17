@@ -32,6 +32,16 @@ public class GameSessionPlayer extends GameSessionWatcher {
     private final UserManager userManager;
     private final PlayableCache playableCache = new PlayableCache();
     private final UUID playerId;
+    private java.util.function.Supplier<ResponseIdleView> responseIdleSupplier;
+
+    void setResponseIdleSupplier(java.util.function.Supplier<ResponseIdleView> supplier) {
+        this.responseIdleSupplier = supplier;
+    }
+
+    private GameView attachResponseIdle(GameView view) {
+        if (responseIdleSupplier != null) view.setResponseIdle(responseIdleSupplier.get());
+        return view;
+    }
 
     private final ExecutorService callExecutor;
 
@@ -208,12 +218,13 @@ public class GameSessionPlayer extends GameSessionWatcher {
         // so recalculate game view by game thread only to protect from ConcurrentModificationException
         // warning, don't forget to sync logci with GameSessionWatcher and GameSessionPlayer
         if (this.lastGameView != null && !ThreadUtils.isRunGameThread()) {
-            return this.lastGameView;
+            return attachResponseIdle(this.lastGameView);
         }
 
         // full processing for player
         GameView gameView = prepareGameView(game, playerId, userId, playableCache);
         attachEvents(gameView, playerId);
+        attachResponseIdle(gameView);
 
         if (GameView.ENABLE_GAME_VIEW_CACHE) {
             this.lastGameView = gameView;

@@ -139,3 +139,22 @@ test('floating mana has a readable touch target inside the mobile payment panel'
   await expect(pool).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => (window as unknown as { paymentFixture: { calls: string[] } }).paymentFixture.calls)).toEqual(['GREEN']);
 });
+
+for (const [language, label] of [['en', 'Decision idle:'], ['es', 'Inactividad:']] as const) {
+  test(`own inactivity warning is separate from the match clock and leaves mobile controls usable (${language})`, async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`/e2e/fixtures/mana-payment.html?lang=${language}`);
+    await page.evaluate(() => {
+      const { session } = (window as unknown as { paymentFixture: { session: GameSession } }).paymentFixture;
+      session.store.setState((state) => ({ view: { ...state.view, priorityTime: 0, responseIdle: {
+        status: 'running', sampledAtEpochMs: 1_000_000, deadlineEpochMs: 1_060_000, remainingMillis: 60_000, timeoutSeconds: 60,
+      } } }));
+    });
+    await expect(page.getByRole('timer')).toContainText(label);
+    // A 1970 server epoch deliberately differs from the browser's clock: a fresh sample still has a minute.
+    await expect(page.getByRole('timer')).toHaveText(new RegExp(`${label} (1:00|0:5[0-9])`));
+    await expect(page.getByRole('timer')).toHaveAttribute('aria-live', 'off');
+    await page.locator('[data-object-id="forest"]').click();
+    await expect.poll(() => page.evaluate(() => (window as unknown as { paymentFixture: { calls: string[] } }).paymentFixture.calls)).toEqual(['forest']);
+  });
+}

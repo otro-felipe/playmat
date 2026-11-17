@@ -45,6 +45,7 @@ import { AttackGroups } from './AttackGroups';
 import { AlwaysAnswerMenu, TriggerOrderOptions } from './AutoAnswer';
 import { BetweenGames } from './BetweenGames';
 import { Arrows } from './Arrows';
+import { DecisionIdleNotice } from './DecisionIdleNotice';
 import { stackLeads } from './attackArrows';
 import { buildBoard, cardKey, fitRow, type PermanentGroup, type PlayerBoard } from './boardModel';
 import { CardDetail } from './CardDetail';
@@ -778,6 +779,7 @@ export function MatchStage({ session, state, replayLog, onLeave, seatDisplayName
             <Vfx key={state.gameId} view={view} myPlayerId={myId} liveDraws={mode === 'play' && !state.resyncing && !state.gameOver} simpleOnly />
             <Arrows sourceId={arrowSource} targetIds={arrowTargets} live={choosingTargets} links={links} attacks={attacks} leads={leads} tints={arrowTint} />
             <EmoteBubbles view={view} gameId={state.gameId} />
+            {mode === 'play' && <DecisionIdleNotice timing={view?.responseIdle} active={!state.gameOver && !awaitingServer} />}
             {mode === 'play' && <Coach view={view ?? null} mode={choosingStarter ? 'panel' : interaction.mode} awaiting={awaitingServer} gameOver={!!state.gameOver} />}
             {mode === 'play' && <LessonCoach gameId={state.gameId} view={view ?? null} mode={choosingStarter ? 'panel' : interaction.mode} awaiting={awaitingServer} gameOver={!!state.gameOver} />}
             <GameLog key={`chat:${state.gameId}`} gameId={state.gameId} notices={state.notices} canChat={mode === 'play'} view={view} replayLog={replayLog} delayMs={state.broadcastDelayMs} seatDisplayNames={seatDisplayNames} />

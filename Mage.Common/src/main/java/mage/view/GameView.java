@@ -82,6 +82,11 @@ public class GameView implements Serializable {
     private int gameCycle;
     /** what happened since this player's previous view (web client only; null when nothing did) */
     private List<GameEventView> events;
+    /** Receiving player only; absent for watchers and older engines. */
+    private ResponseIdleView responseIdle;
+
+    public ResponseIdleView getResponseIdle() { return responseIdle; }
+    public void setResponseIdle(ResponseIdleView responseIdle) { this.responseIdle = responseIdle; }
 
     public GameView(GameState state, Game game, UUID createdForPlayerId, UUID watcherUserId) {
         // debug only

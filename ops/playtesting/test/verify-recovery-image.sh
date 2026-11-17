@@ -57,6 +57,7 @@ docker run -d --name "$app" --network "$network" --network-alias playmat-recover
     -e DATABASE_URL=postgresql://playmat:isolated-local-fixture@playmat-recovery-pg:5432/recovery_fixture \
     -e PLAYMAT_PUBLIC_URL=http://127.0.0.1:8080 -e PLAYMAT_INSECURE_COOKIE=true \
     -e PLAYMAT_PVP_RECOVERY=on -e PLAYMAT_RECOVERY_LOCAL_TEST=yes \
+    -e PLAYMAT_PRIVATE_RESPONSE_IDLE_SECONDS=60 \
     -e PLAYMAT_RECOVERY_BACKUP_SECONDS=60 -e PLAYMAT_RECOVERY_BACKUP_KEEP=2 \
     -e XMAGE_MEMORY=1024m -e XMAGE_JAVA_OPTS=-Dh2.bindAddress=127.0.0.1 "$image" >/dev/null
 app_created=true
@@ -168,4 +169,5 @@ assert status['intervalSeconds']==60 and status['keep']==2
 assert stat.S_IMODE(p.stat().st_mode)==0o600
 print('Private backup daemon effective: healthy, owner-only, interval 60 seconds, retention 2')
 PY
-echo 'Complete isolated image backup/restore/recovery acceptance passed'
+fixture idle
+echo 'Complete isolated image backup/restore/recovery/idle acceptance passed'

@@ -24,13 +24,26 @@ function seatTiming(view, own, decision) {
     reportedAtEpochMs: enabled === true && Number.isFinite(own?.priorityTimeSavedTimeMs) && own.priorityTimeSavedTimeMs > 0
       ? own.priorityTimeSavedTimeMs : null,
   };
+  // This process shares the engine host's wall clock. Never derive idle from a match-clock sample.
+  const idle = view?.myPlayerId === own?.playerId ? view?.responseIdle : null;
+  const inactivity = { status: 'unknown', deadlineEpochMs: null, secondsRemaining: null };
+  if (idle?.status === 'running' && Number.isFinite(idle.deadlineEpochMs) && idle.deadlineEpochMs >= 0
+      && Number.isFinite(idle.remainingMillis) && idle.remainingMillis >= 0 && Number.isFinite(idle.sampledAtEpochMs)) {
+    inactivity.status = 'running';
+    inactivity.deadlineEpochMs = idle.deadlineEpochMs;
+    inactivity.secondsRemaining = Math.max(0, Math.ceil((idle.deadlineEpochMs - Date.now()) / 1000));
+  } else if (idle?.status === 'inactive' || idle?.status === 'disabled') {
+    inactivity.status = idle.status;
+  }
+  const pending = decision && decision.kind !== 'waiting' && decision.choices.length > 0;
   return {
     matchClock,
-    // GameController's separate responseIdleTimeoutFuture is not sent to this client.
-    inactivity: { status: 'unknown', deadlineEpochMs: null, secondsRemaining: null },
-    warning: decision && decision.kind !== 'waiting' && decision.choices.length > 0
-      ? 'Your decision is pending. The inactivity deadline is unknown; null does not mean unlimited time. Submit a current legal choice promptly. Polling, chat and local analysis do not answer the engine prompt.'
-      : null,
+    inactivity,
+    warning: !pending ? null : inactivity.status === 'running'
+      ? 'Your decision is pending. The server response-inactivity timer can auto-concede even with the match clock disabled. Answer a current legal choice before the reported deadline. Polling, chat and local analysis do not extend it.'
+      : inactivity.status === 'disabled'
+        ? 'Your decision is pending. The engine response-inactivity timer is disabled for this game; the cumulative match clock is separate. Polling does not answer the engine prompt.'
+        : 'Your decision is pending. The inactivity deadline is unknown; null does not mean unlimited time. Submit a current legal choice promptly. Polling, chat and local analysis do not answer the engine prompt.',
   };
 }
 

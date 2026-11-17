@@ -128,3 +128,43 @@ test('a null match clock keeps a pending choice and warning visible after a wait
   assert.equal(finished.decision, null);
   assert.equal(finished.timing.warning, null);
 });
+
+test('authoritative own idle deadline survives polling independently of a disabled match clock', { timeout: 5000 }, async t => {
+  const { actions, call, emit } = await fixture(t);
+  const sampledAtEpochMs = Date.now();
+  const deadlineEpochMs = sampledAtEpochMs + 900_000;
+  await emit('GAME_ASK', { message: 'Keep this hand?', gameView: { ...view(0), myPlayerId: playerId,
+    responseIdle: { status: 'running', sampledAtEpochMs, deadlineEpochMs, remainingMillis: 900_000, timeoutSeconds: 900 } },
+    options: { webPrompt: 'mulligan' } });
+  const first = await call('get_game_state', { gameId });
+  assert.equal(first.timing.matchClock.status, 'disabled');
+  assert.equal(first.secondsRemaining, null);
+  assert.equal(first.timing.inactivity.status, 'running');
+  assert.equal(first.timing.inactivity.deadlineEpochMs, deadlineEpochMs);
+  assert.ok(first.timing.inactivity.secondsRemaining > 895 && first.timing.inactivity.secondsRemaining <= 900);
+  assert.match(first.timing.warning, /auto-concede even with the match clock disabled/);
+  for (let n = 0; n < 5; n++) {
+    const observed = await call('get_game_state', { gameId });
+    assert.equal(observed.timing.inactivity.deadlineEpochMs, deadlineEpochMs);
+    assert.ok(observed.timing.inactivity.secondsRemaining <= first.timing.inactivity.secondsRemaining);
+  }
+  assert.deepEqual(actions, []);
+  await emit('GAME_UPDATE', { ...view(0), myPlayerId: playerId,
+    responseIdle: { status: 'running', sampledAtEpochMs, deadlineEpochMs: 0, remainingMillis: 0, timeoutSeconds: 900 } });
+  assert.deepEqual((await call('get_game_state', { gameId })).timing.inactivity,
+    { status: 'running', deadlineEpochMs: 0, secondsRemaining: 0 });
+});
+
+test('idle metadata is own-seat only and clears inactive or disabled deadlines', { timeout: 5000 }, async t => {
+  const { actions, call, emit } = await fixture(t);
+  for (const status of ['inactive', 'disabled']) {
+    await emit('GAME_UPDATE', { ...view(0), myPlayerId: playerId, responseIdle: { status } });
+    assert.deepEqual((await call('get_game_state', { gameId })).timing.inactivity,
+      { status, deadlineEpochMs: null, secondsRemaining: null });
+  }
+  await emit('GAME_UPDATE', { ...view(0), myPlayerId: 'another-seat', responseIdle: {
+    status: 'running', sampledAtEpochMs: Date.now(), deadlineEpochMs: Date.now() + 900_000, remainingMillis: 900_000 } });
+  assert.deepEqual((await call('get_game_state', { gameId })).timing.inactivity,
+    { status: 'unknown', deadlineEpochMs: null, secondsRemaining: null });
+  assert.deepEqual(actions, []);
+});

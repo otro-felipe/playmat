@@ -3,6 +3,10 @@
  * the server's own messages stay in English.
  */
 export default {
+  'match.idle.remaining': 'Decision idle: {time}',
+  'match.idle.hint': 'Answer the current decision before inactivity auto-concedes. This is separate from the match clock. Polling or opening chat does not extend it.',
+  'match.idle.expiring': 'Less than a minute to answer this decision before inactivity may auto-concede.',
+
   // a game the Rust engine plays (EngineBadge)
   'match.engine.rust': 'Rust engine',
   'match.engine.beta': 'Beta',
