@@ -1,5 +1,7 @@
 package mage.server.replay;
 
+import mage.cards.decks.DeckCardLists;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -11,6 +13,9 @@ public class ReplayInfo {
     public static class ReplayPlayer {
         public String name;
         public boolean human;
+        /** Private capture metadata. Product replay responses project only the viewer's list. */
+        public DeckCardLists deck;
+        public Integer mulligans;
 
         public ReplayPlayer() {
         }
@@ -24,6 +29,9 @@ public class ReplayInfo {
     public int version = 1;
     public String gameId;
     public String tableId;
+    public String matchId;
+    public Integer gameNumber;
+    public Integer winsNeeded;
     public String tableName;
     public String gameType;
     public String deckType;
@@ -33,6 +41,8 @@ public class ReplayInfo {
     public long endedAt;
     /** the server's end message, such as "Player Ana is the winner" */
     public String result;
+    public String winner;
+    public String startPlayer;
     public int turns;
     /** recorded steps: board snapshots and log lines */
     public int events;

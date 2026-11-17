@@ -9,6 +9,7 @@ import mage.server.decks.DeckSyncEntry;
 import mage.server.decks.SharedDeck;
 import mage.server.managers.ConfigSettings;
 import mage.server.notify.DiscordNotifier;
+import mage.server.playtesting.ProductGateway;
 import mage.server.moderation.ClientErrors;
 import mage.server.moderation.PlayerReport;
 import mage.server.moderation.ReportStore;
@@ -226,7 +227,7 @@ final class AccountApi {
             info.maxPasswordLength = config.getMaxPasswordLength();
         }
         info.deckSync = info.accounts;
-        info.sharedDecks = info.accounts && sharedDecksOn();
+        info.sharedDecks = info.accounts && !ProductGateway.enabled() && sharedDecksOn();
         mage.server.TrustedHeaderAuth signOn = mage.server.TrustedHeaderAuth.get();
         if (info.accounts && signOn.isEnabled()) {
             info.signOn = connection == null ? null : connection.getSignedOnUser();
@@ -290,6 +291,9 @@ final class AccountApi {
     private static String account(ApiContext ctx, RpcCall call) throws RpcException {
         String userName = ctx.sessions.userName(call.sessionId())
                 .orElseThrow(() -> RpcException.notAuthorized("Sign in first"));
+        if (ProductGateway.enabled()) {
+            throw RpcException.notAuthorized("Use the private deck library");
+        }
         if (ctx.managers == null || !ctx.managers.configSettings().isAuthenticationActivated()) {
             throw RpcException.notAuthorized("This server has no accounts, so decks stay in your browser");
         }

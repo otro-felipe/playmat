@@ -71,6 +71,14 @@ public class LondonMulligan extends Mulligan {
         return openingHandSizes.get(playerId) - deduction;
     }
 
+    /** Number of accepted mulligans, including free mulligans. */
+    public Integer getMulliganCount(UUID playerId) {
+        Integer startingSize = startingHandSizes.get(playerId);
+        Integer openingSize = openingHandSizes.get(playerId);
+        return startingSize == null || openingSize == null ? null
+                : startingSize - openingSize + usedFreeMulligans.getOrDefault(playerId, 0);
+    }
+
     @Override
     public boolean canTakeMulligan(Game game, Player player) {
         return super.canTakeMulligan(game, player) && openingHandSizes.get(player.getId()) > 0;

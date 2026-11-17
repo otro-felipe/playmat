@@ -6,6 +6,7 @@ import mage.constants.ManaType;
 import mage.constants.PlayerAction;
 import mage.server.game.GameController;
 import mage.server.game.PracticeTools;
+import mage.server.playtesting.ProductGateway;
 import mage.server.replay.ReplayStore;
 import mage.server.websocket.rpc.RpcCall;
 import mage.server.websocket.rpc.RpcException;
@@ -93,15 +94,23 @@ final class GameApi {
                         .session(1)
                         .params(gameId(), of("sessionId", STRING))
                         .doc("Start spectating a game.")
-                        .handler(call -> ctx.server.gameWatchStart(call.uuid(0), call.string(1))),
+                        .handler(call -> {
+                            if (ProductGateway.enabled()) {
+                                throw RpcException.notAuthorized("Private practice games cannot be spectated");
+                            }
+                            return ctx.server.gameWatchStart(call.uuid(0), call.string(1));
+                        }),
 
                 RpcMethod.named("replayList")
                         .returns("ReplayInfo[]")
                         .doc("Recorded games available for replay, newest first. Games are recorded as a spectator sees them "
                                 + "(xmage.replays, on by default) and kept for xmage.replays.retentionDays (30).")
                         .handler(call -> {
-                            ctx.sessions.userName(call.sessionId())
+                            String userName = ctx.sessions.userName(call.sessionId())
                                     .orElseThrow(() -> RpcException.notAuthorized("Log in to see replays"));
+                            if (ProductGateway.enabled()) {
+                                return ProductGateway.replay(userName, "replayList", null, 0, 0);
+                            }
                             return ReplayStore.get().list();
                         }),
 
@@ -114,6 +123,9 @@ final class GameApi {
                         .handler(call -> {
                             String userName = ctx.sessions.userName(call.sessionId())
                                     .orElseThrow(() -> RpcException.notAuthorized("Log in to watch replays"));
+                            if (ProductGateway.enabled()) {
+                                return ProductGateway.replay(userName, "replayPage", call.uuid(0), call.integer(1), call.integer(2));
+                            }
                             try {
                                 return ReplayStore.get().page(call.uuid(0), call.integer(1), call.integer(2), userName);
                             } catch (java.io.IOException e) {

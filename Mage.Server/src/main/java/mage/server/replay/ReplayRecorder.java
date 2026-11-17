@@ -3,8 +3,12 @@ package mage.server.replay;
 import com.google.gson.JsonObject;
 import mage.game.Game;
 import mage.game.Table;
+import mage.game.match.Match;
+import mage.game.match.MatchPlayer;
+import mage.game.mulligan.LondonMulligan;
 import mage.players.Player;
 import mage.server.game.GameChangeKey;
+import mage.server.playtesting.ProductGateway;
 import mage.server.websocket.rpc.JsonCodec;
 import mage.view.CardsView;
 import mage.view.ChatMessage;
@@ -33,6 +37,7 @@ public final class ReplayRecorder {
 
     /** recorders by game chat, so log lines reach the recording of their game */
     private static final ConcurrentMap<UUID, ReplayRecorder> BY_CHAT = new ConcurrentHashMap<>();
+    private static final ConcurrentMap<UUID, ReplayRecorder> BY_GAME = new ConcurrentHashMap<>();
 
     private final ReplayStore store;
     private final Game game;
@@ -75,9 +80,7 @@ public final class ReplayRecorder {
                 info.tableName = table.getName();
                 info.deckType = table.getDeckType();
             }
-            for (Player player : game.getPlayers().values()) {
-                info.players.add(new ReplayInfo.ReplayPlayer(player.getName(), player.isHuman()));
-            }
+            fillPlayers(info, game, table);
 
             Files.createDirectories(store.settings().dir);
             ReplayRecorder recorder = new ReplayRecorder(store, game, chatId, info);
@@ -86,12 +89,68 @@ public final class ReplayRecorder {
             if (chatId != null) {
                 BY_CHAT.put(chatId, recorder);
             }
+            if (ProductGateway.enabled()) {
+                store.markActive(info);
+                BY_GAME.put(game.getId(), recorder);
+            }
             recorder.frame(true);
             return recorder;
         } catch (Throwable e) {
             logger.error("Can't record game " + (game == null ? null : game.getId()) + " for replay", e);
             return null;
         }
+    }
+
+    private static void fillPlayers(ReplayInfo info, Game game, Table table) {
+        Match match = table == null ? null : table.getMatch();
+        boolean privateProduct = ProductGateway.enabled() && match != null;
+        if (privateProduct) {
+            info.matchId = match.getId().toString();
+            info.winsNeeded = match.getWinsNeeded();
+            info.gameNumber = Math.max(1, match.getNumGames());
+        }
+        for (Player player : game.getPlayers().values()) {
+            ReplayInfo.ReplayPlayer seat = new ReplayInfo.ReplayPlayer(player.getName(), player.isHuman());
+            if (privateProduct) {
+                MatchPlayer matchPlayer = match.getPlayer(player.getId());
+                if (matchPlayer != null && matchPlayer.getDeck() != null) {
+                    seat.deck = matchPlayer.getDeck().prepareCardsOnlyDeck();
+                }
+            }
+            info.players.add(seat);
+        }
+    }
+
+    /** Called from the committed engine rollback event. Requests and votes do not produce markers. */
+    public static void onRollbackCommitted(Game game) {
+        ReplayRecorder recorder = BY_GAME.get(game.getId());
+        if (recorder != null) {
+            recorder.rollback(game.getTurnNum());
+        }
+    }
+
+    private synchronized void rollback(int turn) {
+        if (!canWrite()) {
+            return;
+        }
+        JsonObject event = new JsonObject();
+        event.addProperty("t", elapsed());
+        event.addProperty("kind", "rollback");
+        event.addProperty("turn", turn);
+        write(event.toString());
+    }
+
+    public static void onMatchEnded(Table table) {
+        if (!ProductGateway.enabled() || table.getMatch() == null) {
+            return;
+        }
+        Match match = table.getMatch();
+        JsonObject result = new JsonObject();
+        result.addProperty("matchId", match.getId().toString());
+        result.addProperty("endedAt", System.currentTimeMillis());
+        match.getPlayers().stream().filter(MatchPlayer::isMatchWinner).findFirst()
+                .ifPresent(winner -> result.addProperty("winner", winner.getName()));
+        ReplayStore.get().markMatchEnded(match.getId(), result);
     }
 
     /**
@@ -227,7 +286,8 @@ public final class ReplayRecorder {
     }
 
     private synchronized void log(ChatMessage message) {
-        if (!canWrite()) {
+        if (!canWrite() || (ProductGateway.enabled() && message.getMessageType() != ChatMessage.MessageType.GAME
+                && message.getMessageType() != ChatMessage.MessageType.STATUS)) {
             return;
         }
         JsonObject event = new JsonObject();
@@ -248,6 +308,19 @@ public final class ReplayRecorder {
         finished = true;
         if (chatId != null) {
             BY_CHAT.remove(chatId, this);
+        }
+        if (ProductGateway.enabled()) {
+            BY_GAME.remove(game.getId(), this);
+            Player startingPlayer = game.getStartingPlayerId() == null ? null : game.getPlayer(game.getStartingPlayerId());
+            info.startPlayer = startingPlayer == null ? null : startingPlayer.getName();
+            game.getPlayers().values().stream().filter(Player::hasWon).findFirst()
+                    .ifPresent(winner -> info.winner = winner.getName());
+            if (game.getMulligan() instanceof LondonMulligan london) {
+                for (ReplayInfo.ReplayPlayer replaySeat : info.players) {
+                    game.getPlayers().values().stream().filter(player -> player.getName().equals(replaySeat.name)).findFirst()
+                            .ifPresent(player -> replaySeat.mulligans = london.getMulliganCount(player.getId()));
+                }
+            }
         }
         info.endedAt = System.currentTimeMillis();
         info.turns = game.getTurnNum();

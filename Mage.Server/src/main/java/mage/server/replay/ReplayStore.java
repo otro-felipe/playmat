@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import mage.server.playtesting.ProductGateway;
 import mage.server.websocket.rpc.JsonCodec;
 import org.apache.log4j.Logger;
 
@@ -94,13 +95,43 @@ public final class ReplayStore {
                 return;
             }
             Files.move(part, eventsFile(info.gameId), StandardCopyOption.REPLACE_EXISTING);
-            try (Writer writer = Files.newBufferedWriter(infoFile(info.gameId), StandardCharsets.UTF_8)) {
-                JsonCodec.GSON.toJson(info, writer);
+            writeAtomically(infoFile(info.gameId), JsonCodec.GSON.toJsonTree(info));
+            if (ProductGateway.enabled()) {
+                Files.deleteIfExists(settings.dir.resolve(info.gameId + ".active.json"));
             }
         } catch (IOException e) {
             logger.error("Can't finish the replay of game " + info.gameId, e);
         }
         prune();
+    }
+
+    void markActive(ReplayInfo info) {
+        try {
+            writeAtomically(settings.dir.resolve(info.gameId + ".active.json"), JsonCodec.GSON.toJsonTree(info));
+        } catch (IOException exception) {
+            logger.error("Can't stage replay metadata for " + info.gameId, exception);
+        }
+    }
+
+    void markMatchEnded(UUID matchId, JsonObject result) {
+        try {
+            Files.createDirectories(settings.dir);
+            writeAtomically(settings.dir.resolve(matchId + ".match.json"), result);
+        } catch (IOException exception) {
+            logger.error("Can't stage match metadata for " + matchId, exception);
+        }
+    }
+
+    private static void writeAtomically(Path path, JsonElement payload) throws IOException {
+        Path temporary = Files.createTempFile(path.getParent(), ".replay-", ".tmp");
+        try {
+            try (Writer writer = Files.newBufferedWriter(temporary, StandardCharsets.UTF_8)) {
+                JsonCodec.GSON.toJson(payload, writer);
+            }
+            Files.move(temporary, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } finally {
+            Files.deleteIfExists(temporary);
+        }
     }
 
     /** finished replays, newest first */
@@ -189,7 +220,7 @@ public final class ReplayStore {
 
     /** drops replays past the retention or the count limit, and recordings a crash left unfinished */
     public synchronized void prune() {
-        if (!Files.isDirectory(settings.dir)) {
+        if (ProductGateway.enabled() || !Files.isDirectory(settings.dir)) {
             return;
         }
         long now = System.currentTimeMillis();

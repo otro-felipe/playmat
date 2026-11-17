@@ -6,6 +6,7 @@ import mage.server.User;
 import mage.server.admin.RuntimeSettings;
 import mage.server.career.CareerStore;
 import mage.server.game.GamesRoom;
+import mage.server.playtesting.ProductGateway;
 import mage.server.social.PlayerDirectory;
 import mage.server.social.Presence;
 import mage.server.social.PresenceStore;
@@ -185,7 +186,12 @@ final class LobbyApi {
                         .session(0)
                         .params(of("sessionId", STRING), of("roomId", UUID), of("tableId", UUID))
                         .doc("Spectate a running match.")
-                        .handler(call -> ctx.server.roomWatchTable(call.string(0), call.uuid(1), call.uuid(2))),
+                        .handler(call -> {
+                            if (ProductGateway.enabled()) {
+                                throw RpcException.notAuthorized("Private practice matches cannot be spectated");
+                            }
+                            return ctx.server.roomWatchTable(call.string(0), call.uuid(1), call.uuid(2));
+                        }),
 
                 RpcMethod.named("matchStart")
                         .session(0)
@@ -234,6 +240,9 @@ final class LobbyApi {
                         .params(of("chatId", UUID), of("sessionId", STRING), optional("userName", STRING))
                         .doc("Subscribe to a chat.")
                         .handler(call -> {
+                            if (ProductGateway.enabled() && !canJoinPrivateChat(ctx, call.sessionId(), call.uuid(0))) {
+                                throw RpcException.notAuthorized("Only the participants can join that chat");
+                            }
                             ctx.server.chatJoin(call.uuid(0), call.string(1), call.optString(2, ""));
                             return true;
                         }),
@@ -300,5 +309,27 @@ final class LobbyApi {
                         .doc("Chat of a room.")
                         .handler(call -> ctx.server.chatFindByRoom(call.uuid(0)))
         );
+    }
+
+    private static boolean canJoinPrivateChat(ApiContext ctx, String sessionId, java.util.UUID chatId) {
+        String user = ctx.sessions.userName(sessionId).orElse("");
+        if (user.isEmpty()) {
+            return false;
+        }
+        if (ctx.managers.chatManager().getChatSessions().stream()
+                .anyMatch(chat -> chatId.equals(chat.getChatId()) && chat.isRoomChat())) {
+            return true;
+        }
+        var game = ctx.managers.gameManager().getGameController().values().stream()
+                .filter(controller -> chatId.equals(controller.getChatId())).findFirst().orElse(null);
+        var table = game == null
+                ? ctx.managers.tableManager().getTables().stream()
+                    .filter(candidate -> ctx.managers.tableManager().getChatId(candidate.getId())
+                            .filter(chatId::equals).isPresent())
+                    .findFirst().orElse(null)
+                : ctx.managers.tableManager().getTable(game.getTableId());
+        return table != null && (user.equalsIgnoreCase(table.getControllerName())
+                || Arrays.stream(table.getSeats()).anyMatch(seat -> seat.getPlayer() != null
+                        && user.equalsIgnoreCase(seat.getPlayer().getName())));
     }
 }
