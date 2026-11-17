@@ -53,6 +53,11 @@ public interface RpcConnection {
     default void promptAnswered(UUID gameId) {
     }
 
+    /** Atomically takes an open question if its message ID still matches. */
+    default boolean takePrompt(UUID gameId, int messageId) {
+        return false;
+    }
+
     /**
      * Sends the game's unanswered question to this connection again.
      *

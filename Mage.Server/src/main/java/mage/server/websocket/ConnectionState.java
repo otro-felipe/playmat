@@ -184,6 +184,12 @@ final class ConnectionState implements RpcConnection {
     }
 
     @Override
+    public boolean takePrompt(UUID gameId, int messageId) {
+        WebSocketCallbackHandler handler = callbackHandler;
+        return handler != null && handler.takePrompt(gameId, messageId);
+    }
+
+    @Override
     public boolean resendPrompt(UUID gameId) {
         WebSocketCallbackHandler handler = callbackHandler;
         return handler != null && handler.resendPrompt(gameId);

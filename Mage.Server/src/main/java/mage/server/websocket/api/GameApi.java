@@ -154,40 +154,40 @@ final class GameApi {
 
                 RpcMethod.named("sendPlayerUUID")
                         .session(1)
-                        .params(gameId(), of("sessionId", STRING), optional("data", mage.server.websocket.rpc.RpcParam.Type.UUID))
+                        .params(gameId(), of("sessionId", STRING), optional("data", mage.server.websocket.rpc.RpcParam.Type.UUID), optional("expectedPrompt", INT))
                         .doc("Answer a prompt with an object or player id (targets, choices, attackers, blockers).")
                         .handler(call -> {
-                            answered(call, 0);
+                            answerPrompt(call, 3);
                             ctx.server.sendPlayerUUID(call.uuid(0), call.string(1), call.optUuid(2));
                             return true;
                         }),
 
                 RpcMethod.named("sendPlayerString")
                         .session(1)
-                        .params(gameId(), of("sessionId", STRING), of("data", STRING))
+                        .params(gameId(), of("sessionId", STRING), of("data", STRING), optional("expectedPrompt", INT))
                         .doc("Answer a prompt with text (choices, \"special\" mana payment).")
                         .handler(call -> {
-                            answered(call, 0);
+                            answerPrompt(call, 3);
                             ctx.server.sendPlayerString(call.uuid(0), call.string(1), call.string(2));
                             return true;
                         }),
 
                 RpcMethod.named("sendPlayerBoolean")
                         .session(1)
-                        .params(gameId(), of("sessionId", STRING), of("data", BOOLEAN))
+                        .params(gameId(), of("sessionId", STRING), of("data", BOOLEAN), optional("expectedPrompt", INT))
                         .doc("Answer a yes/no prompt, pass priority (false) or cancel mana payment (any value).")
                         .handler(call -> {
-                            answered(call, 0);
+                            answerPrompt(call, 3);
                             ctx.server.sendPlayerBoolean(call.uuid(0), call.string(1), call.bool(2));
                             return true;
                         }),
 
                 RpcMethod.named("sendPlayerInteger")
                         .session(1)
-                        .params(gameId(), of("sessionId", STRING), of("data", INT))
+                        .params(gameId(), of("sessionId", STRING), of("data", INT), optional("expectedPrompt", INT))
                         .doc("Answer an amount prompt.")
                         .handler(call -> {
-                            answered(call, 0);
+                            answerPrompt(call, 3);
                             ctx.server.sendPlayerInteger(call.uuid(0), call.string(1), call.integer(2));
                             return true;
                         }),
@@ -195,10 +195,10 @@ final class GameApi {
                 RpcMethod.named("sendPlayerManaType")
                         .session(2)
                         .params(gameId(), of("playerId", mage.server.websocket.rpc.RpcParam.Type.UUID), of("sessionId", STRING),
-                                of("manaType", STRING).typed("ManaType"))
+                                of("manaType", STRING).typed("ManaType"), optional("expectedPrompt", INT))
                         .doc("Pay from the mana pool with one mana type.")
                         .handler(call -> {
-                            answered(call, 0);
+                            answerPrompt(call, 4);
                             ctx.server.sendPlayerManaType(call.uuid(0), call.uuid(1), call.string(2), manaType(call, 3));
                             return true;
                         }),
@@ -272,6 +272,16 @@ final class GameApi {
      */
     private static void answered(RpcCall call, int gameIdIndex) throws RpcException {
         call.getConnection().promptAnswered(call.uuid(gameIdIndex));
+    }
+
+    private static void answerPrompt(RpcCall call, int promptIndex) throws RpcException {
+        if (!call.has(promptIndex)) {
+            answered(call, 0);
+            return;
+        }
+        if (!call.getConnection().takePrompt(call.uuid(0), call.integer(promptIndex))) {
+            throw RpcException.invalidParams("The expected decision is no longer pending");
+        }
     }
 
     private static mage.server.websocket.rpc.RpcParam gameId() {

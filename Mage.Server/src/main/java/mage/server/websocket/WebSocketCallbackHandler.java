@@ -41,10 +41,12 @@ public class WebSocketCallbackHandler implements ClientChannel {
      * and written out only if it has to be sent again, which is rare.
      */
     private static final class Prompt {
+        private final int messageId;
         private final JsonObject tree;
         private String json;
 
-        Prompt(JsonObject tree, String json) {
+        Prompt(int messageId, JsonObject tree, String json) {
+            this.messageId = messageId;
             this.tree = tree;
             this.json = json;
         }
@@ -112,6 +114,12 @@ public class WebSocketCallbackHandler implements ClientChannel {
         }
     }
 
+    /** Claims the specified open question once without clearing a newer question on a stale answer. */
+    boolean takePrompt(UUID gameId, int messageId) {
+        Prompt prompt = gameId == null ? null : pendingPrompts.get(gameId);
+        return prompt != null && prompt.messageId == messageId && pendingPrompts.remove(gameId, prompt);
+    }
+
     /**
      * Sends the game's open question again (a reply or the question itself was lost on the way).
      *
@@ -174,7 +182,7 @@ public class WebSocketCallbackHandler implements ClientChannel {
             }
             String json = serialize(clientCallback);
             BridgeMetrics.get().callback(clientCallback.getMethod().name(), json.length(), clientCallback.getObjectId());
-            remember(clientCallback.getMethod(), clientCallback.getObjectId(), new Prompt(null, json));
+            remember(clientCallback.getMethod(), clientCallback.getObjectId(), new Prompt(clientCallback.getMessageId(), null, json));
             WebSocketServerImpl.sendText(conn, json);
         } catch (Exception e) {
             throw new Closed("Error sending WebSocket message", e);
@@ -196,7 +204,7 @@ public class WebSocketCallbackHandler implements ClientChannel {
             states.sent(messageId);
             // a question is kept complete (encoding leaves the tree as it is): when it is sent again, the client may
             // have moved past this state
-            remember(method, gameId, new Prompt(message, encoded == null ? json : null));
+            remember(method, gameId, new Prompt(messageId, message, encoded == null ? json : null));
             sendState(json, encoded);
         }
     }

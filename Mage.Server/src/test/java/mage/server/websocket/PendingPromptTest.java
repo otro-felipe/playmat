@@ -76,4 +76,21 @@ public class PendingPromptTest {
         assertThat(handler.resendPrompt(gameId)).isFalse();
         assertThat(handler.resendPrompt(UUID.randomUUID())).isFalse();
     }
+
+    @Test
+    void pmAc08StalePromptCannotConsumeANewerPromptAndTheCurrentPromptIsClaimedOnce() throws Exception {
+        ClientCallback old = new ClientCallback(ClientCallbackMethod.GAME_SELECT, gameId, null);
+        old.setMessageId(41);
+        ClientCallback current = new ClientCallback(ClientCallbackMethod.GAME_SELECT, gameId, null);
+        current.setMessageId(42);
+        handler.send(old);
+        handler.send(current);
+
+        assertThat(handler.takePrompt(gameId, 41)).isFalse();
+        assertThat(handler.takePrompt(UUID.randomUUID(), 42)).isFalse();
+        assertThat(handler.resendPrompt(gameId)).isTrue();
+        assertThat(handler.takePrompt(gameId, 42)).isTrue();
+        assertThat(handler.takePrompt(gameId, 42)).isFalse();
+        assertThat(handler.resendPrompt(gameId)).isFalse();
+    }
 }

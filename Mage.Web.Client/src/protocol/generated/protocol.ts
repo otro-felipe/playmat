@@ -79,11 +79,11 @@ export interface RpcMethods {
   replayPage: { params: [gameId: UUID, start: number, count: number]; result: ReplayPage | null };
   gameWatchers: { params: [gameId: UUID]; result: string[] };
   gameWatchStop: { params: [gameId: UUID, sessionId: string]; result: boolean };
-  sendPlayerUUID: { params: [gameId: UUID, sessionId: string, data?: UUID | null]; result: boolean };
-  sendPlayerString: { params: [gameId: UUID, sessionId: string, data: string]; result: boolean };
-  sendPlayerBoolean: { params: [gameId: UUID, sessionId: string, data: boolean]; result: boolean };
-  sendPlayerInteger: { params: [gameId: UUID, sessionId: string, data: number]; result: boolean };
-  sendPlayerManaType: { params: [gameId: UUID, playerId: UUID, sessionId: string, manaType: ManaType]; result: boolean };
+  sendPlayerUUID: { params: [gameId: UUID, sessionId: string, data?: UUID | null, expectedPrompt?: number | null]; result: boolean };
+  sendPlayerString: { params: [gameId: UUID, sessionId: string, data: string, expectedPrompt?: number | null]; result: boolean };
+  sendPlayerBoolean: { params: [gameId: UUID, sessionId: string, data: boolean, expectedPrompt?: number | null]; result: boolean };
+  sendPlayerInteger: { params: [gameId: UUID, sessionId: string, data: number, expectedPrompt?: number | null]; result: boolean };
+  sendPlayerManaType: { params: [gameId: UUID, playerId: UUID, sessionId: string, manaType: ManaType, expectedPrompt?: number | null]; result: boolean };
   sendPlayerAction: { params: [action: PlayerAction, gameId: UUID, sessionId: string, data?: unknown | null]; result: boolean };
   cheatShow: { params: [gameId: UUID, sessionId: string, playerId: UUID]; result: boolean };
   gamePractice: { params: [gameId: UUID, sessionId: string, tool: string, cardName?: string | null, amount?: number | null]; result: boolean };
