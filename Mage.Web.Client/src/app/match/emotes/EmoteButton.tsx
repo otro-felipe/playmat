@@ -11,11 +11,11 @@ const EmoteGrid = lazy(() => import('./EmoteGrid'));
  * The quick-emote button by your seat (B298): it opens a compact grid of the free phrases and your earned stickers.
  * A menu, so the keyboard reaches it like the game menu: Tab to the button, Enter, arrows, Enter; Escape closes.
  */
-export function EmoteButton({ gameId }: { gameId: string }) {
+export function EmoteButton({ gameId, placement = 'seat' }: { gameId: string; placement?: 'seat' | 'toolbar' }) {
   const t = useT();
   const [open, setOpen] = useState(false);
   return (
-    <div className={styles.spot}>
+    <div className={[styles.spot, styles[placement]].join(' ')}>
       <DropdownMenu.Root open={open} onOpenChange={setOpen}>
         <DropdownMenu.Trigger className={styles.button} aria-label={t('match.emote.open')} title={t('match.emote.open')}>
           <Smile size={24} aria-hidden="true" />

@@ -160,3 +160,40 @@ describe('ActionCluster shortcuts', () => {
     expect(screen.getByRole('button', { name: 'OK' })).toBeTruthy();
   });
 });
+
+describe('mana payment decision', () => {
+  const payment = { cost: '{1}{G}', sourceId: 'spell', sourceName: 'Elvish Visionary', busy: false, available: true, reason: null };
+  test('puts auto-pay in the primary action slot and explains the remaining cost', () => {
+    let paid = 0;
+    const sent: Command[] = [];
+    render(<ActionCluster interaction={interaction({ mode: 'payMana', secondaryButtons: [CANCEL] })} phases={<nav aria-label="Phases" />} awaiting={false} status={null} canAct special={false} holdingPriority={false} payment={{ ...payment, onAutoPay: () => paid++ }} onCommand={(command) => sent.push(command)} />);
+    expect(screen.getByText('Elvish Visionary')).toBeTruthy();
+    expect(screen.getByText('Remaining cost')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Auto-pay' }));
+    expect(paid).toBe(1);
+    expect(sent).toEqual([]);
+    expect(screen.queryByRole('button', { name: /Pass|Go to/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(sent).toEqual([CANCEL.command]);
+  });
+
+  test('keeps cancel usable while paying and blocks additional auto-pay requests', () => {
+    let paid = 0;
+    const sent: Command[] = [];
+    render(<ActionCluster interaction={interaction({ mode: 'payMana', secondaryButtons: [CANCEL] })} awaiting status={null} canAct special={false} holdingPriority={false} payment={{ ...payment, busy: true, onAutoPay: () => paid++ }} onCommand={(command) => sent.push(command)} />);
+    const paying = screen.getByRole('button', { name: 'Paying…' }) as HTMLButtonElement;
+    expect(paying.disabled).toBe(true);
+    fireEvent.click(paying);
+    fireEvent.click(paying);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(paid).toBe(0);
+    expect(sent).toEqual([CANCEL.command]);
+  });
+
+  test('explains unavailable auto-pay and keeps manual cancellation reachable', () => {
+    render(<ActionCluster interaction={interaction({ mode: 'payMana', secondaryButtons: [CANCEL] })} awaiting={false} status={null} canAct special={false} holdingPriority={false} payment={{ ...payment, available: false, reason: 'insufficient', onAutoPay: () => { throw new Error('must not pay'); } }} onCommand={() => undefined} />);
+    expect(screen.getByRole('status').textContent).toMatch(/Not enough known mana sources/);
+    expect((screen.getByRole('button', { name: 'Auto-pay' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Cancel' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+});

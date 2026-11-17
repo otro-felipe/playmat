@@ -1,0 +1,111 @@
+import { expect, test, type Page } from '@playwright/test';
+
+test.skip(process.env.MAGE_WEB_E2E_PREVIEW === '1', 'isolated fixture needs Vite');
+test.use({ hasTouch: true, isMobile: true });
+
+async function screenshot(page: Page, name: string) {
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    await Promise.all(document.getAnimations().filter((animation) => animation.effect?.getTiming().iterations !== Infinity).map((animation) => animation.finished.catch(() => undefined)));
+  });
+  await page.screenshot({ path: test.info().outputPath(name) });
+}
+
+for (const viewport of [{ width: 390, height: 844 }, { width: 360, height: 740 }, { width: 844, height: 390 }]) {
+  test(`mana payment remains usable at ${viewport.width}x${viewport.height}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto('/e2e/fixtures/mana-payment.html?lang=es');
+    const corner = page.getByRole('region', { name: 'Your decision' });
+    const pay = corner.getByRole('button', { name: 'Autopagar', exact: true });
+    await expect(pay).toBeEnabled();
+    await expect(corner.getByText('Coste pendiente')).toBeVisible();
+    await expect(corner.getByRole('navigation')).toHaveCount(0);
+    const cancel = corner.getByRole('button', { name: 'Cancelar', exact: true });
+    expect(await cancel.evaluate((button) => button.scrollWidth <= button.clientWidth)).toBe(true);
+    for (const button of [pay, cancel, page.getByRole('button', { name: /emote|gestos/i })]) {
+      const box = await button.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.width).toBeGreaterThanOrEqual(43);
+      expect(box!.height).toBeGreaterThanOrEqual(43);
+      expect(box!.x).toBeGreaterThanOrEqual(0);
+      expect(box!.y).toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(viewport.width);
+      expect(box!.y + box!.height).toBeLessThanOrEqual(viewport.height);
+    }
+    const life = await page.locator('[data-object-id="me"]').boundingBox();
+    const emote = await page.getByRole('button', { name: /emote|gestos/i }).boundingBox();
+    expect(emote!.y + emote!.height).toBeLessThan(life!.y);
+    await screenshot(page, `payment-${viewport.width}x${viewport.height}.png`);
+    await pay.dblclick();
+    await expect(corner.getByRole('button', { name: 'Autopagar', exact: true })).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => (window as unknown as { paymentFixture: { calls: string[] } }).paymentFixture.calls)).toEqual(['forest', 'island']);
+  });
+}
+
+test('manual taps update the remaining cost and cancel stays usable during the response', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/e2e/fixtures/mana-payment.html');
+  await page.locator('[data-object-id="forest"]').click();
+  await expect(page.getByRole('region', { name: 'Your decision' }).getByRole('img', { name: 'G', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Auto-pay', exact: true }).click();
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { paymentFixture: { calls: string[] } }).paymentFixture.calls)).toEqual(['forest', 'cancel']);
+});
+
+test('insufficient sources explain the blocked auto-pay and allow cancellation', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/e2e/fixtures/mana-payment.html?scenario=insufficient');
+  await expect(page.getByRole('button', { name: 'Auto-pay', exact: true })).toBeDisabled();
+  await expect(page.getByText(/Not enough known mana sources/)).toBeVisible();
+  await screenshot(page, 'insufficient-mana.png');
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Auto-pay', exact: true })).toHaveCount(0);
+});
+
+test('desktop keeps the phase ladder and emote beside the seat', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await page.goto('/e2e/fixtures/mana-payment.html?scenario=priority');
+  await expect(page.getByRole('region', { name: 'Your decision' }).getByRole('navigation')).toBeVisible();
+  await expect(page.getByRole('button', { name: /emote|gestos/i })).toHaveCount(1);
+  await screenshot(page, 'desktop-priority.png');
+});
+
+test('rotation and simulated iOS safe areas preserve the active payment', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/e2e/fixtures/mana-payment.html');
+  const pay = page.getByRole('button', { name: 'Auto-pay', exact: true });
+  await expect(pay).toBeEnabled();
+  await page.setViewportSize({ width: 844, height: 390 });
+  await page.locator('[data-layout]').evaluate((stage) => { stage.parentElement!.style.inset = '0px 47px 21px'; });
+  await expect(page.locator('[data-layout="wide"]')).toBeVisible();
+  await expect(pay).toBeEnabled();
+  // The ResizeObserver applies the new stage scale on the next frame after the inset changes.
+  await expect.poll(async () => {
+    const box = await page.getByRole('region', { name: 'Your decision' }).boundingBox();
+    return !!box && box.x >= 47 && box.x + box.width <= 797 && box.y + box.height <= 369;
+  }).toBe(true);
+  const corner = await page.getByRole('region', { name: 'Your decision' }).boundingBox();
+  expect(corner!.x).toBeGreaterThanOrEqual(47);
+  expect(corner!.x + corner!.width).toBeLessThanOrEqual(844 - 47);
+  expect(corner!.y + corner!.height).toBeLessThanOrEqual(390 - 21);
+  expect(await page.evaluate(() => (window as unknown as { paymentFixture: { calls: string[] } }).paymentFixture.calls)).toEqual([]);
+  await screenshot(page, 'landscape-safe-areas.png');
+});
+
+test('floating mana has a readable touch target inside the mobile payment panel', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/e2e/fixtures/mana-payment.html?pool');
+  const pool = page.getByRole('region', { name: 'Your decision' }).getByRole('button', { name: 'Pay with G mana, 1 in your pool' });
+  await expect(pool).toBeVisible();
+  const box = await pool.boundingBox();
+  expect(box!.height).toBeGreaterThanOrEqual(43);
+  expect(box!.width).toBeGreaterThanOrEqual(43);
+  expect(await page.locator('[data-object-id="forest"]').evaluate((card) => {
+    const rect = card.getBoundingClientRect();
+    return card.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+  })).toBe(true);
+  await screenshot(page, 'manual-pool.png');
+  await pool.click();
+  await expect(pool).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { paymentFixture: { calls: string[] } }).paymentFixture.calls)).toEqual(['GREEN']);
+});

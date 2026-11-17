@@ -6,11 +6,27 @@
   z-index: var(--z-seat);
 }
 
+.toolbar { display: none; }
+
 :global([data-layout='tall']) .spot {
   left: auto;
   right: -14px;
   top: -18px;
   bottom: auto;
+}
+
+/* Phones: a dedicated toolbar slot, away from the life total and hand. */
+@media (max-width: 600px), (max-height: 500px) and (pointer: coarse) {
+  .seat { display: none; }
+  .spot.toolbar {
+    display: block;
+    left: auto;
+    right: calc(44px + 2 * max(52px, var(--touch-target, 0px)));
+    top: 20px;
+    bottom: auto;
+    z-index: var(--z-vfx);
+  }
+  .toolbar .button { border-radius: 12px; width: max(52px, var(--touch-target, 0px)); height: max(52px, var(--touch-target, 0px)); }
 }
 
 .button {
@@ -138,4 +154,8 @@
   .phraseItem {
     min-height: 48px;
   }
+}
+
+@media (max-width: 600px), (max-height: 500px) and (pointer: coarse) {
+  .toolbar .button svg { width: max(24px, calc(var(--touch-target, 0px) * 0.45)); height: max(24px, calc(var(--touch-target, 0px) * 0.45)); }
 }

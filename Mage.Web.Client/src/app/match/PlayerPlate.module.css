@@ -293,6 +293,13 @@
   color: var(--ink-dim);
 }
 
+/* The mobile payment panel owns the cost and thumb-sized pool controls, leaving the seat for life. */
+@media (max-width: 600px), (max-height: 500px) and (pointer: coarse) {
+  :global([data-payment-panel]) .toPay,
+  :global([data-payment-panel]) .pool { display: none; }
+  :global([data-payment-panel]) .extras:not(:has(> :not(.toPay, .pool))) { display: none; }
+}
+
 .poolItem b {
   font-family: var(--font-print);
   font-size: 22px;

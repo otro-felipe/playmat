@@ -289,11 +289,20 @@ export function MatchStage({ session, state, replayLog, onLeave, seatDisplayName
   );
   const stack = useMemo(() => Object.values(view?.stack ?? {}), [view?.stack]);
 
+  const manaPayment = useAutoPay(session, state, board.me?.isMe ? board.me : null, autoPay && !fullControl && mode === 'play', {
+    hybrid: automation.autoPayHybrid,
+    anyColor: automation.autoPayAnyColor,
+    painful: automation.autoPayPainful,
+    afterX: automation.autoPayX,
+  });
+  const stopManaPayment = manaPayment.stop;
+
   // the declare-blockers prompt whose blocks were warned about, and why (a second press sends them anyway)
   const [blockWarned, setBlockWarned] = useState<{ prompt: unknown; text: string } | null>(null);
   const onCommand = useCallback((command: Command) => {
     // Cancel on a payment is never dropped: auto-pay keeps a tap with the server most of the time
     if (command.type === 'boolean' && !command.value && session.getState().interaction.mode === 'payMana') {
+      stopManaPayment();
       session.cancelPayment();
       return;
     }
@@ -314,7 +323,7 @@ export function MatchStage({ session, state, replayLog, onLeave, seatDisplayName
       setHolding(command.action === 'HOLD_PRIORITY');
     }
     void session.respond(command).catch(() => undefined);
-  }, [session, t, blockWarned]);
+  }, [session, t, blockWarned, stopManaPayment]);
   const onResend = useCallback(() => void session.resend().catch(() => undefined), [session]);
   const onResync = useCallback(() => {
     void session.resync().then((resent) => {
@@ -362,12 +371,6 @@ export function MatchStage({ session, state, replayLog, onLeave, seatDisplayName
     [commanders],
   );
   useWarmImages(view);
-  useAutoPay(session, state, board.me?.isMe ? board.me : null, autoPay && mode === 'play', {
-    hybrid: automation.autoPayHybrid,
-    anyColor: automation.autoPayAnyColor,
-    painful: automation.autoPayPainful,
-    afterX: automation.autoPayX,
-  });
   useAutoCrew(session, state, board.me?.isMe ? board.me : null, automation.autoCrew && mode === 'play');
   useSkipSingleChoice(session, state, automation.skipSingleChoice && mode === 'play');
   useAutoDamage(session, state, mode === 'play' ? damageSplit : null, { plain: automation.autoAssignDamage, trample: automation.autoAssignTrample });
@@ -604,7 +607,8 @@ export function MatchStage({ session, state, replayLog, onLeave, seatDisplayName
         // "Match size" grows the creatures and the hand for a laptop screen (#147)
         const layout = matchLayout(stage, matchSize);
         return (
-          <div className={styles.layout} style={{ ['--seam' as string]: `${layout.seam}px`, ['--hand-raise' as string]: `${layout.handRaise}px` }}>
+          <div className={styles.layout} data-payment-panel={payment ? '' : undefined} style={{ ['--seam' as string]: `${layout.seam}px`, ['--hand-raise' as string]: `${layout.handRaise}px` }}>
+            {emotes && <EmoteButton gameId={state.gameId} placement="toolbar" />}
             {/* an opponent's own cloth dyes their half of the table (B295); several opponents dye their columns */}
             {theirCloths.map((cloth, index) => cloth && (
               <div
@@ -735,6 +739,7 @@ export function MatchStage({ session, state, replayLog, onLeave, seatDisplayName
               overlayOpen ? <div className={styles.viewPhases}>{phaseLadder}</div> : <ActionCluster
                 interaction={cornerInteraction}
                 phases={phaseLadder}
+                payment={payment ? { ...payment, ...manaPayment, pool: board.me?.player.manaPool, onAutoPay: manaPayment.start } : undefined}
                 awaiting={awaitingServer}
                 status={state.status}
                 canAct={canAct}

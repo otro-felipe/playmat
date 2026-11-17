@@ -161,6 +161,17 @@ PLAYWRIGHT_CHANNEL=chrome npm run test:e2e:app                                  
 PLAYWRIGHT_CHANNEL=chrome MAGE_WEB_E2E_BASE_URL=http://localhost:5173 npm run test:e2e:app  # against a dev server you already run
 ```
 
+## Paying mana
+
+During a payment, the decision corner shows the spell or ability and the remaining cost. Tap a mana source or floating
+mana, or press **Auto-pay** to pay this cost once without changing Settings. The planner uses floating mana first and
+only taps sources when it can cover the entire remaining cost. Unknown or insufficient sources leave the payment open
+for manual choices. **Cancel** stays available while a tap is in flight. Full control pauses automatic payment, while
+the explicit Auto-pay button remains available.
+
+On phones, the payment panel replaces the phase controls and includes touch-sized floating-mana buttons. Emotes move
+to the top toolbar, leaving the life total clear. Desktop keeps the phase ladder and emotes beside the seat.
+
 ## Languages
 
 The interface speaks English (the source) and Spanish. The code is in `src/app/i18n`, with no library: a small

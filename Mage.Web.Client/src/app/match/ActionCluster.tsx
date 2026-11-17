@@ -2,7 +2,8 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { ChevronsRight, ChevronUp, Shield } from 'lucide-react';
 import { useEffect, useMemo, type ReactNode } from 'react';
 import type { Command, Interaction, PromptButton } from '../../core/game/interaction';
-import type { CardView, PlayerAction } from '../../protocol/generated/views';
+import type { CardView, ManaPoolView, PlayerAction } from '../../protocol/generated/views';
+import { POOL_MANA, type Payment } from '../../core/game/payment';
 import { useT } from '../i18n';
 import { isEditableEventTarget } from '../ui/keys';
 import { Button } from '../ui/Button';
@@ -45,6 +46,7 @@ export interface ActionClusterProps {
   warning?: string | null;
   /** the cards the question is about (an effect looked at them just before asking), shown with it */
   cards?: CardView[] | null;
+  payment?: Payment & { pool?: ManaPoolView; busy: boolean; available: boolean; reason: 'manual' | 'insufficient' | null; onAutoPay(): void };
   onCommand(command: Command): void;
 }
 
@@ -61,7 +63,7 @@ const UNDO: PromptButton = { label: 'Undo tap', command: { type: 'action', actio
 export function ActionCluster({
   interaction, phases, awaiting, status, canAct, special, holdingPriority, undoable = false, autoPassing = false, fullControl = false, onFullControl,
   passTurn = false, onPassTurn, extra,
-  stalled = false, onResend, onResync, conceding = null, warning = null, cards = null, onCommand,
+  stalled = false, onResend, onResync, conceding = null, warning = null, cards = null, payment, onCommand,
 }: ActionClusterProps) {
   const t = useT();
   const openViewer = useMatchUi((state) => state.openViewer);
@@ -79,6 +81,9 @@ export function ActionCluster({
     return buttons;
   }, [interaction.secondaryButtons, interaction.mode, special, undo]);
   const cancel = secondary.find((button) => button.label === 'Cancel');
+  const paying = interaction.mode === 'payMana' && !!payment;
+  const autoPayment = paying && !main;
+  const paymentBusy = awaiting || !!payment?.busy;
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -148,8 +153,21 @@ export function ActionCluster({
   const passAhead = canAct && (interaction.mode === 'priority' || interaction.mode === 'waiting');
 
   return (
-    <section className={styles.cluster} aria-label="Your decision" aria-live="polite">
-      {headline && <p className={[styles.headline, deciding ? styles.deciding : ''].join(' ')}><PromptText text={headline} /></p>}
+    <section className={styles.cluster} data-payment={paying ? '' : undefined} aria-label="Your decision" aria-live="polite">
+      {paying ? <div className={styles.payment}>
+        {payment.sourceName && <p className={styles.paymentSource}>{payment.sourceName}</p>}
+        <div className={styles.paymentCostRow}>
+          <p className={styles.paymentCost}><span>{t('match.payment.remaining')}</span><PromptText text={payment.cost || interaction.headline} /></p>
+          {payment.pool && <div className={styles.paymentPool} aria-label={t('match.payment.pool')}>
+            {POOL_MANA.filter(({ key }) => (payment.pool?.[key] ?? 0) > 0).map(({ key, manaType, symbol }) => (
+              <button key={key} type="button" disabled={paymentBusy} aria-label={t('match.payment.usePool', { color: symbol.toUpperCase(), count: payment.pool?.[key] ?? 0 })} onClick={() => onCommand({ type: 'manaType', manaType })}>
+                <i className={`ms ms-cost ms-${symbol}`} aria-hidden="true" /><b>{payment.pool?.[key]}</b>
+              </button>
+            ))}
+          </div>}
+        </div>
+        <p className={styles.paymentHint} role="status">{t(paymentBusy ? 'match.payment.paying' : payment.reason === 'insufficient' ? 'match.payment.insufficient' : payment.reason === 'manual' ? 'match.payment.manual' : 'match.payment.hint')}</p>
+      </div> : headline && <p className={[styles.headline, deciding ? styles.deciding : ''].join(' ')}><PromptText text={headline} /></p>}
       {!phases && fullControl && canAct && (
         <button type="button" className={styles.fullControl} onClick={() => onFullControl?.(false)} title="Turn full control off (Ctrl+Shift)">
           Full control
@@ -185,11 +203,12 @@ export function ActionCluster({
       {(secondary.length > 0 || extra) && deciding && (
         <div className={styles.secondary}>
           {extra}
-          {secondary.map((button, index) => (
+          {secondary.map((button, index) => paying && button === cancel ? null : (
             <Button
               key={button.label}
               variant={button.tone === 'danger' ? 'danger' : button.tone === 'attack' ? 'print' : 'print'}
               size="md"
+              disabled={paying && paymentBusy}
               aria-keyshortcuts={index < 10 ? `Alt+${(index + 1) % 10}${index === 0 ? ' Alt+Enter' : ''}` : undefined}
               title={button.shortcut && button.shortcut !== 'Space' ? `${button.label} (${button.shortcut})` : undefined}
               onKeyDown={(event) => {
@@ -204,8 +223,9 @@ export function ActionCluster({
           ))}
         </div>
       )}
-      {phases}
-      <div className={styles.mainRow} data-phases={phases ? '' : undefined}>
+      {phases && <div className={styles.phases}>{phases}</div>}
+      <div className={styles.mainRow} data-phases={phases ? '' : undefined} data-payment={paying ? '' : undefined}>
+        {paying && cancel && <Button variant="print" size="md" className={styles.cancelPayment} onClick={() => onCommand(cancel.command)}>{t('match.payment.cancel')}</Button>}
         {passAhead && (
           <DropdownMenu.Root>
             <DropdownMenu.Trigger className={styles.ahead} aria-label="Pass ahead">
@@ -246,7 +266,11 @@ export function ActionCluster({
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
         )}
-        {autoPassing ? (
+        {autoPayment ? (
+          <Button variant="decision" size="xl" className={styles.main} disabled={!canAct || paymentBusy || !payment.available} aria-busy={paymentBusy || undefined} onClick={payment.onAutoPay}>
+            <span className={styles.mainLabel}>{t(paymentBusy ? 'match.payment.paying' : 'match.payment.autoPay')}</span>
+          </Button>
+        ) : autoPassing ? (
           <div className={[styles.waiting, styles.passing].join(' ')} role="status">Passing</div>
         ) : main && deciding ? (
           <Button
@@ -268,7 +292,7 @@ export function ActionCluster({
         ) : deciding ? null : (
           <div className={styles.waiting}>{awaiting ? 'Sending…' : 'Waiting'}</div>
         )}
-        {phases && onFullControl && canAct && (
+        {phases && onFullControl && canAct && !paying && (
           <button
             type="button"
             className={styles.control}
@@ -280,7 +304,7 @@ export function ActionCluster({
             <Shield aria-hidden="true" />
           </button>
         )}
-        {onPassTurn && canAct && (!phases || passTurn) && (
+        {onPassTurn && canAct && !paying && (!phases || passTurn) && (
           <button
             type="button"
             className={[styles.passTurn, passTurn ? styles.passTurnOn : ''].join(' ')}

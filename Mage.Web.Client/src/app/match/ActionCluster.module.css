@@ -10,6 +10,65 @@
   z-index: var(--z-controls);
 }
 
+.phases { width: 100%; }
+
+.payment {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: var(--radius-control);
+  background: rgb(var(--mat-rgb) / 0.95);
+  box-shadow: inset 0 0 0 1.5px var(--decision);
+  color: var(--ink-strong);
+}
+
+.payment p { margin: 0; }
+.paymentSource { font-size: 22px; font-weight: 600; overflow-wrap: anywhere; }
+.paymentCostRow { display: flex; align-items: center; gap: 8px; }
+.paymentCost { flex: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 30px; }
+.paymentCost > span { font-size: 20px; color: var(--ink-soft); }
+.paymentHint { font-size: 18px; line-height: 1.25; color: var(--ink-soft); }
+.paymentPool { display: none; }
+
+.mainRow[data-payment],
+.mainRow[data-phases][data-payment] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  width: 100%;
+}
+.mainRow[data-payment] .cancelPayment { grid-column: 1; grid-row: 1; height: max(64px, var(--touch-target, 0px)); }
+.mainRow[data-payment] .main { grid-column: 2; min-width: 0; width: 100%; }
+
+/* Mobile controls keep the primary action large and put full control in the existing Pass ahead menu. */
+@media (max-width: 600px), (max-height: 500px) and (pointer: coarse) {
+  .cluster { gap: 8px; }
+  .mainRow[data-phases]:not([data-payment]) { grid-template-columns: var(--side-control-size) minmax(0, 1fr); }
+  .mainRow .control { display: none; }
+  .cluster[data-payment] .phases { display: none; }
+  .paymentSource { font-size: max(24px, calc(var(--touch-target, 0px) * 0.33)); }
+  .paymentCost { font-size: max(32px, calc(var(--touch-target, 0px) * 0.4)); }
+  .paymentCost > span,
+  .paymentHint { font-size: max(22px, calc(var(--touch-target, 0px) * 0.29)); }
+  .mainRow[data-payment] .cancelPayment { font-size: max(24px, calc(var(--touch-target, 0px) * 0.3)); }
+  .paymentPool { display: flex; gap: 6px; max-width: 40%; overflow-x: auto; touch-action: pan-x; }
+  .paymentPool:empty { display: none; }
+  .paymentPool button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-width: max(48px, var(--touch-target, 0px));
+    min-height: max(48px, var(--touch-target, 0px));
+    flex: none;
+    border: 1px solid var(--ink-faint);
+    border-radius: var(--radius-control);
+    background: var(--mat-600);
+    color: var(--ink-strong);
+    font-size: max(24px, calc(var(--touch-target, 0px) * 0.33));
+    cursor: pointer;
+  }
+  .paymentPool button:disabled { opacity: 0.6; cursor: progress; }
+}
+
 .headline {
   max-width: 420px;
   margin: 0;
