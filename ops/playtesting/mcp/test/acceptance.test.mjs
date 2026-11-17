@@ -181,6 +181,28 @@ test('[PM-AC-08] a tools-only connector can discover and read the same guides as
   await assert.rejects(() => client.callTool({ name: 'get_guide', arguments: { guideId: 'rules' } }), /401|Unauthorized/i);
 });
 
+test('get_guide delivers the public opponent response range guidance before seating an agent', async (t) => {
+  const { url, fixtures } = await start(t);
+  const client = await connect(t, url, 'fixture-other');
+  const { error, value } = await call(client, 'get_guide', { guideId: 'card-catalog' });
+  assert.equal(error, false);
+  assert.equal(value.uri, 'playmat://guides/card-catalog');
+  for (const instruction of [
+    '## Track an opponent response range',
+    'Separate known public facts, hypotheses and unknowns.',
+    'not invented percentages',
+    'Never inspect opposing hidden hands/libraries, private saved decks, private server diagnostics or another seat\'s view',
+    'Authorized history or replays may support public facts only through your seat\'s permitted, redacted view.',
+    'Confirm that the opponent actually had and yielded priority.',
+    'tool latency, disconnect, inactivity or an automatic pass is not evidence of card absence',
+    'repeated observations of the same opportunity are not independent evidence',
+    'After their next draw, reopen the possibility.',
+    'the MCP does not automatically persist it',
+    'replan only the unapplied remainder',
+  ]) assert.ok(value.text.includes(instruction), `The delivered guide must include: ${instruction}`);
+  assert.equal(fixtures.size, 0, 'Reading strategic guidance must not create or join an engine seat');
+});
+
 test('[PM-AC-09] checks an explicit hold and stops on a new meaningful response', async (t) => {
   const { url, fixtures } = await start(t);
   const player = await connect(t, url, 'fixture-player');
