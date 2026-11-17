@@ -37,7 +37,7 @@ function cardsOnBoard(cards: Record<string, CardView> | undefined) {
 }
 
 /** Explicit projection: future diagnostic/private engine fields never enter the agent contract. */
-function sequenceEvidence(view: GameSessionState['view']) {
+function sequenceEvidence(view: GameSessionState['view'] | undefined) {
   const evidence = view?.sequenceEvidence;
   if (!evidence) return null;
   return {

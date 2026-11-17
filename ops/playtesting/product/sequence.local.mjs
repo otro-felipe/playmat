@@ -22,6 +22,7 @@ const rivalDeck = { name: 'Isolated pass-only fixture', cards: [{ cardName: 'Mou
 let browser, client
 const totalDeadline = Date.now() + 300_000
 let acceptedSetup = 0
+let injectRivalMana = false, rivalManaAccepted = false
 async function call(name, args = {}) {
   const result = await client.callTool({ name, arguments: args })
   const data = JSON.parse(result.content[0].text)
@@ -42,15 +43,18 @@ async function rivalPass() {
   const state = browser.snapshot()
   const decision = state.decision
   if (!decision || state.status !== 'active') return false
-  let choice
+  let choice, mana
   if (decision.kind === 'priority') {
     // Put one public mana source out before the tested line; afterwards this seat only passes.
-    choice = !ownPlayer(state).battlefield.length && decision.choices.find(item => item.card?.name === 'Mountain'
+    mana = injectRivalMana && !rivalManaAccepted && state.stack.length > 0
+      && decision.choices.find(item => item.type === 'manaAbility' && item.card?.name === 'Mountain'
+        && ownPlayer(state).battlefield.some(card => card.id === item.card.id && !card.tapped))
+    choice = mana || !ownPlayer(state).battlefield.length && decision.choices.find(item => item.card?.name === 'Mountain'
       && state.ownHand.some(card => card.id === item.card.id))
     choice ||= decision.choices.find(item => item.type === 'pass')
   } else choice = decision.choices.find(item => /^Keep\b|^Play first\b/.test(item.label)) || decision.choices.find(item => item.type === 'button')
   if (!choice) throw Error('Unexpected rival fixture decision: ' + decision.kind)
-  try { await browser.respond(decision.id, choice.id); return true }
+  try { await browser.respond(decision.id, choice.id); if (choice === mana) rivalManaAccepted = true; return true }
   catch (error) { if (['stale_decision', 'engine_rejected', 'illegal_choice'].includes(error.code)) return false; throw error }
 }
 async function waitNextOwn(oldId) {
@@ -162,6 +166,59 @@ try {
   assert.equal(after.sequenceEvidence.publicActions[rival.id] ?? 0, before.actions, 'Open rival mana without public action does not interrupt')
   assert.equal(after.sequenceEvidence.resolutionRevision, before.revision + 2)
   assert.ok(cards.every(card => !after.ownHand.some(remaining => remaining.id === card.id)))
+  // Independent second scenario: actually activate rival mana with a planned burn spell on the stack.
+  // PlayerImpl's mana path emits no ACTIVATED_ABILITY rules event, so only the neutral observer can catch it.
+  state = after
+  while (Date.now() < totalDeadline) {
+    await rivalPass()
+    state = await ownState()
+    if (!state.decision || state.decision.kind === 'waiting') { await sleep(15); continue }
+    if (state.decision.kind === 'priority' && state.priority === 'self' && state.step === 'PRECOMBAT_MAIN'
+      && state.activePlayerId === ownPlayer(state).id && burnCards(state).length && freeLands(state).length) break
+    const land = state.decision.kind === 'priority' && state.decision.choices.find(item => item.card?.name === 'Mountain'
+      && state.ownHand.some(card => card.id === item.card.id))
+    const discard = state.decision.kind === 'target' && state.decision.choices.find(item => item.card?.name === 'Mountain')
+    const choice = land || discard || state.decision.choices.find(item => item.type === 'pass') || state.decision.choices.find(item => item.type === 'button')
+    if (!choice) throw Error('Unplanned setup decision before rival mana scenario')
+    await answer(state, choice)
+  }
+  assert.ok(state.step === 'PRECOMBAT_MAIN' && burnCards(state).length && freeLands(state).length)
+  const reactingRival = rivalPlayer(state), reactingOwn = ownPlayer(state), reactionCard = burnCards(state)[0]
+  const reactionLife = reactingRival.life, reactionActions = state.sequenceEvidence.publicActions[reactingRival.id] ?? 0
+  const reactionLands = freeLands(state)
+  let reactionManaIndex = 0
+  const reactionSteps = [{ kind: 'answer', select: { cardId: reactionCard.id, zone: 'hand' }, guard: { kind: 'priority', step: 'PRECOMBAT_MAIN' }, expectCast: true }]
+  for (const kind of learned) reactionSteps.push({ kind: 'answer', guard: { kind, step: 'PRECOMBAT_MAIN' },
+    select: kind === 'target' ? { label: reactingRival.name } : { cardId: reactionLands[reactionManaIndex++].id, zone: 'battlefield' } })
+  reactionSteps.push({ kind: 'yield_priority', allowPlannedResolutions: true },
+    { kind: 'answer', select: { label: 'Pass' }, guard: { kind: 'priority', step: 'PRECOMBAT_MAIN', priority: 'self' } })
+  injectRivalMana = true
+  const reactionPlan = await call('play_sequence', { gameId: state.gameId, cursor: state.cursor, steps: reactionSteps })
+  let interrupted
+  while (Date.now() < totalDeadline) {
+    await rivalPass()
+    interrupted = await call('get_sequence_status', { gameId: state.gameId, sequenceId: reactionPlan.sequenceId })
+    if (interrupted.status !== 'running') break
+    await sleep(15)
+  }
+  assert.equal(rivalManaAccepted, true, 'The real rival PlayerImpl mana path must have executed')
+  assert.equal(interrupted.status, 'interrupted')
+  assert.equal(interrupted.reason, 'opponent_action')
+  assert.ok(interrupted.appliedDecisions >= 1 && interrupted.appliedDecisions < reactionSteps.length, 'Acknowledged actions remain counted and the unapplied remainder never completes')
+  assert.ok(interrupted.completedSteps < reactionSteps.length)
+  injectRivalMana = false
+  state = await ownState()
+  while (state.stack.length && Date.now() < totalDeadline) {
+    await rivalPass()
+    state = await ownState()
+    const choice = state.decision?.kind === 'priority' && state.decision.choices.find(item => item.type === 'pass')
+    if (choice) { await answer(state, choice); state = await waitNextOwn(state.decision.id) } else await sleep(15)
+  }
+  assert.equal(state.stack.length, 0)
+  assert.equal(rivalPlayer(state).life, reactionLife - (reactionCard.name === 'Lightning Bolt' ? 3 : 2))
+  assert.equal(state.sequenceEvidence.publicActions[reactingRival.id], reactionActions + 1)
+  assert.equal(ownPlayer(state).id, reactingOwn.id)
+  console.log(JSON.stringify({ phase: 'real-java-rival-mana-interrupted-before-next-answer', manaActionObserved: true, ownBurnSubsequentlyResolved: true }))
   console.log(JSON.stringify({ phase: 'real-java-own-damage-line-completed', completedSteps: result.completedSteps,
     appliedDecisions: result.appliedDecisions, ownResolutions: 2, rivalOnlyPassed: true, endedAtEndStep: true, setupActions: acceptedSetup }))
 } finally { browser?.close(); await client?.close() }

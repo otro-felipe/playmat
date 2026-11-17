@@ -2,6 +2,7 @@ package mage.server.game;
 
 import mage.view.GameEventView;
 import mage.view.SequenceEvidenceView;
+import mage.game.events.PublicActionObservations;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -27,10 +28,16 @@ public final class GameEventFeed {
     private final Deque<Entry> events = new ArrayDeque<>();
     private long lastSeq = 0;
     private final String evidenceEpoch = UUID.randomUUID().toString();
+    private final UUID gameId;
     private final Map<UUID, Long> publicActions = new LinkedHashMap<>();
     private final Map<UUID, Long> resolutions = new LinkedHashMap<>();
     private long resolutionRevision;
     static final int RESOLUTION_CAPACITY = 32;
+
+    private GameEventFeed(UUID gameId) {
+        this.gameId = gameId;
+        PublicActionObservations.register(gameId, this::publicAction);
+    }
 
     /** Only committed, already-public rules actions; never clicks, hidden prompts or passes. */
     public synchronized void publicAction(UUID playerId) {
@@ -46,6 +53,7 @@ public final class GameEventFeed {
     }
 
     public synchronized SequenceEvidenceView sequenceEvidence() {
+        if (!PublicActionObservations.isObserved(gameId)) return null;
         return new SequenceEvidenceView(evidenceEpoch, publicActions, resolutions, resolutionRevision);
     }
 
@@ -61,7 +69,7 @@ public final class GameEventFeed {
     }
 
     public static GameEventFeed open(UUID gameId) {
-        return FEEDS.computeIfAbsent(gameId, id -> new GameEventFeed());
+        return FEEDS.computeIfAbsent(gameId, GameEventFeed::new);
     }
 
     /** null when the game has no feed (closed, or a game the server isn't running) */
@@ -72,6 +80,7 @@ public final class GameEventFeed {
     public static void close(UUID gameId) {
         if (gameId != null) {
             FEEDS.remove(gameId);
+            PublicActionObservations.close(gameId);
         }
     }
 
