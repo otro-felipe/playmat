@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
-import { createApi, RpcClient, EventBus, GameSession, PROMPT_EVENTS, stripMarkup, pregameChoice } from '../dist/engine-core.mjs';
+import { createApi, RpcClient, EventBus, GameSession, PROMPT_EVENTS, stripMarkup, projectedChoices, commandForAgentChoice, describeAgentDecision, visibleAgentGame } from '../dist/engine-core.mjs';
 import { cardCatalogEntry, formatTag } from './catalog.mjs';
 import { ToolError } from './game-seat.mjs';
 
@@ -10,21 +10,6 @@ const ROLLBACK_VOTE = 'ADD_PERMISSION_TO_ROLLBACK_TURN';
 function rejectOnFalse(value, code, message) {
   if (value !== true) throw new ToolError(code, message);
   return value;
-}
-
-function cardOnBoard(card, id) {
-  if (!card) return null;
-  if (card.faceDown || card.hideInfo) return { id, faceDown: true, name: 'Face-down card', tapped: !!card.tapped };
-  return {
-    id, cardId: card.cardId, name: card.name ?? card.displayName ?? 'Unnamed card', controllerId: card.controllerId,
-    types: card.cardTypes ?? [], rules: card.rules?.map(stripMarkup), manaCost: card.manaCostLeftStr,
-    power: card.power, toughness: card.toughness, tapped: card.tapped, counters: card.counters,
-    damage: card.damage, targets: card.targets, setCode: card.expansionSetCode, cardNumber: card.cardNumber,
-  };
-}
-
-function cardsOnBoard(cards) {
-  return Object.entries(cards ?? {}).flatMap(([id, card]) => card ? [cardOnBoard(card, id)] : []);
 }
 
 function poolFromView(deck) {
@@ -43,88 +28,6 @@ function poolFromView(deck) {
     return [...entries.values()];
   };
   return { name: deck.name ?? 'Match deck', cards: pack(deck.cards), sideboard: pack(deck.sideboard) };
-}
-
-function projectChoice(command, id, label, type, card) {
-  return { id, label, type, ...(card ? { card } : {}), command };
-}
-
-function projectedChoices(state, promptId) {
-  const { view, prompt, interaction } = state;
-  if (!view || !prompt || interaction.prompt !== prompt || state.awaitingServer || state.resyncing || state.stalled) return null;
-
-  const playerNames = new Map((view.players ?? []).map((p) => [p.playerId, p.name]));
-  const pregame = pregameChoice(prompt, {
-    pregame: !view.step, clickable: interaction.clickable.keys(),
-    handIds: new Set(Object.keys(view.myHand ?? {})), playerIds: new Set(playerNames.keys()),
-  });
-
-  const visible = { ...view.myHand, ...view.stack, ...(prompt.kind === 'target' ? prompt.cards : undefined) };
-  for (const player of view.players ?? []) Object.assign(visible, player.battlefield, player.graveyard, player.exile);
-  const buttons = [interaction.mainButton, ...interaction.secondaryButtons].filter(Boolean);
-  const choices = buttons.map((button, index) => {
-    if (prompt.kind === 'priority' && button.command.type === 'boolean' && button.command.value === false) {
-      return projectChoice(button.command, 'pass', 'Pass', 'pass');
-    }
-    return projectChoice(button.command, `button-${index}`, button.label, 'button');
-  });
-  for (const [id, command] of interaction.clickable) {
-    const card = cardOnBoard(visible[id], id);
-    const legal = view.canPlayObjects?.objects?.[id];
-    const manaOnly = prompt.kind === 'priority' && !!legal?.basicManaAbilities?.length
-      && !legal?.basicCastAbilities?.length && !legal?.basicPlayAbilities?.length && !legal?.other?.length;
-    const label = pregame === 'startingPlayer' ? id === state.playerId ? 'Play first' : 'Draw first'
-      : card?.name ?? playerNames.get(id) ?? 'Choose object';
-    choices.push(projectChoice(command, `object-${id}`, label, manaOnly ? 'manaAbility' : 'object', card));
-  }
-  const details = {};
-  if (prompt.kind === 'chooseAbility') {
-    prompt.choices.forEach(({ id, text }, index) => {
-      const label = stripMarkup(text).replace(/^\d+\.\s*/, '') || `Ability ${index + 1}`;
-      choices.push(projectChoice({ type: 'uuid', id }, `ability-${index}`, label, 'option'));
-    });
-    choices.push(projectChoice({ type: 'uuid', id: null }, 'cancel', 'Cancel', 'button'));
-  }
-  if (prompt.kind === 'chooseChoice') {
-    const keys = Object.entries(prompt.choice.keyChoices ?? {});
-    const options = keys.length ? keys : (prompt.choice.choices ?? []).map((label) => [label, label]);
-    options.forEach(([value, label], index) => choices.push(projectChoice({ type: 'string', value }, `option-${index}`, stripMarkup(label), 'option')));
-    if (!prompt.choice.required) choices.push(projectChoice({ type: 'string', value: '' }, 'skip', 'Skip', 'button'));
-  }
-  if (prompt.kind === 'choosePile') {
-    for (const [index, pile] of [prompt.pile1, prompt.pile2].entries()) {
-      const choice = projectChoice({ type: 'boolean', value: index === 0 }, `pile-${index + 1}`, `Choose pile ${index + 1}`, 'pile');
-      choice.cards = pile.map((card) => cardOnBoard(card, card.id));
-      choices.push(choice);
-    }
-  }
-  if (prompt.kind === 'amount') {
-    details.amount = { min: prompt.min, max: prompt.max };
-    choices.push(projectChoice(null, 'amount', 'Submit an integer within the provided range', 'number'));
-  }
-  if (prompt.kind === 'multiAmount') {
-    details.amounts = {
-      min: prompt.min, max: prompt.max, items: prompt.items.map((item) => ({
-        label: stripMarkup(item.message), min: item.min ?? 0, max: item.max, defaultValue: item.defaultValue,
-      })),
-    };
-    choices.push(projectChoice(null, 'amounts', 'Submit one integer per provided item in order', 'numbers'));
-    if (prompt.canCancel && !choices.some((choice) => choice.command?.type === 'string' && choice.command.value === '')) {
-      choices.push(projectChoice({ type: 'string', value: '' }, 'cancel', 'Cancel', 'button'));
-    }
-  }
-  return { id: promptId, kind: pregame ?? interaction.mode, instruction: stripMarkup(interaction.headline), choices, ...details };
-}
-
-function numericCommand(choice, decision, value) {
-  const within = (n, limits) => Number.isSafeInteger(n) && n >= (limits.min ?? 0) && n <= (limits.max ?? Infinity);
-  if (choice.type === 'number' && within(value, decision.amount)) return { type: 'integer', value };
-  if (choice.type === 'numbers' && Array.isArray(value) && value.length === decision.amounts.items.length
-    && value.every((amount, index) => within(amount, decision.amounts.items[index]))
-    && within(value.reduce((a, b) => a + b, 0), decision.amounts)) {
-    return { type: 'string', value: value.join(' ') };
-  }
-  throw new ToolError('illegal_choice', 'The choice requires values within the given limits.');
 }
 
 export class PlaymatEngineSeat {
@@ -299,23 +202,13 @@ export class PlaymatEngineSeat {
     return {
       gameId: state?.gameId ?? null, tableId: this.#tableId, status, epoch: this.#epoch, cursor: this.#cursor,
       ...(chatPreference?.tableId === chatTableId ? { chatMode: chatPreference.mode } : {}),
-      turn: view?.turn ?? null, phase: view?.phase ?? null, step: view?.step ?? null, priority,
-      activePlayer: view?.activePlayerName ?? null, priorityPlayer: view?.priorityPlayerName ?? null,
+      ...visibleAgentGame(state),
+      priority,
       secondsRemaining: own?.timerActive && own.priorityTimeLeftSecs > 0 ? own.priorityTimeLeftSecs : null,
-      ownHand: cardsOnBoard(view?.myHand), stack: cardsOnBoard(view?.stack),
-      players: (view?.players ?? []).map((player) => ({
-        id: player.playerId, name: player.name, yourSeat: player.playerId === state?.playerId,
-        life: player.life, handCount: player.handCount, libraryCount: player.libraryCount, wins: player.wins,
-        battlefield: cardsOnBoard(player.battlefield), graveyard: cardsOnBoard(player.graveyard), exile: cardsOnBoard(player.exile),
-        manaPool: player.playerId === state?.playerId ? player.manaPool : undefined,
-      })),
-      combat: (view?.combat ?? []).map((group) => ({
-        attackers: cardsOnBoard(group.attackers), blockers: cardsOnBoard(group.blockers),
-      })),
       score: state?.endInfo ? { wins: state.endInfo.wins, losses: state.endInfo.loses, winsNeeded: state.endInfo.winsNeeded } : null,
       rollbackRequest: this.#vote,
       sideboard: this.#sideboard ? { decisionId: this.#sideboard.decisionId, submitted: this.#sideboard.submitted } : null,
-      decision: decision && { ...decision, choices: decision.choices.map(({ command, ...choice }) => choice) },
+      decision: describeAgentDecision(decision),
     };
   }
 
@@ -325,7 +218,8 @@ export class PlaymatEngineSeat {
     if (!decision || decision.id !== decisionId) throw new ToolError('stale_decision', 'Read the current engine decision again.');
     const choice = decision.choices.find(({ id }) => id === choiceId);
     if (!choice) throw new ToolError('illegal_choice', 'That engine choice is unavailable.');
-    const command = choice.command ?? numericCommand(choice, decision, value);
+    const command = commandForAgentChoice(choice, decision, value);
+    if (!command) throw new ToolError('illegal_choice', 'The choice requires values within the given limits.');
     this.#answerPromptMessageId = this.#enginePromptMessageId;
     try {
       await this.#session.respond(command);

@@ -1,0 +1,37 @@
+.endpoint {
+  color: var(--ink-dim);
+  overflow-wrap: anywhere;
+}
+
+.endpoint p {
+  margin-bottom: var(--space-2);
+}
+
+.steps {
+  display: grid;
+  gap: var(--space-3);
+  margin: var(--space-4) 0;
+  padding-inline-start: var(--space-5);
+}
+
+.command {
+  display: block;
+  margin-top: var(--space-2);
+  padding: var(--space-2);
+  border-radius: var(--radius-control);
+  background: var(--mat-600);
+  overflow-wrap: anywhere;
+}
+
+.browser {
+  color: var(--ink-dim);
+  font-size: var(--text-sm);
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+  cursor: pointer;
+}

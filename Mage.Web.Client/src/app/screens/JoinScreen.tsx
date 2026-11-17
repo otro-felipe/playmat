@@ -1,10 +1,12 @@
 import { Bot, Lock, UserRound } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { formatRules } from '../../core/decks/formats';
 import { inviteLink } from '../../core/social/chatLine';
 import { registerMessages, useT } from '../i18n';
 import messages from '../i18n/en/social';
+import { McpConnectionEndpoint } from '../mcp/McpConnection';
+import { mcpEndpoint } from '../mcp/connectionGuide';
 import { useTables } from '../queries';
 import { claimPlaytestingInvite, PRIVATE_PLAYTESTING, type McpChatMode } from '../playtesting';
 import { useDecks } from '../stores/decks';
@@ -14,10 +16,17 @@ import { usePlaytestingInvitation } from '../usePlaytestingInvitation';
 import { Button } from '../ui/Button';
 import { Field } from '../ui/Field';
 import { Zone } from '../ui/Zone';
+import { isSiteToolOrigin, NO_INPUT, useSiteTool } from '../webmcp';
 import { joinTable } from './joinTable';
 import styles from './JoinScreen.module.css';
 
 registerMessages(messages);
+
+const JOIN_MATCH = {
+  name: 'join_match',
+  description: 'Accept the invitation on this page as the signed-in player using the deck currently selected.',
+  inputSchema: NO_INPUT,
+};
 
 const MCP_GUIDES = [
   'playmat://guides/getting-started',
@@ -31,7 +40,7 @@ function McpInviteGuide({ tableId, name, chatMode = 'quiet' }: { tableId: string
   const t = useT();
   const [copyStatus, setCopyStatus] = useState<'copied' | 'manual' | null>(null);
   const origin = window.location.origin;
-  const endpoint = `${origin}/mcp`;
+  const endpoint = mcpEndpoint();
   const instructions = [
     t('mcpInvite.instructions.connect', { endpoint }),
     t('mcpInvite.instructions.read'),
@@ -52,8 +61,7 @@ function McpInviteGuide({ tableId, name, chatMode = 'quiet' }: { tableId: string
   return (
     <Zone label="Rival MCP" className={styles.card}>
       <h2 className={styles.name}>{name}</h2>
-      <p className={styles.note}>{t('mcpInvite.connect')}</p>
-      <code className={styles.endpoint}>{endpoint}</code>
+      <McpConnectionEndpoint endpoint={endpoint} />
       <div className={styles.guide}>
         <h3>{t('mcpInvite.resources')}</h3>
         <ul>
@@ -76,7 +84,8 @@ export function JoinScreen() {
   const { tableId = '' } = useParams();
   const navigate = useNavigate();
   const { data: tables = [], dataUpdatedAt, refetch } = useTables();
-  const { data: invitation, isPending: invitationPending } = usePlaytestingInvitation(tableId);
+  const { data: invitation, isPending: invitationPending, isFetching: invitationFetching, isError: invitationError } =
+    usePlaytestingInvitation(tableId);
   // the cached list may predate the table: only a list fetched after the link was opened can say it's gone
   const [openedAt] = useState(() => Date.now());
   useEffect(() => {
@@ -84,12 +93,15 @@ export function JoinScreen() {
   }, [refetch]);
   const fresh = dataUpdatedAt >= openedAt;
   const userName = useSession((state) => state.userName);
+  const serverUrl = useSession((state) => state.serverUrl);
+  const connected = useSession((state) => state.phase === 'signedIn' && state.connection === 'open' && !!state.roomId);
   const decks = useDecks();
   const roster = useDeckRoster();
   const [deckId, setDeckId] = useState<string | null>(null);
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const joining = useRef(false);
 
   useEffect(() => {
     if (!decks.loaded) void decks.refresh();
@@ -99,19 +111,40 @@ export function JoinScreen() {
   const chosen = roster.find((deck) => deck.id === (deckId ?? decks.selectedId)) ?? roster[0] ?? null;
   const seated = !!table?.seats?.some((seat) => seat.playerName === userName);
   const open = table?.tableState === 'WAITING' && !!table.seats?.some((seat) => !seat.playerName);
+  const allowedInvite = PRIVATE_PLAYTESTING
+    ? !invitationPending && !invitationFetching && !invitationError && invitation?.mode === 'friend'
+      && invitation.guestEngineName?.toLowerCase() === userName.toLowerCase()
+    : !table?.passworded;
+  const siteToolAvailable = connected && !!userName && fresh && open && !!chosen && !seated && allowedInvite
+    && isSiteToolOrigin(serverUrl);
 
-  async function join() {
-    if (!table || !chosen) return;
+  useSiteTool(siteToolAvailable, JOIN_MATCH, (_, signal) => siteToolAvailable
+    ? join(signal)
+    : { error: 'The invitation has no available seat for this session.' }, `${serverUrl}|${userName}|${tableId}`);
+
+  async function join(signal?: AbortSignal) {
+    if (!table || !chosen || !open || seated || joining.current) {
+      return { error: 'This invitation has no available seat or deck.' };
+    }
+    joining.current = true;
     setBusy(true);
     setError(null);
     try {
-      const tablePassword = PRIVATE_PLAYTESTING ? (await claimPlaytestingInvite(tableId)).password : password;
-      await joinTable(table, chosen.id, tablePassword);
-      decks.select(chosen.id);
-      navigate('/tables');
+      signal?.throwIfAborted();
+      const tablePassword = PRIVATE_PLAYTESTING ? (await claimPlaytestingInvite(tableId, signal)).password : password;
+      await joinTable(table, chosen.id, tablePassword, signal);
+      if (!signal?.aborted) {
+        decks.select(chosen.id);
+        navigate('/tables');
+      }
+      return { joined: true, tableId };
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      signal?.throwIfAborted();
+      const message = reason instanceof Error ? reason.message : String(reason);
+      setError(message);
+      return { error: message };
     } finally {
+      joining.current = false;
       setBusy(false);
     }
   }

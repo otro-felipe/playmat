@@ -1,41 +1,9 @@
-import { expect, test, type Locator, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import { importTestDeck, gameOver } from './helpers/app';
 import { finishBestOfThree, sideboardDeck } from './helpers/bo3';
-
-type Account = { username: string; password: string };
+import { qaAccount, setPrivateInput, signInPrivate, tableRow } from './helpers/private';
 
 const baseURL = process.env.PLAYMAT_PRIVATE_BASE_URL;
-
-function qaAccount(seat: 'A' | 'B'): Account {
-  const username = process.env[`PLAYMAT_PRIVATE_QA_${seat}_USERNAME`];
-  const password = process.env[`PLAYMAT_PRIVATE_QA_${seat}_PASSWORD`];
-  if (!username || !password) throw new Error(`Provisioned QA seat ${seat} is missing its credentials.`);
-  return { username, password };
-}
-
-// Playwright's fill action may print its value in a failure or debug log. The evaluation API leaves
-// the value out of the action title. Use the DOM setter and input event to keep React state in sync.
-async function setPrivateInput(locator: Locator, value: string) {
-  await locator.evaluate((input, text) => {
-    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-    if (!setValue || !(input instanceof HTMLInputElement)) throw new Error('Expected a text input.');
-    setValue.call(input, text);
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-  }, value);
-}
-
-async function signInPrivate(page: Page, account: Account) {
-  await page.goto('/decks');
-  const password = page.locator('input[autocomplete="current-password"]');
-  await password.waitFor();
-  await setPrivateInput(page.locator('input[autocomplete="username"]'), account.username);
-  await setPrivateInput(password, account.password);
-  await page.getByRole('button', { name: 'Entrar', exact: true }).click();
-  await page.waitForURL((url) => url.pathname === '/decks', { timeout: 30_000 });
-}
-
-const tableRow = (page: Page, name: string) =>
-  page.getByRole('article').filter({ has: page.getByRole('heading', { name, exact: false }) });
 
 test.use({ trace: 'off', video: 'off', screenshot: 'off' });
 

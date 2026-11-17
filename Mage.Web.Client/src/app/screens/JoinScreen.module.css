@@ -30,7 +30,6 @@
   margin: var(--space-3) 0;
 }
 
-.endpoint,
 .guide {
   overflow-wrap: anywhere;
 }

@@ -78,6 +78,13 @@ export function createProductClient(baseUrl, publicUrl) {
       case 'get_replay':
         path = `${root}/replays/${encode(args.gameId)}?start=${args.start}&count=${args.count}`;
         break;
+      case 'evaluate_match':
+        path = `${root}/evaluations/${encode(args.gameId)}?start=${args.start}&count=${args.count}`;
+        break;
+      case 'score_match_evaluation':
+        path = `${root}/evaluations/${encode(args.gameId)}`;
+        config = { method: 'POST', body: { positions: args.positions } };
+        break;
       case 'export_matches':
         path = `${root}/exports`;
         config = { method: 'POST', body: { gameIds: args.gameIds, mode: 'handle' } };
@@ -87,6 +94,9 @@ export function createProductClient(baseUrl, publicUrl) {
     }
     const response = await request(token, path, config);
     if (!response.ok) {
+      if (response.status === 409 && (name === 'evaluate_match' || name === 'score_match_evaluation')) {
+        throw new ToolError('replay_not_ready', 'Wait for the completed game to be archived.');
+      }
       const known = {
         400: ['invalid_input', 'The requested operation did not accept the supplied inputs.'],
         401: ['unauthorized', 'The credential is no longer authorized.'],

@@ -9,6 +9,7 @@ import { readJson } from '../stores/persist';
 import { useCoach } from '../stores/coach';
 import { usePlay } from '../stores/play';
 import { useT, type MessageKey } from '../i18n';
+import { PRIVATE_PLAYTESTING } from '../playtesting';
 import { Button } from '../ui/Button';
 import { DeckBox } from '../ui/DeckBox';
 import { MatPrint } from '../ui/MatPrint';
@@ -36,7 +37,7 @@ const MetaFormatPicker = lazy(() => import('./MetaFormatPicker'));
 
 const SupportBar = lazy(() => import('../support/SupportBar').then((module) => ({ default: module.SupportBar })));
 
-type Mode = 'ai' | 'meta' | 'practice' | 'friend';
+type Mode = 'ai' | 'meta' | 'practice' | 'friend' | 'mcp';
 
 export const META_FORMAT_KEY = 'playmat.metaFormat';
 
@@ -46,6 +47,7 @@ const MODES: { id: Mode; label: MessageKey }[] = [
   { id: 'meta', label: 'home.mode.meta' },
   { id: 'practice', label: 'home.mode.practice' },
   { id: 'friend', label: 'home.mode.friend' },
+  ...(PRIVATE_PLAYTESTING ? [{ id: 'mcp', label: 'home.mode.mcp' } as const] : []),
 ];
 
 /** Home: your deck on your mat, one decision away from a game. */
@@ -114,7 +116,8 @@ export function HomeScreen() {
         void play.playVsAi(selected.id, { practice: true });
         break;
       case 'friend':
-        navigate('/tables', { state: { host: selected.id } });
+      case 'mcp':
+        navigate('/tables', { state: { host: selected.id, opponent: mode } });
         break;
     }
   }
@@ -189,7 +192,7 @@ export function HomeScreen() {
                 type="button"
                 role="radio"
                 aria-checked={mode === item.id}
-                className={[styles.mode, mode === item.id ? styles.modeOn : ''].join(' ')}
+                className={[styles.mode, mode === item.id ? styles.modeOn : '', item.id === 'mcp' ? styles.modeWide : ''].join(' ')}
                 onClick={() => setMode(item.id)}
                 disabled={busy}
               >
@@ -233,7 +236,8 @@ export function HomeScreen() {
               onClick={start}
               className={styles.playButton}
             >
-              {t(busy ? (play.phase === 'waitingForGame' ? 'home.shuffling' : 'home.settingUp') : mode === 'friend' ? 'home.continue' : 'home.play')}
+              {t(busy ? (play.phase === 'waitingForGame' ? 'home.shuffling' : 'home.settingUp')
+                : mode === 'friend' ? 'home.continue' : mode === 'mcp' ? 'home.playMcp' : 'home.play')}
             </Button>
           </div>
           <Suspense fallback={null}><SavedGames disabled={busy} /></Suspense>

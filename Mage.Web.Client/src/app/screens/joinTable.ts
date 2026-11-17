@@ -7,10 +7,12 @@ import { warmDeck } from '../ui/imageCache';
 import type { TableView } from '../../protocol/generated/views';
 
 /** Takes a seat at a table with one of the player's decks. Throws with a message the player can act on. */
-export async function joinTable(table: TableView, deckId: string, password = ''): Promise<void> {
+export async function joinTable(table: TableView, deckId: string, password = '', signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
   const { roomId, userName } = useSession.getState();
   if (!roomId || !table.tableId) throw new Error('Not connected to the server.');
   const { deck } = await useDecks.getState().loadForPlay(deckId);
+  signal?.throwIfAborted();
   // the pictures download while the table fills, so the first hand lands with its art
   warmDeck(deck);
   const joined = await api.roomJoinTable(roomId, table.tableId, userName, 'HUMAN', 1, toWire(deck), password);

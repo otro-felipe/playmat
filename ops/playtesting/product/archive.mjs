@@ -7,6 +7,7 @@ import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3
 import { strToU8, zipSync } from 'fflate'
 import { isUuid, normalize, normalizeFormat, ProductError, transaction } from './decks.mjs'
 import { viewerNames } from './identity.mjs'
+import { evaluationPositions, scoreEvaluation } from './evaluation.mjs'
 
 const unzip = promisify(gunzip)
 const compress = promisify(gzip)
@@ -332,6 +333,25 @@ export function createArchive(pool, stage, backend) {
     return { info: gameView(game), total: events.length, start: from, events: events.slice(from, from + take) }
   }
 
+  async function evaluation(actor, id, options = {}) {
+    const game = await authorizedGame(actor, id)
+    if (game.status !== 'completed' || !game.object_key) {
+      throw new ProductError(409, 'Wait for the completed game to be archived')
+    }
+    const events = await projectedEvents(store, game, game.viewer)
+    const positions = evaluationPositions(events, game.viewer)
+    const base = {
+      gameId: game.id, matchId: game.match_id, format: game.format,
+      perspective: game.players.find(player => normalize(player.name) === game.viewer)?.name,
+      partialReplay: game.archive_state !== 'ready',
+    }
+    if (Object.hasOwn(options, 'reviews')) return { ...base, ...scoreEvaluation(positions, options.reviews) }
+    const start = Math.min(positions.length, Math.max(0, Number.parseInt(options.start, 10) || 0))
+    const count = Math.min(4, Math.max(1, Number.parseInt(options.count, 10) || 4))
+    const end = start + count
+    return { ...base, total: positions.length, next: end < positions.length ? end : null, positions: positions.slice(start, end) }
+  }
+
   async function statistics(actor, requestedFormat) {
     const format = requestedFormat ? normalizeFormat(requestedFormat) : null
     if (requestedFormat && !format) throw new ProductError(400, 'Unsupported format')
@@ -390,5 +410,5 @@ export function createArchive(pool, stage, backend) {
     return zipSync(all, { level: 4 })
   }
 
-  return { archiveGames, matchList, replayPage, exportReplays, authorizeExport, statistics }
+  return { archiveGames, matchList, replayPage, evaluation, exportReplays, authorizeExport, statistics }
 }

@@ -133,6 +133,10 @@
   gap: 6px;
 }
 
+.modeWide {
+  grid-column: 1 / -1;
+}
+
 .mode {
   min-height: 48px;
   padding: 0 12px;

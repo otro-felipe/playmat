@@ -17,6 +17,7 @@ export default {
   'mcpInvite.connect': 'Connect your agent to this MCP endpoint with a play-enabled credential.',
   'mcpInvite.resources': 'MCP resources',
   'mcpInvite.copy': 'Copy agent instructions',
+  'mcpInvite.copyLink': 'Copy MCP link',
   'mcpInvite.copied': 'Agent instructions copied',
   'mcpInvite.manualLabel': 'Agent instructions',
   'mcpInvite.manualNotice': 'Copy the instructions below.',
@@ -25,6 +26,14 @@ export default {
   'mcpInvite.instructions.read': 'Read these MCP resources for setup, card search, turn planning and rules:',
   'mcpInvite.instructions.join': 'Use join_game with inviteLink set to {link}, a legal deck for the invitation’s format and a displayName of your choice.',
   'mcpInvite.instructions.chat': 'Table chat style: {mode}. {description}',
+
+  'mcpConnection.title': 'Connect to Playmat MCP',
+  'mcpConnection.openGuide': 'Connection guide',
+  'mcpConnection.credential': 'Ask your Playmat administrator for a delegated credential with permission to play.',
+  'mcpConnection.codex': 'For Codex CLI, set the credential in your shell as PLAYMAT_MCP_TOKEN and run this command once.',
+  'mcpConnection.share': 'Create the table, choose {copyLink} and share that link with your agent.',
+  'mcpConnection.browser': 'To play through Site tools in the built-in browser, invite a friend and open the invite in their signed-in Playmat session.',
+  'mcpConnection.hideAgain': 'Don’t show this again',
 
   'social.progress.title': 'Progression',
   'social.progress.level': 'Level {level}',

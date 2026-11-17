@@ -130,6 +130,8 @@ export default {
   'home.mode.meta': 'Format deck',
   'home.mode.practice': 'Practice',
   'home.mode.friend': 'A friend',
+  'home.mode.mcp': 'MCP rival',
+  'home.playMcp': 'Play with MCP',
   'home.practiceNote': 'Goldfish: an opponent that only plays lands. In the game, Practice tools put any card in your hand or on the battlefield, draw, untap and set your life.',
   'home.change': 'Change',
   'home.serverFull': 'The server is running as many games as it can right now. A new game starts as soon as another one ends.',

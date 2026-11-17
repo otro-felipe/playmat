@@ -274,6 +274,17 @@ export async function createProduct({
       requireScope(actor, 'history')
       return send(res, 200, await archive.replayPage(actor, endpoint.slice('replays/'.length), url.searchParams.get('start'), url.searchParams.get('count')))
     }
+    if (endpoint.startsWith('evaluations/') && (req.method === 'GET' || req.method === 'POST')) {
+      requireScope(actor, 'history')
+      const gameId = endpoint.slice('evaluations/'.length)
+      if (req.method === 'GET') {
+        return send(res, 200, await archive.evaluation(actor, gameId, {
+          start: url.searchParams.get('start'), count: url.searchParams.get('count'),
+        }))
+      }
+      const data = await body(req)
+      return send(res, 200, await archive.evaluation(actor, gameId, { reviews: data?.positions }))
+    }
     if (endpoint === 'exports' && req.method === 'POST') {
       requireScope(actor, 'history')
       const { gameIds, mode } = await body(req)

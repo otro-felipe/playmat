@@ -32,6 +32,10 @@ Game results and replay pages use the product service's authorization. Request a
 
 See the [turn planning guide](guides/turn-planning.md) for a complete sequence that plays a land, casts a spell and pays for it.
 
+## Review a game
+
+Use a grant with `history`. Start the `review_playmat_match` prompt with a completed game's `gameId`. The connected model reads `evaluate_match` pages, compares the observed choice with plausible legal alternatives from the pre-action position, and submits up to 40 scored positions to `score_match_evaluation`. The tool calculates a score from the ratings supplied by your client. The report includes the number of scored, reviewed and available positions so you can judge the coverage. Low-confidence reviews are excluded from the score.
+
 ## Verification
 
 Use the Node 22 image and the same engine container network for the local integration test. Set `PLAYMAT_LIVE_ENGINE_URL` to that container's trusted loopback WebSocket endpoint. The synthetic fixture seats run a Pioneer Bo3 through real MCP HTTP transports and the engine's match and sideboard flow. In the absence of a live test URL, `npm test` still exercises the HTTP contract for PM-AC-08, PM-AC-09 and PM-AC-10. `PLAYMAT_LIVE_LEGACY_ENGINE=1` permits the live fixture to check a pre-change engine without the optional atomic prompt gate. Release acceptance requires the guard enabled on the candidate.

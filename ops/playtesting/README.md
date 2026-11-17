@@ -36,3 +36,9 @@ codex mcp add playmat --url https://<public-host>/mcp --bearer-token-env-var PLA
 ```
 
 The [MCP playbook](mcp/README.md) describes the decision loop. Keep the token in a private environment variable. Restart Codex or activate the connection before asking it to join.
+
+## Browser WebMCP
+
+Choose **Friend** and share that invitation with the named player. Open it in a browser that supports site tools, sign in as that player, and select a deck. The page exposes `join_match`. The player's active game exposes `get_match_state`, `wait_for_decision`, and `submit_choice`.
+
+The [native Chromium acceptance test](../../Mage.Web.Client/e2e/app-private-webmcp.spec.ts) uses two provisioned QA browser accounts and a private server. Supply their credentials through the protected `PLAYMAT_PRIVATE_QA_A_*` and `PLAYMAT_PRIVATE_QA_B_*` variables used by the browser suite. From the frontend test runner, opt in using `PLAYMAT_NATIVE_WEBMCP=1`, set both `PLAYMAT_PRIVATE_BASE_URL` and `MAGE_WEB_E2E_BASE_URL` to the test origin, and run `npx playwright test e2e/app-private-webmcp.spec.ts --project=chromium-desktop --workers=1`. Use `MAGE_CHROMIUM_EXECUTABLE` to point to a Chromium build with the native testing API.

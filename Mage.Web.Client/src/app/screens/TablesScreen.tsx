@@ -29,11 +29,14 @@ import { createPlaytestingInvite, MCP_CHAT_MODES, PRIVATE_PLAYTESTING, type McpC
 import { usePlaytestingInvitation } from '../usePlaytestingInvitation';
 import { registerMessages, useT } from '../i18n';
 import messages from '../i18n/en/social';
+import { McpConnectionDialog } from '../mcp/McpConnection';
+import { mcpConnectionGuideHidden } from '../mcp/connectionGuide';
 
 registerMessages(messages);
 
 const FREEFORM = 'Constructed - Freeform';
 const PRIVATE_FORMATS = ['Constructed - Standard', 'Constructed - Pioneer', 'Constructed - Modern'];
+type HostOpponent = 'friend' | 'mcp' | 'ai';
 
 const STATE_LABEL: Record<string, string> = {
   WAITING: 'Waiting for players',
@@ -55,7 +58,8 @@ export function TablesScreen() {
   const decks = useDecks();
   const roster = useDeckRoster();
   const selectedDeck = roster.find((deck) => deck.id === decks.selectedId) ?? roster[0] ?? null;
-  const [hostOpen, setHostOpen] = useState(!!(location.state as { host?: string } | null)?.host);
+  const hostEntry = location.state as { host?: string; opponent?: HostOpponent } | null;
+  const [hostOpen, setHostOpen] = useState(!!hostEntry?.host);
   const [busyTable, setBusyTable] = useState<string | null>(null);
   // a passworded table asks for the password in a dialog before joining
   const [locked, setLocked] = useState<TableView | null>(null);
@@ -176,7 +180,12 @@ export function TablesScreen() {
           <Field label="Password" type="password" value={tablePassword} onChange={(event) => setTablePassword(event.target.value)} autoFocus />
         </form>
       </Dialog>
-      <HostDialog open={hostOpen} onOpenChange={setHostOpen} deckId={selectedDeck?.id ?? null} />
+      <HostDialog
+        open={hostOpen}
+        onOpenChange={setHostOpen}
+        deckId={selectedDeck?.id ?? null}
+        initialOpponent={PRIVATE_PLAYTESTING && hostEntry?.opponent === 'mcp' ? 'mcp' : 'friend'}
+      />
     </div>
   );
 }
@@ -247,7 +256,7 @@ function MyTable({ table }: { table: TableView }) {
     <>
       <TableRow table={table} mcpInvite={mcpInvite}>
         {table.tableState === 'WAITING' && (
-          <Button size="sm" variant="quiet" icon={<Link2 size={16} />} onClick={() => void copyInvite()}>{mcpInvite ? 'Copy MCP link' : 'Invite'}</Button>
+          <Button size="sm" variant="quiet" icon={<Link2 size={16} />} onClick={() => void copyInvite()}>{mcpInvite ? t('mcpInvite.copyLink') : 'Invite'}</Button>
         )}
         {isOwner && mcpInvite && table.tableId && (table.tableState === 'WAITING' || ready) && (
           <IconButton label={t('mcpInvite.guide')} icon={<BookOpen size={16} />} onClick={() => navigate(`/join/${table.tableId}`)} />
@@ -280,7 +289,12 @@ function TableChat({ tableId }: { tableId: string }) {
   );
 }
 
-function HostDialog({ open, onOpenChange, deckId }: { open: boolean; onOpenChange(open: boolean): void; deckId: string | null }) {
+function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
+  open: boolean;
+  onOpenChange(open: boolean): void;
+  deckId: string | null;
+  initialOpponent: HostOpponent;
+}) {
   const t = useT();
   const { data: serverState } = useServerState();
   const roomId = useSession((state) => state.roomId);
@@ -293,7 +307,8 @@ function HostDialog({ open, onOpenChange, deckId }: { open: boolean; onOpenChang
   const [seats, setSeats] = useState(2);
   const [wins, setWins] = useState(2);
   const [aiSeats, setAiSeats] = useState(0);
-  const [opponent, setOpponent] = useState<'friend' | 'mcp' | 'ai'>('friend');
+  const [opponent, setOpponent] = useState(initialOpponent);
+  const [mcpGuideOpen, setMcpGuideOpen] = useState(() => open && initialOpponent === 'mcp' && !mcpConnectionGuideHidden());
   const [chatMode, setChatMode] = useState<McpChatMode>('quiet');
   const [password, setPassword] = useState('');
   const [guest, setGuest] = useState('');
@@ -328,7 +343,13 @@ function HostDialog({ open, onOpenChange, deckId }: { open: boolean; onOpenChang
 
   function closeDialog() {
     setChatMode('quiet');
+    setOpponent('friend');
     onOpenChange(false);
+  }
+
+  function chooseOpponent(next: HostOpponent) {
+    setOpponent(next);
+    if (next === 'mcp' && !mcpConnectionGuideHidden()) setMcpGuideOpen(true);
   }
 
   async function host() {
@@ -389,6 +410,8 @@ function HostDialog({ open, onOpenChange, deckId }: { open: boolean; onOpenChang
     }
   }
 
+  if (open && mcpGuideOpen) return <McpConnectionDialog onClose={() => setMcpGuideOpen(false)} />;
+
   return (
     <Dialog
       open={open}
@@ -444,7 +467,7 @@ function HostDialog({ open, onOpenChange, deckId }: { open: boolean; onOpenChang
           )}
           {PRIVATE_PLAYTESTING ? <label className={styles.selectField}>
             <span>Opponent</span>
-            <select value={opponent} onChange={(event) => setOpponent(event.target.value as typeof opponent)}>
+            <select value={opponent} onChange={(event) => chooseOpponent(event.target.value as HostOpponent)}>
               <option value="friend">Friend</option>
               <option value="mcp">Rival MCP</option>
               <option value="ai">XMage AI</option>
@@ -467,6 +490,7 @@ function HostDialog({ open, onOpenChange, deckId }: { open: boolean; onOpenChang
               </select>
             </label>
             <p id="mcp-chat-description" className={styles.selectionHint}>{t(`mcpInvite.chat.${chatMode}.description`)}</p>
+            <Button size="sm" variant="quiet" onClick={() => setMcpGuideOpen(true)}>{t('mcpConnection.openGuide')}</Button>
           </div>
         )}
         <TableAdvancedFields

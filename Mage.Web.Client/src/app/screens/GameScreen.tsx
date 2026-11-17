@@ -6,9 +6,11 @@ import { usePlay } from '../stores/play';
 import { MatchErrorBoundary } from '../match/MatchErrorBoundary';
 import { MatchStage } from '../match/MatchStage';
 import { ReconnectScrim } from '../match/ReconnectScrim';
+import { useMatchSiteTools } from '../match/useMatchSiteTools';
 import { useSession } from '../stores/session';
 import { usePlaytestingInvitation } from '../usePlaytestingInvitation';
 import { Button } from '../ui/Button';
+import { isSiteToolOrigin } from '../webmcp';
 import styles from './GameScreen.module.css';
 
 /** A running game: the match stage, full screen. */
@@ -57,7 +59,19 @@ function ConnectedStage({ gameId, leaveLabel, onLeave }: { gameId: string; leave
   const { data: invite } = usePlaytestingInvitation(tableId);
   const state = useStore(session.store);
   const connection = useSession((session) => session.connection);
+  const phase = useSession((session) => session.phase);
+  const serverUrl = useSession((session) => session.serverUrl);
+  const loginCount = useSession((session) => session.loginCount);
   const offline = connection !== 'open';
+  useMatchSiteTools(session, !offline && phase === 'signedIn' && isSiteToolOrigin(serverUrl), {
+    key: `${gameId}:${state.playerId}:${loginCount}`,
+    isCurrent() {
+      const current = useSession.getState();
+      return current.connection === 'open' && current.phase === 'signedIn'
+        && current.loginCount === loginCount && current.serverUrl === serverUrl
+        && useGames.getState().sessions[gameId] === session;
+    },
+  });
   return (
     <>
       <MatchStage session={session} state={state} seatDisplayNames={invite?.mode === 'mcp' && invite.guestEngineName && invite.guestDisplayName

@@ -263,7 +263,7 @@ test('[PM-AC-05] browser and delegated agent share immutable owned revisions and
   assert.equal((await (await f.path(route + '?revision=1', { headers: agent })).json()).data.name, 'Mono Red')
 })
 
-async function addReplay(f, matchId, gameId, names) {
+async function addReplay(f, matchId, gameId, names, events) {
   const now = Date.now()
   const info = {
     gameId, matchId, tableId: matchId, startedAt: now - 1000, endedAt: now,
@@ -271,12 +271,84 @@ async function addReplay(f, matchId, gameId, names) {
     players: names.map(name => ({ name, human: true, deck: { cards: [`private:${name}`] } })),
   }
   await writeFile(join(f.replayDirectory, gameId + '.json'), JSON.stringify(info))
-  const data = [
+  const data = events ?? [
     { t: 100, view: { turn: 1, players: names.map(name => ({ name })) }, hands: Object.fromEntries(names.map(name => [name, [`secret:${name}`]])) },
     { t: 105, log: { messageType: 'TALK', message: 'private chat' } },
   ]
   await writeFile(join(f.replayDirectory, gameId + '.ndjson.gz'), gzipSync(data.map(row => JSON.stringify(row)).join('\n')))
 }
+
+test('[PM-AC-15] the judge receives pre-action evidence from its own final timeline and scores only supported choices', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const alice = await signIn(f, 'Alice')
+  const bob = await signIn(f, 'Bob')
+  const outsider = await signIn(f, 'Carol')
+  const matchId = randomUUID()
+  const gameId = randomUUID()
+  const forest = { name: 'Forest', cardTypes: ['LAND'] }
+  const swamp = { name: 'Swamp', cardTypes: ['LAND'] }
+  const frame = ({ turn, battlefield = {}, hand = {}, time }) => ({
+    t: time,
+    view: { turn, step: 'PRECOMBAT_MAIN', phase: 'PRECOMBAT_MAIN', priorityPlayerName: 'Alice', activePlayerName: 'Alice',
+      players: [{ name: 'Alice', life: 20, battlefield }, { name: 'Bob', life: 20, topCard: { name: 'Private top card' } }] },
+    hands: { Alice: hand, Bob: { unknown: { name: 'Hidden answer' } } },
+  })
+  await addReplay(f, matchId, gameId, ['Alice', 'Bob'], [
+    frame({ turn: 2, time: 100, hand: { swamp, forest } }),
+    frame({ turn: 2, time: 200, hand: { swamp }, battlefield: { forest } }),
+    { t: 250, kind: 'rollback', turn: 2 },
+    frame({ turn: 2, time: 300, hand: { swamp, forest } }),
+    frame({ turn: 2, time: 400, hand: { forest }, battlefield: { swamp } }),
+    frame({ turn: 3, time: 500, hand: { forest, future: { name: 'Future Draw' } }, battlefield: { swamp } }),
+  ])
+  await f.product.archiveGames()
+  const path = '/api/playtesting/evaluations/' + gameId
+  assert.equal((await f.path(path, { headers: outsider })).status, 404)
+  const packet = await (await f.path(path, { headers: alice })).json()
+  assert.equal(packet.perspective, 'Alice')
+  assert.equal(packet.total, 1)
+  assert.equal(packet.positions[0].action.card, 'Swamp')
+  assert.equal(packet.positions[0].before.hand.length, 2)
+  assert.doesNotMatch(JSON.stringify(packet), /Hidden answer|Private top card|Future Draw|winner/)
+  const other = await (await f.path(path, { headers: bob })).json()
+  assert.equal(other.total, 0)
+  const entry = { index: packet.positions[0].index, played: 75, best: 100, confidence: 'high', alternative: 'Forest', reason: 'Keeps green available.' }
+  const submit = (positions, headers = alice) => f.path(path, json('POST', headers, { positions }))
+  assert.equal((await submit([entry], outsider)).status, 404)
+  assert.equal((await submit([{ ...entry, index: 9999 }])).status, 400)
+  assert.equal((await submit([entry, entry])).status, 400)
+  const report = await (await submit([entry])).json()
+  assert.equal(report.accuracy, 75)
+  assert.equal(report.scored, 1)
+  assert.equal(report.total, 1)
+  const uncertain = await (await submit([{ ...entry, confidence: 'low' }])).json()
+  assert.equal(uncertain.accuracy, null)
+  assert.equal(uncertain.scored, 0)
+})
+
+test('[PM-AC-15] a public action can anchor a coalesced frame without inventing the state before later actions', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const alice = await signIn(f, 'Alice')
+  const gameId = randomUUID()
+  const forest = { name: 'Forest', cardTypes: ['LAND'] }
+  const elf = { name: 'Llanowar Elves', cardTypes: ['CREATURE'] }
+  const view = { turn: 1, step: 'PRECOMBAT_MAIN', activePlayerName: 'Alice',
+    priorityPlayerName: 'Bob', players: [{ name: 'Alice' }, { name: 'Bob' }] }
+  await addReplay(f, randomUUID(), gameId, ['Alice', 'Bob'], [
+    { t: 100, view, hands: { Alice: { forest, elf } } },
+    { t: 200, log: { messageType: 'GAME', message: '<font>Alice</font> plays <a>Forest</a> [bea]' } },
+    { t: 300, log: { messageType: 'GAME', message: 'Alice casts Llanowar Elves [dec] from hand' } },
+    { t: 400, view: { ...view, players: [{ name: 'Alice', battlefield: { forest } }, { name: 'Bob' }] }, hands: { Alice: {} } },
+  ])
+  await f.product.archiveGames()
+  const path = '/api/playtesting/evaluations/' + gameId
+  const packet = await (await f.path(path, { headers: alice })).json()
+  assert.equal(packet.total, 1)
+  assert.deepEqual(packet.positions[0].action, { kind: 'play_land', card: 'Forest' })
+  assert.equal(packet.positions[0].evidence, 'engine_log')
+  assert.equal(packet.positions[0].before.hand.length, 2)
+  assert.equal(packet.positions[0].before.players[0].battlefield.total, 0)
+})
 
 test('[PM-AC-11] archive outage leaves the game visible and idempotent retry marks one verified artifact ready', { skip: !databaseUrl }, async t => {
   const objects = new Map()

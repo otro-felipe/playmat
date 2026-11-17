@@ -19,12 +19,14 @@ export interface PlaytestingInvitationView {
   chatMode?: McpChatMode;
 }
 
-async function sendInviteRequest(path: string, input?: Record<string, unknown>): Promise<Response> {
+async function sendInviteRequest(path: string, input?: Record<string, unknown>, signal?: AbortSignal): Promise<Response> {
   const response = await fetch(`/api/playtesting/invites${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input ?? {}),
+    signal,
   });
+  signal?.throwIfAborted();
   if (response.status === 401) {
     window.location.assign(`/login?next=${encodeURIComponent(window.location.pathname)}`);
   }
@@ -43,8 +45,8 @@ export async function getPlaytestingInvitation(tableId: string, signal: AbortSig
   return response.json();
 }
 
-export async function claimPlaytestingInvite(tableId: string): Promise<PlaytestingInvite> {
-  const response = await sendInviteRequest(`/${encodeURIComponent(tableId)}/claim`);
+export async function claimPlaytestingInvite(tableId: string, signal?: AbortSignal): Promise<PlaytestingInvite> {
+  const response = await sendInviteRequest(`/${encodeURIComponent(tableId)}/claim`, undefined, signal);
   const invite = await response.json() as PlaytestingInvite;
   if (invite.tableId !== tableId || typeof invite.password !== 'string') throw new Error('Invalid invitation.');
   return invite;

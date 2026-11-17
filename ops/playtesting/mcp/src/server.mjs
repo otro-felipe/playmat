@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { GameSeat, ToolError } from './game-seat.mjs';
 import { listArchetypes, possibleResponses, searchCards } from './catalog.mjs';
 import { guideInstructions, registerGuides } from './guides.mjs';
+import { registerMatchReviewPrompt, scoredPositions } from './match-review.mjs';
 
 const Uuid = z.uuid();
 const StringId = z.string().min(1).max(120);
@@ -184,6 +185,12 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
     (args) => fromProduct('get_replay', args), true);
   tool('query_match_events', 'Read ordered, authorized and cursor-paginated events for one game to analyze its play.', replayPage, 'history',
     (args) => fromProduct('get_replay', args), true);
+  tool('evaluate_match', 'Read pre-action evidence for one completed game from the authorized player perspective. Use next as the next page’s start.', {
+    gameId: Uuid, start: Cursor.default(0), count: z.number().int().min(1).max(4).default(4),
+  }, 'history', (args) => fromProduct('evaluate_match', args), true);
+  tool('score_match_evaluation', 'Calculate game accuracy and coverage from reviewed positions. Low-confidence positions are excluded from the score.', {
+    gameId: Uuid, positions: scoredPositions,
+  }, 'history', (args) => fromProduct('score_match_evaluation', args), true);
   tool('export_matches', 'Request an authorized download handle for selected games.', {
     gameIds: z.array(Uuid).min(1).max(10),
   }, 'history', (args) => fromProduct('export_matches', args));
@@ -219,6 +226,7 @@ export function createMcpServer({ authorize, createEngine, product, allowedOrigi
     const mcp = new McpServer({ name: 'playmat-private', version: '0.1.0' }, { instructions: guideInstructions });
     const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true, sessionIdGenerator: undefined });
     registerGuides(mcp);
+    if (actor.scopes.includes('history')) registerMatchReviewPrompt(mcp);
     registerTools(mcp, {
       actor, getSeat, allowedOrigins,
       callProduct: product ? (operation, args) => product(token, operation, args) : null,
