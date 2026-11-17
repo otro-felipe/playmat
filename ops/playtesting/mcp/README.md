@@ -30,3 +30,7 @@ Use the Node 22 image and the same engine container network for the local integr
 For the deployed adapter, use `scripts/smoke.mjs` in the packaged service with `PLAYMAT_MCP_URL` and `PLAYMAT_MCP_TOKEN` injected. It reports only authentication, tool registration and catalog status. Verify the actual Codex client and a complete live match separately.
 
 To exercise a deployed Bo3 and its archived replays, provision two distinct test agent grants with `play,catalog,chat,history`. Inject `PLAYMAT_LIVE_MCP_URL`, `PLAYMAT_LIVE_MCP_ENGINE_NAME_1`, `PLAYMAT_LIVE_MCP_ENGINE_NAME_2`, `PLAYMAT_LIVE_MCP_TOKEN_1` and `PLAYMAT_LIVE_MCP_TOKEN_2` through the runtime. Then run `node --test test/bo3.live.test.mjs` in the Node 22 container. This creates an invited test table and verifies its replay export. It does not print credentials, live game cards or game IDs.
+
+### Native AI match evidence
+
+Run `node --test test/native-ai.live.test.mjs` with `PLAYMAT_LIVE_ENGINE_URL` for a trusted loopback engine fixture. To exercise the full deployed browser identity boundary, inject the HTTPS origin as `PLAYMAT_LIVE_WEB_URL` with a dedicated account's `PLAYMAT_LIVE_WEB_USERNAME` and `PLAYMAT_LIVE_WEB_PASSWORD`. The test authenticates with the browser login and carries its cookie on the same-origin WebSocket. It creates an AI Bo3 through Playmat's native API, observes an AI land action in each game, submits a legal sideboard and checks the 2–0 score. It uses no MCP credential and prints no password or session cookie.
