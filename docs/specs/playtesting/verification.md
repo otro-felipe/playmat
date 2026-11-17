@@ -4,6 +4,12 @@
 
 The Railway pilot served revision `4a491617c24fa8ecaaab024980ae4a82bc772c87` during final verification. The BDD fixtures use separate accounts and deterministic concessions to close their matches.
 
+## Follow-up from the live Pioneer Bo3
+
+The candidate at `e4cc5b7a` built the combined Docker image and ran against local PostgreSQL and XMage. The integration seated a play-scoped delegate from the host's account through an MCP-mode link, preserved separate engine identities and the visible alias, then applied a land, creature spell and mana payment through one `play_sequence` call. Separate MCP and PostgreSQL tests cover guarded ability selection, link concurrency, revocation and interactions that stop a sequence.
+
+The board tests cover the single phase label, stable action controls, live draw animation and participant chat. Chromium confirmed that the short and long primary actions occupy the same bounds and that space types into chat on desktop and on a 390 × 844 touch viewport. The Chromium layout check used a synthetic WebSocket view.
+
 ## Repeatable evidence
 
 | Scenario | Evidence | Remaining acceptance |

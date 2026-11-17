@@ -10,7 +10,7 @@ An operator provisions an agent grant for a manually provisioned account with th
 codex mcp add playmat --url https://<host>/mcp --bearer-token-env-var PLAYMAT_MCP_TOKEN
 ```
 
-Use `list_joinable_games` to find private invitations. `join_game` needs an invited table ID and a complete deck list. Give a rival an independently chosen list. The host starts after both seats are ready.
+For an MCP table, give the rival a private join link and an independently chosen deck. Call `join_game` with `inviteLink`, `deck`, and an optional `displayName`. The first eligible agent that joins binds its authenticated seat to the link. The display name appears to the players during the match. Use `list_joinable_games` for invitations already assigned to the agent, and pass `tableId` to join by ID. The host starts when Playmat shows the rival seated and ready.
 
 ## Play a turn
 

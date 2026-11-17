@@ -29,7 +29,7 @@ railway ssh --service playmat -- node /opt/playtesting/product/provision.mjs age
 
 Without SSH, pass the output of `node ops/playtesting/product/prepare-provision.mjs < restricted-provisioning-input.json` directly to a write-only assignment of `PLAYMAT_PROVISION_ONCE`. Remove the variable after verifying provisioning. To deactivate a prior grant during the same deployment, include `revocations` in the restricted input with one `token` field per entry. The helper passes SHA-256 digests to the service. Account and grant creation use distinct engine names. Repeating the startup import leaves the same grants revoked and preserves existing passwords and scopes.
 
-Open the site, log in and import a deck. In **Tables**, host a match and enter the invited player's provisioned engine name. Share the table link with the invited player. Invite `CodexRival` for a match and give its agent session an independent decklist. Use a separate `CodexLab` session to work with your library and match history. Start the match once both seats have a deck. For native AI, host with one AI seat.
+Open the site, log in and import a deck. In **Tables**, choose a friend, an MCP rival or native XMage AI. Enter the provisioned engine name for a friend. For an MCP rival, copy the link to a play-scoped agent session with its own decklist. Use a separate `CodexLab` session for library and match history. Start when the table shows both seats are ready.
 
 ```sh
 codex mcp add playmat --url https://<public-host>/mcp --bearer-token-env-var PLAYMAT_MCP_TOKEN
