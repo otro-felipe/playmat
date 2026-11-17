@@ -23,7 +23,12 @@ export function createProductClient(baseUrl, publicUrl) {
     const reply = await request(token, '/internal/verify');
     if ([401, 403, 404].includes(reply.status)) return null;
     if (!reply.ok) throw new Error('Playmat authorization service unavailable.');
-    return reply.json();
+    const actor = await reply.json();
+    if (!Array.isArray(actor.scopes)) return null;
+    const scopes = new Set(actor.scopes);
+    if (scopes.has('play') || scopes.has('library')) scopes.add('catalog');
+    if (scopes.has('library')) scopes.add('decks');
+    return { ...actor, scopes: [...scopes] };
   }
 
   async function operation(token, name, args) {
