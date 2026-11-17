@@ -71,9 +71,13 @@ export default defineConfig({
   build: {
     // scripts/check-bundle-size.mjs reads the manifest to find each page's chunks
     manifest: true,
+    // Keep the same reachable-JS budget while compressing the existing and new lazy screens more tightly.
+    minify: 'terser',
+    terserOptions: { compress: { passes: 2 } },
     rollupOptions: {
       input: {
         main: 'index.html',
+        ...(process.env.PLAYMAT_UI_TEST_FIXTURES === 'yes' ? { 'mana-payment': 'e2e/fixtures/mana-payment.html' } : {}),
       },
       output: {
         manualChunks(id, graph) {

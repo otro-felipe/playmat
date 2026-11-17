@@ -1,7 +1,37 @@
 import { expect, test, type Page } from '@playwright/test';
+import type { GameSession } from '../src/core/game/gameSession';
 
-test.skip(process.env.MAGE_WEB_E2E_PREVIEW === '1', 'isolated fixture needs Vite');
+test.skip(process.env.MAGE_WEB_E2E_PREVIEW === '1' && process.env.PLAYMAT_PAYMENT_FIXTURE_BUILT !== '1', 'isolated fixture requires its explicit test build');
 test.use({ hasTouch: true, isMobile: true });
+
+test.beforeEach(({ baseURL }) => {
+  if (!baseURL || !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(baseURL).hostname)) {
+    throw new Error('Mana/payment presentation fixtures must use an isolated loopback server');
+  }
+});
+
+for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }]) {
+  test(`public target receipts preserve manual controls at ${viewport.width}x${viewport.height}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto('/e2e/fixtures/mana-payment.html');
+    await expect(page.getByRole('button', { name: 'Auto-pay', exact: true })).toBeEnabled();
+    await page.evaluate(() => {
+      const { session } = (window as unknown as { paymentFixture: { session: GameSession } }).paymentFixture;
+      session.store.setState((state) => {
+        if (!state.view?.stack?.spell) throw new Error('Synthetic stack fixture not ready');
+        return { view: { ...state.view, stack: { ...state.view.stack, spell: { ...state.view.stack.spell, targets: ['them', 'opponentForest'] } } } };
+      });
+    });
+    const receipt = page.getByRole('complementary', { name: 'Recent action' });
+    await expect(receipt.getByText('Targets announced', { exact: true })).toBeVisible();
+    await expect(page.getByRole('list', { name: 'Stack targets' }).getByText('Targets: Opponent · Forest')).toBeVisible();
+    expect(await receipt.evaluate((element) => getComputedStyle(element).pointerEvents)).toBe('none');
+    await page.locator('[data-object-id="forest"]').click();
+    await expect.poll(() => page.evaluate(() => (window as unknown as { paymentFixture: { calls: string[] } }).paymentFixture.calls)).toEqual(['forest']);
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect.poll(() => page.evaluate(() => (window as unknown as { paymentFixture: { calls: string[] } }).paymentFixture.calls)).toEqual(['forest', 'cancel']);
+  });
+}
 
 async function screenshot(page: Page, name: string) {
   await page.evaluate(async () => {
