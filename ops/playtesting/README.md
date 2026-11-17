@@ -23,10 +23,13 @@ Pass newly chosen credentials from a masked or restricted write-only source. The
 ```sh
 docker compose -f ops/playtesting/compose.yml exec -T playmat node /opt/playtesting/product/provision.mjs human PLAYER < restricted-password-file
 railway ssh --service playmat -- node /opt/playtesting/product/provision.mjs human PLAYER < restricted-password-file
-railway ssh --service playmat -- node /opt/playtesting/product/provision.mjs agent OWNER Codex play,library,history,chat < restricted-token-file
+railway ssh --service playmat -- node /opt/playtesting/product/provision.mjs agent OWNER CodexRival play,chat < restricted-rival-token-file
+railway ssh --service playmat -- node /opt/playtesting/product/provision.mjs agent OWNER CodexLab library,history < restricted-lab-token-file
 ```
 
-Open the site, log in and import a deck. In **Tables**, host a match and enter the invited player's provisioned engine name. Share the table link with the invited player. For Codex, invite the engine name associated with the personal agent token, such as `Codex`. Start the match once both seats have a deck. For native AI, host with one AI seat.
+Without SSH, pass the output of `node ops/playtesting/product/prepare-provision.mjs < restricted-provisioning-input.json` directly to a write-only assignment of `PLAYMAT_PROVISION_ONCE`. Remove the variable after verifying provisioning. To deactivate a prior grant during the same deployment, include `revocations` in the restricted input with one `token` field per entry. The helper passes SHA-256 digests to the service. Account and grant creation use distinct engine names. Repeating the startup import leaves the same grants revoked and preserves existing passwords and scopes.
+
+Open the site, log in and import a deck. In **Tables**, host a match and enter the invited player's provisioned engine name. Share the table link with the invited player. Invite `CodexRival` for a match and give its agent session an independent decklist. Use a separate `CodexLab` session to work with your library and match history. Start the match once both seats have a deck. For native AI, host with one AI seat.
 
 ```sh
 codex mcp add playmat --url https://<public-host>/mcp --bearer-token-env-var PLAYMAT_MCP_TOKEN

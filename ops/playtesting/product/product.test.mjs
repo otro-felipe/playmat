@@ -113,6 +113,41 @@ test('[PM-AC-04] a prehashed provisioning import is idempotent and cannot rotate
   assert.equal((await f.path('/internal/verify', { headers: { Authorization: 'Bearer ' + replacement } })).status, 401)
 })
 
+test('[PM-AC-04] provisioning revokes only the targeted grant and preserves independently scoped replacements', { skip: !databaseUrl }, async t => {
+  const { digest, newToken, prepareProvisionBundle } = await import('./identity.mjs')
+  const f = await fixture(t)
+  await f.product.provisionHuman('Alice', password)
+  const original = await f.product.provisionAgent('Alice', 'AgentAlice', ['play', 'library', 'history', 'chat'])
+  const rival = newToken()
+  const analyst = newToken()
+  const verify = token => f.path('/internal/verify', { headers: { Authorization: 'Bearer ' + token } })
+  const provision = await prepareProvisionBundle({
+    agents: [
+      { owner: 'Alice', engineName: 'AliceRival', token: rival, scopes: ['play', 'chat'] },
+      { owner: 'Alice', engineName: 'AliceLab', token: analyst, scopes: ['library', 'history'] },
+    ],
+    revocations: [{ token: original }],
+  })
+  assert.equal((await verify(original)).status, 200)
+  await f.product.importProvisionBundle(provision)
+  assert.equal((await verify(original)).status, 401)
+  assert.deepEqual(provision.revocations, [{ tokenDigest: digest(original) }])
+  assert.doesNotMatch(JSON.stringify(provision), new RegExp(original))
+  await f.product.importProvisionBundle(provision)
+  await f.product.importProvisionBundle({ revocations: [{ tokenDigest: digest(newToken()) }] })
+  await f.product.importProvisionBundle(await prepareProvisionBundle({
+    agents: [{ owner: 'Alice', engineName: 'agentalice', token: original, scopes: ['play'] }],
+  }))
+  assert.equal((await verify(original)).status, 401)
+  assert.deepEqual((await (await verify(rival)).json()).scopes, ['play', 'chat'])
+  assert.deepEqual((await (await verify(analyst)).json()).scopes, ['library', 'history'])
+  await assert.rejects(prepareProvisionBundle({ revocations: [{ token: 'invalid' }] }), { status: 400 })
+  await assert.rejects(f.product.importProvisionBundle({
+    revocations: [{ tokenDigest: digest(rival) }, { tokenDigest: 'invalid' }],
+  }), { status: 400 })
+  assert.equal((await verify(rival)).status, 200)
+})
+
 test('[PM-AC-05] browser and delegated agent share immutable owned revisions and reject stale writes', { skip: !databaseUrl }, async t => {
   const f = await fixture(t)
   const alice = await signIn(f, 'Alice')

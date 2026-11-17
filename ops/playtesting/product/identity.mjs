@@ -28,12 +28,14 @@ async function verifyPassword(password, hash) {
 }
 
 function validateProvisionList(bundle) {
-  if (!bundle || typeof bundle !== 'object' || Array.isArray(bundle)
-    || (bundle.accounts && !Array.isArray(bundle.accounts)) || (bundle.agents && !Array.isArray(bundle.agents))
-    || (bundle.accounts?.length ?? 0) > 16 || (bundle.agents?.length ?? 0) > 16) {
+  if (!bundle || typeof bundle !== 'object' || Array.isArray(bundle)) {
     throw new ProductError(400, 'Invalid provisioning bundle')
   }
-  return { accounts: bundle.accounts ?? [], agents: bundle.agents ?? [] }
+  const { accounts = [], agents = [], revocations = [] } = bundle
+  if ([accounts, agents, revocations].some(rows => !Array.isArray(rows) || rows.length > 16)) {
+    throw new ProductError(400, 'Invalid provisioning bundle')
+  }
+  return { accounts, agents, revocations }
 }
 
 function validName(name) {
@@ -46,7 +48,7 @@ function validScopes(scopes) {
 }
 
 export async function prepareProvisionBundle(bundle) {
-  const { accounts, agents } = validateProvisionList(bundle)
+  const { accounts, agents, revocations } = validateProvisionList(bundle)
   const users = []
   for (const user of accounts) {
     if (!validName(user?.username) || typeof user.password !== 'string' || user.password.length < 12 || user.password.length > 128) {
@@ -61,7 +63,13 @@ export async function prepareProvisionBundle(bundle) {
     }
     return { owner: agent.owner, engineName: agent.engineName, tokenDigest: digest(agent.token), scopes: [...new Set(agent.scopes)] }
   })
-  return { accounts: users, agents: verified }
+  const revoked = revocations.map(revocation => {
+    if (typeof revocation?.token !== 'string' || !digestPattern.test(revocation.token)) {
+      throw new ProductError(400, 'Invalid manual agent revocation')
+    }
+    return { tokenDigest: digest(revocation.token) }
+  })
+  return { accounts: users, agents: verified, revocations: revoked }
 }
 
 export function createIdentity(pool, insecureCookie) {
@@ -119,12 +127,18 @@ export function createIdentity(pool, insecureCookie) {
     })
   }
 
+  async function revokeAgentDigests(db, digests) {
+    if (digests.length) {
+      await db.query('UPDATE agent_grants SET revoked_at=now() WHERE digest=ANY($1::text[]) AND revoked_at IS NULL', [digests])
+    }
+  }
+
   async function revokeAgent(token) {
-    await pool.query('UPDATE agent_grants SET revoked_at=now() WHERE digest=$1', [digest(token)])
+    await revokeAgentDigests(pool, [digest(token)])
   }
 
   async function importProvisionBundle(bundle) {
-    const { accounts, agents } = validateProvisionList(bundle)
+    const { accounts, agents, revocations } = validateProvisionList(bundle)
     for (const user of accounts) {
       if (!validName(user?.username) || typeof user.passwordHash !== 'string' || !prehashedPasswordPattern.test(user.passwordHash)) {
         throw new ProductError(400, 'Invalid prehashed manual account')
@@ -136,6 +150,12 @@ export function createIdentity(pool, insecureCookie) {
         throw new ProductError(400, 'Invalid prehashed agent grant')
       }
     }
+    const revokedDigests = revocations.map(revocation => {
+      if (typeof revocation?.tokenDigest !== 'string' || !tokenDigestPattern.test(revocation.tokenDigest)) {
+        throw new ProductError(400, 'Invalid prehashed agent revocation')
+      }
+      return revocation.tokenDigest
+    })
     const names = [...new Set([
       ...accounts.map(user => normalize(user.username)),
       ...agents.flatMap(agent => [normalize(agent.owner), normalize(agent.engineName)]),
@@ -156,6 +176,7 @@ export function createIdentity(pool, insecureCookie) {
           agent.tokenDigest, owner.id, agent.engineName, normalize(agent.engineName), [...new Set(agent.scopes)],
         ])
       }
+      await revokeAgentDigests(db, revokedDigests)
     })
   }
 
