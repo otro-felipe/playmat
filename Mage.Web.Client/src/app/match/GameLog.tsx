@@ -61,7 +61,12 @@ function useGameChat(gameId: string, view: GameView | null, live: boolean, delay
   useEffect(() => {
     latest.current = view;
   }, [view]);
-  const [chatId, setChatId] = useState<string | null>(null);
+  const loginCount = useSession((state) => state.loginCount);
+  const userName = useSession((state) => state.userName);
+  const [membership, setMembership] = useState<{ id: string; loginCount: number; userName: string; gameId: string } | null>(null);
+  const chatId = membership?.loginCount === loginCount && membership.userName === userName && membership.gameId === gameId ? membership.id : null;
+  const channel = useRef<string | null>(null);
+  const seq = useRef(0);
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [unread, setUnread] = useState(0);
   // watching with a broadcast delay: the log keeps pace with the delayed board, or it would give the game away
@@ -71,34 +76,9 @@ function useGameChat(gameId: string, view: GameView | null, live: boolean, delay
 
   useEffect(() => {
     if (!live) return;
-    let cancelled = false;
-    let joined: string | null = null;
-    api.chatFindByGame(gameId)
-      .then(async (id) => {
-        if (cancelled || !id) return;
-        if (!await api.chatJoin(id, useSession.getState().userName)) return;
-        if (cancelled) {
-          await api.chatLeave(id);
-          return;
-        }
-        joined = id;
-        setChatId(id);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-      useEmotes.getState().clear();
-      usePresence.getState().clear();
-      if (joined) api.chatLeave(joined).catch(() => undefined);
-    };
-  }, [gameId, live]);
-
-  useEffect(() => {
-    if (!chatId) return;
-    let seq = 0;
     return events.on('CHATMESSAGE', (message: ChatMessage, event) => {
-      if (event.objectId !== chatId) return;
-      const parsed = parseChatMessage(message, `c${seq++}`);
+      if (!channel.current || event.objectId !== channel.current) return;
+      const parsed = parseChatMessage(message, `c${seq.current++}`);
       if (!parsed) return;
       const me = useSession.getState().userName;
       const fromOther = parsed.tone !== 'chat' || parsed.who !== me;
@@ -120,7 +100,44 @@ function useGameChat(gameId: string, view: GameView | null, live: boolean, delay
       if (fromOther) relay.push(show);
       else show();
     });
-  }, [chatId, gameId, relay]);
+  }, [live, gameId, relay]);
+
+  useEffect(() => {
+    if (!live) return;
+    let cancelled = false;
+    let joined: string | null = null;
+    let failures = 0;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const join = async () => {
+      try {
+        const id = await api.chatFindByGame(gameId);
+        if (cancelled) return;
+        if (!id) throw new Error('Game chat not ready');
+        // The join can itself deliver lines before the RPC promise resolves.
+        channel.current = id;
+        if (!await api.chatJoin(id, userName)) throw new Error('Game chat join failed');
+        if (cancelled) {
+          // A newer effect may already have joined the same chat. Do not undo its membership.
+          if (channel.current !== id) await api.chatLeave(id);
+          return;
+        }
+        joined = id;
+        setMembership({ id, loginCount, userName, gameId });
+      } catch {
+        if (!cancelled) retry = setTimeout(() => void join(), Math.min(30_000, 2000 * 2 ** failures++));
+      }
+    };
+    void join();
+    return () => {
+      cancelled = true;
+      clearTimeout(retry);
+      channel.current = null;
+      useEmotes.getState().clear();
+      usePresence.getState().clear();
+      if (joined) api.chatLeave(joined).catch(() => undefined);
+    };
+    // The server removes chat membership on disconnect; every new login must join again.
+  }, [gameId, live, loginCount, userName]);
 
   const send = (text: string) => {
     if (chatId && text.trim()) api.chatSendMessage(chatId, useSession.getState().userName, text.trim()).catch(() => undefined);
@@ -223,9 +240,10 @@ export function GameLog({ gameId, notices, canChat, view, replayLog, delayMs = 0
   }, [open, showChat, chat.unread]);
 
   const displayed = showChat ? rows.filter((row) => row.kind !== 'separator' && row.entry.tone === 'chat') : rows;
+  const lastDisplayedKey = displayed.at(-1)?.key;
   useEffect(() => {
     list.current?.scrollTo({ top: list.current.scrollHeight });
-  }, [displayed.length, open, showChat]);
+  }, [lastDisplayedKey, open, showChat]);
 
   const panelLabel = t(showChat ? 'match.chat.panel' : 'match.chat.logPanel');
   const onSend = () => {
