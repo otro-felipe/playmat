@@ -46,8 +46,15 @@ test('local XMage inactivity expires with a disabled match clock despite continu
   }, 'human engine prompt');
   assert.equal(pending.secondsRemaining, null);
   assert.equal(pending.timing.matchClock.status, 'disabled');
-  assert.deepEqual(pending.timing.inactivity, { status: 'unknown', deadlineEpochMs: null, secondsRemaining: null });
-  assert.match(pending.timing.warning, /null does not mean unlimited time/);
+  if (pending.timing.inactivity.status === 'running') {
+    assert.ok(Number.isFinite(pending.timing.inactivity.deadlineEpochMs));
+    assert.ok(pending.timing.inactivity.secondsRemaining >= 0 && pending.timing.inactivity.secondsRemaining <= 3);
+    assert.match(pending.timing.warning, /response-inactivity timer/);
+  } else {
+    // Legacy image acceptance remains available; the full private-image fixture requires the new deadline.
+    assert.deepEqual(pending.timing.inactivity, { status: 'unknown', deadlineEpochMs: null, secondsRemaining: null });
+    assert.match(pending.timing.warning, /null does not mean unlimited time/);
+  }
   // Deliberately leave only this disposable fixture unanswered while continuously reading state.
   await until(() => {
     for (const seat of seats) seat.snapshot();

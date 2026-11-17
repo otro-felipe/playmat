@@ -33,7 +33,7 @@ export const sequenceInstructions = 'The standalone pass_until tool intentionall
 
 export const guideInstructions = [
   guideBootstrap,
-  'Keep the live decision loop active: null secondsRemaining is not unlimited decision time. It is a sampled cumulative match clock, separate from the unknown response-inactivity deadline. Resolve pending legal choices promptly; polling, chat and webhook subscriptions do not answer them. Inspect the state returned even after a wait timeout.',
+  'Keep the live decision loop active: null secondsRemaining is not unlimited decision time. It is a sampled cumulative match clock, separate from timing.inactivity. Use the server response-inactivity deadline when status is running; zero requires immediate attention, and unknown/null never means unlimited time. Resolve pending legal choices promptly; polling, chat, resync and webhook subscriptions do not answer or renew them. Inspect the state returned even after a wait timeout.',
   'Call get_guide with no arguments to list the guides, then pass guideId to read one. You can also use resources/list and resources/read.',
   sequenceInstructions,
   ...guideList.map(({ uri, description }) => `${uri} — ${description}`),
