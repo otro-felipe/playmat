@@ -9,6 +9,8 @@ const usernamePattern = /^[a-z0-9_-]{3,24}$/i
 const allScopes = ['play', 'library', 'history', 'chat']
 const browserDuration = 1000 * 60 * 60 * 24 * 7
 const dummyHash = 'AAAAAAAAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+const prehashedPasswordPattern = /^[a-z0-9_-]{22}\.[a-z0-9_-]{43}$/i
+const tokenDigestPattern = /^[a-f0-9]{64}$/
 
 export const digest = token => createHash('sha256').update(token).digest('hex')
 export const newToken = () => randomBytes(32).toString('base64url')
@@ -25,6 +27,43 @@ async function verifyPassword(password, hash) {
   return timingSafeEqual(Buffer.from(candidate), Buffer.from(hash))
 }
 
+function validateProvisionList(bundle) {
+  if (!bundle || typeof bundle !== 'object' || Array.isArray(bundle)
+    || (bundle.accounts && !Array.isArray(bundle.accounts)) || (bundle.agents && !Array.isArray(bundle.agents))
+    || (bundle.accounts?.length ?? 0) > 16 || (bundle.agents?.length ?? 0) > 16) {
+    throw new ProductError(400, 'Invalid provisioning bundle')
+  }
+  return { accounts: bundle.accounts ?? [], agents: bundle.agents ?? [] }
+}
+
+function validName(name) {
+  return typeof name === 'string' && usernamePattern.test(name)
+}
+
+function validScopes(scopes) {
+  return Array.isArray(scopes) && scopes.length > 0 && scopes.length <= allScopes.length
+    && scopes.every(scope => allScopes.includes(scope))
+}
+
+export async function prepareProvisionBundle(bundle) {
+  const { accounts, agents } = validateProvisionList(bundle)
+  const users = []
+  for (const user of accounts) {
+    if (!validName(user?.username) || typeof user.password !== 'string' || user.password.length < 12 || user.password.length > 128) {
+      throw new ProductError(400, 'Invalid credential for a manual account')
+    }
+    users.push({ username: user.username, passwordHash: await hashPassword(user.password) })
+  }
+  const verified = agents.map(agent => {
+    if (!validName(agent?.owner) || !validName(agent.engineName) || typeof agent.token !== 'string'
+      || !digestPattern.test(agent.token) || !validScopes(agent.scopes)) {
+      throw new ProductError(400, 'Invalid manual agent credential')
+    }
+    return { owner: agent.owner, engineName: agent.engineName, tokenDigest: digest(agent.token), scopes: [...new Set(agent.scopes)] }
+  })
+  return { accounts: users, agents: verified }
+}
+
 export function createIdentity(pool, insecureCookie) {
   const cookieName = insecureCookie ? 'playmat-session' : '__Host-playmat-session'
   const attributes = '; Path=/; HttpOnly; SameSite=Lax' + (insecureCookie ? '' : '; Secure')
@@ -39,11 +78,15 @@ export function createIdentity(pool, insecureCookie) {
   }
 
   async function assertAvailable(db, name) {
+    if (await nameExists(db, name)) throw new ProductError(409, 'That engine name is already provisioned')
+  }
+
+  async function nameExists(db, name) {
     const { rowCount } = await db.query(
       'SELECT 1 FROM accounts WHERE username_key=$1 UNION ALL SELECT 1 FROM agent_grants WHERE engine_key=$1 LIMIT 1',
       [normalize(name)],
     )
-    if (rowCount) throw new ProductError(409, 'That engine name is already provisioned')
+    return rowCount > 0
   }
 
   async function provisionHuman(name, password) {
@@ -78,6 +121,42 @@ export function createIdentity(pool, insecureCookie) {
 
   async function revokeAgent(token) {
     await pool.query('UPDATE agent_grants SET revoked_at=now() WHERE digest=$1', [digest(token)])
+  }
+
+  async function importProvisionBundle(bundle) {
+    const { accounts, agents } = validateProvisionList(bundle)
+    for (const user of accounts) {
+      if (!validName(user?.username) || typeof user.passwordHash !== 'string' || !prehashedPasswordPattern.test(user.passwordHash)) {
+        throw new ProductError(400, 'Invalid prehashed manual account')
+      }
+    }
+    for (const agent of agents) {
+      if (!validName(agent?.owner) || !validName(agent.engineName) || typeof agent.tokenDigest !== 'string'
+        || !tokenDigestPattern.test(agent.tokenDigest) || !validScopes(agent.scopes)) {
+        throw new ProductError(400, 'Invalid prehashed agent grant')
+      }
+    }
+    const names = [...new Set([
+      ...accounts.map(user => normalize(user.username)),
+      ...agents.flatMap(agent => [normalize(agent.owner), normalize(agent.engineName)]),
+    ])].sort()
+    return transaction(pool, async db => {
+      for (const name of names) await lockName(db, name)
+      for (const user of accounts) {
+        if (await nameExists(db, user.username)) continue
+        await db.query('INSERT INTO accounts(id,username,username_key,password_hash) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING',
+          [randomUUID(), user.username, normalize(user.username), user.passwordHash])
+      }
+      for (const agent of agents) {
+        if (await nameExists(db, agent.engineName)) continue
+        const { rows: [owner] } = await db.query('SELECT id FROM accounts WHERE username_key=$1 AND enabled', [normalize(agent.owner)])
+        if (!owner) throw new ProductError(400, 'Manual agent owner is unavailable')
+        await db.query(`INSERT INTO agent_grants(digest,account_id,engine_name,engine_key,scopes)
+          VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, [
+          agent.tokenDigest, owner.id, agent.engineName, normalize(agent.engineName), [...new Set(agent.scopes)],
+        ])
+      }
+    })
   }
 
   async function signIn(name, password) {
@@ -133,7 +212,7 @@ export function createIdentity(pool, insecureCookie) {
     return agent ? actor(agent.id, agent.username, agent.engine_name, agent.scopes, true) : null
   }
 
-  return { provisionHuman, provisionAgent, revokeAgent, signIn, signOut, resolve, fromEngine }
+  return { provisionHuman, provisionAgent, revokeAgent, importProvisionBundle, signIn, signOut, resolve, fromEngine }
 }
 
 function actor(accountId, username, engineName, scopes, agent = false) {

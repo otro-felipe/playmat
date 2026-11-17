@@ -334,6 +334,7 @@ export async function createProduct({
 
   return {
     server, provisionHuman: id.provisionHuman, provisionAgent: id.provisionAgent, revokeAgent: id.revokeAgent,
+    importProvisionBundle: id.importProvisionBundle,
     archiveGames: archive.archiveGames,
     async dropTestSchema() {
       if (!schema.startsWith('test_')) throw Error('Refusing to remove data outside an isolated test schema')

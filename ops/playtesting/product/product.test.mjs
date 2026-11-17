@@ -85,6 +85,31 @@ test('[PM-AC-04] the claimed guest and actual table host control admission', { s
   assert.equal((await f.path(gate.replace('=Alice', '=Carol'))).status, 404)
 })
 
+test('[PM-AC-04] a prehashed provisioning import is idempotent and cannot rotate an existing identity', { skip: !databaseUrl }, async t => {
+  const { newToken, prepareProvisionBundle } = await import('./identity.mjs')
+  const f = await fixture(t)
+  const grant = newToken()
+  const replacement = newToken()
+  const first = await prepareProvisionBundle({
+    accounts: [{ username: 'Alice', password }],
+    agents: [{ owner: 'Alice', engineName: 'AgentAlice', token: grant, scopes: ['play'] }],
+  })
+  assert.doesNotMatch(JSON.stringify(first), new RegExp(password + '|' + grant))
+  await f.product.importProvisionBundle(first)
+  await f.product.importProvisionBundle(first)
+  await f.product.importProvisionBundle(await prepareProvisionBundle({
+    accounts: [{ username: 'alice', password: 'different-synthetic-password' }],
+    agents: [{ owner: 'Alice', engineName: 'agentalice', token: replacement, scopes: ['play', 'history'] }],
+  }))
+  const response = await f.path('/login', {
+    method: 'POST', redirect: 'manual', body: new URLSearchParams({ username: 'Alice', password }),
+  })
+  assert.equal(response.status, 303)
+  const initial = await f.path('/internal/verify', { headers: { Authorization: 'Bearer ' + grant } })
+  assert.deepEqual((await initial.json()).scopes, ['play'])
+  assert.equal((await f.path('/internal/verify', { headers: { Authorization: 'Bearer ' + replacement } })).status, 401)
+})
+
 test('[PM-AC-05] browser and delegated agent share immutable owned revisions and reject stale writes', { skip: !databaseUrl }, async t => {
   const f = await fixture(t)
   const alice = await signIn(f, 'Alice')

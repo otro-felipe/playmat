@@ -16,6 +16,11 @@ async function start() {
     store,
     insecureCookie: process.env.PLAYMAT_INSECURE_COOKIE === 'true',
   })
+  const provision = process.env.PLAYMAT_PROVISION_ONCE
+  if (provision) {
+    if (Buffer.byteLength(provision) > 16384) throw new Error('Provisioning input too large')
+    await product.importProvisionBundle(JSON.parse(provision))
+  }
   await product.archiveGames({ markInterrupted: true })
   product.server.listen(Number(process.env.PRODUCT_PORT ?? '8790'), '127.0.0.1')
   const archive = setInterval(() => product.archiveGames().catch(() => console.warn('Playmat archive scan delayed')), 5000)
