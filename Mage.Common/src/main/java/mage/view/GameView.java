@@ -82,6 +82,7 @@ public class GameView implements Serializable {
     private int gameCycle;
     /** what happened since this player's previous view (web client only; null when nothing did) */
     private List<GameEventView> events;
+    private SequenceEvidenceView sequenceEvidence;
 
     public GameView(GameState state, Game game, UUID createdForPlayerId, UUID watcherUserId) {
         // debug only
@@ -404,4 +405,8 @@ public class GameView implements Serializable {
     public void setEvents(List<GameEventView> events) {
         this.events = events == null || events.isEmpty() ? null : events;
     }
+
+    public SequenceEvidenceView getSequenceEvidence() { return sequenceEvidence; }
+
+    public void setSequenceEvidence(SequenceEvidenceView evidence) { this.sequenceEvidence = evidence; }
 }
