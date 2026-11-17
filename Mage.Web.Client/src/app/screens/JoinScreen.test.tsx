@@ -40,6 +40,7 @@ test('[PM-AC-04] an MCP invite shows and copies its endpoint, private link, reso
   const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined);
   const page = mount('coach');
   expect(await page.findByText(rules)).toBeTruthy();
+  expect(page.getByText(/get_guide without arguments to list the guides/)).toBeTruthy();
   expect(page.getByText('Coach', { exact: false })).toBeTruthy();
   fireEvent.click(page.getByRole('button', { name: 'Copy agent instructions' }));
   expect(await page.findByText('Agent instructions copied')).toBeTruthy();
@@ -47,8 +48,9 @@ test('[PM-AC-04] an MCP invite shows and copies its endpoint, private link, reso
   for (const detail of [
     `${window.location.origin}/mcp`, `${window.location.origin}${invitePath}`,
     'playmat://guides/getting-started', 'playmat://guides/card-catalog', 'playmat://guides/turn-planning', rules,
-    'join_game', 'Coach',
+    'get_guide without arguments to list the guides', 'guideId', 'join_game', 'Coach',
   ]) expect(instructions).toContain(detail);
+  expect(instructions.indexOf('get_guide')).toBeLessThan(instructions.indexOf('join_game'));
 });
 
 test('[PM-AC-04] existing invites use Quiet and instructions can be copied manually when clipboard access fails', async () => {

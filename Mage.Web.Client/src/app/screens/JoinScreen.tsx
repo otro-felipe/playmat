@@ -64,6 +64,7 @@ function McpInviteGuide({ tableId, name, chatMode = 'quiet' }: { tableId: string
       <McpConnectionEndpoint endpoint={endpoint} />
       <div className={styles.guide}>
         <h3>{t('mcpInvite.resources')}</h3>
+        <p className={styles.note}>{t('mcpInvite.instructions.read')}</p>
         <ul>
           {MCP_GUIDES.map((uri) => <li key={uri}><code>{uri}</code></li>)}
         </ul>

@@ -134,6 +134,38 @@ test('an invited agent can discover and read the Playmat guides before joining a
   await assert.rejects(() => rival.readResource({ uri: rules }), /401|Unauthorized/i);
 });
 
+test('[PM-AC-08] a tools-only connector can discover and read the same guides as MCP resources', async (t) => {
+  const { url, fixtures, tokens } = await start(t);
+  tokens.set('fixture-history', { accountId: 'owner-c', engineName: 'Agent-C', scopes: ['history'] });
+  const client = await connect(t, url, 'fixture-history');
+  const { tools } = await client.listTools();
+  const tool = tools.find(({ name }) => name === 'get_guide');
+  assert.equal(tool?.annotations?.readOnlyHint, true);
+  assert.match(client.getInstructions(), /get_guide/);
+
+  const ids = ['getting-started', 'card-catalog', 'turn-planning', 'rules'];
+  const { error, value: { guides } } = await call(client, 'get_guide');
+  assert.equal(error, false);
+  assert.deepEqual(new Set(guides.map(({ name }) => name)), new Set(ids));
+  assert.equal(guides.length, ids.length);
+
+  const { resources } = await client.listResources();
+  for (const guide of guides) {
+    const { name, uri } = guide;
+    assert.equal(uri, `playmat://guides/${name}`);
+    assert.deepEqual(guide, resources.find((resource) => resource.uri === uri));
+    const { contents: [{ text }] } = await client.readResource({ uri });
+    const selected = await call(client, 'get_guide', { guideId: name });
+    assert.deepEqual(selected, { error: false, value: { ...guide, text } });
+  }
+  const invalid = await client.callTool({ name: 'get_guide', arguments: { guideId: 'nonexistent' } });
+  assert.equal(invalid.isError, true);
+  assert.equal(fixtures.size, 0);
+
+  tokens.delete('fixture-history');
+  await assert.rejects(() => client.callTool({ name: 'get_guide', arguments: { guideId: 'rules' } }), /401|Unauthorized/i);
+});
+
 test('[PM-AC-09] checks an explicit hold and stops on a new meaningful response', async (t) => {
   const { url, fixtures } = await start(t);
   const player = await connect(t, url, 'fixture-player');

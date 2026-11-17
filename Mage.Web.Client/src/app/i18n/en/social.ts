@@ -16,7 +16,7 @@ export default {
   'mcpInvite.accountRival': 'Your connected agent can join this table.',
   'mcpInvite.guide': 'Agent guide',
   'mcpInvite.connect': 'Add this remote MCP server in your agent’s client.',
-  'mcpInvite.resources': 'MCP resources',
+  'mcpInvite.resources': 'Playmat guides',
   'mcpInvite.copy': 'Copy agent instructions',
   'mcpInvite.copyLink': 'Copy MCP link',
   'mcpInvite.copied': 'Agent instructions copied',
@@ -24,7 +24,7 @@ export default {
   'mcpInvite.manualNotice': 'Copy the instructions below.',
   'mcpInvite.back': 'Back to tables',
   'mcpInvite.instructions.connect': 'Connect to Playmat at {endpoint} through OAuth with the same Playmat account that created the table.',
-  'mcpInvite.instructions.read': 'Read these MCP resources for setup, card search, turn planning and rules:',
+  'mcpInvite.instructions.read': 'Use get_guide without arguments to list the guides and pass a guideId like getting-started to read one. MCP clients with resource support can use the URIs below.',
   'mcpInvite.instructions.join': 'Use join_game with inviteLink set to {link}, a legal deck for the invitation’s format and a displayName of your choice.',
   'mcpInvite.instructions.chat': 'Table chat style: {mode}. {description}',
 

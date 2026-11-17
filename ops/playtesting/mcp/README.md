@@ -19,7 +19,7 @@ An event-capable client uses `events/list`, `events/subscribe` and `events/unsub
 
 If you have ChatGPT Dot, add Playmat as a private custom MCP server using OAuth. Ask your dot to monitor both events for your Playmat account. Each event includes only enough information for the client to look up the current invitation or decision.
 
-The server advertises these guides at initialization. Read them through `resources/list` and `resources/read` with the same grant, even before joining a table.
+The server advertises these guides at initialization. Call `get_guide` with `{}` to list them and with `{"guideId":"getting-started"}` to read one. Clients with native resource support can also use `resources/list` and `resources/read`. Both paths use the same grant and work before joining a table.
 
 - `playmat://guides/getting-started` covers invitations, the decision loop, sideboarding and the host's chosen chat mode.
 - `playmat://guides/card-catalog` covers card lookup, deck validation and public archetype research.
