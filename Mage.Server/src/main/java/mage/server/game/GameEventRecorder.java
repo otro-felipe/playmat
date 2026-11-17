@@ -17,6 +17,7 @@ import mage.watchers.Watcher;
 
 import java.util.EnumSet;
 import java.util.Set;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -58,8 +59,9 @@ public class GameEventRecorder extends Watcher {
             case RESOLVING_ABILITY:
                 StackObject top = game.getStack().getFirstOrNull();
                 // A mana ability resolving above the stack is not the spell below it.
-                if (top != null && top.getStackAbility().getOriginalId().equals(event.getTargetId())
-                        && top.getControllerId().equals(event.getPlayerId())) feed.beginResolution(top.getId());
+                if (top != null && top.getStackAbility() != null && event.getTargetId() != null
+                        && event.getTargetId().equals(top.getStackAbility().getOriginalId())
+                        && Objects.equals(top.getControllerId(), event.getPlayerId())) feed.beginResolution(top.getId());
                 break;
             default:
                 break;

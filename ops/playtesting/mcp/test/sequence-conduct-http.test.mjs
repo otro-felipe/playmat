@@ -23,7 +23,7 @@ async function fixture(t, variant) {
     players:[{playerId:own,name:'Pilot',hasPriority:true,battlefield:{}},{playerId:rival,name:'Rival',life,battlefield:{}}],myHand:hand,stack,
     sequenceEvidence:{epoch:'synthetic-feed',publicActions:{[own]:0,[rival]:counter},resolutions,resolutionRevision:revision},
     canPlayObjects:{objects:Object.fromEntries(Object.keys(hand).map(id=>[id,{}]))} });
-  const next=(method='GAME_SELECT',message='Play spells and abilities')=>send(method,{message,gameView:view()});
+  const next=(method='GAME_SELECT',message='Play spells and abilities')=>send(method,{message,gameView:view(), ...(method==='GAME_TARGET'?{targets:[rival],flag:true}:{})});
   ws.on('connection',socket=>{
     send=(method,data)=>socket.send(JSON.stringify({method,messageId:++seq,objectId:gameId,data}));
     socket.on('message',raw=>{
