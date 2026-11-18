@@ -58,8 +58,9 @@ function stackIdentity(stack) {
 }
 
 function plannedChoice(state, decision, step) {
+  if (step.intent) return decision.choices.find((choice) => choice.intent === step.intent);
   if (step.choiceId) return decision.choices.find((choice) => choice.id === step.choiceId);
-  const { cardName, cardId, label, zone } = step.select;
+  const { cardName, cardId, objectId, label, zone } = step.select;
   // Battlefield is a public zone, not a controller filter. The current
   // engine choices still decide which objects may actually be selected.
   const cards = zone === 'hand' ? state.ownHand
@@ -68,6 +69,7 @@ function plannedChoice(state, decision, step) {
     if (zone && !cards?.some((card) => card.id === choice.card?.id)) return false;
     if (cardName !== undefined && choice.card?.name !== cardName) return false;
     if (cardId !== undefined && choice.card?.id !== cardId && choice.card?.cardId !== cardId) return false;
+    if (objectId !== undefined && choice.objectId !== objectId && choice.card?.id !== objectId) return false;
     return label === undefined || choice.label === label;
   });
   if (matches.length > 1) throw new ToolError('ambiguous_choice', 'Use the exact card ID when more than one choice matches.');
@@ -153,8 +155,11 @@ export class GameSeat {
     return outcome;
   }
 
-  startSequence({ gameId, cursor, steps }, authorize, responsePolicy = 'interrupt') {
+  startSequence({ gameId, cursor, steps, expectedStackIds = [], allowPlannedCombatDamage = false, autoAdvance = false }, authorize, responsePolicy = 'interrupt') {
     const initial = this.snapshot(gameId);
+    if (new Set(expectedStackIds).size !== expectedStackIds.length || expectedStackIds.some((id) => !initial.stack.some((card) => card.id === id))) {
+      throw new ToolError('bad_stack_expectation', 'Adopt only exact, distinct objects visible at the current stack cursor.');
+    }
     if (steps.some((step, index) => step.kind === 'advance_to_own_turn' && index !== steps.length - 1)) {
       throw new ToolError('bad_sequence', 'Advance to your next turn only as the final step; replan before taking another action.');
     }
@@ -167,8 +172,39 @@ export class GameSeat {
     this.#current = sequence;
     this.#sequences.set(sequence.id, sequence);
     if (this.#sequences.size > 40) this.#sequences.delete(this.#sequences.keys().next().value);
-    void this.#runSequence(sequence, initial, steps, authorize, responsePolicy);
+    void this.#runSequence(sequence, initial, steps, authorize, responsePolicy, { expectedStackIds, allowPlannedCombatDamage, autoAdvance });
     return this.sequenceStatus({ gameId, sequenceId: sequence.id });
+  }
+
+  /** Compile significant intentions; ordinary priority handoffs are the executor's responsibility. */
+  startTurn({ gameId, cursor, actions, expectedStackIds, finish = 'next_turn' }, authorize) {
+    const initial = this.snapshot(gameId);
+    const steps = [];
+    for (const action of actions) {
+      if (action.kind === 'play') {
+        steps.push({ kind: 'answer', guard: { kind: 'priority', priority: 'self' }, select: action.select, expectCast: 'auto', semanticPlay: true,
+          requiresEmptyStack: action.when !== 'priority', expectTriggers: action.expectTriggers, expectTargetTriggers: action.expectTargetTriggers });
+        for (const target of action.targets ?? []) steps.push({ kind: 'answer', guard: { kind: 'target', instruction: target.instruction }, select: target.select, semanticTarget: true,
+          skipIfTargetedBy: action.select.cardId });
+        for (const source of action.payWith ?? []) steps.push({ kind: 'answer', guard: { kind: 'payMana' }, select: { objectId: source, zone: 'battlefield' } });
+      } else if (action.kind === 'choose') {
+        steps.push({ ...action, kind: 'answer' });
+      } else if (action.kind === 'attack') {
+        if (action.attackers === 'all' || action.attackers === undefined) steps.push({ kind: 'answer', guard: { kind: 'declareAttackers' }, intent: 'attack_all' });
+        else for (const id of action.attackers) steps.push({ kind: 'answer', guard: { kind: 'declareAttackers' }, select: { objectId: id, zone: 'battlefield' } });
+        steps.push({ kind: 'answer', guard: { kind: 'declareAttackers' }, intent: 'confirm_attack' });
+      } else steps.push(action);
+    }
+    // Finishing the final cast includes its declared resolution, even without a phase advance.
+    steps.push({ kind: 'pass_until', priority: 'self', stackEmpty: true, allowPlannedResolutions: true, skipOptionalResponses: true });
+    if (finish === 'next_turn') steps.push({ kind: 'advance_to_own_turn' });
+    else if (finish === 'end_step') steps.push({ kind: 'pass_until', step: 'END_TURN' });
+    if (steps.length > 96) throw new ToolError('bad_sequence', 'The semantic turn exceeds its bounded action budget.');
+    const ownId = initial.players?.find((player) => player.yourSeat)?.id;
+    const adopted = expectedStackIds ?? initial.stack.filter((card) => card.controllerId === ownId).map((card) => card.id);
+    if (adopted.length > 16) throw new ToolError('bad_stack_expectation', 'A semantic turn may adopt at most sixteen visible objects.');
+    return this.startSequence({ gameId, cursor, steps, autoAdvance: true, allowPlannedCombatDamage: true,
+      expectedStackIds: adopted }, authorize);
   }
 
   sequenceStatus({ gameId, sequenceId }) {
@@ -189,7 +225,7 @@ export class GameSeat {
     this.#current?.controller.abort(new ToolError(reason, 'The active game changed.'));
   }
 
-  async #runSequence(sequence, initial, steps, authorize, responsePolicy) {
+  async #runSequence(sequence, initial, steps, authorize, responsePolicy, { expectedStackIds, allowPlannedCombatDamage, autoAdvance }) {
     const { signal } = sequence.controller;
     const wallDeadline = Date.now() + this.maxSequenceWallMs;
     let deadline = Date.now() + this.sequenceTimeoutMs;
@@ -202,6 +238,7 @@ export class GameSeat {
       sequence.waitingFor = suspendedAt !== null ? 'opponent' : null;
     };
     accountTime(initial);
+    const publicCardState = ({ hints: _derivedHints, ...card }) => card;
     const opponentState = (state) => {
       const opponents = (state.players ?? []).filter((player) => !player.yourSeat);
       const opponentIds = new Set(opponents.map((player) => player.id));
@@ -214,12 +251,12 @@ export class GameSeat {
         || (!card.controllerId && !ownObjects.has(card.id));
       return JSON.stringify({
         players: opponents.map(({ id, life, handCount, libraryCount, battlefield, graveyard, exile }) =>
-          ({ id, life, handCount, libraryCount, battlefield, graveyard, exile })),
+          ({ id, life, handCount, libraryCount, battlefield: battlefield?.map(publicCardState), graveyard: graveyard?.map(publicCardState), exile: exile?.map(publicCardState) })),
         combat: (state.combat ?? []).flatMap((group, index) => {
           const attackers = (group.attackers ?? []).filter(opposingCombatCard);
           const blockers = (group.blockers ?? []).filter(opposingCombatCard);
           return attackers.length || blockers.length
-            ? [{ index, attackerIds: (group.attackers ?? []).map((card) => card.id), attackers, blockers }] : [];
+            ? [{ index, attackerIds: (group.attackers ?? []).map((card) => card.id), attackers: attackers.map(publicCardState), blockers: blockers.map(publicCardState) }] : [];
         }),
       });
     };
@@ -227,6 +264,13 @@ export class GameSeat {
     const ownPlayerId = initial.players?.find((player) => player.yourSeat)?.id;
     const initialEvidence = initial.sequenceEvidence;
     let evidenceRevision = initialEvidence?.resolutionRevision;
+    let combatRevision = initialEvidence?.combatRevision;
+    const informationRevision = initialEvidence?.informationRevision;
+    const plannedAttackers = new Set((initial.combat ?? []).flatMap((group) => group.attackers ?? []).filter((card) => card.controllerId === ownPlayerId
+      || initial.players?.some((player) => player.yourSeat && player.battlefield?.some((own) => own.id === card.id))).map((card) => card.id));
+    let attackDeclarationPending = false;
+    const pendingCombatDamage = new Map();
+    let settlingResolution = false;
     const resolvingPlanned = new Set();
     let advancingOwnTurn = false;
     const validEvidence = (evidence) => evidence && typeof evidence.epoch === 'string'
@@ -240,19 +284,21 @@ export class GameSeat {
     let passCount = 0;
     let expectedStackCards = initial.stack;
     let expectedStack = stackIdentity(initial.stack);
-    const plannedStackIds = new Set();
+    const plannedStackIds = new Set(expectedStackIds);
+    for (const id of expectedStackIds) if (initialEvidence?.resolutions?.[id]) resolvingPlanned.add(id);
     const initiallyKnownCards = new Set([
       ...(initial.ownHand ?? []), ...initial.stack,
       ...(initial.players ?? []).flatMap((player) => [
         ...(player.battlefield ?? []), ...(player.exile ?? []), ...(player.graveyard ?? []),
       ]),
     ].map((card) => card.cardId ?? card.id));
-    let allowPlannedResolutions = false;
+    const allowPlannedResolutions = autoAdvance || expectedStackIds.length > 0 || steps.some((step) => step.allowPlannedResolutions === true);
     let pendingCast = null;
     let pendingTriggers = [];
     const checkStack = (state) => {
       if (responsePolicy === 'ignore') return;
       const evidence = state.sequenceEvidence;
+      if (autoAdvance && !Number.isSafeInteger(informationRevision)) throw new ToolError('evidence_unavailable', 'Semantic turns need current information evidence.');
       const witnessed = initialEvidenceValid && validEvidence(evidence) && evidence.epoch === initialEvidence.epoch;
       const newResolutions = witnessed ? Object.entries(evidence.resolutions)
         .filter(([, revision]) => revision > evidenceRevision).sort((a, b) => a[1] - b[1]) : [];
@@ -266,16 +312,51 @@ export class GameSeat {
           && (evidence.publicActions[player.id] ?? 0) !== (initialEvidence.publicActions[player.id] ?? 0)) {
           throw new ToolError('opponent_action', 'The opponent took a public non-pass action; replan the unapplied remainder.');
         }
+        if (informationRevision !== undefined) {
+          if (!Number.isSafeInteger(evidence.informationRevision) || evidence.informationRevision < informationRevision) throw new ToolError('evidence_unavailable', 'Information evidence is unavailable or moved backwards.');
+          if (evidence.informationRevision !== informationRevision) throw new ToolError('new_information', 'A new public or own random outcome needs a fresh plan.');
+        }
+      }
+      if (attackDeclarationPending) {
+        const ownIds = new Set(state.players?.filter((player) => player.yourSeat).flatMap((player) => player.battlefield ?? []).map((card) => card.id));
+        for (const group of state.combat ?? []) for (const card of group.attackers ?? []) {
+          if (card.controllerId === ownPlayerId || ownIds.has(card.id)) plannedAttackers.add(card.id);
+        }
+      }
+      if (allowPlannedCombatDamage) {
+        if (!witnessed || !Number.isSafeInteger(combatRevision) || !Number.isSafeInteger(evidence.combatRevision) || !Array.isArray(evidence.combatDamage)) {
+          throw new ToolError('evidence_unavailable', 'Planned combat needs current public combat evidence.');
+        }
+        const fresh = evidence.combatDamage.filter((entry) => entry.revision > combatRevision).sort((a, b) => a.revision - b.revision);
+        if (fresh.length !== evidence.combatRevision - combatRevision || fresh.some((entry, index) => entry.revision !== combatRevision + index + 1)) {
+          throw new ToolError('evidence_unavailable', 'Public combat evidence is discontinuous.');
+        }
+        for (const hit of fresh) {
+          if (hit.controllerId !== ownPlayerId || !plannedAttackers.has(hit.sourceId) || !Number.isSafeInteger(hit.amount) || hit.amount <= 0
+            || !state.players?.some((player) => !player.yourSeat && player.id === hit.targetId)) {
+            throw new ToolError('opponent_state_changed', 'Combat damage was not caused by a declared own attacker.');
+          }
+          pendingCombatDamage.set(hit.targetId, (pendingCombatDamage.get(hit.targetId) ?? 0) + hit.amount);
+        }
+        combatRevision = evidence.combatRevision;
       }
       for (const [id] of newResolutions) {
         if (!allowPlannedResolutions || !plannedStackIds.has(id)) {
           throw new ToolError('state_changed', 'An unplanned stack object resolved between views.');
         }
         resolvingPlanned.add(id);
+        settlingResolution = true;
       }
       const currentOpponentState = opponentState(state);
+      let combatExplainsChange = false;
+      if (currentOpponentState !== expectedOpponentState && pendingCombatDamage.size) {
+        const expected = JSON.parse(expectedOpponentState);
+        for (const player of expected.players) if (pendingCombatDamage.has(player.id) && Number.isFinite(player.life)) player.life -= pendingCombatDamage.get(player.id);
+        combatExplainsChange = JSON.stringify(expected) === currentOpponentState;
+        if (combatExplainsChange) pendingCombatDamage.clear();
+      }
       if (currentOpponentState !== expectedOpponentState
-        && !(witnessed && ((allowPlannedResolutions && resolvingPlanned.size) || advancingOwnTurn))) {
+        && !(witnessed && ((allowPlannedResolutions && (resolvingPlanned.size || settlingResolution)) || advancingOwnTurn || combatExplainsChange))) {
         throw new ToolError('opponent_state_changed', 'Public opponent state changed without verified planned resolution; inspect before continuing.');
       }
       const commitEvidence = () => {
@@ -283,7 +364,7 @@ export class GameSeat {
         if (witnessed) evidenceRevision = evidence.resolutionRevision;
         for (const id of resolvingPlanned) if (!state.stack.some((item) => item.id === id)) resolvingPlanned.delete(id);
       };
-      if (allowPlannedResolutions) {
+      {
         const own = state.players?.find((player) => player.yourSeat);
         if ([...(state.ownHand ?? []), ...(own?.exile ?? [])].some((card) =>
           !initiallyKnownCards.has(card.cardId ?? card.id))) {
@@ -312,7 +393,8 @@ export class GameSeat {
         }
         const expected = nextTriggers.filter((trigger) => trigger.remaining > 0
           && item.abilityType === 'TRIGGERED_NONMANA' && item.sourceId === trigger.sourceId
-          && item.abilityText === trigger.abilityText && item.controllerId === trigger.playerId);
+          && item.abilityText === trigger.abilityText && item.controllerId === trigger.playerId
+          && (!trigger.targetingCardId || state.stack.some((spell) => spell.cardId === trigger.targetingCardId && spell.controllerId === ownPlayerId && spell.targets?.includes(trigger.sourceId))));
         if (expected.length !== 1) throw new ToolError('state_changed', 'An unexpected or ambiguous stack object needs a fresh plan.');
         expected[0].remaining--;
       }
@@ -379,10 +461,30 @@ export class GameSeat {
       }
     };
     const waitForNext = () => waitForState(observable);
+    const matchesAnswer = (state, step) => step?.kind === 'answer' && visibleDecision(state)
+      && (step.decisionId ? state.decision.id === step.decisionId : step.guard?.kind === state.decision.kind && reaches(state, step.guard)
+        && (step.guard.instruction === undefined || step.guard.instruction === state.decision.instruction))
+      && (!step.requiresEmptyStack || state.stack.length === 0);
+    const intentionReady = (state, step) => matchesAnswer(state, step) && (!step.semanticPlay || plannedChoice(state, state.decision, step));
+    const canSkipTarget = (state, step) => {
+      const targetId = step.select?.objectId ?? step.select?.cardId;
+      if (!step.skipIfTargetedBy || step.guard?.kind !== 'target' || !targetId) return false;
+      const publicTarget = state.stack.some((card) => card.id === targetId) || state.players?.some((player) => player.id === targetId || player.battlefield?.some((card) => card.id === targetId));
+      const matching = state.stack.filter((card) => card.cardId === step.skipIfTargetedBy && card.controllerId === ownPlayerId && plannedStackIds.has(card.id));
+      return publicTarget && matching.length === 1 && matching[0].targets?.includes(targetId);
+    };
+    const submit = async (args) => {
+      settlingResolution = false;
+      pendingCombatDamage.clear();
+      return this.submit(args, sequence.id);
+    };
+    const nextPredeterminedAnswer = (state) => {
+      const next = steps[sequence.completedSteps + 1];
+      return matchesAnswer(state, next) && next.guard?.instruction !== undefined && plannedChoice(state, state.decision, next);
+    };
     try {
       for (const step of steps) {
         advancingOwnTurn = step.kind === 'advance_to_own_turn';
-        allowPlannedResolutions = step.allowPlannedResolutions === true;
         let state = await stateForStep();
         if (step.kind === 'hold' || step.kind === 'pace') {
           if (!visibleDecision(state) || state.decision.id === previousDecisionId) throw new ToolError('not_actionable', 'A hold requires a current decision.');
@@ -398,7 +500,34 @@ export class GameSeat {
             if (!await waitForNext()) throw new ToolError('timeout', 'The expected decision did not arrive.');
             state = await stateForStep();
           }
+          if (autoAdvance && state.stop) throw new ToolError('response_available', 'The configured stop needs a fresh plan.');
+          if ((!matchesAnswer(state, step) || step.semanticTarget && step.guard?.instruction === undefined) && canSkipTarget(state, step)) {
+            sequence.skippedSteps = (sequence.skippedSteps ?? 0) + 1;
+            sequence.completedSteps++;
+            sequence.cursor = state.cursor;
+            continue;
+          }
+          while (autoAdvance && !intentionReady(state, step)) {
+            const decision = visibleDecision(state);
+            if (!decision || decision.id === previousDecisionId) {
+              if (!await waitForNext()) throw new ToolError('timeout', 'The next intended decision did not arrive.');
+            } else {
+              if (step.semanticPlay && decision.kind === 'priority' && state.stack.length === 0 && ['PRECOMBAT_MAIN', 'POSTCOMBAT_MAIN'].includes(state.step) && state.priority === 'self') {
+                throw new ToolError('illegal_choice', 'The next planned play is unavailable in this main phase.');
+              }
+              const pass = decision.choices.find((choice) => choice.type === 'pass');
+              if (decision.kind !== 'priority' || state.priority !== 'self' || !pass || state.stop || pendingCast
+                || (!step.semanticPlay && step.guard?.kind !== 'declareAttackers' && !state.stack.length)) {
+                throw new ToolError('response_available', 'An unplanned mandatory choice or unavailable intention needs a fresh plan.');
+              }
+              if (++passCount > 80) throw new ToolError('pass_limit', 'The semantic turn reached its priority limit.');
+              await submit({ gameId: sequence.gameId, cursor: state.cursor, decisionId: decision.id, choiceId: pass.id, idempotencyKey: `${sequence.id}:implicit:${passCount}` });
+              sequence.appliedDecisions++; previousDecisionId = decision.id;
+            }
+            state = await stateForStep();
+          }
           const decision = state.decision;
+          if (step.semanticTarget && step.guard?.instruction === undefined) throw new ToolError('response_available', 'An unresolved target needs its exact instruction guard; an absent prompt is not target evidence.');
           if (pendingCast || state.turn !== turn || (step.decisionId ? decision.id !== step.decisionId :
             !step.guard || step.guard.kind !== decision.kind || !reaches(state, step.guard)
             || (step.guard.instruction !== undefined && step.guard.instruction !== decision.instruction))) {
@@ -406,6 +535,20 @@ export class GameSeat {
           }
           const choice = plannedChoice(state, decision, step);
           if (!choice) throw new ToolError('illegal_choice', 'The planned choice is unavailable in the current decision.');
+          if (step.expectTargetTriggers?.length) {
+            for (const trigger of step.expectTargetTriggers) {
+              const rival = state.players?.find((player) => !player.yourSeat && player.battlefield?.some((card) => card.id === trigger.sourceId));
+              const source = rival?.battlefield.find((card) => card.id === trigger.sourceId);
+              const targetingCast = step.expectCast && (choice.card?.cardId === trigger.targetingCardId || choice.card?.id === trigger.targetingCardId);
+              const existing = state.stack.some((card) => card.controllerId === ownPlayerId && card.cardId === trigger.targetingCardId && plannedStackIds.has(card.id));
+              if (!source || source.faceDown || !/^Ward(?:\b|[—–-])/i.test(trigger.abilityText)
+                || !source.rules?.some((rule) => /^Ward(?:\b|[—–-])/i.test(rule)) || (!targetingCast && !existing)) {
+                throw new ToolError('bad_target_trigger_expectation', 'Expect only exact Ward on a visible opposing target of the declared own spell.');
+              }
+              if (pendingTriggers.some((entry) => entry.remaining > 0 && entry.sourceId === trigger.sourceId && entry.abilityText === trigger.abilityText)) throw new ToolError('ambiguous_trigger_expectation', 'Declare one exact target-trigger budget.');
+              pendingTriggers.push({ ...trigger, playerId: rival.id, remaining: trigger.count ?? 1 });
+            }
+          }
           if (step.expectTriggers?.length) {
             const own = state.players?.find((player) => player.yourSeat);
             const sources = [...(state.ownHand ?? []), ...(own?.battlefield ?? [])];
@@ -424,7 +567,7 @@ export class GameSeat {
             }
             pendingTriggers.push(...additions);
           }
-          if (step.expectCast) {
+          if (step.expectCast && !(step.expectCast === 'auto' && choice.card?.types?.includes('LAND'))) {
             // The engine's visible legal choice can cast from exile/graveyard too
             // (for example Wrenn's Resolve or flashback). Never infer permission
             // from the zone alone, or treat a battlefield activation as a cast.
@@ -439,10 +582,11 @@ export class GameSeat {
             }
             pendingCast = { cardId: card.cardId, name: card.name, playerId };
           }
-          await this.submit({
+          if (decision.kind === 'declareAttackers') attackDeclarationPending = true;
+          await submit({
             gameId: sequence.gameId, cursor: state.cursor, decisionId: decision.id, choiceId: choice.id,
             idempotencyKey: `${sequence.id}:${sequence.completedSteps}`, value: step.value,
-          }, sequence.id);
+          });
           sequence.appliedDecisions++;
           previousDecisionId = decision.id;
         } else if (step.kind === 'yield_priority') {
@@ -456,8 +600,8 @@ export class GameSeat {
           if (decision.kind !== 'priority' || state.priority !== 'self' || !choice || pendingCast || state.stop) {
             throw new ToolError('response_available', 'Yield requires your ordinary priority decision.');
           }
-          await this.submit({ gameId: sequence.gameId, cursor: state.cursor, decisionId: decision.id,
-            choiceId: choice.id, idempotencyKey: `${sequence.id}:yield:${sequence.completedSteps}` }, sequence.id);
+          await submit({ gameId: sequence.gameId, cursor: state.cursor, decisionId: decision.id,
+            choiceId: choice.id, idempotencyKey: `${sequence.id}:yield:${sequence.completedSteps}` });
           sequence.appliedDecisions++;
           previousDecisionId = decision.id;
           const destination = step.until ?? 'self';
@@ -470,7 +614,7 @@ export class GameSeat {
             return updated.priority === 'self' && next && next.id !== decision.id ? updated : null;
           });
           if (!observed) throw new ToolError('timeout', 'Priority did not return before the sequence deadline.');
-          if (visibleDecision(observed) && observed.decision.id !== decision.id && observed.decision.kind !== 'priority') {
+          if (visibleDecision(observed) && observed.decision.id !== decision.id && observed.decision.kind !== 'priority' && !nextPredeterminedAnswer(observed)) {
             throw new ToolError('response_available', 'A mandatory prompt needs a fresh decision.');
           }
           await stateForStep();
@@ -493,33 +637,42 @@ export class GameSeat {
               throw new ToolError('response_available', 'A currently legal play or mandatory choice needs your decision before advancing.');
             }
             if (++passCount > 80) throw new ToolError('pass_limit', 'The advance reached its priority window limit.');
-            await this.submit({ gameId: sequence.gameId, cursor: state.cursor, decisionId: state.decision.id,
-              choiceId: choice.id, idempotencyKey: `${sequence.id}:advance:${passCount}` }, sequence.id);
+            await submit({ gameId: sequence.gameId, cursor: state.cursor, decisionId: state.decision.id,
+              choiceId: choice.id, idempotencyKey: `${sequence.id}:advance:${passCount}` });
             sequence.appliedDecisions++;
             previousDecisionId = state.decision.id;
           }
         } else if (step.kind === 'pass_until') {
+          const destinationReached = (view) => reaches(view, step) && !pendingCast
+            && (!autoAdvance || step.step || step.phase || !visibleDecision(view) || view.decision.id !== previousDecisionId);
           for (;;) {
             state = await stateForStep();
-            if (reaches(state, step)) break;
+            // A requested combat declaration is itself the destination, not an unknown choice to answer.
+            if ((step.step || step.phase) && destinationReached(state)) break;
+            if (visibleDecision(state) && state.decision.id !== previousDecisionId && state.decision.kind !== 'priority') {
+              if (nextPredeterminedAnswer(state)) break;
+              throw new ToolError('response_available', 'An unplanned mandatory choice needs a fresh decision.');
+            }
+            if (destinationReached(state)) break;
             if (!visibleDecision(state) || state.decision.id === previousDecisionId) {
-              const observed = await waitForState((updated) => reaches(updated, step) ? updated : observable(updated));
+              const observed = await waitForState((updated) => destinationReached(updated) ? updated : observable(updated));
               if (!observed) throw new ToolError('timeout', 'The destination did not arrive.');
               continue;
             }
             const choice = state.decision.choices.find((item) => item.type === 'pass');
             if (!choice || state.decision.kind !== 'priority' || pendingCast || state.stop
-              || (!step.skipOptionalResponses && state.decision.choices.some((item) => item.type !== 'pass' && item.type !== 'manaAbility'))) {
+              || (!step.skipOptionalResponses && state.decision.choices.some((item) => item.type !== 'pass' && (autoAdvance ? !plainManaChoice(item) : item.type !== 'manaAbility')))) {
               throw new ToolError('response_available', 'A new response or mandatory prompt needs a decision.');
             }
-            if (++passCount > 30) throw new ToolError('pass_limit', 'The sequence reached its priority window limit.');
-            await this.submit({
+            if (++passCount > (autoAdvance ? 80 : 30)) throw new ToolError('pass_limit', 'The sequence reached its priority window limit.');
+            await submit({
               gameId: sequence.gameId, cursor: state.cursor, decisionId: state.decision.id, choiceId: choice.id,
               idempotencyKey: `${sequence.id}:pass:${passCount}`,
-            }, sequence.id);
+            });
             sequence.appliedDecisions++;
             previousDecisionId = state.decision.id;
           }
+          sequence.lastDestination = { cursor: state.cursor, turn: state.turn, activePlayerId: state.activePlayerId, phase: state.phase, step: state.step };
         }
         sequence.completedSteps++;
         sequence.cursor = this.snapshot().cursor;

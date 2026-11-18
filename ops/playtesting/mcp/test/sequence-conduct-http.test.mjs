@@ -15,13 +15,14 @@ async function fixture(t, variant) {
   const ws = new WebSocketServer({ host:'127.0.0.1', port:0 }); await once(ws,'listening');
   const accepted=[], timers=new Set();
   let seq=0, counter=0, revision=0, turn=3, active=own, life=20, stack={}, hand={ [bolt]:boltCard,[shock]:shockCard }, resolutions={};
+  if (variant === 'existing-stack') { delete hand[bolt]; stack = { [boltStack]: { ...boltCard, id: boltStack } }; }
   const engine=new PlaymatEngineSeat({ engineUrl:`ws://127.0.0.1:${ws.address().port}`, engineName:'Pilot',trustedHeader:'X-Fixture' });
   const server=createMcpServer({ authorize:async token=>token==='isolated-http-fixture'?{accountId:'fixture',engineName:'Pilot',scopes:['play']}:null,createEngine:()=>engine });
   const connected=once(ws,'connection');
   let send;
   const view=()=>({ turn,phase:'PRECOMBAT_MAIN',step:variant==='advance'?'END_TURN':'PRECOMBAT_MAIN',myPlayerId:own,activePlayerId:active,activePlayerName:active===own?'Pilot':'Rival',priorityPlayerName:'Pilot',
     players:[{playerId:own,name:'Pilot',hasPriority:true,battlefield:{}},{playerId:rival,name:'Rival',life,battlefield:{}}],myHand:hand,stack,
-    sequenceEvidence:{epoch:'synthetic-feed',publicActions:{[own]:0,[rival]:counter},resolutions,resolutionRevision:revision},
+    sequenceEvidence:{epoch:'synthetic-feed',publicActions:{[own]:0,[rival]:counter},resolutions,resolutionRevision:revision,combatRevision:0,combatDamage:[],informationRevision:0},
     canPlayObjects:{objects:Object.fromEntries(Object.keys(hand).map(id=>[id,{}]))} });
   const next=(method='GAME_SELECT',message='Play spells and abilities')=>send(method,{message,gameView:view(), ...(method==='GAME_TARGET'?{targets:[rival],flag:true}:{})});
   ws.on('connection',socket=>{
@@ -52,7 +53,7 @@ async function fixture(t, variant) {
   const call=async(name,args={})=>{const r=await client.callTool({name,arguments:args});const data=JSON.parse(r.content[0].text);assert.equal(r.isError??false,false,JSON.stringify(data));return data;};
   await engine.open();await connected;send('START_GAME',{gameId,playerId:own});send('GAME_INIT',view());next();
   const ready=await call('wait_for_decision',{gameId,timeoutMs:500});
-  return{call,accepted,initial:ready.state};
+  return{call,client,accepted,initial:ready.state};
 }
 for(const variant of ['own-damage','opponent-action','unexpected-target'])test(`HTTP+WebSocket causal sequence boundary: ${variant}`,async(t)=>{
   const f=await fixture(t,variant);
@@ -68,6 +69,21 @@ for(const variant of ['own-damage','opponent-action','unexpected-target'])test(`
   assert.equal(f.accepted.length,variant==='own-damage'?4:2);
   if(variant==='own-damage'){const s=await f.call('get_game_state',{gameId});assert.equal(s.players.find(p=>p.id===rival).life,15);assert.equal(s.sequenceEvidence.resolutionRevision,2);}
 });
+test('[PM-AC-09-TURN] HTTP semantic plan can settle its existing stack without inventing another action', async (t) => {
+  const f = await fixture(t, 'existing-stack');
+  const plan = await f.call('play_turn', { gameId, cursor:f.initial.cursor, actions:[], finish:'none' });
+  let result;
+  for (let n=0;n<60;n++) { result=await f.call('get_sequence_status',{gameId,sequenceId:plan.sequenceId}); if(result.status!=='running')break; await sleep(5); }
+  assert.equal(result.status,'completed'); assert.equal(f.accepted.length,1);
+  const state=await f.call('get_game_state',{gameId});
+  assert.equal(state.players.find(p=>p.id===rival).life,17);
+  assert.equal(state.stack.length,0); assert.equal(state.ownHand[0].id,shock);
+});
+test('[PM-AC-09-TURN] HTTP rejects an unguarded predetermined discard before any engine action', async (t) => {
+  const f=await fixture(t,'own-damage');
+  const result=await f.client.callTool({name:'play_turn',arguments:{gameId,cursor:f.initial.cursor,actions:[{kind:'choose',guard:{kind:'target'},select:{cardId:bolt,zone:'hand'}}]}});
+  assert.equal(result.isError,true); assert.equal(f.accepted.length,0);
+});
 test('HTTP MCP discovery exposes explicit advance and brief pacing without removing legacy tools',async(t)=>{
   const f=await fixture(t,'advance');
   const state=await f.call('get_game_state',{gameId});
@@ -75,4 +91,20 @@ test('HTTP MCP discovery exposes explicit advance and brief pacing without remov
   const paced=await f.call('play_sequence',{gameId,cursor:state.cursor,steps:[{kind:'pace',delayMs:1}]});
   for(let i=0;i<30;i++){const r=await f.call('get_sequence_status',{gameId,sequenceId:paced.sequenceId});if(r.status!=='running'){assert.equal(r.status,'completed');assert.ok(r.effectiveDelayMs<=1);return;}await sleep(3);}
   assert.fail('Pacing must terminate');
+});
+for (const variant of ['own-damage', 'existing-stack', 'opponent-action', 'unexpected-target']) test(`[PM-AC-09-TURN] HTTP semantic casts resolve through the real WebSocket adapter: ${variant}`, async (t) => {
+  const f = await fixture(t, variant);
+  const actions = [...(variant === 'existing-stack' ? [] : [{ kind:'play', select:{cardId:bolt,zone:'hand'} }]), { kind:'play', select:{cardId:shock,zone:'hand'} }];
+  const plan = await f.call('play_turn', { gameId, cursor:f.initial.cursor, actions, finish:'none' });
+  let result;
+  for (let n=0;n<80;n++) { result=await f.call('get_sequence_status',{gameId,sequenceId:plan.sequenceId}); if(result.status!=='running')break; await sleep(5); }
+  const interrupted = ['opponent-action','unexpected-target'].includes(variant);
+  assert.equal(result.status, interrupted ? 'interrupted' : 'completed');
+  assert.equal(f.accepted.length, interrupted ? 2 : variant === 'existing-stack' ? 3 : 4);
+  if (!interrupted) {
+    const state=await f.call('get_game_state',{gameId});
+    assert.equal(state.players.find(p=>p.id===rival).life,15);
+    assert.equal(state.stack.length,0,'finish:none still settles the last declared spell');
+    assert.equal(state.turn,3,'No implicit phase/turn advance was requested');
+  } else assert.equal(result.reason,variant==='opponent-action'?'opponent_action':'response_available');
 });

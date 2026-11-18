@@ -2,6 +2,7 @@ package mage.server.game;
 
 import mage.view.GameEventView;
 import mage.view.SequenceEvidenceView;
+import mage.view.SequenceCombatDamageView;
 import mage.game.events.PublicActionObservations;
 
 import java.util.ArrayDeque;
@@ -32,6 +33,10 @@ public final class GameEventFeed {
     private final Map<UUID, Long> publicActions = new LinkedHashMap<>();
     private final Map<UUID, Long> resolutions = new LinkedHashMap<>();
     private long resolutionRevision;
+    private long combatRevision;
+    private final Deque<SequenceCombatDamageView> combatDamage = new ArrayDeque<>();
+    private final Map<UUID, Long> newInformation = new LinkedHashMap<>();
+    private long publicInformationRevision;
     static final int RESOLUTION_CAPACITY = 32;
 
     private GameEventFeed(UUID gameId) {
@@ -54,8 +59,29 @@ public final class GameEventFeed {
     }
 
     public synchronized SequenceEvidenceView sequenceEvidence() {
+        return sequenceEvidence(null);
+    }
+
+    public synchronized void combatDamage(UUID source, UUID controller, UUID target, int amount) {
+        if (source == null || controller == null || target == null || amount <= 0) return;
+        combatDamage.addLast(new SequenceCombatDamageView(++combatRevision, source, controller, target, amount));
+        while (combatDamage.size() > RESOLUTION_CAPACITY) combatDamage.removeFirst();
+    }
+
+    /** The result remains in the owner's view; the witness reports only that new information arrived. */
+    public synchronized void newInformation(UUID player) {
+        newInformation(player, false);
+    }
+
+    public synchronized void newInformation(UUID player, boolean publicOrigin) {
+        if (publicOrigin) publicInformationRevision++;
+        else if (player != null) newInformation.merge(player, 1L, Long::sum);
+    }
+
+    public synchronized SequenceEvidenceView sequenceEvidence(UUID viewerId) {
         if (!PublicActionObservations.isObserved(gameId)) return null;
-        return new SequenceEvidenceView(evidenceEpoch, publicActions, resolutions, resolutionRevision);
+        return new SequenceEvidenceView(evidenceEpoch, publicActions, resolutions, resolutionRevision,
+                new ArrayList<>(combatDamage), combatRevision, publicInformationRevision + (viewerId == null ? 0 : newInformation.getOrDefault(viewerId, 0L)));
     }
 
     private static final class Entry {

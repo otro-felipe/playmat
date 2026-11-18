@@ -7,8 +7,15 @@ import mage.cards.m.MonasterySwiftspear;
 import mage.constants.Rarity;
 import mage.constants.Zone;
 import mage.game.Game;
+import mage.game.GameImpl;
+import mage.game.match.MatchType;
+import mage.game.mulligan.LondonMulligan;
+import mage.constants.MultiplayerAttackOption;
+import mage.constants.RangeOfInfluence;
 import mage.game.GameState;
 import mage.game.events.GameEvent;
+import mage.game.events.DamagedPlayerEvent;
+import mage.game.permanent.Permanent;
 import mage.game.events.PublicActionObservations;
 import mage.game.stack.SpellStack;
 import mage.game.stack.Spell;
@@ -192,5 +199,93 @@ public class GameEventRecorderEvidenceTest {
         stack.resolve(stub(Game.class, values("getId", gameId, "isSimulation", true)));
         assertEquals(0, feed.sequenceEvidence().getResolutionRevision());
         assertTrue(feed.sequenceEvidence().getPublicActions().isEmpty());
+    }
+
+    @Test public void publicCombatDamageHasExactSourceControllerTargetAndAmountWithoutInventingAnAction() {
+        UUID attackerId = UUID.randomUUID();
+        Permanent attacker = stub(Permanent.class, values("getId", attackerId, "getControllerId", own));
+        Game combatGame = stub(Game.class, values("getId", gameId, "isSimulation", false, "getPermanentOrLKIBattlefield", attacker));
+        recorder.watch(new DamagedPlayerEvent(rival, attackerId, rival, 3, true), combatGame);
+        SequenceEvidenceView evidence = feed.sequenceEvidence(own);
+        assertEquals(1, evidence.getCombatRevision());
+        assertEquals(attackerId, evidence.getCombatDamage().get(0).getSourceId());
+        assertEquals(own, evidence.getCombatDamage().get(0).getControllerId());
+        assertEquals(rival, evidence.getCombatDamage().get(0).getTargetId());
+        assertEquals(3, evidence.getCombatDamage().get(0).getAmount());
+        assertTrue(evidence.getPublicActions().isEmpty());
+    }
+
+    @Test public void nonCombatOrUnknownSourceCannotSupplyAnOwnCombatWitness() {
+        recorder.watch(new DamagedPlayerEvent(rival, UUID.randomUUID(), rival, 3, false), game);
+        recorder.watch(new DamagedPlayerEvent(rival, UUID.randomUUID(), rival, 3, true), game);
+        assertEquals(0, feed.sequenceEvidence().getCombatRevision());
+        assertTrue(feed.sequenceEvidence().getCombatDamage().isEmpty());
+    }
+
+    @Test public void randomInformationCounterIsOwnViewerOnlyAndContainsNoResultOrSourceIdentity() {
+        UUID privateSource = UUID.randomUUID();
+        SequenceEvidenceView before = feed.sequenceEvidence(own);
+        GameEvent random = new GameEvent(GameEvent.EventType.COIN_FLIPPED, own, (Ability) null, own) { { setSourceId(privateSource); } };
+        recorder.watch(random, game);
+        assertEquals(0, before.getInformationRevision());
+        assertEquals(1, feed.sequenceEvidence(own).getInformationRevision());
+        assertEquals(0, feed.sequenceEvidence(rival).getInformationRevision());
+        assertEquals(0, feed.sequenceEvidence().getInformationRevision());
+        assertFalse(new Gson().toJson(feed.sequenceEvidence(own)).contains(privateSource.toString()));
+    }
+
+    @Test public void boundedCombatHistoryExposesGapsAndDoesNotMutateOldSnapshots() {
+        SequenceEvidenceView before = feed.sequenceEvidence(own);
+        for (int i = 0; i < GameEventFeed.RESOLUTION_CAPACITY + 2; i++) feed.combatDamage(UUID.randomUUID(), own, rival, 1);
+        SequenceEvidenceView after = feed.sequenceEvidence(own);
+        assertEquals(GameEventFeed.RESOLUTION_CAPACITY, after.getCombatDamage().size());
+        assertEquals(GameEventFeed.RESOLUTION_CAPACITY + 2, after.getCombatRevision());
+        assertTrue(before.getCombatDamage().isEmpty());
+        assertEquals(0, before.getCombatRevision());
+    }
+
+    @Test public void publicRandomOriginInvalidatesEveryViewerButPrivateOriginsRemainOwnerOnly() {
+        feed.newInformation(rival, true);
+        feed.newInformation(rival, false);
+        assertEquals(1, feed.sequenceEvidence(own).getInformationRevision());
+        assertEquals(2, feed.sequenceEvidence(rival).getInformationRevision());
+        assertEquals(1, feed.sequenceEvidence().getInformationRevision());
+    }
+
+    /** Exercise the live caller, which bypasses SpellStack.resolve entirely. */
+    @Test public void liveGameResolutionPublishesEvidenceBeforeEffectsAndSkipsSimulation() {
+        for (boolean simulation : new boolean[]{false, true}) {
+            ResolvingGame live = new ResolvingGame(simulation);
+            GameEventFeed liveFeed = GameEventFeed.open(live.getId());
+            AtomicInteger effects = new AtomicInteger();
+            try {
+                StackObject object = (StackObject) Proxy.newProxyInstance(StackObject.class.getClassLoader(), new Class<?>[]{StackObject.class}, (proxy, method, args) -> {
+                    if (method.getName().equals("getId")) return stackId;
+                    if (method.getName().equals("resolve")) {
+                        assertEquals("The live caller must witness the public stack object before its effect", simulation ? null : Long.valueOf(1), liveFeed.sequenceEvidence().getResolutions().get(stackId));
+                        effects.incrementAndGet();
+                        live.getStack().poll();
+                        return true;
+                    }
+                    if (method.getName().equals("equals")) return proxy == args[0];
+                    return null;
+                });
+                live.getStack().add(object);
+                live.resolveTop();
+                assertEquals(1, effects.get());
+                assertEquals(simulation ? 0 : 1, liveFeed.sequenceEvidence().getResolutionRevision());
+                assertTrue(liveFeed.sequenceEvidence().getPublicActions().isEmpty());
+            } finally { GameEventFeed.close(live.getId()); }
+        }
+    }
+
+    private static final class ResolvingGame extends GameImpl {
+        ResolvingGame(boolean simulate) { super(MultiplayerAttackOption.MULTIPLE, RangeOfInfluence.ALL, new LondonMulligan(0), 60, 20, 7); simulation = simulate; }
+        void resolveTop() { super.resolve(); }
+        @Override public MatchType getGameType() { return null; }
+        @Override public int getNumPlayers() { return 2; }
+        @Override public Game copy() { throw new UnsupportedOperationException("No simulation copies in this caller regression"); }
+        @Override public void resetControlAfterSpellResolve(UUID id) { }
+        @Override protected void checkInfiniteLoop(UUID id) { }
     }
 }

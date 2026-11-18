@@ -197,7 +197,7 @@ public class GameSessionWatcher {
             return;
         }
         List<GameEventView> events = feed.since(lastEventSeq, viewerId);
-        gameView.setSequenceEvidence(feed.sequenceEvidence());
+        gameView.setSequenceEvidence(feed.sequenceEvidence(viewerId));
         if (!events.isEmpty()) {
             lastEventSeq = events.get(events.size() - 1).getSeq();
             gameView.setEvents(events);

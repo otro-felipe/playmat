@@ -54,12 +54,23 @@ public class GameEventRecorder extends Watcher {
             case BLOCKER_DECLARED:
                 feed.publicAction(event.getPlayerId());
                 break;
+            case COIN_FLIPPED:
+            case DIE_ROLLED:
+            case DICE_ROLLED:
+                boolean publicOrigin = event.getSourceId() != null && game.getState() != null
+                        && PUBLIC_ZONES.contains(game.getState().getZone(event.getSourceId()));
+                feed.newInformation(event.getTargetId(), publicOrigin);
+                break;
             default:
                 break;
         }
         switch (event.getType()) {
             case DAMAGED_PLAYER:
             case DAMAGED_PERMANENT:
+                if (event.getType() == GameEvent.EventType.DAMAGED_PLAYER && event instanceof DamagedEvent && ((DamagedEvent) event).isCombatDamage()) {
+                    Permanent source = game.getPermanentOrLKIBattlefield(event.getSourceId());
+                    if (source != null) feed.combatDamage(event.getSourceId(), source.getControllerId(), event.getTargetId(), event.getAmount());
+                }
                 feed.add(view(feed, GameEventKind.DAMAGE, game, event)
                         .source(event.getSourceId(), nameOf(game, event.getSourceId()))
                         .combat(event instanceof DamagedEvent && ((DamagedEvent) event).isCombatDamage()), null);

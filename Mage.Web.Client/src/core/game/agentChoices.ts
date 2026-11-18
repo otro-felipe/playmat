@@ -3,11 +3,13 @@ import type { GameSessionState } from './gameSession';
 import type { Command } from './interaction';
 import { pregameChoice } from './pregame';
 import { stripMarkup } from './prompt';
+import { splitRules } from './glossary';
 
 /** An allowlisted view of a card for both MCP transports. Face-down cards keep their public object ID. */
 function cardOnBoard(card: CardView, id: string | undefined) {
   const { tapped, damage } = card as PermanentView;
   if (card.faceDown || card.hideInfo) return { id, faceDown: true, name: 'Face-down card', tapped: !!tapped };
+  const text = splitRules(card);
   return {
     id,
     cardId: card.cardId,
@@ -19,7 +21,8 @@ function cardOnBoard(card: CardView, id: string | undefined) {
       abilityText: card.rules?.[0] ? stripMarkup(card.rules[0]) : undefined,
     } : {}),
     types: card.cardTypes ?? [],
-    rules: card.rules?.map(stripMarkup),
+    rules: text.rules.map(stripMarkup),
+    hints: text.hints,
     manaCost: card.manaCostLeftStr,
     power: card.power,
     toughness: card.toughness,
@@ -45,6 +48,9 @@ function sequenceEvidence(view: GameSessionState['view'] | undefined) {
     publicActions: evidence.publicActions ? { ...evidence.publicActions } : undefined,
     resolutions: evidence.resolutions ? { ...evidence.resolutions } : undefined,
     resolutionRevision: evidence.resolutionRevision,
+    combatRevision: evidence.combatRevision,
+    combatDamage: evidence.combatDamage?.map((entry) => ({ revision: entry.revision, sourceId: entry.sourceId, controllerId: entry.controllerId, targetId: entry.targetId, amount: entry.amount })),
+    informationRevision: evidence.informationRevision,
   };
 }
 
@@ -88,6 +94,8 @@ interface AgentChoice {
   command: Command | null;
   card?: ReturnType<typeof cardOnBoard>;
   cards?: ReturnType<typeof cardOnBoard>[];
+  objectId?: string;
+  intent?: 'attack_all' | 'confirm_attack';
 }
 
 type Limits = { min?: number; max?: number };
@@ -123,7 +131,12 @@ export function projectedChoices(state: GameSessionState, promptId: string) {
     if (prompt.kind === 'priority' && button.command.type === 'boolean' && !button.command.value) {
       return projectChoice(button.command, 'pass', 'Pass', 'pass');
     }
-    return projectChoice(button.command, `button-${index}`, button.label, 'button');
+    const choice = projectChoice(button.command, `button-${index}`, button.label, 'button');
+    if (interaction.mode === 'declareAttackers') {
+      if (button.command.type === 'string' && button.command.value === 'special') choice.intent = 'attack_all';
+      else if (button.command.type === 'boolean' && button.command.value) choice.intent = 'confirm_attack';
+    }
+    return choice;
   });
   for (const [id, command] of interaction.clickable) {
     const card = visible[id] ? cardOnBoard(visible[id], id) : undefined;
@@ -132,7 +145,7 @@ export function projectedChoices(state: GameSessionState, promptId: string) {
       && !legal?.basicCastAbilities?.length && !legal?.basicPlayAbilities?.length && !legal?.other?.length;
     const label = pregame === 'startingPlayer' ? id === state.playerId ? 'Play first' : 'Draw first'
       : card?.name ?? playerNames.get(id) ?? 'Choose object';
-    choices.push(projectChoice(command, `object-${id}`, label, manaOnly ? 'manaAbility' : 'object', card));
+    choices.push({ ...projectChoice(command, `object-${id}`, label, manaOnly ? 'manaAbility' : 'object', card), objectId: id });
   }
 
   const details: { amount?: Limits; amounts?: Amounts } = {};
@@ -187,8 +200,8 @@ type AgentDecision = NonNullable<ReturnType<typeof projectedChoices>>;
 export function describeAgentDecision(decision: AgentDecision | null) {
   return decision && {
     ...decision,
-    choices: decision.choices.map(({ id, label, type, card, cards }) => ({
-      id, label, type, ...(card ? { card } : {}), ...(cards ? { cards } : {}),
+    choices: decision.choices.map(({ id, label, type, card, cards, objectId, intent }) => ({
+      id, label, type, ...(card ? { card } : {}), ...(cards ? { cards } : {}), ...(objectId ? { objectId } : {}), ...(intent ? { intent } : {}),
     })),
   };
 }

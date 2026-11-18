@@ -25,32 +25,44 @@ const AdvanceToOwnTurn = z.object({ kind: z.literal('advance_to_own_turn') }).st
 const ChoiceSelector = z.object({
   cardName: z.string().trim().min(1).max(250).optional(),
   cardId: StringId.optional(), label: z.string().trim().min(1).max(500).optional(),
+  objectId: StringId.optional(),
   zone: z.enum(['hand', 'battlefield']).optional(),
-}).strict().refine(({ cardName, cardId, label }) => cardName || cardId || label, 'Name the exact card or choice label.');
+}).strict().refine(({ cardName, cardId, objectId, label }) => cardName || cardId || objectId || label, 'Name the exact public object, card or choice label.');
+const OwnTrigger = z.object({ sourceId: StringId, abilityText: z.string().min(1).max(2000), count: z.number().int().min(1).max(4).default(1) }).strict();
+const TargetTrigger = z.object({ sourceId: StringId, targetingCardId: StringId, abilityText: z.string().min(1).max(2000), count: z.number().int().min(1).max(2).default(1) }).strict();
 const Answer = z.object({
   kind: z.literal('answer'), choiceId: StringId.optional(), select: ChoiceSelector.optional(), decisionId: StringId.optional(),
   guard: z.object({ kind: StringId, ...GameCondition, instruction: z.string().min(1).max(2000).optional() }).strict().optional(), value: Value.optional(),
   expectCast: z.boolean().default(false),
-  expectTriggers: z.array(z.object({
-    sourceId: StringId,
-    abilityText: z.string().min(1).max(2000),
-    count: z.number().int().min(1).max(4).default(1),
-  }).strict()).max(4).optional().describe('Predeclare exact own triggered abilities caused by this answer: public source object ID, exact public ability text and bounded count. Never matches opponent abilities.'),
+  expectTriggers: z.array(OwnTrigger).max(4).optional().describe('Predeclare exact own triggered abilities caused by this answer; never matches opponent abilities.'),
+  expectTargetTriggers: z.array(TargetTrigger).max(2).optional().describe('Separate Ward forecast: exact public opposing target, targeting own card and exact Ward trigger text. It never authorizes a rival action.'),
+  skipIfTargetedBy: StringId.optional().describe('Skip this target answer only if its exact selected public object is already announced as a target of this own planned card. Never skip a hidden-zone cost.'),
 }).strict()
   .refine(({ choiceId, select }) => !!choiceId !== !!select, 'Use one exact choice ID or one semantic selector.')
   .refine((value) => value.decisionId || (value.guard && hasDestination(value.guard)),
   'A planned answer needs the exact decision ID or a guard with its expected kind and destination.');
 const YieldPriority = z.object({
   kind: z.literal('yield_priority'), until: z.enum(['self', 'opponent']).default('self').describe('Pass exactly once, then wait for a new self decision or the observed opponent handoff.'),
-  allowPlannedResolutions: z.boolean().default(false).describe('Allow only removal of this plan’s expected spell/trigger objects; unexpected responses and public opponent changes still interrupt.'),
+  allowPlannedResolutions: z.boolean().default(false).describe('Authorize this plan’s exact declared spell/trigger resolutions, including early automatic resolution. Unexpected objects, rival actions and new information still interrupt.'),
 }).strict();
 const PassUntil = z.object({
   kind: z.literal('pass_until').describe(sequenceInstructions), ...GameCondition,
   stackEmpty: z.literal(true).optional().describe('Require an empty stack in addition to other destination conditions.'),
-  allowPlannedResolutions: z.boolean().default(false).describe('Allow only removal of this plan’s expected spell/trigger objects; unexpected responses and public opponent changes still interrupt.'),
+  allowPlannedResolutions: z.boolean().default(false).describe('Authorize this plan’s exact declared spell/trigger resolutions, including early automatic resolution. Unexpected objects, rival actions and new information still interrupt.'),
   skipOptionalResponses: z.boolean().default(false).describe('Keep false unless intentionally declining every optional play, including land drops. Never use this to wait for your next turn.'),
 }).strict().refine((value) => hasDestination(value) || value.stackEmpty === true, 'A pass needs a phase, step, priority or empty-stack destination.');
-const Sequence = { gameId: Uuid, cursor: Cursor, steps: z.array(z.union([Hold, Pace, Answer, PassUntil, YieldPriority, AdvanceToOwnTurn])).min(1).max(12) };
+const Sequence = { gameId: Uuid, cursor: Cursor, expectedStackIds: z.array(StringId).max(16).optional(), allowPlannedCombatDamage: z.boolean().default(false), steps: z.array(z.union([Hold, Pace, Answer, PassUntil, YieldPriority, AdvanceToOwnTurn])).min(1).max(32) };
+const TurnPlay = z.object({ kind: z.literal('play'), select: ChoiceSelector, when: z.enum(['stack_empty', 'priority']).default('stack_empty'),
+  targets: z.array(z.object({ select: ChoiceSelector, instruction: z.string().min(1).max(2000).optional() }).strict()).max(8).optional(), payWith: z.array(StringId).max(16).optional(),
+  expectTriggers: z.array(OwnTrigger).max(4).optional(), expectTargetTriggers: z.array(TargetTrigger).max(2).optional(),
+}).strict();
+const TurnChoose = z.object({ kind: z.literal('choose'), select: ChoiceSelector, guard: z.object({ kind: StringId, instruction: z.string().min(1).max(2000).optional(), ...GameCondition }).strict(),
+  value: Value.optional(), skipIfTargetedBy: StringId.optional(), expectTriggers: z.array(OwnTrigger).max(4).optional(), expectTargetTriggers: z.array(TargetTrigger).max(2).optional(),
+}).strict().refine(({ guard }) => ['priority', 'payMana'].includes(guard.kind) || guard.instruction !== undefined, 'A predetermined mandatory choice needs its exact instruction guard.');
+const TurnAttack = z.object({ kind: z.literal('attack'), attackers: z.union([z.literal('all'), z.array(StringId).max(16)]).default('all') }).strict()
+  .refine(({ attackers }) => attackers === 'all' || new Set(attackers).size === attackers.length, 'Name each attacker once.');
+const Turn = { gameId: Uuid, cursor: Cursor, actions: z.array(z.union([TurnPlay, TurnChoose, TurnAttack, Pace])).max(32),
+  expectedStackIds: z.array(StringId).max(16).optional(), finish: z.enum(['next_turn', 'end_step', 'none']).default('next_turn') };
 const Catalog = {
   format: Format.optional(), query: z.string().trim().min(1).max(160).optional(),
   colors: z.array(z.enum(['W', 'U', 'B', 'R', 'G', 'C'])).min(1).max(6).optional(),
@@ -85,7 +97,7 @@ function readToken(req) {
 
 function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedOrigins }) {
   function tool(name, description, inputSchema, scope, run, readOnlyHint = false) {
-    if (['create_game', 'join_game', 'start_match', 'get_game_state', 'submit_decision', 'pass_until', 'advance_to_own_turn', 'play_sequence', 'submit_sequence'].includes(name)) {
+    if (['create_game', 'join_game', 'start_match', 'get_game_state', 'submit_decision', 'pass_until', 'advance_to_own_turn', 'play_sequence', 'submit_sequence', 'play_turn'].includes(name)) {
       description += ` ${guideBootstrap}`;
     }
     if (['play_sequence', 'submit_sequence'].includes(name)) description += ` ${sequenceInstructions}`;
@@ -145,6 +157,7 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
   tool('advance_to_own_turn', 'Pass only when the current engine offers no non-mana optional play, stopping before your next turn or any useful legal play, mandatory decision, public opponent action or missing causal evidence. Zero mana is never evidence that no action exists.', { gameId: Uuid, cursor: Cursor },
     'play', ({ gameId, cursor }) => getSeat().startSequence({ gameId, cursor, steps: [{ kind: 'advance_to_own_turn' }] }, reauthorize));
   const playSequence = (args) => getSeat().startSequence(args, reauthorize);
+  tool('play_turn', 'Plan a complete turn with significant plays, public targets, chosen mana sources, guarded costs/choices and attacks. The executor makes legal ordinary passes between intentions; do not enumerate passes or predict priority windows. Own declared spells/triggers and the initial own stack may resolve; real rival actions, new information, unknown mandatory choices and chosen stops interrupt. finish next_turn advances only while no useful legal action remains, never because mana is zero.', Turn, 'play', (args) => getSeat().startTurn(args, reauthorize));
   tool('play_sequence', 'Queue guarded choices by exact ID, card or label. Mark a planned cast with expectCast to let later steps pay for that same spell.', Sequence, 'play', playSequence);
   tool('submit_sequence', 'Start a conditional, bounded sequence of choices, brief waits and ordinary passes.', Sequence, 'play', playSequence);
   tool('get_sequence_status', 'Check the progress and interruption reason for one plan.', { gameId: Uuid, sequenceId: Uuid }, 'play',

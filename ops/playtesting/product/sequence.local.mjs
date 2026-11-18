@@ -91,6 +91,7 @@ try {
   await client.connect(new StreamableHTTPClientTransport(new URL(base + '/mcp'), { requestInit: { headers: { Authorization: 'Bearer ' + token } } }))
   const discovered = await client.listTools()
   assert.ok(discovered.tools.some(tool => tool.name === 'advance_to_own_turn'))
+  assert.ok(discovered.tools.some(tool => tool.name === 'play_turn'))
   assert.ok(JSON.stringify(discovered.tools.find(tool => tool.name === 'play_sequence').inputSchema).includes('allowPlannedResolutions'))
   const created = await browser.createGame({ name: 'Isolated causal sequence acceptance', format: 'Modern', deck: rivalDeck, matchTimeLimit: 'MIN__15', seed: 77 }, async record => {
     const response = await fetch(base + '/api/playtesting/invites', { method: 'POST', headers: { 'content-type': 'application/json', Cookie: cookie }, body: JSON.stringify({ ...record, guestEngineName: engineName }) })
@@ -131,34 +132,23 @@ try {
     if (decision.kind === 'target') choice = decision.choices.find(item => item.id === 'object-' + rivalPlayer(state).id || item.label === rivalPlayer(state).name)
     else if (decision.kind === 'payMana') choice = decision.choices.find(item => freeLands(state).some(land => land.id === item.card?.id))
     if (!choice) throw Error('Unplanned warm-up prompt: ' + decision.kind)
-    learned.push(decision.kind)
+    learned.push({ kind: decision.kind, instruction: decision.instruction })
     await answer(state, choice)
     state = await waitNextOwn(decision.id)
   }
-  while (state.stack.length) {
-    const choice = state.decision.choices.find(item => item.type === 'pass')
-    assert.ok(choice, 'Warm-up resolution requires ordinary priority')
-    await answer(state, choice)
-    state = await waitNextOwn(state.decision.id)
-  }
+  assert.equal(state.stack.length, 1, 'Leave the paid warm-up spell in the initial visible stack for semantic adoption')
   const own = ownPlayer(state), rival = rivalPlayer(state)
   const cards = burnCards(state).slice(0, 2), lands = freeLands(state)
   assert.equal(cards.length, 2); assert.ok(lands.length >= 2)
   assert.ok(state.sequenceEvidence?.epoch, 'Real Java must project public causal evidence')
   const before = { life: rival.life, actions: state.sequenceEvidence.publicActions[rival.id] ?? 0,
     revision: state.sequenceEvidence.resolutionRevision, epoch: state.sequenceEvidence.epoch }
-  let manaIndex = 0
-  const steps = []
-  for (const card of cards) {
-    steps.push({ kind: 'answer', select: { cardId: card.id, zone: 'hand' }, guard: { kind: 'priority', step: 'PRECOMBAT_MAIN', priority: 'self' }, expectCast: true })
-    for (const kind of learned) steps.push({ kind: 'answer', guard: { kind, step: 'PRECOMBAT_MAIN' },
-      select: kind === 'target' ? { label: rival.name } : { cardId: lands[manaIndex++].id, zone: 'battlefield' } })
-    steps.push({ kind: 'yield_priority', allowPlannedResolutions: true })
-  }
-  steps.push({ kind: 'pass_until', step: 'END_TURN', skipOptionalResponses: true })
-  assert.ok(steps.length <= 12, 'Learned concrete line must fit the public step budget')
+  assert.deepEqual(learned.map(item => item.kind), ['target', 'payMana'], 'The identical-cost semantic fixture must use its observed target/payment order')
+  const actions = cards.map((card, index) => ({ kind: 'play', select: { cardId: card.id, zone: 'hand' },
+    targets: [{ select: { objectId: rival.id }, instruction: learned[0].instruction }], payWith: [lands[index].id] }))
+  assert.equal(JSON.stringify(actions).includes('pass'), false, 'The agent expresses spells, targets and resources without priority choreography')
   const boundary = { gameId: state.gameId, turn: state.turn, activePlayerId: state.activePlayerId }
-  const plan = await call('play_sequence', { gameId: state.gameId, cursor: state.cursor, steps })
+  const plan = await call('play_turn', { gameId: state.gameId, cursor: state.cursor, actions, finish: 'end_step' })
   let result
   while (Date.now() < totalDeadline) {
     result = await drivePlanPeerOnce({
@@ -171,15 +161,16 @@ try {
   assert.equal(result.status, 'completed', 'The real own-damage line must retain its unapplied second spell and complete: ' + JSON.stringify({
     reason: result.reason, completedSteps: result.completedSteps, appliedDecisions: result.appliedDecisions,
   }))
-  assert.equal(result.completedSteps, steps.length)
+  assert.equal(result.completedSteps, 8, 'Two plays/targets/payments, final settling and end-step destination must complete')
+  assert.equal(result.lastDestination.turn, boundary.turn)
+  assert.equal(result.lastDestination.activePlayerId, boundary.activePlayerId)
+  assert.equal(result.lastDestination.step, 'END_TURN', 'The receipt must prove the actual observed destination before any later engine-only auto-advance')
   const after = await ownState()
-  assert.equal(after.turn, boundary.turn)
-  assert.equal(after.activePlayerId, boundary.activePlayerId)
-  assert.equal(after.step, 'END_TURN')
-  assert.equal(rivalPlayer(after).life, before.life - cards.reduce((sum, card) => sum + (card.name === 'Lightning Bolt' ? 3 : 2), 0))
+  assert.ok(after.turn === boundary.turn || after.turn === boundary.turn + 1, 'An empty end step can advance automatically under engine preferences; the MCP must not submit another choice')
+  assert.equal(rivalPlayer(after).life, before.life - [warmup, ...cards].reduce((sum, card) => sum + (card.name === 'Lightning Bolt' ? 3 : 2), 0))
   assert.equal(after.sequenceEvidence.epoch, before.epoch)
   assert.equal(after.sequenceEvidence.publicActions[rival.id] ?? 0, before.actions, 'Open rival mana without public action does not interrupt')
-  assert.equal(after.sequenceEvidence.resolutionRevision, before.revision + 2)
+  assert.equal(after.sequenceEvidence.resolutionRevision, before.revision + 3)
   assert.ok(cards.every(card => !after.ownHand.some(remaining => remaining.id === card.id)))
   // Independent second scenario: actually activate rival mana with a planned burn spell on the stack.
   // PlayerImpl's mana path emits no ACTIVATED_ABILITY rules event, so only the neutral observer can catch it.
@@ -203,7 +194,7 @@ try {
   const reactionLands = freeLands(state)
   let reactionManaIndex = 0
   const reactionSteps = [{ kind: 'answer', select: { cardId: reactionCard.id, zone: 'hand' }, guard: { kind: 'priority', step: 'PRECOMBAT_MAIN' }, expectCast: true }]
-  for (const kind of learned) reactionSteps.push({ kind: 'answer', guard: { kind, step: 'PRECOMBAT_MAIN' },
+  for (const { kind, instruction } of learned) reactionSteps.push({ kind: 'answer', guard: { kind, instruction, step: 'PRECOMBAT_MAIN' },
     select: kind === 'target' ? { label: reactingRival.name } : { cardId: reactionLands[reactionManaIndex++].id, zone: 'battlefield' } })
   reactionSteps.push({ kind: 'yield_priority', allowPlannedResolutions: true },
     { kind: 'answer', select: { label: 'Pass' }, guard: { kind: 'priority', step: 'PRECOMBAT_MAIN', priority: 'self' } })
@@ -216,6 +207,9 @@ try {
     if (interrupted.status !== 'running') break
     await sleep(15)
   }
+  console.log(JSON.stringify({ phase: 'real-java-rival-response-attempt', status: interrupted?.status,
+    reason: interrupted?.reason, completedSteps: interrupted?.completedSteps, appliedDecisions: interrupted?.appliedDecisions,
+    rivalManaAccepted }))
   assert.equal(rivalManaAccepted, true, 'The real rival PlayerImpl mana path must have executed')
   assert.equal(interrupted.status, 'interrupted')
   assert.equal(interrupted.reason, 'opponent_action')
@@ -235,5 +229,6 @@ try {
   assert.equal(ownPlayer(state).id, reactingOwn.id)
   console.log(JSON.stringify({ phase: 'real-java-rival-mana-interrupted-before-next-answer', manaActionObserved: true, ownBurnSubsequentlyResolved: true }))
   console.log(JSON.stringify({ phase: 'real-java-own-damage-line-completed', completedSteps: result.completedSteps,
-    appliedDecisions: result.appliedDecisions, ownResolutions: 2, rivalOnlyPassed: true, endedAtEndStep: true, setupActions: acceptedSetup }))
+    appliedDecisions: result.appliedDecisions, ownResolutions: 3, initialStackAdopted: true, semanticActions: 2,
+    rivalOnlyPassed: true, observedEndStep: result.lastDestination.step === 'END_TURN', setupActions: acceptedSetup }))
 } finally { browser?.close(); await client?.close() }

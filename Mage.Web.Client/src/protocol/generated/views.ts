@@ -2594,4 +2594,15 @@ export interface SequenceEvidenceView extends Serializable {
     publicActions?: { [index: string]: number };
     resolutions?: { [index: string]: number };
     resolutionRevision?: number;
+    combatRevision?: number;
+    combatDamage?: SequenceCombatDamageView[];
+    informationRevision?: number;
+}
+
+export interface SequenceCombatDamageView extends Serializable {
+    revision?: number;
+    sourceId?: string;
+    controllerId?: string;
+    targetId?: string;
+    amount?: number;
 }

@@ -21,8 +21,15 @@ finish() {
  exit "$result"
 }
 trap finish EXIT
-docker build --build-arg PLAYMAT_COMMIT="$stamp" -t "$image" .
-docker network create "$network" >/dev/null
+if [[ -n ${PLAYMAT_SEQUENCE_TEST_IMAGE:-} ]]; then
+ image=$PLAYMAT_SEQUENCE_TEST_IMAGE
+ docker image inspect "$image" >/dev/null
+else
+ docker build --build-arg PLAYMAT_COMMIT="$stamp" -t "$image" .
+fi
+network_options=()
+[[ -z ${PLAYMAT_SEQUENCE_TEST_SUBNET:-} ]] || network_options+=(--subnet "$PLAYMAT_SEQUENCE_TEST_SUBNET")
+docker network create "${network_options[@]}" "$network" >/dev/null
 docker run -d --name "$pg" --network "$network" --network-alias playmat-sequence-pg --memory 256m \
  -v "$prefix-postgres:/var/lib/postgresql/data" -e POSTGRES_USER=playmat -e POSTGRES_DB=sequence_fixture \
  -e POSTGRES_PASSWORD=isolated-sequence-fixture postgres:17-alpine >/dev/null
