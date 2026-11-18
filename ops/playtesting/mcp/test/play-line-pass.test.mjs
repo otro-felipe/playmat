@@ -103,6 +103,18 @@ test('[PM-LINE-02] a passed-over draw window returns the actual post-draw decisi
   assert.deepEqual(table.applied.map(([id]) => id), ['end']);
 });
 
+for (const skipped of [
+  { ...upkeep, step: 'DRAW', decision: priority('draw') },
+  { ...upkeep, step: 'PRECOMBAT_MAIN', decision: priority('main') },
+  { ...main, ownHand: [] },
+]) test(`[PM-LINE-02] a missed draw reports the real ${skipped.step} window without claiming a card`, async (t) => {
+  const table = game(t, { end: skipped });
+  const receipt = await table.submit([{ kind: 'pass_until', destination: 'my_draw' }]);
+  assert.equal(receipt.reason, 'destination_skipped');
+  assert.equal(receipt.lastDestination.step, skipped.step);
+  assert.deepEqual(table.applied.map(([id]) => id), ['end']);
+});
+
 test('[PM-LINE-02] a line at own upkeep can advance to this turn’s draw', async (t) => {
   const table = game(t, { upkeep: draw }, upkeep);
   const receipt = await table.submit([{ kind: 'pass_until', destination: 'my_draw', policy: 'decline_optional' }]);
@@ -163,6 +175,42 @@ test('[PM-LINE-02] a deliberate priority pass yields exactly once and waits for 
   assert.equal(receipt.status, 'completed');
   assert.equal(table.seat.snapshot().decision.id, 'upkeep');
   assert.deepEqual(table.applied.map(([id]) => id), ['end']);
+});
+
+test('[PM-LINE-02] a deliberate pass waits for a declared activation to appear on the stack', async (t) => {
+  const source = { id: 'source', name: 'Class' };
+  const table = game(t, {
+    end: { decision: priority('after-activation') },
+    'after-activation': { decision: priority('next') },
+  }, {
+    decision: priority('end', { id: 'activate', type: 'object' }),
+    players: [{ id: 'me', yourSeat: true, battlefield: [source] }, { id: 'opponent' }],
+  });
+  const receipt = await table.submit([
+    { kind: 'choose', decisionId: 'end', choiceId: 'activate', expectAbility: { sourceId: 'source', abilityText: 'Level 2' } },
+    { kind: 'pass_priority' },
+  ]);
+  assert.equal(receipt.reason, 'response_available');
+  assert.deepEqual(table.applied.map(([, id]) => id), ['activate']);
+});
+
+test('[PM-LINE-02] a current-turn stop cannot complete before a pending spell target arrives', async (t) => {
+  const bolt = { id: 'bolt', cardId: 'bolt', name: 'Lightning Bolt', types: ['INSTANT'] };
+  const target = { id: 'target', kind: 'target', choices: [{ id: 'legal-target', type: 'object' }] };
+  const table = game(t, { main: (publish) => {
+    publish({ decision: null });
+    setTimeout(() => publish({ decision: target }), 5);
+  } }, {
+    turn: 8, activePlayer: 'Pilot', activePlayerId: 'me', step: 'PRECOMBAT_MAIN', ownHand: [bolt],
+    decision: priority('main', { id: 'cast', type: 'object', card: bolt }),
+  });
+  const receipt = await table.submit([
+    { kind: 'play', select: { cardId: 'bolt', zone: 'hand' } },
+    { kind: 'pass_until', destination: 'current_turn', priority: 'self' },
+  ]);
+  assert.equal(receipt.reason, 'response_available');
+  assert.equal(table.seat.snapshot().decision.id, target.id);
+  assert.deepEqual(table.applied.map(([, id]) => id), ['cast']);
 });
 
 test('[PM-LINE-02] explicit passes must be the final action', async (t) => {

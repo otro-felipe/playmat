@@ -438,6 +438,8 @@ export class GameSeat {
     const allowPlannedResolutions = autoAdvance || expectedStackIds.length > 0 || steps.some((step) => step.allowPlannedResolutions === true);
     let pendingCast = null;
     let pendingTriggers = [];
+    const pendingIntention = () => pendingCast
+      || pendingTriggers.some((entry) => entry.abilityType === 'ACTIVATED_NONMANA' && entry.remaining > 0);
     const explicitInformationObjects = new Set();
     let canCallHeads = false;
     let informationResolutionStarted = expectedStackIds.some((id) => initialEvidence?.resolutions?.[id] && initial.stack.some((card) => card.id === id
@@ -808,7 +810,7 @@ export class GameSeat {
           }
           const decision = state.decision;
           const choice = decision.choices.find((item) => item.type === 'pass');
-          if (decision.kind !== 'priority' || state.priority !== 'self' || !choice || pendingCast || state.stop) {
+          if (decision.kind !== 'priority' || state.priority !== 'self' || !choice || pendingIntention() || state.stop) {
             throw new ToolError('response_available', 'Yield requires your ordinary priority decision.');
           }
           await submit({ gameId: sequence.gameId, cursor: state.cursor, decisionId: decision.id,
@@ -833,6 +835,12 @@ export class GameSeat {
           if (advancingOwnTurn && (!initialEvidenceValid || !ownPlayerId || !initial.activePlayerId || !Number.isSafeInteger(turn))) {
             throw new ToolError('evidence_unavailable', 'Advancing across turns requires current public action evidence and exact player IDs.');
           }
+          const handBeforePass = new Set((state.ownHand ?? []).map((card) => card.id ?? card.cardId));
+          const observedDraw = (view) => view.sequenceEvidence?.informationRevision > informationRevision
+            && view.ownHand?.some((card) => {
+              const id = card.id ?? card.cardId;
+              return id && !handBeforePass.has(id);
+            });
           const inspectEndpoint = (view) => {
             if (step.kind === 'advance_to_own_turn') return nextOwnTurn(view) ? 'reached' : null;
             if (step.destination === 'current_turn') return view.turn !== turn ? 'skipped' : reaches(view, step) ? 'reached' : null;
@@ -842,13 +850,16 @@ export class GameSeat {
             }
             if (step.destination === 'my_upkeep' && nextOwnTurn(view) && view.step === 'UPKEEP') return 'reached';
             if (step.destination === 'my_draw' && targetsThisDraw && view.turn !== turn) return 'skipped';
-            if (atOrAfterOwnDraw(view)) return step.destination === 'my_draw' ? 'reached' : 'skipped';
+            if (atOrAfterOwnDraw(view)) return step.destination === 'my_draw' && observedDraw(view) ? 'reached' : 'skipped';
             return null;
           };
           const readyEndpoint = (view) => {
             const endpoint = inspectEndpoint(view);
-            if (endpoint && (observable(view) || step.kind === 'advance_to_own_turn' || step.destination === 'current_turn')) return endpoint;
-            return null;
+            if (!endpoint) return null;
+            if (step.kind === 'advance_to_own_turn') return endpoint;
+            const handoff = step.destination === 'current_turn' && step.priority && step.priority !== 'self';
+            if (endpoint === 'reached' && pendingIntention()) return null;
+            return observable(view) || handoff ? endpoint : null;
           };
           for (;;) {
             state = await stateForStep();
@@ -866,8 +877,7 @@ export class GameSeat {
             }
             if (sequence.observedNewInformation) throw new ToolError('new_information', 'New information is available. Inspect the current decision before continuing.');
             const choice = state.decision.choices.find((item) => item.type === 'pass');
-            if (state.decision.kind !== 'priority' || state.priority !== 'self' || !choice || pendingCast || state.stop
-              || pendingTriggers.some((entry) => entry.abilityType === 'ACTIVATED_NONMANA' && entry.remaining > 0)
+            if (state.decision.kind !== 'priority' || state.priority !== 'self' || !choice || pendingIntention() || state.stop
               || (!step.skipOptionalResponses && state.decision.choices.some((item) => item.type !== 'pass' && !plainManaChoice(item)))) {
               throw new ToolError('response_available', 'A currently legal play or mandatory choice needs your decision before advancing.');
             }
@@ -878,8 +888,7 @@ export class GameSeat {
             previousDecisionId = state.decision.id;
           }
         } else if (step.kind === 'pass_until') {
-          const destinationReached = (view) => reaches(view, step) && !pendingCast
-            && !pendingTriggers.some((entry) => entry.abilityType === 'ACTIVATED_NONMANA' && entry.remaining > 0)
+          const destinationReached = (view) => reaches(view, step) && !pendingIntention()
             && (!autoAdvance || step.step || step.phase || visibleDecision(view) && view.decision.id !== previousDecisionId);
           for (;;) {
             state = await stateForStep();
