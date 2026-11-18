@@ -48,6 +48,20 @@ test('[PM-AC-09-TURN] explicitly adopted existing stack objects may resolve befo
   assert.equal(result.status, 'completed'); assert.equal(applied.length, 1);
 });
 
+test('[PM-AC-09-TURN] adopting an already resolving object preserves its witnessed delayed effects', async (t) => {
+  let state = { gameId: 'resolving', status: 'active', epoch: 1, cursor: 1, turn: 3, activePlayer: 'Pilot', activePlayerId: 'me', priority: 'opponent', stack: [{ ...spell, id: 's', controllerId: 'me' }], ownHand: [], players: [{ id: 'me', yourSeat: true }, { id: 'rival', life: 20 }], sequenceEvidence: evidence({ s: 1 }, 1), decision: null };
+  const listeners = new Set();
+  const seat = new GameSeat({ snapshot: () => state, subscribe: (fn) => { listeners.add(fn); return () => listeners.delete(fn); }, respond: () => assert.fail('A resolving object needs no new player answer') });
+  t.after(() => seat.invalidate());
+  const started = seat.startTurn({ gameId: 'resolving', cursor: 1, actions: [], finish: 'none' }, async () => true);
+  await sleep(1);
+  for (const change of [{ stack: [] }, { players: [state.players[0], { id: 'rival', life: 18 }], priority: 'self', decision: priority('done') }]) {
+    state = { ...state, ...change, cursor: state.cursor + 1 }; for (const fn of [...listeners]) fn();
+    await sleep(1);
+  }
+  assert.equal(seat.sequenceStatus({ gameId: 'resolving', sequenceId: started.sequenceId }).status, 'completed');
+});
+
 test('[PM-AC-09-TURN] an observed end-step destination stops even before a replacement decision callback', async (t) => {
   const { result, applied } = await run(t, { initial: { ownHand: [], step: 'POSTCOMBAT_MAIN', decision: priority('pass') }, options: { autoAdvance: true }, steps: [{ kind: 'pass_until', step: 'END_TURN' }], respond: ({ update }) => update({ step: 'END_TURN' }) });
   assert.equal(result.status, 'completed');
@@ -65,6 +79,25 @@ test('[PM-AC-09-TURN] a declared prowess trigger may auto-resolve during the fin
     } else update({ stack: [], sequenceEvidence: evidence({ prowess: 1, s: 2 }, 2), decision: priority('done') });
   } });
   assert.equal(result.status, 'completed');
+});
+
+test('[PM-AC-09-TURN] a declared Talent ETB creates its public token without treating it as a draw', async (t) => {
+  const talent = { ...spell, name: "Stormchaser's Talent", types: ['ENCHANTMENT'] };
+  const token = visibleAgentGame({ view: { players: [{ playerId: 'me', battlefield: { token: { id: 'token', name: 'Otter', isToken: true } } }] } }).players[0].battlefield[0];
+  const trigger = { id: 'etb', sourceId: 'physical', controllerId: 'me', abilityType: 'TRIGGERED_NONMANA', abilityText: 'When this enchantment enters, create an Otter token.' };
+  const { result, applied } = await run(t, { initial: { ownHand: [talent] }, steps: [answer('cast', 'priority', { expectCast: true, expectTriggers: [{ sourceId: 'physical', abilityText: trigger.abilityText }] }), resolve], respond: ({ id, update, state }) => {
+    if (id === 'cast') update({ ownHand: [], stack: [{ ...talent, id: 's', controllerId: 'me' }], decision: priority('resolve-talent') });
+    else if (id === 'resolve-talent') update({ stack: [trigger], sequenceEvidence: evidence({ s: 1 }, 1), players: [{ ...state.players[0], battlefield: [talent] }, state.players[1]], decision: priority('resolve-etb') });
+    else update({ stack: [], sequenceEvidence: evidence({ s: 1, etb: 2 }, 2), players: [{ ...state.players[0], battlefield: [talent, token] }, state.players[1]], decision: priority('done') });
+  } });
+  assert.equal(token.isToken, true); assert.equal(result.status, 'completed'); assert.equal(applied.length, 3);
+});
+
+test('[PM-AC-09-TURN] the information projection includes only authorized reveals and looks, never other hidden hands', () => {
+  const projected = visibleAgentGame({ playerId: 'me', view: { revealed: [{ name: 'Public reveal', cards: { public: { id: 'public', name: 'Shock' } } }], lookedAt: [{ name: 'My look', cards: { own: { id: 'own', expansionSetCode: 'M21', cardNumber: '1' } } }], opponentHands: { rival: { secret: { id: 'secret', name: 'Hidden opponent card' } } } } });
+  assert.equal(projected.revealed[0].cards[0].name, 'Shock');
+  assert.equal(projected.lookedAt[0].cards[0].id, 'own');
+  assert.equal(JSON.stringify(projected).includes('secret'), false);
 });
 
 test('[PM-AC-09-TURN] Burst removal and its public effects may arrive in successive views before a fresh decision', async (t) => {
@@ -119,10 +152,11 @@ for (const variant of ['ward', 'not-ward', 'other-trigger', 'wrong-target', 'riv
   assert.equal(applied.length, variant === 'ward' ? 5 : ['not-ward', 'other-trigger'].includes(variant) ? 0 : 1);
 });
 
-for (const kind of ['draw', 'exile', 'random']) test(`[PM-AC-09-TURN] new information still interrupts a declared own resolution: ${kind}`, async (t) => {
+for (const kind of ['draw', 'exile', 'graveyard', 'opponent-exile', 'top-card', 'reveal', 'look', 'random']) test(`[PM-AC-09-TURN] new information still interrupts a declared own resolution: ${kind}`, async (t) => {
   const { result, applied } = await run(t, { steps: [answer('cast', 'priority', { expectCast: true }), resolve], respond: ({ id, update, state }) => {
     if (id === 'cast') update({ ownHand: [], stack: [{ ...spell, id: 's', controllerId: 'me' }], decision: priority('pass') });
-    else update({ stack: [], sequenceEvidence: evidence({ s: 1 }, 1, { informationRevision: kind === 'random' ? 1 : 0 }), ...(kind === 'draw' ? { ownHand: [{ id: 'new-card', name: 'New card' }] } : kind === 'exile' ? { players: [{ ...state.players[0], exile: [{ id: 'new-exile', name: 'New exile' }] }, state.players[1]] } : {}), decision: priority('done') });
+    else update({ stack: [], sequenceEvidence: evidence({ s: 1 }, 1, { informationRevision: kind === 'random' ? 1 : 0 }),
+      ...(kind === 'draw' ? { ownHand: [{ id: 'new-card', name: 'New card' }] } : kind === 'exile' || kind === 'graveyard' ? { players: [{ ...state.players[0], [kind]: [{ id: 'new-card', name: 'New card' }] }, state.players[1]] } : kind === 'opponent-exile' ? { players: [state.players[0], { ...state.players[1], exile: [{ id: 'new-card', name: 'New card' }] }] } : kind === 'top-card' ? { players: [{ ...state.players[0], topCard: { id: 'new-card', name: 'New card' } }, state.players[1]] } : kind === 'reveal' || kind === 'look' ? { [kind === 'reveal' ? 'revealed' : 'lookedAt']: [{ cards: [{ id: 'new-card', name: 'New card' }] }] } : {}), decision: priority('done') });
   } });
   assert.equal(result.status, 'interrupted'); assert.equal(result.reason, 'new_information'); assert.equal(applied.length, 2);
 });

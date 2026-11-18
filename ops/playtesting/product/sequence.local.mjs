@@ -194,7 +194,7 @@ try {
   const reactionLands = freeLands(state)
   let reactionManaIndex = 0
   const reactionSteps = [{ kind: 'answer', select: { cardId: reactionCard.id, zone: 'hand' }, guard: { kind: 'priority', step: 'PRECOMBAT_MAIN' }, expectCast: true }]
-  for (const { kind, instruction } of learned) reactionSteps.push({ kind: 'answer', guard: { kind, instruction, step: 'PRECOMBAT_MAIN' },
+  for (const { kind, instruction } of learned) reactionSteps.push({ kind: 'answer', guard: { kind, ...(kind === 'target' ? { instruction } : {}), step: 'PRECOMBAT_MAIN' },
     select: kind === 'target' ? { label: reactingRival.name } : { cardId: reactionLands[reactionManaIndex++].id, zone: 'battlefield' } })
   reactionSteps.push({ kind: 'yield_priority', allowPlannedResolutions: true },
     { kind: 'answer', select: { label: 'Pass' }, guard: { kind: 'priority', step: 'PRECOMBAT_MAIN', priority: 'self' } })

@@ -50,13 +50,18 @@ async function run(t, variant) {
   assert.fail('The sequence must reach a bounded terminal state');
 }
 
-for (const variant of ['damage', 'mid-resolution', 'effect-tap', 'effect-destroy', 'effect-discard']) test(`OWN-DAMAGE-REGRESSION planned damage continues to the next spell with explicit resolution evidence: ${variant}`, async (t) => {
+for (const variant of ['damage', 'mid-resolution', 'effect-tap', 'effect-destroy']) test(`OWN-DAMAGE-REGRESSION planned damage continues to the next spell with explicit resolution evidence: ${variant}`, async (t) => {
   const { status, applied, state } = await run(t, variant);
   assert.equal(status.status, 'completed');
   assert.equal(status.completedSteps, 3);
   assert.equal(status.appliedDecisions, 3);
   assert.equal(state.players[1].life, 17);
   assert.deepEqual(applied, [['cast-bolt', 'cast-bolt'], ['yield-bolt', 'pass'], ['cast-spike', 'cast-spike']]);
+});
+test('[PM-AC-09-TURN] a planned discard still stops when it reveals a previously hidden opponent card', async (t) => {
+  const { status, applied } = await run(t, 'effect-discard');
+  assert.equal(status.status, 'interrupted'); assert.equal(status.reason, 'new_information');
+  assert.deepEqual(applied, [['cast-bolt', 'cast-bolt'], ['yield-bolt', 'pass']], 'The second spell must remain unapplied after learning the discarded identity');
 });
 for (const variant of ['rival-action', 'missing', 'epoch', 'gap', 'unexpected-prompt', 'unexpected-stack']) test(`planned damage never hides ${variant}`, async (t) => {
   const { status, applied } = await run(t, variant);

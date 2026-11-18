@@ -21,6 +21,7 @@ function cardOnBoard(card: CardView, id: string | undefined) {
       abilityText: card.rules?.[0] ? stripMarkup(card.rules[0]) : undefined,
     } : {}),
     types: card.cardTypes ?? [],
+    ...(card.isToken ? { isToken: true } : {}),
     rules: text.rules.map(stripMarkup),
     hints: text.hints,
     manaCost: card.manaCostLeftStr,
@@ -66,6 +67,9 @@ export function visibleAgentGame(state: GameSessionState | undefined) {
     sequenceEvidence: sequenceEvidence(view),
     priorityPlayer: view?.priorityPlayerName ?? null,
     ownHand: cardsOnBoard(view?.myHand),
+    revealed: (view?.revealed ?? []).map((group) => ({ name: group.name, cards: cardsOnBoard(group.cards) })),
+    // GameView includes lookedAt only for this viewer; never read opponentHands/watchedHands.
+    lookedAt: (view?.lookedAt ?? []).map((group) => ({ name: group.name, cards: cardsOnBoard(group.cards) })),
     stack: cardsOnBoard(view?.stack),
     players: (view?.players ?? []).map((player) => ({
       id: player.playerId,
@@ -74,6 +78,7 @@ export function visibleAgentGame(state: GameSessionState | undefined) {
       life: player.life,
       handCount: player.handCount,
       libraryCount: player.libraryCount,
+      topCard: player.topCard ? cardOnBoard(player.topCard, player.topCard.id) : undefined,
       wins: player.wins,
       battlefield: cardsOnBoard(player.battlefield),
       graveyard: cardsOnBoard(player.graveyard),

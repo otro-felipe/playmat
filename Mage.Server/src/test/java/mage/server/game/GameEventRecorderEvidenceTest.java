@@ -245,8 +245,12 @@ public class GameEventRecorderEvidenceTest {
     }
 
     @Test public void publicRandomOriginInvalidatesEveryViewerButPrivateOriginsRemainOwnerOnly() {
-        feed.newInformation(rival, true);
-        feed.newInformation(rival, false);
+        UUID publicSource = UUID.randomUUID();
+        GameState publicState = new GameState();
+        publicState.setZone(publicSource, Zone.STACK);
+        Game publicGame = stub(Game.class, values("getId", gameId, "isSimulation", false, "getState", publicState));
+        recorder.watch(new GameEvent(GameEvent.EventType.COIN_FLIPPED, rival, (Ability) null, rival) { { setSourceId(publicSource); } }, publicGame);
+        recorder.watch(new GameEvent(GameEvent.EventType.COIN_FLIPPED, rival, (Ability) null, rival) { { setSourceId(UUID.randomUUID()); } }, game);
         assertEquals(1, feed.sequenceEvidence(own).getInformationRevision());
         assertEquals(2, feed.sequenceEvidence(rival).getInformationRevision());
         assertEquals(1, feed.sequenceEvidence().getInformationRevision());

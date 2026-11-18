@@ -285,13 +285,19 @@ export class GameSeat {
     let expectedStackCards = initial.stack;
     let expectedStack = stackIdentity(initial.stack);
     const plannedStackIds = new Set(expectedStackIds);
-    for (const id of expectedStackIds) if (initialEvidence?.resolutions?.[id]) resolvingPlanned.add(id);
+    for (const id of expectedStackIds) if (initialEvidence?.resolutions?.[id]) {
+      resolvingPlanned.add(id);
+      settlingResolution = true;
+    }
     const initiallyKnownCards = new Set([
       ...(initial.ownHand ?? []), ...initial.stack,
+      ...(initial.revealed ?? []).flatMap((group) => group.cards ?? []), ...(initial.lookedAt ?? []).flatMap((group) => group.cards ?? []),
+      ...(initial.decision?.choices ?? []).flatMap((choice) => [choice.card, ...(choice.cards ?? [])].filter(Boolean)),
       ...(initial.players ?? []).flatMap((player) => [
+        ...(player.topCard ? [player.topCard] : []),
         ...(player.battlefield ?? []), ...(player.exile ?? []), ...(player.graveyard ?? []),
       ]),
-    ].map((card) => card.cardId ?? card.id));
+    ].filter((card) => !card.faceDown).map((card) => card.cardId ?? card.id));
     const allowPlannedResolutions = autoAdvance || expectedStackIds.length > 0 || steps.some((step) => step.allowPlannedResolutions === true);
     let pendingCast = null;
     let pendingTriggers = [];
@@ -365,10 +371,14 @@ export class GameSeat {
         for (const id of resolvingPlanned) if (!state.stack.some((item) => item.id === id)) resolvingPlanned.delete(id);
       };
       {
-        const own = state.players?.find((player) => player.yourSeat);
-        if ([...(state.ownHand ?? []), ...(own?.exile ?? [])].some((card) =>
-          !initiallyKnownCards.has(card.cardId ?? card.id))) {
-          throw new ToolError('new_information', 'A new hand or exile card needs a fresh plan.');
+        const visibleCards = [
+          ...(state.ownHand ?? []),
+          ...(state.revealed ?? []).flatMap((group) => group.cards ?? []), ...(state.lookedAt ?? []).flatMap((group) => group.cards ?? []),
+          ...(state.decision?.choices ?? []).flatMap((choice) => [choice.card, ...(choice.cards ?? [])].filter(Boolean)),
+          ...(state.players ?? []).flatMap((player) => [...(player.topCard ? [player.topCard] : []), ...(player.battlefield ?? []), ...(player.graveyard ?? []), ...(player.exile ?? [])]),
+        ];
+        if (visibleCards.some((card) => (card.cardId ?? card.id) && !card.faceDown && !card.isToken && !initiallyKnownCards.has(card.cardId ?? card.id))) {
+          throw new ToolError('new_information', 'A newly visible card needs a fresh plan.');
         }
       }
       const currentStack = stackIdentity(state.stack);
