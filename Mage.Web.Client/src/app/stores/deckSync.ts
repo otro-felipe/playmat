@@ -50,8 +50,9 @@ async function listRemote() {
 async function download(id: string) {
   if (!PRIVATE_PLAYTESTING) return (await api.deckSyncGet(id))?.data;
   const account = accountKey();
+  const started = generation;
   const deck = await productRequest<ProductDeckStamp & { data: object }>('/' + encodeURIComponent(id));
-  if (account !== accountKey()) return undefined;
+  if (started !== generation || account !== accountKey()) return undefined;
   rememberRevision(account, id, deck.revision);
   return JSON.stringify(deck.data);
 }

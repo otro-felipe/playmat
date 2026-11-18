@@ -53,6 +53,57 @@ function deck(id: string, name: string, updatedAt: number) {
   return { id, name, updatedAt, format: 'Pioneer', cards: [{ cardName: 'Forest', amount: 60 }], sideboard: [] };
 }
 
+test('[PM-AC-20] returning to the same account fences an old connection download before its next write', async () => {
+  vi.resetModules();
+  vi.doMock('../connection', () => createFakeConnection());
+  vi.doMock('../playtesting', () => ({ PRIVATE_PLAYTESTING: true }));
+  const { useSession } = await import('./session');
+  const { deckStorage } = await import('../../core/decks/DeckStorageService');
+  const { useDeckSyncStatus } = await import('./deckSyncStatus');
+  const oldDeck = deck('alice-shared', 'Old Alice deck', 10);
+  const currentDeck = deck('alice-shared', 'Current Alice deck', 20);
+  let releaseOld!: (response: Response) => void;
+  let oldRequested!: () => void;
+  const started = new Promise<void>((resolve) => { oldRequested = resolve; });
+  let lists = 0, downloads = 0;
+  const writes: number[] = [];
+  vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+    const owner = (init?.headers as Record<string, string>)?.['X-Playmat-Deck-Owner'];
+    if (init?.method === 'PUT') {
+      const revision = JSON.parse(String(init.body)).expectedRevision as number;
+      writes.push(revision);
+      return revision === 2 ? Response.json({ revision: 3 }) : Response.json({}, { status: 409 });
+    }
+    if (url === `${ROOT}?deleted=1`) {
+      if (owner !== 'Alice') return Response.json({ decks: [] });
+      const revision = ++lists === 1 ? 1 : 2;
+      return Response.json({ decks: [{ id: currentDeck.id, revision, updatedAt: revision * 10 }] });
+    }
+    if (url === `${ROOT}/${currentDeck.id}`) {
+      if (++downloads === 1) {
+        oldRequested();
+        return new Promise<Response>((resolve) => { releaseOld = resolve; });
+      }
+      return Response.json({ revision: 2, data: currentDeck });
+    }
+    return Response.json({ decks: [] });
+  });
+  const sync = await import('./deckSync');
+  useSession.setState({ phase: 'signedIn', loginCount: 1, userName: 'Alice', serverUrl: SERVER });
+  await started;
+  useSession.setState({ phase: 'signedOut' });
+  useSession.setState({ phase: 'signedIn', loginCount: 2, userName: 'Bob' });
+  await vi.waitFor(() => expect(useDeckSyncStatus.getState()).toMatchObject({ ready: true, status: 'synced' }));
+  useSession.setState({ phase: 'signedOut' });
+  useSession.setState({ phase: 'signedIn', loginCount: 3, userName: 'Alice' });
+  await vi.waitFor(() => expect(useDeckSyncStatus.getState()).toMatchObject({ ready: true, status: 'synced' }));
+  releaseOld(Response.json({ revision: 1, data: oldDeck }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect((await deckStorage.loadDeck(currentDeck.id))?.name).toBe('Current Alice deck');
+  await expect(sync.uploadNow(currentDeck.id)).resolves.toBeUndefined();
+  expect(writes).toEqual([2]);
+});
+
 afterEach(() => {
   vi.unstubAllGlobals();
   localStorage.clear();
