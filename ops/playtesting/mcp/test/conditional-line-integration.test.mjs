@@ -14,7 +14,7 @@ test('a two-spell line selects its exact public mana source, resolves each plann
   let state = { gameId: 'integration', status: 'active', epoch: 1, cursor: 1, turn: 4,
     activePlayer: 'Pilot', step: 'PRECOMBAT_MAIN', priority: 'self', stack: [], ownHand: [first, second],
     players: [{ id: 'pilot', yourSeat: true, battlefield: ownLands }, { id: 'rival', battlefield: [rivalLand] }],
-    sequenceEvidence: { epoch: 'integration-feed', publicActions: {}, resolutions: {}, resolutionRevision: 0 }, decision: priority('cast-first', [first]) };
+    sequenceEvidence: { epoch: 'integration-feed', publicActions: {}, resolutions: {}, resolutionRevision: 0, informationRevision: 0 }, decision: priority('cast-first', [first]) };
   const listeners = new Set();
   const accepted = [];
   const timers = [];
@@ -41,7 +41,7 @@ test('a two-spell line selects its exact public mana source, resolves each plann
         later({ decision: priority(decisionId === 'pay-first' ? 'yield-first' : 'yield-second') });
       } else if (decisionId === 'yield-first' || decisionId === 'yield-second') {
         update({ priority: 'opponent', decision: null });
-        later({ stack: [], sequenceEvidence: { epoch: 'integration-feed', publicActions: {}, resolutions: decisionId === 'yield-first' ? { 'stack-first': 1 } : { 'stack-first': 1, 'stack-second': 2 }, resolutionRevision: decisionId === 'yield-first' ? 1 : 2 }, priority: 'self', decision: decisionId === 'yield-first'
+        later({ stack: [], sequenceEvidence: { epoch: 'integration-feed', publicActions: {}, resolutions: decisionId === 'yield-first' ? { 'stack-first': 1 } : { 'stack-first': 1, 'stack-second': 2 }, resolutionRevision: decisionId === 'yield-first' ? 1 : 2, informationRevision: 0 }, priority: 'self', decision: decisionId === 'yield-first'
           ? priority('cast-second', [second]) : priority('advance-end') });
       } else if (decisionId === 'advance-end') {
         update({ step: 'END_TURN', decision: priority('end') });

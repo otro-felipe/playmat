@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { test } from 'node:test';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { WebSocketServer } from 'ws';
@@ -17,13 +18,18 @@ test('[PM-AC-08] selects or cancels the engine ability panel through guarded MCP
   const engineServer = new WebSocketServer({ host: '127.0.0.1', port: 0 });
   await once(engineServer, 'listening');
   const played = [];
-  const responses = { connectUser: true, serverGetMainRoomId: roomId, gameJoin: true, sendPlayerUUID: true };
+  const concessions = [];
+  const gameView = { players: [{ playerId, name: 'FixtureRival', hasPriority: true }], myPlayerId: playerId, priorityPlayerName: 'FixtureRival', step: 'PRECOMBAT_MAIN', turn: 3,
+    sequenceEvidence: { epoch: 'panel-fixture', publicActions: {}, resolutions: {}, resolutionRevision: 0, informationRevision: 0, combatRevision: 0, combatDamage: [] } };
+  const responses = { connectUser: true, serverGetMainRoomId: roomId, gameJoin: true, sendPlayerUUID: true, sendPlayerAction: true, matchQuit: true };
   const connected = once(engineServer, 'connection');
   engineServer.on('connection', (socket) => {
     socket.on('message', (raw) => {
       const { method, id, params } = JSON.parse(raw);
       if (method === 'sendPlayerUUID') played.push(params);
+      if (method === 'sendPlayerAction' || method === 'matchQuit') concessions.push({ method, params });
       socket.send(JSON.stringify({ jsonrpc: '2.0', id, result: responses[method] ?? null }));
+      if (method === 'sendPlayerUUID' && played.length === 3) socket.send(JSON.stringify({ method: 'GAME_SELECT', messageId: 6, objectId: gameId, data: { message: 'Play spells and abilities', gameView } }));
     });
   });
   const actor = { accountId: 'fixture-owner', engineName: 'FixtureRival', scopes: ['play'] };
@@ -57,7 +63,7 @@ test('[PM-AC-08] selects or cancels the engine ability panel through guarded MCP
   const [socket] = await connected;
   const event = (method, messageId, data) => socket.send(JSON.stringify({ method, messageId, objectId: gameId, data }));
   event('START_GAME', 1, { gameId, playerId });
-  event('GAME_INIT', 2, { players: [{ playerId, name: actor.engineName }], step: 'PRECOMBAT_MAIN' });
+  event('GAME_INIT', 2, gameView);
   const abilityPanel = {
     message: 'Choose spell or ability to play Branchloft Pathway',
     choices: { [front]: '1. <b>Play Branchloft Pathway</b>', [back]: '2. <b>Play Boulderloft Pathway</b>' },
@@ -104,4 +110,27 @@ test('[PM-AC-08] selects or cancels the engine ability panel through guarded MCP
     [gameId, back, 3],
     [gameId, null, 4],
   ]);
+  event('GAME_CHOOSE_ABILITY', 5, abilityPanel);
+  const third = (await call('wait_for_decision', { gameId, afterDecisionId: current.id, timeoutMs: 1000 })).result.state;
+  const invalid = await client.callTool({ name: 'play_turn', arguments: { gameId, cursor: third.cursor, actions: [{ kind: 'choose', decisionId: third.decision.id,
+    choiceId: third.decision.choices[0].id, select: { label: 'Play Branchloft Pathway' } }], finish: 'none' } });
+  assert.equal(invalid.isError, true); assert.equal(played.length, 2, 'Malformed XOR input never reaches the engine');
+  const queued = (await call('play_turn', { gameId, cursor: third.cursor, actions: [{ kind: 'choose', decisionId: third.decision.id, choiceId: third.decision.choices[0].id }], finish: 'none' })).result;
+  let result;
+  for (let n=0;n<60;n++) { result=(await call('get_sequence_status',{gameId,sequenceId:queued.sequenceId})).result; if(result.status!=='running')break; await sleep(5); }
+  assert.equal(result.status,'completed'); assert.equal(played.length,3); assert.equal(played[2][2],front);
+  const recovered=(await call('get_sequence_status',{gameId,startCursor:third.cursor})).result;
+  assert.equal(recovered.sequenceId,queued.sequenceId); assert.equal(recovered.appliedDecisions,1); assert.equal(played.length,3,'Recovering a lost receipt must never resubmit its accepted choice');
+  assert.equal((await call('get_sequence_status',{gameId,startCursor:third.cursor+1000})).result.code,'unknown_sequence');
+  const fresh=(await call('get_game_state',{gameId})).result;
+  const paced=(await call('play_turn',{gameId,cursor:fresh.cursor,actions:[{kind:'pace',delayMs:1000}],finish:'none'})).result;
+  const foreign=await call('concede',{gameId:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'});
+  assert.equal(foreign.result.code,'forbidden_game'); assert.equal(concessions.length,0);
+  assert.equal((await call('concede',{gameId,entireMatch:false})).result.submitted,true);
+  await sleep(2);
+  const cancelled=(await call('get_sequence_status',{gameId,sequenceId:paced.sequenceId})).result;
+  assert.equal(cancelled.reason,'conceded'); assert.equal(played.length,3,'Surrender cancels the queued remainder');
+  assert.equal(concessions[0].method,'sendPlayerAction'); assert.equal(concessions[0].params[0],'CONCEDE');
+  assert.equal((await call('concede',{gameId,entireMatch:true})).result.submitted,true);
+  assert.equal(concessions[1].method,'matchQuit');
 });

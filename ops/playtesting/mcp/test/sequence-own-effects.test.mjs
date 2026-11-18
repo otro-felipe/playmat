@@ -5,7 +5,7 @@ import { GameSeat } from '../src/game-seat.mjs';
 
 const pass = { id: 'pass', type: 'pass' };
 const priority = (id, card) => ({ id, kind: 'priority', choices: [pass, ...(card ? [{ id: `cast-${card.id}`, type: 'object', card }] : [])] });
-const evidence = (actions = 0, resolutions = {}, revision = 0, epoch = 'feed-1') => ({ epoch, publicActions: { me: 0, them: actions }, resolutions, resolutionRevision: revision });
+const evidence = (actions = 0, resolutions = {}, revision = 0, epoch = 'feed-1') => ({ epoch, publicActions: { me: 0, them: actions }, resolutions, resolutionRevision: revision, informationRevision: 0 });
 const bolt = { id: 'bolt', cardId: 'physical-bolt', name: 'Lightning Bolt', types: ['INSTANT'] };
 const spike = { id: 'spike', cardId: 'physical-spike', name: 'Lava Spike', types: ['SORCERY'] };
 

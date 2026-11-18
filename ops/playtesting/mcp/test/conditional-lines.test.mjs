@@ -8,7 +8,7 @@ const priority = (id, choices = [pass]) => ({ id, kind: 'priority', choices });
 async function run(t, steps, { initial = {}, onRespond, seatOptions, responsePolicy = 'interrupt' } = {}) {
   let state = { gameId: 'g', status: 'active', epoch: 1, cursor: 1, turn: 1, activePlayer: 'self',
     priority: 'self', step: 'PRECOMBAT_MAIN', ownHand: [spell], players: [{ id: 'self', yourSeat: true }],
-    stack: [], sequenceEvidence: { epoch: 'conditional-feed', publicActions: {}, resolutions: {}, resolutionRevision: 0 }, decision: priority('initial'), ...initial };
+    stack: [], sequenceEvidence: { epoch: 'conditional-feed', publicActions: {}, resolutions: {}, resolutionRevision: 0, informationRevision: 0 }, decision: priority('initial'), ...initial };
   const listeners = new Set(), timers = [], applied = [];
   const update = (data) => { state = { ...state, ...data, cursor: state.cursor + 1 }; for (const f of [...listeners]) f(); };
   const later = (data) => timers.push(setTimeout(() => update(data), 10));
@@ -55,7 +55,7 @@ for (const variant of ['normal', 'auto', 'response', 'default', 'turn', 'mandato
         update({ priority: 'opponent', decision: { kind: 'waiting' } });
         if (variant === 'response') later({ stack: [{ ...spell, id: 'stack-spell', controllerId: 'self' }, { id: 'enemy-spell', controllerId: 'enemy' }] });
         else if (variant === 'turn') later({ turn: 2 });
-        else later({ stack: [], sequenceEvidence: { epoch: 'conditional-feed', publicActions: {}, resolutions: { 'stack-spell': 1 }, resolutionRevision: 1 }, ...(variant === 'draw' ? { ownHand: [{ id: 'new-draw', cardId: 'new-draw' }] } : {}), priority: 'self', decision: variant === 'mandatory'
+        else later({ stack: [], sequenceEvidence: { epoch: 'conditional-feed', publicActions: {}, resolutions: { 'stack-spell': 1 }, resolutionRevision: 1, informationRevision: 0 }, ...(variant === 'draw' ? { ownHand: [{ id: 'new-draw', cardId: 'new-draw' }] } : {}), priority: 'self', decision: variant === 'mandatory'
           ? { id: 'mandatory', kind: 'target', choices: [{ id: 'followup' }] }
           : priority('follow', [{ id: 'followup', type: 'object' }, pass]) });
       }

@@ -105,6 +105,7 @@ public class GameEventRecorder extends Watcher {
                         .source(event.getSourceId(), nameOf(game, event.getSourceId())), null);
                 break;
             case DREW_CARD:
+                feed.newInformation(event.getPlayerId());
                 feed.add(view(feed, GameEventKind.DRAW, game, event).player(event.getPlayerId()).zones(Zone.LIBRARY.name(), Zone.HAND.name()), event.getPlayerId());
                 break;
             case CREATED_TOKEN:

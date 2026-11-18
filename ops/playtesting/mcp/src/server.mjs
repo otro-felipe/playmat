@@ -29,18 +29,20 @@ const ChoiceSelector = z.object({
   zone: z.enum(['hand', 'battlefield']).optional(),
 }).strict().refine(({ cardName, cardId, objectId, label }) => cardName || cardId || objectId || label, 'Name the exact public object, card or choice label.');
 const OwnTrigger = z.object({ sourceId: StringId, abilityText: z.string().min(1).max(2000), count: z.number().int().min(1).max(4).default(1) }).strict();
+const OwnActivation = z.object({ sourceId: StringId, abilityText: z.string().min(1).max(2000) }).strict();
 const TargetTrigger = z.object({ sourceId: StringId, targetingCardId: StringId, abilityText: z.string().min(1).max(2000), count: z.number().int().min(1).max(2).default(1) }).strict();
 const Answer = z.object({
   kind: z.literal('answer'), choiceId: StringId.optional(), select: ChoiceSelector.optional(), decisionId: StringId.optional(),
   guard: z.object({ kind: StringId, ...GameCondition, instruction: z.string().min(1).max(2000).optional() }).strict().optional(), value: Value.optional(),
   expectCast: z.boolean().default(false),
+  expectAbility: OwnActivation.optional().describe('One exact own non-mana activated stack ability from a visible battlefield source; never a rival ability or trigger.'),
   expectTriggers: z.array(OwnTrigger).max(4).optional().describe('Predeclare exact own triggered abilities caused by this answer; never matches opponent abilities.'),
   expectTargetTriggers: z.array(TargetTrigger).max(2).optional().describe('Separate Ward forecast: exact public opposing target, targeting own card and exact Ward trigger text. It never authorizes a rival action.'),
   skipIfTargetedBy: StringId.optional().describe('Skip this target answer only if its exact selected public object is already announced as a target of this own planned card. Never skip a hidden-zone cost.'),
 }).strict()
   .refine(({ choiceId, select }) => !!choiceId !== !!select, 'Use one exact choice ID or one semantic selector.')
-  .refine((value) => value.decisionId || (value.guard && hasDestination(value.guard)),
-  'A planned answer needs the exact decision ID or a guard with its expected kind and destination.');
+  .refine((value) => value.decisionId || (value.guard && (hasDestination(value.guard) || value.guard.instruction !== undefined)),
+  'Use the observed decisionId, or a guard with its expected kind and destination/exact instruction.');
 const YieldPriority = z.object({
   kind: z.literal('yield_priority'), until: z.enum(['self', 'opponent']).default('self').describe('Pass exactly once, then wait for a new self decision or the observed opponent handoff.'),
   allowPlannedResolutions: z.boolean().default(false).describe('Authorize this plan’s exact declared spell/trigger resolutions, including early automatic resolution. Unexpected objects, rival actions and new information still interrupt.'),
@@ -53,12 +55,16 @@ const PassUntil = z.object({
 }).strict().refine((value) => hasDestination(value) || value.stackEmpty === true, 'A pass needs a phase, step, priority or empty-stack destination.');
 const Sequence = { gameId: Uuid, cursor: Cursor, expectedStackIds: z.array(StringId).max(16).optional(), allowPlannedCombatDamage: z.boolean().default(false), steps: z.array(z.union([Hold, Pace, Answer, PassUntil, YieldPriority, AdvanceToOwnTurn])).min(1).max(32) };
 const TurnPlay = z.object({ kind: z.literal('play'), select: ChoiceSelector, when: z.enum(['stack_empty', 'priority']).default('stack_empty'),
+  reevaluateAfter: z.boolean().optional().describe('Make this the last strategic intention and return control after settlement. Only guarded costs for its tracked cast/activation may follow before resolution; an untracked no-stack choice must be last. Use for uncertain effects not recognized automatically.'),
+  expectCast: z.boolean().optional().describe('False for an intentional no-stack special action such as plot; lands are detected automatically. Unexpected stack additions still stop.'),
   targets: z.array(z.object({ select: ChoiceSelector, instruction: z.string().min(1).max(2000).optional() }).strict()).max(8).optional(), payWith: z.array(StringId).max(16).optional(),
   expectTriggers: z.array(OwnTrigger).max(4).optional(), expectTargetTriggers: z.array(TargetTrigger).max(2).optional(),
 }).strict();
-const TurnChoose = z.object({ kind: z.literal('choose'), select: ChoiceSelector, guard: z.object({ kind: StringId, instruction: z.string().min(1).max(2000).optional(), ...GameCondition }).strict(),
-  value: Value.optional(), skipIfTargetedBy: StringId.optional(), expectTriggers: z.array(OwnTrigger).max(4).optional(), expectTargetTriggers: z.array(TargetTrigger).max(2).optional(),
-}).strict().refine(({ guard }) => ['priority', 'payMana'].includes(guard.kind) || guard.instruction !== undefined, 'A predetermined mandatory choice needs its exact instruction guard.');
+const TurnChoose = z.object({ kind: z.literal('choose'), choiceId: StringId.optional(), select: ChoiceSelector.optional(), decisionId: StringId.optional(),
+  guard: z.object({ kind: StringId, instruction: z.string().min(1).max(2000).optional(), ...GameCondition }).strict().optional(),
+  value: Value.optional(), reevaluateAfter: z.boolean().optional(), expectCast: z.boolean().optional(), expectAbility: OwnActivation.optional(), skipIfTargetedBy: StringId.optional(), expectTriggers: z.array(OwnTrigger).max(4).optional(), expectTargetTriggers: z.array(TargetTrigger).max(2).optional(),
+}).strict().refine(({ choiceId, select }) => !!choiceId !== !!select, 'Use one exact choiceId or one semantic select, as with submit_decision.')
+  .refine(({ decisionId, guard }) => decisionId || guard && (['priority', 'payMana'].includes(guard.kind) || guard.instruction !== undefined), 'Use the observed decisionId, or guard the future mandatory choice with its exact instruction.');
 const TurnAttack = z.object({ kind: z.literal('attack'), attackers: z.union([z.literal('all'), z.array(StringId).max(16)]).default('all') }).strict()
   .refine(({ attackers }) => attackers === 'all' || new Set(attackers).size === attackers.length, 'Name each attacker once.');
 const Turn = { gameId: Uuid, cursor: Cursor, actions: z.array(z.union([TurnPlay, TurnChoose, TurnAttack, Pace])).max(32),
@@ -160,7 +166,7 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
   tool('play_turn', 'Plan a complete turn with significant plays, public targets, chosen mana sources, guarded costs/choices and attacks. The executor makes legal ordinary passes between intentions; do not enumerate passes or predict priority windows. Own declared spells/triggers and the initial own stack may resolve; real rival actions, new information, unknown mandatory choices and chosen stops interrupt. finish next_turn advances only while no useful legal action remains, never because mana is zero.', Turn, 'play', (args) => getSeat().startTurn(args, reauthorize));
   tool('play_sequence', 'Queue guarded choices by exact ID, card or label. Mark a planned cast with expectCast to let later steps pay for that same spell.', Sequence, 'play', playSequence);
   tool('submit_sequence', 'Start a conditional, bounded sequence of choices, brief waits and ordinary passes.', Sequence, 'play', playSequence);
-  tool('get_sequence_status', 'Check the progress and interruption reason for one plan.', { gameId: Uuid, sequenceId: Uuid }, 'play',
+  tool('get_sequence_status', 'Check progress and interruption for your plan. If transport lost its returned ID, recover with the exact startCursor submitted with that plan; inspect accepted counts and state before retrying any action.', { gameId: Uuid, sequenceId: Uuid.optional(), startCursor: Cursor.optional() }, 'play',
     (args) => getSeat().sequenceStatus(args), true);
   tool('cancel_sequence', 'Cancel unapplied steps without undoing moves already accepted by XMage.', { gameId: Uuid, sequenceId: Uuid }, 'play',
     (args) => getSeat().cancelSequence(args));
@@ -192,8 +198,8 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
     });
   tool('start_match', 'Start your own private table when it is ready.', { tableId: Uuid }, 'play',
     (args) => getSeat().engine.startMatch(args.tableId));
-  tool('concede', 'Concede this game or the whole match explicitly.', { gameId: Uuid, entireMatch: z.boolean().default(false) }, 'play',
-    ({ gameId, entireMatch }) => getSeat().engine.concede(gameId, entireMatch));
+  tool('concede', 'Surrender this game (default) or the whole match explicitly. Cancels the remaining queued plan before sending the concession; accepted earlier actions remain applied.', { gameId: Uuid, entireMatch: z.boolean().default(false) }, 'play',
+    ({ gameId, entireMatch }) => { const seat = getSeat(); seat.snapshot(gameId); seat.invalidate('conceded'); return seat.engine.concede(gameId, entireMatch); });
   tool('get_sideboard_state', 'Read the private eligible card pool and state of your sideboarding step.', { gameId: Uuid.optional() }, 'play',
     ({ gameId }) => getSeat().engine.sideboardState(gameId), true);
   tool('submit_sideboard', 'Submit an engine-validated deck drawn from the registered card pool for the next game.', {

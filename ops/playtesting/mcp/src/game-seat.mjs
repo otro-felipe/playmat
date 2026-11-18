@@ -57,6 +57,41 @@ function stackIdentity(stack) {
     [id, cardId, name, controllerId, abilityType, sourceId, abilityText]));
 }
 
+// Preflight only the selected spell's effect text. A permanent can have unrelated draw abilities.
+function needsEffectReevaluation(text) {
+  return /\b(?:scry|surveil|cascade|discover|mill)\b|\bdraw(?:s)?\b[^.]*\bcards?\b|\b(?:look at|reveal|reveals)\b|\bexile\b[^.]*\btop\b|\bsearch\b[^.]*\blibrar(?:y|ies)\b|\bat random\b|\bflip\b[^.]*\bcoins?\b|\broll\b[^.]*\b(?:die|dice|d\d+)\b|\b(?:opponent|target player|each player|that player)\b[^.]*\b(?:choose|chooses|sacrifice|sacrifices|discard|discards)\b/i.test(text);
+}
+
+function needsSpellReevaluation(card) {
+  if (!card?.types?.some((type) => type === 'INSTANT' || type === 'SORCERY')) return false;
+  return (card.rules ?? []).some(needsEffectReevaluation);
+}
+
+function needsStackReevaluation(card) {
+  return needsSpellReevaluation(card) || !!(card?.abilityType && needsEffectReevaluation(card.abilityText ?? ''));
+}
+
+function declaredInformation(step, state) {
+  return !!(step.reevaluateAfter || step.expectCast && needsSpellReevaluation(planCard(state, step))
+    || step.expectAbility && needsEffectReevaluation(step.expectAbility.abilityText)
+    || step.expectTriggers?.some((trigger) => needsEffectReevaluation(trigger.abilityText)));
+}
+
+function guardedCostChoice(step) {
+  if (!['answer', 'choose'].includes(step.kind) || !step.guard) return false;
+  if (step.guard.kind === 'payMana') return true;
+  return ['target', 'question', 'chooseAbility', 'choice', 'chooseChoice', 'amount', 'amounts', 'multiAmount'].includes(step.guard.kind)
+    && typeof step.guard.instruction === 'string'
+    && !/\b(?:scry|surveil|library)\b|Choose which (?:flip|die roll)|Re-roll\b/i.test(step.guard.instruction);
+}
+
+function planCard(state, step) {
+  if (step.choiceId) return state.decision?.choices.find((choice) => choice.id === step.choiceId)?.card;
+  const cards = [...(state.ownHand ?? []), ...(state.players ?? []).filter((player) => player.yourSeat).flatMap((player) => [...(player.battlefield ?? []), ...(player.graveyard ?? []), ...(player.exile ?? [])])];
+  return cards.find((card) => step.select?.cardId && [card.id, card.cardId].includes(step.select.cardId)
+    || step.select?.objectId && step.select.objectId === card.id || step.select?.cardName && step.select.cardName === card.name);
+}
+
 function plannedChoice(state, decision, step) {
   if (step.intent) return decision.choices.find((choice) => choice.intent === step.intent);
   if (step.choiceId) return decision.choices.find((choice) => choice.id === step.choiceId);
@@ -157,16 +192,28 @@ export class GameSeat {
 
   startSequence({ gameId, cursor, steps, expectedStackIds = [], allowPlannedCombatDamage = false, autoAdvance = false }, authorize, responsePolicy = 'interrupt') {
     const initial = this.snapshot(gameId);
+    if (initial.cursor !== cursor || initial.status !== 'active') throw new ToolError('stale_decision', 'Plan from the latest game state.');
+    steps = steps.map((step) => ({ ...step }));
+    if (!autoAdvance && responsePolicy !== 'ignore') for (let index = 0; index < steps.length; index++) {
+      if (steps[index].kind !== 'answer' || !declaredInformation(steps[index], initial)) continue;
+      let resolving = false;
+      for (const next of steps.slice(index + 1)) {
+        if (next.kind === 'yield_priority' || next.kind === 'pass_until' && next.allowPlannedResolutions) resolving = true;
+        if (next.kind === 'advance_to_own_turn' || next.kind === 'pass_until' && (next.phase || next.step)
+          || next.kind === 'answer' && (!guardedCostChoice(next) && (resolving || ['priority', 'declareAttackers'].includes(next.guard?.kind)))) throw new ToolError('reevaluation_required', 'This spell can reveal information or require an unknown decision. Queue its known casting costs/targets only; inspect its resolution before planning another action.');
+        if (next.kind === 'answer') next.beforeInformation = true;
+      }
+    }
     if (new Set(expectedStackIds).size !== expectedStackIds.length || expectedStackIds.some((id) => !initial.stack.some((card) => card.id === id))) {
       throw new ToolError('bad_stack_expectation', 'Adopt only exact, distinct objects visible at the current stack cursor.');
     }
     if (steps.some((step, index) => step.kind === 'advance_to_own_turn' && index !== steps.length - 1)) {
       throw new ToolError('bad_sequence', 'Advance to your next turn only as the final step; replan before taking another action.');
     }
-    if (initial.cursor !== cursor || initial.status !== 'active') throw new ToolError('stale_decision', 'Plan from the latest game state.');
     if (this.#current || this.#inFlight) throw new ToolError('sequence_running', 'Finish or cancel the current decision or sequence first.');
     const sequence = {
-      id: randomUUID(), gameId, status: 'running', reason: null, completedSteps: 0, appliedDecisions: 0, cursor,
+      id: randomUUID(), gameId, status: 'running', reason: null, completedSteps: 0, appliedDecisions: 0, cursor, startCursor: cursor,
+      startedAtEpochMs: Date.now(),
       controller: new AbortController(),
     };
     this.#current = sequence;
@@ -179,10 +226,29 @@ export class GameSeat {
   /** Compile significant intentions; ordinary priority handoffs are the executor's responsibility. */
   startTurn({ gameId, cursor, actions, expectedStackIds, finish = 'next_turn' }, authorize) {
     const initial = this.snapshot(gameId);
+    if (initial.cursor !== cursor || initial.status !== 'active') throw new ToolError('stale_decision', 'Plan from the latest game state.');
     const steps = [];
-    for (const action of actions) {
+    const ownId = initial.players?.find((player) => player.yourSeat)?.id;
+    const resolvingInformation = initial.stack.some((card) => (card.controllerId === ownId || expectedStackIds?.includes(card.id)) && needsStackReevaluation(card));
+    const answeringObservedInformation = actions.length === 1 && actions[0].kind === 'choose' && initial.decision
+      && (actions[0].decisionId === initial.decision.id || actions[0].guard?.kind === initial.decision.kind
+        && actions[0].guard?.instruction === initial.decision.instruction && reaches(initial, actions[0].guard));
+    const respondingBeforeResolution = actions[0]?.kind === 'play' && actions[0].when === 'priority'
+      && actions.every((action) => action.kind === 'play' && action.when === 'priority' || guardedCostChoice(action));
+    if (resolvingInformation && actions.length && !answeringObservedInformation && !respondingBeforeResolution) throw new ToolError('reevaluation_required', 'The existing stack can reveal information or require an unknown decision. Resolve/inspect it before planning new actions; use when:priority only for deliberate responses before resolution.');
+    let reevaluate = resolvingInformation;
+    let beforeInformation = resolvingInformation && !answeringObservedInformation;
+    for (const [actionIndex, action] of actions.entries()) {
+      const terminal = declaredInformation({ ...action, expectCast: action.kind === 'play' ? action.expectCast !== false : action.expectCast }, initial);
+      if (terminal && actions.slice(actionIndex + 1).some((next) => !guardedCostChoice(next) || declaredInformation(next, initial))) throw new ToolError('reevaluation_required', 'An information-changing intention must be last except for guarded casting costs/modes/targets. Inspect its actual result before planning the remainder.');
+      const selectedCard = planCard(initial, action);
+      const trackedEffect = action.expectAbility || (action.kind === 'play' ? action.expectCast !== false : action.expectCast)
+        && selectedCard?.cardId && Array.isArray(selectedCard.types) && !selectedCard.types.includes('LAND') && !selectedCard.faceDown;
+      if (action.reevaluateAfter && actionIndex !== actions.length - 1 && !trackedEffect) throw new ToolError('reevaluation_required', 'An untracked terminal choice must be last; no later choice can be assumed to precede its unknown outcome.');
+      reevaluate ||= terminal;
+      const firstStep = steps.length;
       if (action.kind === 'play') {
-        steps.push({ kind: 'answer', guard: { kind: 'priority', priority: 'self' }, select: action.select, expectCast: 'auto', semanticPlay: true,
+        steps.push({ kind: 'answer', guard: { kind: 'priority', priority: 'self' }, select: action.select, expectCast: action.expectCast === false ? false : 'auto', reevaluateAfter: action.reevaluateAfter, semanticPlay: true,
           requiresEmptyStack: action.when !== 'priority', expectTriggers: action.expectTriggers, expectTargetTriggers: action.expectTargetTriggers });
         for (const target of action.targets ?? []) steps.push({ kind: 'answer', guard: { kind: 'target', instruction: target.instruction }, select: target.select, semanticTarget: true,
           skipIfTargetedBy: action.select.cardId });
@@ -194,22 +260,30 @@ export class GameSeat {
         else for (const id of action.attackers) steps.push({ kind: 'answer', guard: { kind: 'declareAttackers' }, select: { objectId: id, zone: 'battlefield' } });
         steps.push({ kind: 'answer', guard: { kind: 'declareAttackers' }, intent: 'confirm_attack' });
       } else steps.push(action);
+      for (let index = firstStep; index < steps.length; index++) {
+        steps[index].actionIndex = actionIndex;
+        if (beforeInformation || terminal) steps[index].beforeInformation = true;
+      }
+      beforeInformation ||= terminal;
     }
     // Finishing the final cast includes its declared resolution, even without a phase advance.
     steps.push({ kind: 'pass_until', priority: 'self', stackEmpty: true, allowPlannedResolutions: true, skipOptionalResponses: true });
-    if (finish === 'next_turn') steps.push({ kind: 'advance_to_own_turn' });
+    if (reevaluate) steps.push({ kind: 'reevaluate' });
+    else if (finish === 'next_turn') steps.push({ kind: 'advance_to_own_turn' });
     else if (finish === 'end_step') steps.push({ kind: 'pass_until', step: 'END_TURN' });
     if (steps.length > 96) throw new ToolError('bad_sequence', 'The semantic turn exceeds its bounded action budget.');
-    const ownId = initial.players?.find((player) => player.yourSeat)?.id;
     const adopted = expectedStackIds ?? initial.stack.filter((card) => card.controllerId === ownId).map((card) => card.id);
     if (adopted.length > 16) throw new ToolError('bad_stack_expectation', 'A semantic turn may adopt at most sixteen visible objects.');
     return this.startSequence({ gameId, cursor, steps, autoAdvance: true, allowPlannedCombatDamage: true,
       expectedStackIds: adopted }, authorize);
   }
 
-  sequenceStatus({ gameId, sequenceId }) {
-    const sequence = this.#sequences.get(sequenceId);
+  sequenceStatus({ gameId, sequenceId, startCursor }) {
+    if (!sequenceId && startCursor === undefined) throw new ToolError('missing_sequence', 'Supply the sequenceId, or its exact startCursor if the transport lost the plan receipt.');
+    const sequence = sequenceId ? this.#sequences.get(sequenceId)
+      : [...this.#sequences.values()].reverse().find((item) => item.gameId === gameId && item.startCursor === startCursor);
     if (!sequence || sequence.gameId !== gameId) throw new ToolError('unknown_sequence', 'This seat does not have that sequence.');
+    if (startCursor !== undefined && sequence.startCursor !== startCursor) throw new ToolError('unknown_sequence', 'The plan does not match that starting cursor.');
     const { controller, id, ...status } = sequence;
     return { sequenceId: id, ...status };
   }
@@ -303,10 +377,17 @@ export class GameSeat {
     const allowPlannedResolutions = autoAdvance || expectedStackIds.length > 0 || steps.some((step) => step.allowPlannedResolutions === true);
     let pendingCast = null;
     let pendingTriggers = [];
+    const explicitInformationObjects = new Set();
+    let canCallHeads = false;
+    let informationResolutionStarted = expectedStackIds.some((id) => initialEvidence?.resolutions?.[id] && initial.stack.some((card) => card.id === id
+      && needsStackReevaluation(card)));
     const checkStack = (state) => {
       if (responsePolicy === 'ignore') return;
+      if (state.decision?.informationBoundary && state.decision.id !== initial.decision?.id) {
+        throw new ToolError('new_information', 'A newly presented library, pile or random-result choice needs a fresh plan after inspecting its information.');
+      }
       const evidence = state.sequenceEvidence;
-      if (autoAdvance && !Number.isSafeInteger(informationRevision)) throw new ToolError('evidence_unavailable', 'Semantic turns need current information evidence.');
+      if ((autoAdvance || allowPlannedResolutions) && !Number.isSafeInteger(informationRevision)) throw new ToolError('evidence_unavailable', 'Automating resolutions requires current information evidence; read a fresh state from a compatible engine.');
       const witnessed = initialEvidenceValid && validEvidence(evidence) && evidence.epoch === initialEvidence.epoch;
       const newResolutions = witnessed ? Object.entries(evidence.resolutions)
         .filter(([, revision]) => revision > evidenceRevision).sort((a, b) => a[1] - b[1]) : [];
@@ -353,6 +434,12 @@ export class GameSeat {
           throw new ToolError('state_changed', 'An unplanned stack object resolved between views.');
         }
         resolvingPlanned.add(id);
+        const object = expectedStackCards.find((card) => card.id === id) ?? state.stack.find((card) => card.id === id);
+        if (explicitInformationObjects.has(id) || needsStackReevaluation(object)) {
+          informationResolutionStarted = true;
+          canCallHeads = !!(object?.abilityType && /\bflip\b[^.]*\bcoins?\b/i.test(object.abilityText ?? '')
+            || needsSpellReevaluation(object) && (object.rules ?? []).some((text) => /\bflip\b[^.]*\bcoins?\b/i.test(text)));
+        }
         settlingResolution = true;
       }
       const currentOpponentState = opponentState(state);
@@ -410,14 +497,16 @@ export class GameSeat {
       for (const item of added) {
         if (nextCast && item.cardId === nextCast.cardId && item.controllerId === nextCast.playerId
           && item.name === nextCast.name && item.id !== item.cardId && !item.abilityType?.startsWith('TRIGGERED')) {
+          if (nextCast.information) explicitInformationObjects.add(item.id);
           nextCast = null;
           continue;
         }
         const expected = nextTriggers.filter((trigger) => trigger.remaining > 0
-          && item.abilityType === 'TRIGGERED_NONMANA' && item.sourceId === trigger.sourceId
+          && item.abilityType === (trigger.abilityType ?? 'TRIGGERED_NONMANA') && item.sourceId === trigger.sourceId
           && item.abilityText === trigger.abilityText && item.controllerId === trigger.playerId
           && (!trigger.targetingCardId || state.stack.some((spell) => spell.cardId === trigger.targetingCardId && spell.controllerId === ownPlayerId && spell.targets?.includes(trigger.sourceId))));
         if (expected.length !== 1) throw new ToolError('state_changed', 'An unexpected or ambiguous stack object needs a fresh plan.');
+        if (expected[0].information) explicitInformationObjects.add(item.id);
         expected[0].remaining--;
       }
       if (added.length || removed.length) {
@@ -507,14 +596,24 @@ export class GameSeat {
     const submit = async (args) => {
       requireSettledCombat();
       settlingResolution = false;
-      return this.submit(args, sequence.id);
+      const submission = { stepIndex: sequence.completedSteps, actionIndex: sequence.actionIndex ?? null,
+        dispatchedAtEpochMs: Date.now(), finishedAtEpochMs: null, acknowledged: false };
+      sequence.lastSubmission = submission;
+      try { const result = await this.submit(args, sequence.id); submission.acknowledged = true; return result; }
+      finally { submission.finishedAtEpochMs = Date.now(); }
     };
     const nextPredeterminedAnswer = (state) => {
       const next = steps[sequence.completedSteps + 1];
       return matchesAnswer(state, next) && next.guard?.instruction !== undefined && plannedChoice(state, state.decision, next);
     };
+    const requireBeforeInformation = (step) => {
+      // Calling heads/tails precedes the random outcome; choosing which result to keep does not.
+      const beforeFlip = canCallHeads && step.guard?.kind === 'question' && step.guard.instruction === 'Heads or tails?';
+      if (step.beforeInformation && informationResolutionStarted && !beforeFlip) throw new ToolError('new_information', 'The information-changing effect began resolving; inspect it before answering further choices.');
+    };
     try {
       for (const step of steps) {
+        sequence.actionIndex = step.actionIndex ?? null;
         advancingOwnTurn = step.kind === 'advance_to_own_turn';
         let state = await stateForStep();
         if (step.kind === 'hold' || step.kind === 'pace') {
@@ -531,6 +630,7 @@ export class GameSeat {
             if (!await waitForNext()) throw new ToolError('timeout', 'The expected decision did not arrive.');
             state = await stateForStep();
           }
+          requireBeforeInformation(step);
           if (autoAdvance && state.stop) throw new ToolError('response_available', 'The configured stop needs a fresh plan.');
           checkAttackWindow(state, step);
           if ((!matchesAnswer(state, step) || step.semanticTarget && step.guard?.instruction === undefined) && canSkipTarget(state, step)) {
@@ -540,6 +640,7 @@ export class GameSeat {
             continue;
           }
           while (autoAdvance && !intentionReady(state, step)) {
+            requireBeforeInformation(step);
             checkAttackWindow(state, step);
             const decision = visibleDecision(state);
             if (!decision || decision.id === previousDecisionId) {
@@ -560,15 +661,24 @@ export class GameSeat {
             state = await stateForStep();
           }
           checkAttackWindow(state, step);
+          requireBeforeInformation(step);
           const decision = state.decision;
+          const castingPicker = pendingCast && decision.kind === 'chooseAbility' && matchesAnswer(state, step);
           if (step.semanticTarget && step.guard?.instruction === undefined) throw new ToolError('response_available', 'An unresolved target needs its exact instruction guard; an absent prompt is not target evidence.');
-          if (pendingCast || state.turn !== turn || (step.decisionId ? decision.id !== step.decisionId :
+          if ((pendingCast && !castingPicker) || state.turn !== turn || (step.decisionId ? decision.id !== step.decisionId :
             !step.guard || step.guard.kind !== decision.kind || !reaches(state, step.guard)
             || (step.guard.instruction !== undefined && step.guard.instruction !== decision.instruction))) {
             throw new ToolError('state_changed', 'The expected guarded decision changed.');
           }
           const choice = plannedChoice(state, decision, step);
           if (!choice) throw new ToolError('illegal_choice', 'The planned choice is unavailable in the current decision.');
+          if (step.expectAbility) {
+            const own = state.players?.find((player) => player.yourSeat);
+            const source = own?.battlefield?.find((card) => card.id === step.expectAbility.sourceId);
+            if (!source || source.faceDown || !['priority', 'chooseAbility'].includes(decision.kind)) throw new ToolError('bad_ability_expectation', 'Expect only an exact non-mana activated ability of a visible own battlefield source.');
+            if (pendingTriggers.some((entry) => entry.remaining > 0 && entry.sourceId === source.id && entry.abilityText === step.expectAbility.abilityText)) throw new ToolError('ambiguous_trigger_expectation', 'An exact own stack ability already has an unconsumed expectation.');
+            pendingTriggers.push({ ...step.expectAbility, playerId: own.id, remaining: 1, abilityType: 'ACTIVATED_NONMANA', information: !!step.reevaluateAfter });
+          }
           if (step.expectTargetTriggers?.length) {
             for (const trigger of step.expectTargetTriggers) {
               const rival = state.players?.find((player) => !player.yourSeat && player.battlefield?.some((card) => card.id === trigger.sourceId));
@@ -601,7 +711,7 @@ export class GameSeat {
             }
             pendingTriggers.push(...additions);
           }
-          if (step.expectCast && !(step.expectCast === 'auto' && choice.card?.types?.includes('LAND'))) {
+          if (step.expectCast && !castingPicker && !(step.expectCast === 'auto' && choice.card?.types?.includes('LAND'))) {
             // The engine's visible legal choice can cast from exile/graveyard too
             // (for example Wrenn's Resolve or flashback). Never infer permission
             // from the zone alone, or treat a battlefield activation as a cast.
@@ -614,7 +724,7 @@ export class GameSeat {
             if (decision.kind !== 'priority' || !card?.cardId || !playerId || card.faceDown || !Array.isArray(card.types) || card.types.includes('LAND')) {
               throw new ToolError('bad_cast_expectation', 'Expect a cast only for a visible legal spell from hand, exile or graveyard during priority; not a mode, target or activated ability.');
             }
-            pendingCast = { cardId: card.cardId, name: card.name, playerId };
+            pendingCast = { cardId: card.cardId, name: card.name, playerId, information: !!step.reevaluateAfter };
           }
           if (decision.kind === 'declareAttackers') attackDeclarationPending = true;
           await submit({
@@ -678,7 +788,8 @@ export class GameSeat {
           }
         } else if (step.kind === 'pass_until') {
           const destinationReached = (view) => reaches(view, step) && !pendingCast
-            && (!autoAdvance || step.step || step.phase || !visibleDecision(view) || view.decision.id !== previousDecisionId);
+            && !pendingTriggers.some((entry) => entry.abilityType === 'ACTIVATED_NONMANA' && entry.remaining > 0)
+            && (!autoAdvance || step.step || step.phase || visibleDecision(view) && view.decision.id !== previousDecisionId);
           for (;;) {
             state = await stateForStep();
             // A requested combat declaration is itself the destination, not an unknown choice to answer.
@@ -707,6 +818,8 @@ export class GameSeat {
             previousDecisionId = state.decision.id;
           }
           sequence.lastDestination = { cursor: state.cursor, turn: state.turn, activePlayerId: state.activePlayerId, phase: state.phase, step: state.step };
+        } else if (step.kind === 'reevaluate') {
+          throw new ToolError('reevaluation_required', 'The terminal intention resolved. Inspect its actual outcome and current legal choices before continuing.');
         }
         sequence.completedSteps++;
         sequence.cursor = this.snapshot().cursor;
@@ -720,6 +833,11 @@ export class GameSeat {
       const reason = signal.aborted ? signal.reason : error;
       sequence.status = reason?.code === 'cancelled' ? 'cancelled' : 'interrupted';
       sequence.reason = reason?.code ?? 'action_failed';
+      sequence.error = { code: sequence.reason, message: reason instanceof ToolError ? reason.message : 'The engine could not verify this step; inspect the fresh state before retrying.',
+        stepIndex: sequence.completedSteps, actionIndex: sequence.actionIndex ?? null, expectedDecisionKind: steps[sequence.completedSteps]?.guard?.kind ?? null,
+        actualDecisionKind: this.snapshot().decision?.kind ?? null,
+        mismatchedGuardFields: Object.entries(steps[sequence.completedSteps]?.guard ?? {}).filter(([key, value]) => value !== undefined
+          && value !== (key === 'kind' ? this.snapshot().decision?.kind : key === 'instruction' ? this.snapshot().decision?.instruction : this.snapshot()[key])).map(([key]) => key) };
       sequence.cursor = this.snapshot().cursor;
     } finally {
       unwatch();

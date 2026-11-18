@@ -79,7 +79,7 @@ public class GameEventRecorderEvidenceTest {
         assertEquals(Long.valueOf(1), view.getPublicActions().get(rival));
         assertEquals(Long.valueOf(1), view.getResolutions().get(stackId));
     }
-    @Test public void privateDrawsAndSelectionsAddNoEvidenceOrPrivateIdentity() {
+    @Test public void privateDrawAdvancesOnlyItsOwnInformationWitnessWithoutPublicActionOrIdentity() {
         UUID secretCard = UUID.randomUUID();
         recorder.watch(event(GameEvent.EventType.DREW_CARD, secretCard, rival), game);
         recorder.watch(event(GameEvent.EventType.CAST_SPELL, secretCard, rival), game); // attempt, not committed
@@ -87,6 +87,8 @@ public class GameEventRecorderEvidenceTest {
         assertFalse(json.contains(secretCard.toString()));
         assertTrue(feed.sequenceEvidence().getPublicActions().isEmpty());
         assertTrue(feed.sequenceEvidence().getResolutions().isEmpty());
+        assertEquals("The drawing player's private witness changes even if that card ID was already known", 1, feed.sequenceEvidence(rival).getInformationRevision());
+        assertEquals("Other players cannot observe a private draw counter", 0, feed.sequenceEvidence(own).getInformationRevision());
     }
     @Test public void abilityEventsCannotInventAnotherStackResolution() {
         resolvingOwn();

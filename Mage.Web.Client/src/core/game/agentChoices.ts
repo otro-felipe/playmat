@@ -10,14 +10,17 @@ function cardOnBoard(card: CardView, id: string | undefined) {
   const { tapped, damage } = card as PermanentView;
   if (card.faceDown || card.hideInfo) return { id, faceDown: true, name: 'Face-down card', tapped: !!tapped };
   const text = splitRules(card);
+  const source = (card as StackAbilityView).sourceCard;
+  // Only the announced ability and public source object ID; never copy the source's hidden identity/text.
+  const publicAbility = ['TRIGGERED_NONMANA', 'TRIGGERED_MANA', 'ACTIVATED_NONMANA', 'ACTIVATED_MANA'].includes(card.abilityType ?? '');
   return {
     id,
     cardId: card.cardId,
     name: card.name ?? card.displayName ?? 'Unnamed card',
     controllerId: card.controllerId,
-    ...(card.abilityType === 'TRIGGERED_NONMANA' || card.abilityType === 'TRIGGERED_MANA' ? {
+    ...(publicAbility ? {
       abilityType: card.abilityType,
-      sourceId: (card as StackAbilityView).sourceCard?.id,
+      sourceId: source?.id,
       abilityText: card.rules?.[0] ? stripMarkup(card.rules[0]) : undefined,
     } : {}),
     types: card.cardTypes ?? [],
@@ -197,7 +200,11 @@ export function projectedChoices(state: GameSessionState, promptId: string) {
       }
       break;
   }
-  return { id: promptId, kind: pregame ?? interaction.mode, instruction: stripMarkup(interaction.headline), choices, ...details };
+  const informationBoundary = prompt.kind === 'target' && prompt.options.targetZone === 'LIBRARY' ? 'library_choice'
+    : prompt.kind === 'choosePile' ? 'revealed_piles'
+      : /^(?:Choose which flip to keep|Choose which die roll result to keep|Re-roll\b)/i.test(prompt.text) ? 'random_result' : null;
+  return { id: promptId, kind: pregame ?? interaction.mode, instruction: stripMarkup(interaction.headline), choices,
+    ...(informationBoundary ? { informationBoundary } : {}), ...details };
 }
 
 type AgentDecision = NonNullable<ReturnType<typeof projectedChoices>>;

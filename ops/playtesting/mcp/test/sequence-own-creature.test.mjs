@@ -7,7 +7,7 @@ const land = { id: 'mountain', cardId: 'mountain', name: 'Mountain', types: ['LA
 const swiftspear = { id: 'swift', cardId: 'swift', name: 'Monastery Swiftspear', types: ['CREATURE'] };
 const pass = { id: 'pass', type: 'pass' };
 const priority = (id, choices = []) => ({ id, kind: 'priority', choices: [pass, ...choices] });
-const evidence = (resolutions = {}, revision = 0, rivalActions = 0) => ({ epoch: 'creature-feed', publicActions: { me: 0, rival: rivalActions }, resolutions, resolutionRevision: revision });
+const evidence = (resolutions = {}, revision = 0, rivalActions = 0) => ({ epoch: 'creature-feed', publicActions: { me: 0, rival: rivalActions }, resolutions, resolutionRevision: revision, informationRevision: 0 });
 
 async function line(t, variant) {
   let state = { gameId: 'own-creature', status: 'active', epoch: 1, cursor: 1, turn: 1, activePlayer: 'Pilot', activePlayerId: 'me', priority: 'self', phase: 'PRECOMBAT_MAIN', step: 'PRECOMBAT_MAIN', stack: [], ownHand: [land, swiftspear],
