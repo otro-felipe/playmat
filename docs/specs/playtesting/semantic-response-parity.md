@@ -37,3 +37,14 @@ The player reported Class/plot, two Reckless Rage target roles and Ward discard,
 | No-resource passing | Existing `semantic-turn.test.mjs` whole-turn/next-turn and free-play/useful-mana negatives; `sequence-conduct.test.mjs` free/alternate-cost spell, activated ability and unknown mana-ability cases. Zero mana alone remains insufficient. |
 
 Class/Bird/Rage cases are deterministic protocol/transport fixtures, not a claim of a complete real Java match for every card. The public Class activation text `{3}{U}: Level 2` follows `ClassLevelAbility.getRule`; a real Talent level-2 return is a separate triggered ability requiring its own forecast and guarded graveyard target.
+
+## Verification record
+
+Validated on `715fed7199d` plus this change, in Docker without host project runtimes or existing game data:
+
+- The standard `tools` stage builds; its packaged MCP suite passes 217 tests, with three existing live-environment skips. The same Class HTTP/WebSocket regression with the previous triggered-only projection fails (`interrupted` instead of `completed`), while the corrected projection completes two accepted decisions. Hidden-source and wrong-type/controller/text negatives pass.
+- The aligned web source passes `npm run typecheck`, `npm run lint`, all 1,653 runnable Vitest tests (42 existing skips), and `npm run test:a11y`. Server resources, card implementations, format rules and Rust deck fixtures must be available read-only beside the client; early isolated runs without those resources failed with `ENOENT`, then the complete resource-mounted run passed.
+- Java 17 compilation of the evidence recorder, canonical `GameImpl` resolution hook and their dependencies, followed by both `GameEventRecorderEvidenceTest` and `GameImplResolutionEvidenceTest`, passes 20 JUnit tests. This is the targeted test runner, not a claim that the complete Maven test reactor ran.
+- `ops/playtesting/test/verify-sequence-image.sh` passes against a complete compiled Java image with the final rebuilt tools stage overlaid. Fresh synthetic accounts/PostgreSQL and no published host ports are used. Two significant burn intentions complete eight internal steps, twelve decisions and three own resolutions, including an adopted initial stack, and observe the end step. A real rival mana activation interrupts with `opponent_action` after four accepted decisions; the own spell can subsequently resolve. The frontend in that runtime base precedes the unrelated private-library UI work; this acceptance exercises the final packaged headless adapter, not that newer UI.
+
+No deployment, game invitation, live-game action or production configuration change was performed. The text preflight remains conservative and incomplete; callers must explicitly terminate unmodeled uncertain effects and replan at observed information boundaries.
