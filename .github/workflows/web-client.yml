@@ -75,13 +75,21 @@ jobs:
       - name: Compile isolated payment and presentation fixtures with production minification
         run: PLAYMAT_UI_TEST_FIXTURES=yes npm run build
       - name: Minified mana payment and presentation mobile/desktop fixtures
-        run: MAGE_WEB_E2E_PREVIEW=1 PLAYMAT_PAYMENT_FIXTURE_BUILT=1 npx playwright test e2e/mana-payment.spec.ts e2e/stack-targets.spec.ts --project=chromium-desktop --workers=1
+        run: MAGE_WEB_E2E_PREVIEW=1 PLAYMAT_PAYMENT_FIXTURE_BUILT=1 npx playwright test e2e/mana-payment.spec.ts e2e/stack-targets.spec.ts e2e/chat-social.spec.ts --project=chromium-desktop --workers=1
       - name: Stack arrow fixture screenshots
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: stack-target-ui-fixtures
           path: Mage.Web.Client/test-results/**/stack-targets-*.png
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Chat and social fixture screenshots
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chat-social-ui-fixtures
+          path: Mage.Web.Client/test-results/e2e-chat-social-*/**/*.png
           if-no-files-found: ignore
           retention-days: 7
       - uses: actions/upload-artifact@v4

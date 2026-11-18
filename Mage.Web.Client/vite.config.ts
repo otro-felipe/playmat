@@ -77,7 +77,10 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: 'index.html',
-        ...(process.env.PLAYMAT_UI_TEST_FIXTURES === 'yes' ? { 'mana-payment': 'e2e/fixtures/mana-payment.html' } : {}),
+        ...(process.env.PLAYMAT_UI_TEST_FIXTURES === 'yes' ? {
+          'mana-payment': 'e2e/fixtures/mana-payment.html',
+          'chat-social': 'e2e/fixtures/chat-social.html',
+        } : {}),
       },
       output: {
         manualChunks(id, graph) {

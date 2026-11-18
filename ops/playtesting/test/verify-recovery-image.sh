@@ -83,6 +83,7 @@ restart() {
 healthy
 phase=fixture
 docker exec -w /opt/playtesting/mcp "$app" sh -c 'node --test test/*.test.mjs'
+docker exec -w /opt/playtesting/product "$app" sh -c 'PLAYMAT_TEST_DATABASE_URL="$DATABASE_URL" node --test *.test.mjs'
 fixture prepare
 docker exec --user xmage "$app" python3 /opt/playtesting/recovery-backup.py once
 
