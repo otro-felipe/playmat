@@ -34,3 +34,21 @@ describe('counterBadges', () => {
     expect(isImpending({ ...overlord, counters: [] })).toBe(false);
   });
 });
+
+describe('Saga chapter markers', () => {
+  it.each([0, 1, 2, 3, 7])('always shows the exact lore count %i on a Saga', (count) => {
+    const counters = count ? [{ name: 'Lore counters', count }] : [];
+    const original = structuredClone(counters);
+    const saga: PermanentView = { subTypes: ['SAGA'], cardTypes: ['ENCHANTMENT'], counters };
+    expect(counterBadges(saga)).toEqual([{ name: count ? 'Lore counters' : 'lore', count, kind: 'lore', label: '', word: 'lore', showCount: true, saga: true }]);
+    expect(saga.counters).toEqual(original);
+  });
+
+  it('retains other counters and does not leak a hidden Saga subtype or infer chapter resolution', () => {
+    const saga: PermanentView = { subTypes: ['SAGA'], counters: [{ name: 'lore', count: 1 }, { name: 'shield', count: 1 }] };
+    expect(counterBadges(saga).map((badge) => badge.kind)).toEqual(['lore', 'shield']);
+    expect(counterBadges({ ...saga, faceDown: true })[0]).not.toHaveProperty('saga');
+    expect(counterBadges({ counters: [{ name: 'lore', count: 1 }] })[0]).toMatchObject({ count: 1, showCount: true });
+    expect(counterBadges({ counters: [] })).toEqual([]);
+  });
+});

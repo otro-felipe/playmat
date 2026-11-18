@@ -197,3 +197,15 @@ describe('mana payment decision', () => {
     expect((screen.getByRole('button', { name: 'Cancel' }) as HTMLButtonElement).disabled).toBe(false);
   });
 });
+
+test('a focused combat disclosure never confirms attackers with Enter or Space', () => {
+  const sent: Command[] = [];
+  const main = { label: 'Attack', command: { type: 'boolean', value: true } as Command, tone: 'primary' as const };
+  render(<ActionCluster interaction={interaction({ mode: 'declareAttackers', mainButton: main })} preview={<details><summary>Combat details</summary><p>Bear trades</p></details>} awaiting={false} status={null} canAct special={false} holdingPriority={false} onCommand={(command) => sent.push(command)} />);
+  const summary = screen.getByText('Combat details');
+  fireEvent.keyDown(summary, { key: 'Enter' });
+  fireEvent.keyDown(summary, { key: ' ', code: 'Space' });
+  expect(sent).toEqual([]);
+  fireEvent.click(screen.getByRole('button', { name: 'Attack' }));
+  expect(sent).toEqual([main.command]);
+});

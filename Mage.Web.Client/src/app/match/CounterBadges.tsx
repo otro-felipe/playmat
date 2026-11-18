@@ -4,6 +4,7 @@ import { counterBadges, type CounterBadge, type CounterKind } from '../../core/g
 import type { PermanentView } from '../../protocol/generated/views';
 import { useT, type MessageKey, type Translate } from '../i18n';
 import styles from './CounterBadges.module.css';
+import './matchMessages';
 
 /** The symbol each kind of counter shows; +1/+1 counters and unknown ones print their name instead. */
 const SYMBOLS: Partial<Record<CounterKind, LucideIcon>> = {
@@ -22,6 +23,7 @@ const SYMBOLS: Partial<Record<CounterKind, LucideIcon>> = {
 
 /** What the badge says when pointed at: the counter and, for the ones with a rule of their own, that rule. */
 function titleOf(t: Translate, badge: CounterBadge): string {
+  if (badge.saga) return t('match.counter.saga', { count: badge.count });
   if (badge.impending) return t('match.counter.impendingHelp', { count: badge.count });
   if (badge.kind === 'pt' || badge.kind === 'other') return t('match.counter.named', { count: badge.count, name: badge.word });
   return t(`match.counter.${badge.kind}` as MessageKey, { count: badge.count });
@@ -33,12 +35,13 @@ export function CounterBadges({ permanent, className }: { permanent: PermanentVi
   const badges = useMemo(() => counterBadges(permanent), [permanent]);
   if (badges.length === 0) return null;
   return (
-    <ul className={className} aria-label={t('match.counter.list')}>
+    <ul className={className} data-saga={badges.some((badge) => badge.saga) ? '' : undefined} data-turned={permanent.tapped ? '' : undefined} aria-label={t('match.counter.list')}>
       {badges.map((badge) => {
         const Icon = SYMBOLS[badge.kind];
         return (
-          <li key={badge.name} className={badge.impending ? styles.impending : styles[badge.kind]} title={titleOf(t, badge)}>
+          <li key={badge.name} data-saga-chapter={badge.saga ? '' : undefined} className={badge.saga ? styles.chapter : badge.impending ? styles.impending : styles[badge.kind]} title={titleOf(t, badge)} aria-label={titleOf(t, badge)}>
             {Icon && <Icon className={styles.symbol} size={18} strokeWidth={2.4} aria-hidden="true" />}
+            {badge.saga && <span>{t('match.counter.chapter')}</span>}
             {badge.impending ? <span>{t('match.counter.impending', { count: badge.count })}</span> : badge.label && <span>{badge.label}</span>}
             {badge.showCount && <b>{badge.count}</b>}
           </li>

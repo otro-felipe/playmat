@@ -10,6 +10,7 @@ import { useT } from '../i18n';
 import { useSettings } from '../stores/settings';
 import { CardFace } from '../ui/CardFace';
 import { CounterBadges } from './CounterBadges';
+import { counterBadges } from '../../core/game/counters';
 import { ATTACHMENT_OFFSET_RATIO, cardKey, groupUnits, stackBadge, stackOffsetRatio, type PermanentGroup } from './boardModel';
 import { useFlip } from './flip';
 import './matchMessages';
@@ -226,7 +227,7 @@ function PlacedCard({ permanent, width, sleeve, clickable, selected, attacking, 
       role={isClickable ? 'button' : undefined}
       tabIndex={isClickable ? 0 : undefined}
       onMouseDown={preventMatchObjectMouseFocus}
-      aria-label={describe(permanent, { tapped, asleep, isAttacking, isBlocking, isSelected, keywords: keywords.map((mark) => (mark.gained ? `${mark.name.toLowerCase()} (gained)` : mark.name.toLowerCase())) }) + (isClickable && targeting && !isSelected ? ', can be targeted' : '') + (isSource ? ', source of the ability' : '')}
+      aria-label={describe(permanent, { tapped, asleep, isAttacking, isBlocking, isSelected, keywords: keywords.map((mark) => (mark.gained ? `${mark.name.toLowerCase()} (gained)` : mark.name.toLowerCase())) }) + counterBadges(permanent).filter((badge) => badge.saga).map((badge) => `, ${t('match.counter.saga', { count: badge.count })}`).join('') + (isClickable && targeting && !isSelected ? ', can be targeted' : '') + (isSource ? ', source of the ability' : '')}
       aria-pressed={isClickable ? isSelected : undefined}
       onClick={() => {
         if (suppressClick.current) {

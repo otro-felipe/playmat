@@ -1,6 +1,6 @@
 import { Shield, Skull } from 'lucide-react';
 import { useMemo } from 'react';
-import { combatPreview, type CombatPreview as Preview, type Fighter, type PairPreview } from '../../core/game/combatPreview';
+import { type CombatPreview as Preview, type Fighter, type PairPreview } from '../../core/game/combatPreview';
 import type { Interaction } from '../../core/game/interaction';
 import type { GameView } from '../../protocol/generated/views';
 import { useT, type Translate } from '../i18n';
@@ -53,19 +53,10 @@ function lifeLines(t: Translate, preview: Preview, attacking: boolean): string[]
   });
 }
 
-export function CombatPreview({ view, mode }: { view: GameView | null | undefined; mode: Interaction['mode'] }) {
+/** The forecast is a normal-flow part of ActionCluster, above the question and phase ladder. */
+export function CombatPreview({ view, mode, preview }: { view: GameView | null | undefined; mode: Interaction['mode']; preview: Preview | null }) {
   const t = useT();
-  const active = mode === 'declareBlockers' || mode === 'declareAttackers';
-  const preview = useMemo(() => (active ? combatPreview(view) : null), [active, view]);
   const blocking = mode === 'declareBlockers';
-  // blocked attackers and their blockers: an unblocked attacker always survives combat, so it carries no mark
-  const fates = useMemo(() => new Map(blocking && preview
-    ? preview.pairs.filter((pair) => pair.blockers.length > 0)
-      .flatMap((pair) => [pair.attacker, ...pair.blockers].map((fighter) => [fighter.id, preview.fate.get(fighter.id)!] as const))
-    : []), [blocking, preview]);
-  const ids = useMemo(() => [...fates.keys()], [fates]);
-  const attackerIds = useMemo(() => new Set(preview?.pairs.map((pair) => pair.attacker.id)), [preview]);
-  const boxes = useObjectBoxes(ids);
   if (!preview) return null;
   const myId = view?.myPlayerId;
   const rows = blocking ? preview.pairs.map((pair) => pairLine(t, pair, myId)) : [];
@@ -80,7 +71,35 @@ export function CombatPreview({ view, mode }: { view: GameView | null | undefine
   const title = t(blocking ? 'match.combat.title' : 'match.combat.attackTitle');
 
   return (
-    <div className={styles.layer}>
+    <section className={styles.panel} data-combat-preview aria-live="polite" aria-label={title}>
+      <h3 className={styles.title}>{title}</h3>
+      {lifeLines(t, preview, !blocking).map((line, index) => <p key={index} className={styles.life}>{line}</p>)}
+      {gains.map((line, index) => <p key={index} className={styles.gain}>{line}</p>)}
+      {notes.map((note, index) => <p key={index} className={styles.warn}>{note}</p>)}
+      <p className={styles.caveat}>{t(preview.assumedSplit ? 'match.combat.caveatSplit' : 'match.combat.caveat')}</p>
+      {rows.length > 0 && <details className={styles.details}>
+        <summary>{t('match.combat.details')}</summary>
+        <ul className={styles.rows}>
+          {rows.slice(0, MAX_ROWS).map((row, index) => <li key={index}>{row}</li>)}
+          {rows.length > MAX_ROWS && <li>{t('match.combat.more', { count: rows.length - MAX_ROWS })}</li>}
+        </ul>
+      </details>}
+    </section>
+  );
+}
+
+/** Fate marks remain aligned to creatures; they do not own the forecast panel's placement. */
+export function CombatPreviewMarks({ preview, blocking }: { preview: Preview | null; blocking: boolean }) {
+  const t = useT();
+  // blocked attackers and their blockers: an unblocked attacker always survives combat, so it carries no mark
+  const fates = useMemo(() => new Map(blocking && preview
+    ? preview.pairs.filter((pair) => pair.blockers.length > 0)
+      .flatMap((pair) => [pair.attacker, ...pair.blockers].map((fighter) => [fighter.id, preview.fate.get(fighter.id)!] as const))
+    : []), [blocking, preview]);
+  const ids = useMemo(() => [...fates.keys()], [fates]);
+  const attackerIds = useMemo(() => new Set(preview?.pairs.map((pair) => pair.attacker.id)), [preview]);
+  const boxes = useObjectBoxes(ids);
+  return <div className={styles.layer}>
       {[...fates].map(([id, fate]) => {
         const box = boxes.get(id);
         if (!box) return null;
@@ -98,19 +117,5 @@ export function CombatPreview({ view, mode }: { view: GameView | null | undefine
           </div>
         );
       })}
-      <section className={styles.panel} aria-live="polite" aria-label={title}>
-        <h3 className={styles.title}>{title}</h3>
-        {rows.length > 0 && (
-          <ul className={styles.rows}>
-            {rows.slice(0, MAX_ROWS).map((row, index) => <li key={index}>{row}</li>)}
-            {rows.length > MAX_ROWS && <li>{t('match.combat.more', { count: rows.length - MAX_ROWS })}</li>}
-          </ul>
-        )}
-        {lifeLines(t, preview, !blocking).map((line, index) => <p key={index} className={styles.life}>{line}</p>)}
-        {gains.map((line, index) => <p key={index} className={styles.gain}>{line}</p>)}
-        {notes.map((note, index) => <p key={index} className={styles.warn}>{note}</p>)}
-        <p className={styles.caveat}>{t(preview.assumedSplit ? 'match.combat.caveatSplit' : 'match.combat.caveat')}</p>
-      </section>
-    </div>
-  );
+  </div>;
 }

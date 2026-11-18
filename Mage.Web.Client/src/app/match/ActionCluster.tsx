@@ -18,6 +18,8 @@ import styles from './ActionCluster.module.css';
 export interface ActionClusterProps {
   interaction: Interaction;
   phases?: ReactNode;
+  /** A forecast that shares the decision corner flow, leaving phases and confirmation unobstructed. */
+  preview?: ReactNode;
   awaiting: boolean;
   status: string | null;
   canAct: boolean;
@@ -61,7 +63,7 @@ const UNDO: PromptButton = { label: 'Undo tap', command: { type: 'action', actio
 
 /** The decision corner: what the game is asking, and the one big button that answers it. */
 export function ActionCluster({
-  interaction, phases, awaiting, status, canAct, special, holdingPriority, undoable = false, autoPassing = false, fullControl = false, onFullControl,
+  interaction, phases, preview, awaiting, status, canAct, special, holdingPriority, undoable = false, autoPassing = false, fullControl = false, onFullControl,
   passTurn = false, onPassTurn, extra,
   stalled = false, onResend, onResync, conceding = null, warning = null, cards = null, payment, onCommand,
 }: ActionClusterProps) {
@@ -89,7 +91,7 @@ export function ActionCluster({
     function onKey(event: KeyboardEvent) {
       if (ignoreMatchKey(event) || matchKeysBlocked() || !canAct) return;
       const key = promptKey(event);
-      const focusedControl = event.target instanceof HTMLElement && event.target.closest('button, [role="button"], [role="listitem"], a');
+      const focusedControl = event.target instanceof HTMLElement && event.target.closest('button, [role="button"], [role="listitem"], a, summary');
       let command: Command | undefined;
       if (key === 'primary' && primaryShortcut && !focusedControl && !awaiting && !autoPassing) {
         command = main?.command;
@@ -154,6 +156,7 @@ export function ActionCluster({
 
   return (
     <section className={styles.cluster} data-payment={paying ? '' : undefined} aria-label="Your decision" aria-live="polite">
+      {preview}
       {paying ? <div className={styles.payment}>
         {payment.sourceName && <p className={styles.paymentSource}>{payment.sourceName}</p>}
         <div className={styles.paymentCostRow}>

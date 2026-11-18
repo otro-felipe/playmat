@@ -3,6 +3,16 @@
   flex: none;
 }
 
+ul > li.chapter {
+  font-size: max(22px, calc(var(--touch-target, 0px) * 0.3));
+  padding: 3px 8px;
+  color: var(--brass-ink);
+  background: var(--mat-900);
+  box-shadow: 0 0 0 1.5px var(--brass), var(--shadow-placed);
+}
+
+.chapter .symbol { width: 0.8em; height: 0.8em; }
+
 ul > li.stun {
   color: #9fc6ef;
 }

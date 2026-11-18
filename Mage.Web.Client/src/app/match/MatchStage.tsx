@@ -52,7 +52,8 @@ import { CardDetail } from './CardDetail';
 import { Coach } from './Coach';
 import { LessonCoach } from './LessonCoach';
 import { CardZoom } from './CardZoom';
-import { CombatPreview } from './CombatPreview';
+import { CombatPreview, CombatPreviewMarks } from './CombatPreview';
+import { combatPreview } from '../../core/game/combatPreview';
 import { DamageAssigner } from './DamageAssigner';
 import { damageCorner, useDamageSplit } from './useDamageSplit';
 import { EmoteBubbles } from './EmoteBubbles';
@@ -500,6 +501,7 @@ export function MatchStage({ session, state, replayLog, onLeave, seatDisplayName
     ? Object.values(prompt.cards)
     : choosingFromHand ? hand : offBoard;
   const canAct = mode === 'play' && !state.gameOver;
+  const combatEstimate = useMemo(() => canAct && (interaction.mode === 'declareAttackers' || interaction.mode === 'declareBlockers') ? combatPreview(view) : null, [canAct, interaction.mode, view]);
   // several opponents: the server asks what each attacker attacks
   const defenders = useMemo(() => (canAct && !awaitingServer ? defenderChoice(prompt, view) : null), [canAct, awaitingServer, prompt, view]);
   const attackerName = useMemo(() => {
@@ -745,6 +747,7 @@ export function MatchStage({ session, state, replayLog, onLeave, seatDisplayName
               overlayOpen ? <div className={styles.viewPhases}>{phaseLadder}</div> : <ActionCluster
                 interaction={cornerInteraction}
                 phases={phaseLadder}
+                preview={<CombatPreview view={view} mode={interaction.mode} preview={combatEstimate} />}
                 payment={payment ? { ...payment, ...manaPayment, pool: board.me?.player.manaPool, onAutoPay: manaPayment.start } : undefined}
                 awaiting={awaitingServer}
                 status={state.status}
@@ -774,7 +777,7 @@ export function MatchStage({ session, state, replayLog, onLeave, seatDisplayName
             )}
 
             {damageSplit && canAct && !awaitingServer && <DamageAssigner split={damageSplit} />}
-            {canAct && <CombatPreview view={view} mode={interaction.mode} />}
+            {canAct && <CombatPreviewMarks preview={combatEstimate} blocking={interaction.mode === 'declareBlockers'} />}
             {canAct && interaction.mode === 'declareAttackers' && !overlayOpen && (
               <AttackGroups groups={attackMany.groups} wanted={attackMany.wanted} busy={attackMany.busy} remaining={attackMany.remaining} onWant={attackMany.want} onStop={attackMany.stop} />
             )}

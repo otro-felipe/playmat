@@ -104,6 +104,12 @@ Private servers exclude registered delegated agent identities from human discove
 an `mcp_` prefix. Accounts, user-curated friend lists, direct profiles, game seats, display aliases, XP and history
 are preserved. Public servers keep their existing lists; an unavailable private registry falls back to them too.
 
+Sagas show a readable chapter badge on the battlefield, including one or zero lore counters. The number comes
+from the server's lore count; it does not claim that the corresponding chapter ability has resolved. Tapped
+Sagas keep the badge upright. Combat estimates sit above the decision controls in the same layout flow, leaving
+the phase ladder and confirmation button clear. Block-by-block details expand inside the forecast's scrollable
+panel; opening them with the keyboard does not confirm the combat decision.
+
 ## Dev loop
 
 ```bash

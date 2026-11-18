@@ -183,6 +183,10 @@
   color: var(--ink-strong);
 }
 
+/* A chapter is essential board state: keep it readable even when the card's other badges shrink. */
+.counters[data-saga] { transform: none; }
+.counters[data-saga][data-turned] { transform: rotate(-90deg); }
+
 /* a Room's two doors along the bottom: the unlocked ones lit, the locked ones dim behind a lock */
 .doors {
   position: absolute;

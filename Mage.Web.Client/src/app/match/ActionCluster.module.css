@@ -7,7 +7,8 @@
   align-items: flex-end;
   gap: 12px;
   width: max(420px, calc(5 * var(--touch-target, 0px) + 40px));
-  z-index: var(--z-controls);
+  /* Battlefield arrows and fate marks must never paint over the decision text or buttons. */
+  z-index: calc(var(--z-arrows) + 1);
 }
 
 .phases { width: 100%; }

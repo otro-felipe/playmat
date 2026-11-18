@@ -20,6 +20,8 @@ export interface CounterBadge {
   showCount: boolean;
   /** an impending permanent's time counters: the badge reads "Impending N" */
   impending?: boolean;
+  /** A Saga's visible chapter marker, read directly from its lore counters (not a resolved-trigger claim). */
+  saga?: boolean;
 }
 
 const SYMBOLS: Record<string, CounterKind> = {
@@ -35,9 +37,10 @@ export function isImpending(permanent: Pick<PermanentView, 'counters' | 'cardTyp
     && (permanent.rules ?? []).some((line) => /\bimpending\b/i.test(line));
 }
 
-export function counterBadges(permanent: Pick<PermanentView, 'counters' | 'cardTypes' | 'rules'>): CounterBadge[] {
+export function counterBadges(permanent: Pick<PermanentView, 'counters' | 'cardTypes' | 'rules' | 'subTypes' | 'faceDown'>): CounterBadge[] {
   const impending = isImpending(permanent);
-  return (permanent.counters ?? []).filter((counter) => (counter.count ?? 0) > 0).map((counter) => {
+  const saga = !permanent.faceDown && (permanent.subTypes ?? []).includes('SAGA');
+  const badges: CounterBadge[] = (permanent.counters ?? []).filter((counter) => (counter.count ?? 0) > 0).map((counter) => {
     const name = counter.name ?? '';
     const count = counter.count ?? 0;
     if (/^[+-]\d+\/[+-]\d+$/.test(name)) {
@@ -48,9 +51,14 @@ export function counterBadges(permanent: Pick<PermanentView, 'counters' | 'cardT
     if (kind === 'time' && impending) {
       return { name, count, kind, label: '', word: key, showCount: false, impending: true };
     }
-    if (kind) return { name, count, kind, label: '', word: key, showCount: kind === 'time' || count > 1 };
+    if (kind === 'lore' && saga) return { name, count, kind, label: '', word: key, showCount: true, saga: true };
+    if (kind) return { name, count, kind, label: '', word: key, showCount: kind === 'time' || kind === 'lore' || count > 1 };
     // a counter without a symbol keeps its name, whole when it is short
     const label = key.length <= 10 ? key : `${key.slice(0, 9)}…`;
     return { name, count, kind: 'other' as const, label, word: key, showCount: count > 1 };
   });
+  if (saga && !badges.some((badge) => badge.saga)) {
+    badges.push({ name: 'lore', count: 0, kind: 'lore', label: '', word: 'lore', showCount: true, saga: true });
+  }
+  return badges;
 }

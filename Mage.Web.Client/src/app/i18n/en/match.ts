@@ -218,6 +218,9 @@ export default {
   'match.room.unlocked': '{name}: unlocked',
   'match.room.locked': '{name}: locked',
   // counters on a permanent, as badges on the board
+  'match.counter.chapter': 'Ch.',
+  'match.counter.saga': { one: 'Saga: {count} lore counter', other: 'Saga: {count} lore counters' },
+  'match.combat.details': 'Combat details',
   'match.counter.list': 'Counters',
   'match.counter.named': { one: '{count} {name} counter', other: '{count} {name} counters' },
   'match.counter.time': { one: '{count} time counter', other: '{count} time counters' },
