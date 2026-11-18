@@ -25,7 +25,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function mount(chatMode?: 'coach') {
+function mount(chatMode?: 'quiet' | 'chatty' | 'coach') {
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({ tableId, mode: 'mcp', chatMode })));
   return render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -51,8 +51,21 @@ test('[PM-AC-04] an MCP invite shows and copies its endpoint, private link, reso
     'get_guide with {"bundle":true}', 'join_game', 'Coach',
     'Before creating, joining or playing, load all four guides', 'Repeat after losing context',
     'play_line', 'as far as the visible state justifies',
+    'strong public opportunity', 'After each completed human turn', 'concrete benefit',
+    'without hindsight', 'Coach grants no hand access', 'Resolve pending engine decisions first',
   ]) expect(instructions).toContain(detail);
   expect(instructions.indexOf('get_guide')).toBeLessThan(instructions.indexOf('join_game'));
+});
+
+test.each(['quiet', 'chatty'] as const)('copying a %s invite does not enable Coach advice', async (mode) => {
+  const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined);
+  const page = mount(mode);
+  await page.findByText(rules);
+  fireEvent.click(page.getByRole('button', { name: 'Copy agent instructions' }));
+  await page.findByText('Agent instructions copied');
+  const [instructions] = writeText.mock.calls[0];
+  expect(instructions).not.toContain('After each completed human turn');
+  expect(instructions).not.toContain('genuinely strong public opportunity');
 });
 
 test('[PM-AC-04] existing invites use Quiet and instructions can be copied manually when clipboard access fails', async () => {

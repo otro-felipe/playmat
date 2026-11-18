@@ -34,6 +34,14 @@ For an MCP rival table, the host selects MCP mode. An OAuth client connected to 
 
 For a new MCP table, the host chooses Quiet, Chatty for friendly commentary, or Coach for feedback based on public play. Quiet is the default for both new and existing tables without a saved choice. MCP join and game state communicate the saved preference to the agent throughout the match, including after sideboarding. The join page shows the selected mode, the MCP endpoint and the resource URIs for setup, card search, turn planning and rules. The host can copy either the join URL or ready-to-share agent instructions. Friend and native AI tables do not choose an MCP chat mode.
 
+Coach accompanies the human with at most one concretely supported strong public opportunity during their turn,
+then a short review after each completed human turn: a justified better alternative and why, or a specific,
+qualified acknowledgement when no improvement is identified. Tone is warm and lightly playful. Instructions
+appear in MCP initialization, the getting-started guide and the copied Coach invitation. The existing connected
+model produces the feedback through participant chat, without pausing engine decisions, extra evaluation
+infrastructure or new hand permissions. Hidden rival information, private looks and later reveals must not be
+used to manufacture superiority or expose cards. Missing observations are acknowledged rather than scored.
+
 Starting MCP play from Home or selecting an MCP rival in the host form opens a connection guide before table creation. The guide provides the remote endpoint, account OAuth instructions and how the agent can find the invitation. The host can skip automatic display on this browser, reopen the guide in the host form, and restore automatic display.
 
 **PM-DATA-02. Library.** One shared browser and MCP library supports search, import, create, edit, duplicate and validation. Save browser drafts and imports with their selected format, or use Freeform if no format is provided. Filter and validate Standard, Pioneer and Modern using the pinned engine's card coverage and legality rules. Distinguish a card's identity, its printing and the instance in the game. Use immutable deck revisions and explicit edit versions so concurrent edits cannot silently overwrite each other. Authorize reads and writes by owner. Fix the submitted version to the match and keep sideboard changes for the individual game.

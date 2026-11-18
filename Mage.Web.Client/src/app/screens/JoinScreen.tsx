@@ -60,6 +60,7 @@ function McpInviteGuide({ tableId, name, chatMode = 'quiet' }: { tableId: string
     ...MCP_GUIDES.map((uri) => `- ${uri}`),
     t('mcpInvite.instructions.join', { link: inviteLink(origin, tableId) }),
     t('mcpInvite.instructions.chat', { mode: t(`mcpInvite.chat.${chatMode}`), description: t(`mcpInvite.chat.${chatMode}.description`) }),
+    ...(chatMode === 'coach' ? [t('mcpInvite.instructions.coach')] : []),
   ].join('\n');
 
   async function copyInstructions() {

@@ -236,7 +236,7 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
     'play', (args) => getSeat().engine.voteRollback(args));
   tool('list_chat', 'Read recent messages from the current match chat only.', { gameId: Uuid }, 'chat',
     ({ gameId }) => getSeat().engine.listChat(gameId), true);
-  tool('send_chat', 'Send a chat message as this seat in its active match.', {
+  tool('send_chat', 'Send a chat message as this seat in its active match. Follow the host chatMode and the coaching procedure in getting-started. A comment never answers or pauses a pending engine decision; keep play moving and private information out of chat.', {
     gameId: Uuid, message: z.string().trim().min(1).max(500),
   }, 'chat', (args) => getSeat().engine.sendChat(args));
 

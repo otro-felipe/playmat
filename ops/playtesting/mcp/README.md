@@ -32,6 +32,17 @@ The server advertises these guides at initialization. Every model loads all four
 - `playmat://guides/turn-planning` covers competitive turn planning and guarded execution.
 - `playmat://guides/rules` indexes common rule sections and links to Wizards' downloadable Comprehensive Rules.
 
+The host's **Coach** mode is implemented through this connected model, the existing `chatMode` invitation/state
+and participant chat; it is not a separate engine evaluator or an automatic message generator. Initialization
+instructions, the delivered getting-started guide and the invitation's copied instructions specify the same
+behavior: at most one supported public opportunity during a human turn, then one brief review after that turn,
+with a concrete better alternative or a qualified acknowledgement of a reasonable line. Feedback is warm and
+lightly playful, never a claim of optimal play. Pending engine decisions take precedence. The mode grants no
+hand permissions and must not use the rival's own hidden cards or hindsight to select advice. See the
+[Coach procedure and examples](guides/getting-started.md#coach-useful-possibilities-with-a-little-personality).
+Quiet and Chatty retain their existing behavior. Clients must reread the guides after an update/context loss;
+test model adherence in an explicitly invited match rather than assuming transport tests prove strategic quality.
+
 ## Play a line
 
 1. Attach to a game with `get_game_state`, or use `wait_for_decision` while the other seat decides.
