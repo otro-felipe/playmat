@@ -8,6 +8,7 @@ import mage.constants.PutCards;
 import mage.constants.Zone;
 import mage.game.Game;
 import mage.game.events.GameEvent;
+import mage.game.events.PublicActionObservations;
 import mage.util.CardUtil;
 import org.apache.log4j.Logger;
 
@@ -39,6 +40,7 @@ public class SpellStack extends ArrayDeque<StackObject> {
         StackObject top = null;
         try {
             top = this.peek();
+            if (top != null && !game.isSimulation()) PublicActionObservations.resolving(game.getId(), top.getId());
             top.resolve(game);
             game.resetControlAfterSpellResolve(top.getId());
         } finally {

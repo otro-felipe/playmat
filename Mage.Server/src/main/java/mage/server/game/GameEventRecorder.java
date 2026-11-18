@@ -9,7 +9,6 @@ import mage.game.events.GameEvent;
 import mage.game.events.ZoneChangeEvent;
 import mage.game.permanent.Permanent;
 import mage.game.stack.Spell;
-import mage.game.stack.StackObject;
 import mage.players.Player;
 import mage.view.GameEventView;
 import mage.view.GameEventView.GameEventKind;
@@ -17,7 +16,6 @@ import mage.watchers.Watcher;
 
 import java.util.EnumSet;
 import java.util.Set;
-import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -55,13 +53,6 @@ public class GameEventRecorder extends Watcher {
             case ATTACKER_DECLARED:
             case BLOCKER_DECLARED:
                 feed.publicAction(event.getPlayerId());
-                break;
-            case RESOLVING_ABILITY:
-                StackObject top = game.getStack().getFirstOrNull();
-                // A mana ability resolving above the stack is not the spell below it.
-                if (top != null && top.getStackAbility() != null && event.getTargetId() != null
-                        && event.getTargetId().equals(top.getStackAbility().getOriginalId())
-                        && Objects.equals(top.getControllerId(), event.getPlayerId())) feed.beginResolution(top.getId());
                 break;
             default:
                 break;

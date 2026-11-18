@@ -37,6 +37,7 @@ public final class GameEventFeed {
     private GameEventFeed(UUID gameId) {
         this.gameId = gameId;
         PublicActionObservations.register(gameId, this::publicAction);
+        PublicActionObservations.registerResolutions(gameId, this::beginResolution);
     }
 
     /** Only committed, already-public rules actions; never clicks, hidden prompts or passes. */
