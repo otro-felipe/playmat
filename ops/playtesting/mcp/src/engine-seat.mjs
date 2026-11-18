@@ -6,6 +6,20 @@ import { ToolError } from './game-seat.mjs';
 
 const MAX_MESSAGES = 50;
 const ROLLBACK_VOTE = 'ADD_PERMISSION_TO_ROLLBACK_TURN';
+// Use the normal XMage defaults for the managed MCP identity, with distinct
+// upkeep, draw and end-step windows which would otherwise auto-pass.
+const MCP_USER_DATA = {
+  confirmEmptyManaPool: true,
+  manaPoolAutomatic: true,
+  manaPoolAutomaticRestricted: true,
+  autoOrderTrigger: true,
+  autoTargetLevel: 1,
+  useSameSettingsForReplacementEffects: true,
+  userSkipPrioritySteps: {
+    yourTurn: { upkeep: true, draw: true, endOfTurn: true },
+    opponentTurn: { endOfTurn: true },
+  },
+};
 
 function rejectOnFalse(value, code, message) {
   if (value !== true) throw new ToolError(code, message);
@@ -88,8 +102,9 @@ export class PlaymatEngineSeat {
   #chat = [];
   #invitePresentation = null;
 
-  constructor({ engineUrl, engineName, trustedHeader, accountId, recoverySeatId, connectionId, authenticationHeaders = {}, guardedPrompts = true }) {
+  constructor({ engineUrl, engineName, trustedHeader, accountId, recoverySeatId, connectionId, authenticationHeaders = {}, guardedPrompts = true, managedPriorityStops = false }) {
     this.engineUrl = engineUrl;
+    this.managedPriorityStops = managedPriorityStops;
     this.engineName = engineName;
     this.rpc = new RpcClient({
       createSocket: (url) => new WebSocket(url, { headers: { [trustedHeader]: engineName,
@@ -183,6 +198,10 @@ export class PlaymatEngineSeat {
       const login = await this.api.connectUser(this.engineName, '', this.#restoreToken, 'web');
       rejectOnFalse(login, 'engine_signin', 'This agent seat could not sign in to XMage.');
       this.#restoreToken = await this.api.sessionGetRestoreToken();
+      if (this.managedPriorityStops) {
+        rejectOnFalse(await this.api.connectSetUserData(null, MCP_USER_DATA, 'web', ''),
+          'engine_preferences_unavailable', 'XMage could not initialize the MCP seat priority stops.');
+      }
       this.#roomId = await this.api.serverGetMainRoomId();
       this.#connected = true;
       this.#publish();

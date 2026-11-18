@@ -181,6 +181,29 @@ test('[PM-AC-08] a tools-only connector can discover and read the same guides as
   await assert.rejects(() => client.callTool({ name: 'get_guide', arguments: { guideId: 'rules' } }), /401|Unauthorized/i);
 });
 
+test('[PM-LINE-04] one bootstrap returns all four complete guides without opening a seat', async (t) => {
+  const { url, fixtures } = await start(t);
+  const client = await connect(t, url, 'fixture-other');
+  const bundle = await call(client, 'get_guide', { bundle: true });
+  assert.equal(bundle.error, false);
+  assert.match(bundle.value.version, /^[a-f0-9]{64}$/);
+  assert.equal(bundle.value.guides.length, 4);
+  assert.deepEqual(new Set(bundle.value.guides.map(({ name }) => name)),
+    new Set(['getting-started', 'card-catalog', 'turn-planning', 'rules']));
+  for (const guide of bundle.value.guides) {
+    const resource = await client.readResource({ uri: guide.uri });
+    assert.equal(guide.text, resource.contents[0].text);
+  }
+  assert.deepEqual(await call(client, 'get_guide', { bundle: true }), bundle);
+  assert.equal((await call(client, 'get_guide', { bundle: true, guideId: 'rules' })).error, true);
+  assert.match(client.getInstructions(), /get_guide\(\{"bundle":true\}\)/);
+  assert.match(client.getInstructions(), /longest justified line/);
+  const { tools } = await client.listTools();
+  const playLine = tools.find(({ name }) => name === 'play_line');
+  assert.match(playLine?.description, /get_guide\(\{"bundle":true\}\)/);
+  assert.equal(fixtures.size, 0, 'Reading the bundle must not create or join an engine seat');
+});
+
 test('get_guide delivers the public opponent response range guidance before seating an agent', async (t) => {
   const { url, fixtures } = await start(t);
   const client = await connect(t, url, 'fixture-other');

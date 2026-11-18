@@ -5,7 +5,7 @@ import { createRequire } from 'node:module'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { createProduct } from './product.mjs'
 import { PlaymatEngineSeat } from '../mcp/src/engine-seat.mjs'
-import { mayDriveRival, drivePlanPeerOnce } from './sequence-driver.mjs'
+import { mayDriveRival } from './sequence-driver.mjs'
 
 if (process.env.PLAYMAT_SEQUENCE_LOCAL_TEST !== 'yes'
   || !process.env.DATABASE_URL?.includes('@playmat-sequence-pg:5432/sequence_fixture')) throw Error('Explicit isolated sequence fixture required')
@@ -65,6 +65,21 @@ async function rivalPass(boundary) {
   try { await browser.respond(decision.id, choice.id); if (choice === mana) rivalManaAccepted = true; return true }
   catch (error) { if (['stale_decision', 'engine_rejected', 'illegal_choice'].includes(error.code)) return false; throw error }
 }
+async function playLineWithPeer(command, boundary) {
+  let done = false
+  const peer = (async () => {
+    while (!done && Date.now() < totalDeadline) {
+      await rivalPass(boundary)
+      await sleep(15)
+    }
+  })()
+  try {
+    return await call('play_line', command)
+  } finally {
+    done = true
+    await peer
+  }
+}
 async function waitNextOwn(oldId) {
   while (Date.now() < totalDeadline) {
     await rivalPass()
@@ -91,7 +106,10 @@ try {
   await client.connect(new StreamableHTTPClientTransport(new URL(base + '/mcp'), { requestInit: { headers: { Authorization: 'Bearer ' + token } } }))
   const discovered = await client.listTools()
   assert.ok(discovered.tools.some(tool => tool.name === 'advance_to_own_turn'))
-  assert.ok(discovered.tools.some(tool => tool.name === 'play_turn'))
+  assert.ok(discovered.tools.some(tool => tool.name === 'play_line'))
+  const guideBundle = await call('get_guide', { bundle: true })
+  assert.equal(guideBundle.guides.length, 4)
+  assert.ok(guideBundle.guides.every(guide => guide.text?.length > 0))
   assert.ok(JSON.stringify(discovered.tools.find(tool => tool.name === 'play_sequence').inputSchema).includes('allowPlannedResolutions'))
   const created = await browser.createGame({ name: 'Isolated causal sequence acceptance', format: 'Modern', deck: rivalDeck, matchTimeLimit: 'MIN__15', seed: 77 }, async record => {
     const response = await fetch(base + '/api/playtesting/invites', { method: 'POST', headers: { 'content-type': 'application/json', Cookie: cookie }, body: JSON.stringify({ ...record, guestEngineName: engineName }) })
@@ -101,11 +119,34 @@ try {
   await call('join_game', { tableId: created.tableId, deck: burnDeck })
   await browser.startMatch(created.tableId)
   let state
+  let testedOwnStops = false
   while (Date.now() < totalDeadline) {
     await rivalPass()
     state = await ownState()
     if (state.status !== 'active' || !state.decision || state.decision.kind === 'waiting') { await sleep(15); continue }
     const decision = state.decision
+    if (!testedOwnStops && decision.kind === 'priority' && state.priority === 'self'
+      && state.step === 'PRECOMBAT_MAIN' && state.activePlayerId === rivalPlayer(state).id
+      && rivalPlayer(state).battlefield.length && rivalPlayer(state).handCount <= 7 && state.stack.length === 0) {
+      const beforeDraw = state.sequenceEvidence.informationRevision
+      const upkeep = await playLineWithPeer({ gameId: state.gameId, cursor: state.cursor, commandId: randomUUID(),
+        waitMs: 15_000, actions: [{ kind: 'pass_until', destination: 'my_upkeep', policy: 'decline_optional' }] })
+      assert.equal(upkeep.status, 'completed', String(upkeep.reason))
+      assert.equal(upkeep.state.step, 'UPKEEP')
+      assert.equal(upkeep.state.activePlayerId, ownPlayer(upkeep.state).id)
+      assert.equal(upkeep.state.sequenceEvidence.informationRevision, beforeDraw)
+      assert.equal(upkeep.needsAgent, true)
+      const draw = await playLineWithPeer({ gameId: state.gameId, cursor: upkeep.state.cursor, commandId: randomUUID(),
+        waitMs: 15_000, actions: [{ kind: 'pass_until', destination: 'my_draw', policy: 'decline_optional' }] })
+      assert.equal(draw.status, 'completed', String(draw.reason))
+      assert.equal(draw.state.step, 'DRAW')
+      assert.equal(draw.state.turn, upkeep.state.turn)
+      assert.equal(draw.state.sequenceEvidence.informationRevision, beforeDraw + 1)
+      assert.equal(draw.needsAgent, true)
+      console.log(JSON.stringify({ phase: 'real-java-own-upkeep-and-draw', stoppedBeforeDraw: true, nextLineSawCommittedDraw: true }))
+      testedOwnStops = true
+      continue
+    }
     const land = decision.kind === 'priority' && decision.choices.find(choice => choice.card?.name === 'Mountain'
       && state.ownHand.some(card => card.id === choice.card.id))
     if (land) { await answer(state, land); continue }
@@ -118,6 +159,7 @@ try {
     await answer(state, choice)
   }
   assert.ok(state?.step === 'PRECOMBAT_MAIN' && state.activePlayerId === ownPlayer(state).id && burnCards(state).length >= 3 && freeLands(state).length >= 3, 'Fixed-seed setup must reach three burn spells and their public mana sources')
+  assert.equal(testedOwnStops, true, 'PM-LINE-02 must exercise both priority windows in real Java')
   // Learn target/payment prompt order with one real identical-cost burn spell. Never infer missing callbacks.
   const warmup = burnCards(state)[0]
   const warmupChoice = state.decision.choices.find(choice => choice.card?.id === warmup.id)
@@ -148,24 +190,23 @@ try {
     targets: [{ select: { objectId: rival.id }, instruction: learned[0].instruction }], payWith: [lands[index].id] }))
   assert.equal(JSON.stringify(actions).includes('pass'), false, 'The agent expresses spells, targets and resources without priority choreography')
   const boundary = { gameId: state.gameId, turn: state.turn, activePlayerId: state.activePlayerId }
-  const plan = await call('play_turn', { gameId: state.gameId, cursor: state.cursor, actions, finish: 'end_step' })
-  let result
-  while (Date.now() < totalDeadline) {
-    result = await drivePlanPeerOnce({
-      readStatus: () => call('get_sequence_status', { gameId: boundary.gameId, sequenceId: plan.sequenceId }),
-      readPeer: () => browser.snapshot(), respondPeer: rivalPass, boundary,
-    })
-    if (result.status !== 'running') break
-    await sleep(15)
-  }
+  const command = { gameId: state.gameId, cursor: state.cursor, commandId: randomUUID(), waitMs: 15_000,
+    actions: [...actions, { kind: 'pass_until', destination: 'end_step', policy: 'decline_optional' }] }
+  const result = await playLineWithPeer(command, boundary)
   assert.equal(result.status, 'completed', 'The real own-damage line must retain its unapplied second spell and complete: ' + JSON.stringify({
     reason: result.reason, completedSteps: result.completedSteps, appliedDecisions: result.appliedDecisions,
   }))
-  assert.equal(result.completedSteps, 8, 'Two plays/targets/payments, final settling and end-step destination must complete')
+  assert.equal(result.planOwnsExecution, false)
+  assert.equal(result.commandId, command.commandId)
+  assert.equal(result.state.gameId, state.gameId)
+  assert.ok(result.appliedDecisions >= 6, 'The two plays and their mandatory choices must be acknowledged')
+  const retry = await call('play_line', { ...command, waitMs: 0 })
+  assert.equal(retry.sequenceId, result.sequenceId)
+  assert.equal(retry.appliedDecisions, result.appliedDecisions)
   assert.equal(result.lastDestination.turn, boundary.turn)
   assert.equal(result.lastDestination.activePlayerId, boundary.activePlayerId)
   assert.equal(result.lastDestination.step, 'END_TURN', 'The receipt must prove the actual observed destination before any later engine-only auto-advance')
-  const after = await ownState()
+  const after = result.state
   assert.ok(after.turn === boundary.turn || after.turn === boundary.turn + 1, 'An empty end step can advance automatically under engine preferences; the MCP must not submit another choice')
   assert.equal(rivalPlayer(after).life, before.life - [warmup, ...cards].reduce((sum, card) => sum + (card.name === 'Lightning Bolt' ? 3 : 2), 0))
   assert.equal(after.sequenceEvidence.epoch, before.epoch)

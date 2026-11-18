@@ -145,6 +145,7 @@ export class GameSeat {
       if (['game_over', 'sideboarding', 'match_over'].includes(state.status)) return { event: state.status, state };
       if (state.epoch !== epoch) return { event: 'invalidated', state };
       if (args.afterCursor !== undefined && state.cursor <= args.afterCursor) return null;
+      if (!predicate && state.rollbackRequest) return { event: 'rollback', state };
       const decision = visibleDecision(state);
       if (predicate ? reaches(state, predicate) : decision && decision.id !== args.afterDecisionId) {
         return { event: predicate ? 'reached' : 'decision', state };
@@ -215,6 +216,7 @@ export class GameSeat {
       id: randomUUID(), gameId, status: 'running', reason: null, completedSteps: 0, appliedDecisions: 0, cursor, startCursor: cursor,
       startedAtEpochMs: Date.now(),
       controller: new AbortController(),
+      finishListeners: new Set(),
     };
     this.#current = sequence;
     this.#sequences.set(sequence.id, sequence);
@@ -224,10 +226,13 @@ export class GameSeat {
   }
 
   /** Compile significant intentions; ordinary priority handoffs are the executor's responsibility. */
-  startTurn({ gameId, cursor, actions, expectedStackIds, finish = 'next_turn' }, authorize) {
+  startTurn({ gameId, cursor, actions, expectedStackIds, finish = 'next_turn', settle = true }, authorize) {
     const initial = this.snapshot(gameId);
     if (initial.cursor !== cursor || initial.status !== 'active') throw new ToolError('stale_decision', 'Plan from the latest game state.');
     const steps = [];
+    const terminalPass = (action) => ['pass_until', 'pass_priority'].includes(action?.kind);
+    const finalPass = terminalPass(actions.at(-1));
+    if (actions.slice(0, -1).some(terminalPass)) throw new ToolError('bad_sequence', 'Put an explicit pass at the end of the line.');
     const ownId = initial.players?.find((player) => player.yourSeat)?.id;
     const resolvingInformation = initial.stack.some((card) => (card.controllerId === ownId || expectedStackIds?.includes(card.id)) && needsStackReevaluation(card));
     const answeringObservedInformation = actions.length === 1 && actions[0].kind === 'choose' && initial.decision
@@ -235,7 +240,12 @@ export class GameSeat {
         && actions[0].guard?.instruction === initial.decision.instruction && reaches(initial, actions[0].guard));
     const respondingBeforeResolution = actions[0]?.kind === 'play' && actions[0].when === 'priority'
       && actions.every((action) => action.kind === 'play' && action.when === 'priority' || guardedCostChoice(action));
-    if (resolvingInformation && actions.length && !answeringObservedInformation && !respondingBeforeResolution) throw new ToolError('reevaluation_required', 'The existing stack can reveal information or require an unknown decision. Resolve/inspect it before planning new actions; use when:priority only for deliberate responses before resolution.');
+    const yieldingOnce = actions.length === 1 && actions[0].kind === 'pass_priority';
+    if (resolvingInformation && actions.length && !answeringObservedInformation && !respondingBeforeResolution && !yieldingOnce) throw new ToolError('reevaluation_required', 'The existing stack can reveal information or require an unknown decision. Resolve/inspect it before planning new actions; use when:priority for deliberate responses before resolution.');
+    const exact = actions.length === 1 && actions[0];
+    const singleObservedChoice = !settle && finish === 'none' && exact?.kind === 'choose' && exact.choiceId
+      && exact.decisionId === initial.decision?.id && !exact.expectCast && !exact.expectAbility
+      && !exact.expectTriggers?.length && !exact.expectTargetTriggers?.length && !exact.reevaluateAfter && !expectedStackIds?.length;
     let reevaluate = resolvingInformation;
     let beforeInformation = resolvingInformation && !answeringObservedInformation;
     for (const [actionIndex, action] of actions.entries()) {
@@ -259,6 +269,14 @@ export class GameSeat {
         if (action.attackers === 'all' || action.attackers === undefined) steps.push({ kind: 'answer', guard: { kind: 'declareAttackers' }, intent: 'attack_all' });
         else for (const id of action.attackers) steps.push({ kind: 'answer', guard: { kind: 'declareAttackers' }, select: { objectId: id, zone: 'battlefield' } });
         steps.push({ kind: 'answer', guard: { kind: 'declareAttackers' }, intent: 'confirm_attack' });
+      } else if (action.kind === 'pass_priority') {
+        steps.push({ kind: 'yield_priority', allowTurnBoundary: true });
+      } else if (action.kind === 'pass_until') {
+        const { destination, phase, step, priority } = action;
+        if (destination === 'current_turn' && phase === undefined && step === undefined && priority === undefined) {
+          throw new ToolError('bad_sequence', 'Choose a phase, step or priority for a current-turn destination.');
+        }
+        steps.push({ kind: 'pass_to_boundary', destination, phase, step, priority, skipOptionalResponses: action.policy === 'decline_optional' });
       } else steps.push(action);
       for (let index = firstStep; index < steps.length; index++) {
         steps[index].actionIndex = actionIndex;
@@ -266,15 +284,19 @@ export class GameSeat {
       }
       beforeInformation ||= terminal;
     }
-    // Finishing the final cast includes its declared resolution, even without a phase advance.
-    steps.push({ kind: 'pass_until', priority: 'self', stackEmpty: true, allowPlannedResolutions: true, skipOptionalResponses: true });
-    if (reevaluate) steps.push({ kind: 'reevaluate' });
-    else if (finish === 'next_turn') steps.push({ kind: 'advance_to_own_turn' });
-    else if (finish === 'end_step') steps.push({ kind: 'pass_until', step: 'END_TURN' });
+    if (!finalPass) {
+      // Legacy turns and terminal effects retain the settlement fence. An exact
+      // choice in a play line observes the next prompt without making a pass.
+      if ((settle || reevaluate || finish !== 'none') && !singleObservedChoice) steps.push({ kind: 'pass_until', priority: 'self', stackEmpty: true, allowPlannedResolutions: true, skipOptionalResponses: true });
+      if (reevaluate && !singleObservedChoice) steps.push({ kind: 'reevaluate' });
+      else if (finish === 'next_turn') steps.push({ kind: 'advance_to_own_turn' });
+      else if (finish === 'end_step') steps.push({ kind: 'pass_until', step: 'END_TURN' });
+      else if (!settle) steps.push({ kind: 'observe_next' });
+    }
     if (steps.length > 96) throw new ToolError('bad_sequence', 'The semantic turn exceeds its bounded action budget.');
-    const adopted = expectedStackIds ?? initial.stack.filter((card) => card.controllerId === ownId).map((card) => card.id);
+    const adopted = expectedStackIds ?? (singleObservedChoice ? [] : initial.stack.filter((card) => card.controllerId === ownId).map((card) => card.id));
     if (adopted.length > 16) throw new ToolError('bad_stack_expectation', 'A semantic turn may adopt at most sixteen visible objects.');
-    return this.startSequence({ gameId, cursor, steps, autoAdvance: true, allowPlannedCombatDamage: true,
+    return this.startSequence({ gameId, cursor, steps, autoAdvance: !singleObservedChoice, allowPlannedCombatDamage: !singleObservedChoice,
       expectedStackIds: adopted }, authorize);
   }
 
@@ -284,8 +306,28 @@ export class GameSeat {
       : [...this.#sequences.values()].reverse().find((item) => item.gameId === gameId && item.startCursor === startCursor);
     if (!sequence || sequence.gameId !== gameId) throw new ToolError('unknown_sequence', 'This seat does not have that sequence.');
     if (startCursor !== undefined && sequence.startCursor !== startCursor) throw new ToolError('unknown_sequence', 'The plan does not match that starting cursor.');
-    const { controller, id, ...status } = sequence;
+    const { controller, finishListeners, id, ...status } = sequence;
     return { sequenceId: id, ...status };
+  }
+
+  async waitSequenceStatus(args, timeoutMs, signal) {
+    signal?.throwIfAborted();
+    const status = this.sequenceStatus(args);
+    if (status.status !== 'running' || timeoutMs === 0) return status;
+    const { finishListeners } = this.#sequences.get(status.sequenceId);
+    await new Promise((resolve, reject) => {
+      const done = () => { cleanup(); resolve(); };
+      const abort = () => { cleanup(); reject(signal.reason); };
+      const cleanup = () => {
+        clearTimeout(timer);
+        finishListeners.delete(done);
+        signal?.removeEventListener('abort', abort);
+      };
+      const timer = setTimeout(done, timeoutMs);
+      finishListeners.add(done);
+      signal?.addEventListener('abort', abort, { once: true });
+    });
+    return this.sequenceStatus(args);
   }
 
   cancelSequence(args) {
@@ -349,6 +391,8 @@ export class GameSeat {
     let settlingResolution = false;
     const resolvingPlanned = new Set();
     let advancingOwnTurn = false;
+    let crossingTurnBoundary = false;
+    let requestedPassBoundary;
     const validEvidence = (evidence) => evidence && typeof evidence.epoch === 'string'
       && Number.isSafeInteger(evidence.resolutionRevision) && evidence.resolutionRevision >= 0
       && evidence.publicActions && evidence.resolutions
@@ -356,6 +400,23 @@ export class GameSeat {
       && Object.values(evidence.resolutions).every((value) => Number.isSafeInteger(value) && value > 0);
     const initialEvidenceValid = validEvidence(initialEvidence);
     const turn = initial.turn;
+    const beforeDraw = (state) => state.step === 'UNTAP' || state.step === 'UPKEEP';
+    const targetsThisDraw = initial.activePlayerId === ownPlayerId && beforeDraw(initial);
+    const nextOwnTurn = (state) => state.turn > turn && state.activePlayerId === ownPlayerId;
+    const atOrAfterOwnDraw = (state) => {
+      const ownDrawTurn = requestedPassBoundary === 'my_draw' && targetsThisDraw
+        ? state.turn === turn && state.activePlayerId === ownPlayerId : nextOwnTurn(state);
+      return ownDrawTurn && state.step && !beforeDraw(state);
+    };
+    const reportInformation = (state, message) => {
+      // Allow this terminal boundary to observe the actionable post-draw
+      // snapshot, but never pass again once it observes the information.
+      if (['my_draw', 'my_upkeep'].includes(requestedPassBoundary) && atOrAfterOwnDraw(state)) {
+        sequence.observedNewInformation = true;
+        return;
+      }
+      throw new ToolError('new_information', message);
+    };
     let previousDecisionId = null;
     let passCount = 0;
     let expectedStackCards = initial.stack;
@@ -403,7 +464,7 @@ export class GameSeat {
         }
         if (informationRevision !== undefined) {
           if (!Number.isSafeInteger(evidence.informationRevision) || evidence.informationRevision < informationRevision) throw new ToolError('evidence_unavailable', 'Information evidence is unavailable or moved backwards.');
-          if (evidence.informationRevision !== informationRevision) throw new ToolError('new_information', 'A new public or own random outcome needs a fresh plan.');
+          if (evidence.informationRevision !== informationRevision) reportInformation(state, 'A new public or own random outcome needs a fresh plan.');
         }
       }
       if (attackDeclarationPending) {
@@ -477,7 +538,7 @@ export class GameSeat {
           ...(state.players ?? []).flatMap((player) => [...(player.topCard ? [player.topCard] : []), ...(player.battlefield ?? []), ...(player.graveyard ?? []), ...(player.exile ?? [])]),
         ];
         if (visibleCards.some((card) => (card.cardId ?? card.id) && !card.faceDown && !card.isToken && !initiallyKnownCards.has(card.cardId ?? card.id))) {
-          throw new ToolError('new_information', 'A newly visible card needs a fresh plan.');
+          reportInformation(state, 'A newly visible card needs a fresh plan.');
         }
       }
       const currentStack = stackIdentity(state.stack);
@@ -528,7 +589,7 @@ export class GameSeat {
       if (state.gameId !== sequence.gameId || state.status !== 'active' || state.epoch !== initial.epoch) {
         throw new ToolError('invalidated', 'The game state changed.');
       }
-      if (!advancingOwnTurn && (state.turn !== turn || state.activePlayer !== initial.activePlayer)) {
+      if (!crossingTurnBoundary && (state.turn !== turn || state.activePlayer !== initial.activePlayer)) {
         throw new ToolError('turn_changed', 'The observed turn ended. Read the current state and plan again before passing.');
       }
     };
@@ -572,6 +633,9 @@ export class GameSeat {
       }
     };
     const waitForNext = () => waitForState(observable);
+    const recordDestination = (state) => {
+      sequence.lastDestination = { cursor: state.cursor, turn: state.turn, activePlayerId: state.activePlayerId, phase: state.phase, step: state.step };
+    };
     const matchesAnswer = (state, step) => step?.kind === 'answer' && visibleDecision(state)
       && (step.decisionId ? state.decision.id === step.decisionId : step.guard?.kind === state.decision.kind && reaches(state, step.guard)
         && (step.guard.instruction === undefined || step.guard.instruction === state.decision.instruction))
@@ -614,7 +678,10 @@ export class GameSeat {
     try {
       for (const step of steps) {
         sequence.actionIndex = step.actionIndex ?? null;
-        advancingOwnTurn = step.kind === 'advance_to_own_turn';
+        requestedPassBoundary = step.kind === 'pass_to_boundary' ? step.destination : undefined;
+        if (requestedPassBoundary) sequence.requestedDestination = requestedPassBoundary;
+        advancingOwnTurn = step.kind === 'advance_to_own_turn' || ['my_upkeep', 'my_draw'].includes(requestedPassBoundary);
+        crossingTurnBoundary = advancingOwnTurn || !!requestedPassBoundary || step.allowTurnBoundary === true;
         let state = await stateForStep();
         if (step.kind === 'hold' || step.kind === 'pace') {
           if (!visibleDecision(state) || state.decision.id === previousDecisionId) throw new ToolError('not_actionable', 'A hold requires a current decision.');
@@ -762,22 +829,46 @@ export class GameSeat {
             throw new ToolError('response_available', 'A mandatory prompt needs a fresh decision.');
           }
           await stateForStep();
-        } else if (step.kind === 'advance_to_own_turn') {
-          if (!initialEvidenceValid || !ownPlayerId || !initial.activePlayerId) {
+        } else if (advancingOwnTurn || step.kind === 'pass_to_boundary') {
+          if (advancingOwnTurn && (!initialEvidenceValid || !ownPlayerId || !initial.activePlayerId || !Number.isSafeInteger(turn))) {
             throw new ToolError('evidence_unavailable', 'Advancing across turns requires current public action evidence and exact player IDs.');
           }
+          const inspectEndpoint = (view) => {
+            if (step.kind === 'advance_to_own_turn') return nextOwnTurn(view) ? 'reached' : null;
+            if (step.destination === 'current_turn') return view.turn !== turn ? 'skipped' : reaches(view, step) ? 'reached' : null;
+            if (step.destination === 'end_step') {
+              if (view.turn !== turn || view.step === 'CLEANUP') return 'skipped';
+              return view.step === 'END_TURN' ? 'reached' : null;
+            }
+            if (step.destination === 'my_upkeep' && nextOwnTurn(view) && view.step === 'UPKEEP') return 'reached';
+            if (step.destination === 'my_draw' && targetsThisDraw && view.turn !== turn) return 'skipped';
+            if (atOrAfterOwnDraw(view)) return step.destination === 'my_draw' ? 'reached' : 'skipped';
+            return null;
+          };
+          const readyEndpoint = (view) => {
+            const endpoint = inspectEndpoint(view);
+            if (endpoint && (observable(view) || step.kind === 'advance_to_own_turn' || step.destination === 'current_turn')) return endpoint;
+            return null;
+          };
           for (;;) {
             state = await stateForStep();
-            if (state.turn > turn && state.activePlayerId === ownPlayerId) break;
-            if (!visibleDecision(state) || state.decision.id === previousDecisionId) {
-              if (!await waitForState((updated) => updated.turn > turn && updated.activePlayerId === ownPlayerId ? updated : observable(updated))) {
-                throw new ToolError('timeout', 'Your next turn did not arrive within the bounded wait.');
+            const endpoint = readyEndpoint(state);
+            if (endpoint) {
+              if (requestedPassBoundary) recordDestination(state);
+              if (endpoint === 'skipped') throw new ToolError('destination_skipped', 'The engine passed the requested window; inspect the actual decision before continuing.');
+              break;
+            }
+            if (!observable(state)) {
+              if (!await waitForState((updated) => observable(updated) || (readyEndpoint(updated) ? updated : null))) {
+                throw new ToolError('timeout', 'The requested destination did not arrive within the bounded wait.');
               }
               continue;
             }
+            if (sequence.observedNewInformation) throw new ToolError('new_information', 'New information is available. Inspect the current decision before continuing.');
             const choice = state.decision.choices.find((item) => item.type === 'pass');
             if (state.decision.kind !== 'priority' || state.priority !== 'self' || !choice || pendingCast || state.stop
-              || state.decision.choices.some((item) => item.type !== 'pass' && !plainManaChoice(item))) {
+              || pendingTriggers.some((entry) => entry.abilityType === 'ACTIVATED_NONMANA' && entry.remaining > 0)
+              || (!step.skipOptionalResponses && state.decision.choices.some((item) => item.type !== 'pass' && !plainManaChoice(item)))) {
               throw new ToolError('response_available', 'A currently legal play or mandatory choice needs your decision before advancing.');
             }
             if (++passCount > 80) throw new ToolError('pass_limit', 'The advance reached its priority window limit.');
@@ -817,7 +908,9 @@ export class GameSeat {
             sequence.appliedDecisions++;
             previousDecisionId = state.decision.id;
           }
-          sequence.lastDestination = { cursor: state.cursor, turn: state.turn, activePlayerId: state.activePlayerId, phase: state.phase, step: state.step };
+          recordDestination(state);
+        } else if (step.kind === 'observe_next') {
+          if (!await waitForNext()) throw new ToolError('timeout', 'The next actionable state did not arrive within the bounded wait.');
         } else if (step.kind === 'reevaluate') {
           throw new ToolError('reevaluation_required', 'The terminal intention resolved. Inspect its actual outcome and current legal choices before continuing.');
         }
@@ -842,6 +935,7 @@ export class GameSeat {
     } finally {
       unwatch();
       if (this.#current === sequence) this.#current = null;
+      for (const finish of sequence.finishListeners) finish();
     }
   }
 }

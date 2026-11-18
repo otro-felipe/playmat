@@ -7,6 +7,7 @@ import { monitorSeatDecisions, registerEvents } from './events.mjs';
 import { listArchetypes, possibleResponses, searchCards } from './catalog.mjs';
 import { guideBootstrap, guideInstructions, registerGuides, sequenceInstructions } from './guides.mjs';
 import { registerMatchReviewPrompt, scoredPositions } from './match-review.mjs';
+import { playLine, waitForLine } from './line-runtime.mjs';
 
 const Uuid = z.uuid();
 const StringId = z.string().min(1).max(120);
@@ -69,6 +70,22 @@ const TurnAttack = z.object({ kind: z.literal('attack'), attackers: z.union([z.l
   .refine(({ attackers }) => attackers === 'all' || new Set(attackers).size === attackers.length, 'Name each attacker once.');
 const Turn = { gameId: Uuid, cursor: Cursor, actions: z.array(z.union([TurnPlay, TurnChoose, TurnAttack, Pace])).max(32),
   expectedStackIds: z.array(StringId).max(16).optional(), finish: z.enum(['next_turn', 'end_step', 'none']).default('next_turn') };
+const LinePassUntil = z.object({
+  kind: z.literal('pass_until'),
+  destination: z.enum(['my_upkeep', 'my_draw', 'end_step', 'current_turn']).describe('The next own upkeep or draw, this turn’s end step, or an explicit phase, step or priority in the current turn. The engine may skip a window that was not offered.'),
+  policy: z.enum(['if_no_play', 'decline_optional']).default('if_no_play').describe('Decline optional plays only when explicitly intended, for example to bluff a response. Both policies stop on an opponent action, new information or an unplanned required choice.'),
+  ...GameCondition,
+}).strict().refine((value) => (value.destination === 'current_turn') === hasDestination(value),
+  'Use phase, step or priority only with current_turn. At least one condition is required for current_turn.');
+const LinePassPriority = z.object({ kind: z.literal('pass_priority') }).strict()
+  .describe('Deliberately pass once and return at the next actionable boundary.');
+const Line = {
+  gameId: Uuid, cursor: Cursor, commandId: StringId.describe('Choose a unique ID for this line. For an uncertain result, reuse this ID with the same game, cursor and actions.'),
+  actions: z.array(z.union([TurnPlay, TurnChoose, TurnAttack, Pace, LinePassUntil, LinePassPriority])).min(1).max(32)
+    .describe('Plan as far as current information justifies. Use exact choices for visible engine prompts. Put pass_until or pass_priority last.'),
+  expectedStackIds: z.array(StringId).max(16).optional(),
+  waitMs: z.number().int().min(0).max(25_000).default(5_000).describe('Bound how long this call waits for the result. If the plan still owns execution, wait_for_decision with this gameId and commandId.'),
+};
 const Catalog = {
   format: Format.optional(), query: z.string().trim().min(1).max(160).optional(),
   colors: z.array(z.enum(['W', 'U', 'B', 'R', 'G', 'C'])).min(1).max(6).optional(),
@@ -103,7 +120,7 @@ function readToken(req) {
 
 function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedOrigins }) {
   function tool(name, description, inputSchema, scope, run, readOnlyHint = false) {
-    if (['create_game', 'join_game', 'start_match', 'get_game_state', 'submit_decision', 'pass_until', 'advance_to_own_turn', 'play_sequence', 'submit_sequence', 'play_turn'].includes(name)) {
+    if (['create_game', 'join_game', 'start_match', 'get_game_state', 'submit_decision', 'pass_until', 'advance_to_own_turn', 'play_sequence', 'submit_sequence', 'play_turn', 'play_line'].includes(name)) {
       description += ` ${guideBootstrap}`;
     }
     if (['play_sequence', 'submit_sequence'].includes(name)) description += ` ${sequenceInstructions}`;
@@ -115,7 +132,7 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
         if (!actor.scopes.includes(scope)) throw new ToolError('forbidden', 'This credential lacks the required scope.');
         return textResult(await run(args, extra.signal));
       } catch (error) {
-        if (error instanceof ToolError) return textResult({ code: error.code, message: error.message }, true);
+        if (error instanceof ToolError) return textResult({ code: error.code, message: error.message, ...(error.state ? { state: error.state } : {}) }, true);
         if (extra.signal.aborted) return textResult({ code: 'cancelled', message: 'The request was cancelled.' }, true);
         return textResult({ code: 'operation_failed', message: 'Playmat could not verify completion. Read the latest state before retrying.' }, true);
       }
@@ -137,10 +154,16 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
   }, 'play', (args) => getSeat().engine.recoveryJoin(args));
   tool('resync_game', 'Ask XMage for the current decision after a lost or uncertain acknowledgement.', { gameId: Uuid },
     'play', ({ gameId }) => getSeat().engine.resync(gameId));
-  tool('wait_for_decision', 'Wait for a new engine-issued decision, sideboarding or game end. A timeout includes the current state and may still have an unanswered decision. Polling does not answer it or pause inactivity; resolve a pending choice before waiting for another.', {
+  tool('wait_for_decision', 'Wait for an engine decision, rollback vote, sideboarding or game end. When play_line still owns execution, pass its gameId and commandId to wait for the line to stop and return the next visible state. A timeout includes the current state. Waiting does not answer prompts or pause inactivity.', {
     gameId: Uuid.optional(), afterDecisionId: StringId.optional(), afterCursor: Cursor.optional(),
-    timeoutMs: z.number().int().min(100).max(25_000).optional(),
-  }, 'play', (args, signal) => getSeat().wait(args, signal), true);
+    commandId: StringId.optional(), timeoutMs: z.number().int().min(100).max(25_000).optional(),
+  }, 'play', (args, signal) => {
+    if (args.commandId === undefined) return getSeat().wait(args, signal);
+    if (!args.gameId || args.afterCursor !== undefined || args.afterDecisionId !== undefined) {
+      throw new ToolError('invalid_line_wait', 'Waiting for a line requires its gameId and commandId without a decision or cursor filter.');
+    }
+    return waitForLine(getSeat(), args, signal);
+  }, true);
   tool('wait_until', 'Observe a phase, step or priority destination without passing or modifying play.', {
     gameId: Uuid, ...GameCondition, afterCursor: Cursor.optional(),
     timeoutMs: z.number().int().min(100).max(25_000).optional(),
@@ -163,6 +186,8 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
   tool('advance_to_own_turn', 'Pass only when the current engine offers no non-mana optional play, stopping before your next turn or any useful legal play, mandatory decision, public opponent action or missing causal evidence. Zero mana is never evidence that no action exists.', { gameId: Uuid, cursor: Cursor },
     'play', ({ gameId, cursor }) => getSeat().startSequence({ gameId, cursor, steps: [{ kind: 'advance_to_own_turn' }] }, reauthorize));
   const playSequence = (args) => getSeat().startSequence(args, reauthorize);
+  tool('play_line', 'Submit the longest justified line of plays, choices, attacks and passes from the current cursor, on either turn. Ordinary handoffs are automatic. The line stops on new information, rival actions or a required choice it cannot answer. Returns the applied progress and visible game state together. For an exact choice use its current decisionId and choiceId. Prefer this tool for gameplay.', Line, 'play',
+    (args, signal) => playLine(getSeat(), args, reauthorize, signal));
   tool('play_turn', 'Plan a complete turn with significant plays, public targets, chosen mana sources, guarded costs/choices and attacks. The executor makes legal ordinary passes between intentions; do not enumerate passes or predict priority windows. Own declared spells/triggers and the initial own stack may resolve; real rival actions, new information, unknown mandatory choices and chosen stops interrupt. finish next_turn advances only while no useful legal action remains, never because mana is zero.', Turn, 'play', (args) => getSeat().startTurn(args, reauthorize));
   tool('play_sequence', 'Queue guarded choices by exact ID, card or label. Mark a planned cast with expectCast to let later steps pay for that same spell.', Sequence, 'play', playSequence);
   tool('submit_sequence', 'Start a conditional, bounded sequence of choices, brief waits and ordinary passes.', Sequence, 'play', playSequence);

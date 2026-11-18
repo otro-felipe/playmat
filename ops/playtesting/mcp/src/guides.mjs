@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 
@@ -12,8 +13,8 @@ const guides = [
     description: 'Look up cards, validate decks, and estimate responses from public information.',
   },
   {
-    name: 'turn-planning', title: 'Plan a turn',
-    description: 'Pick a competitive line and use guarded sequences that stop when the game changes.',
+    name: 'turn-planning', title: 'Play a line',
+    description: 'Play the longest justified line and decide again when the game changes.',
   },
   {
     name: 'rules', title: 'Magic rules',
@@ -26,16 +27,20 @@ const guides = [
 }));
 const GuideId = z.enum(guides.map(({ name }) => name));
 const guideList = guides.map(({ text, ...guide }) => guide);
+const guideBundle = {
+  version: createHash('sha256').update(JSON.stringify(guides)).digest('hex'),
+  guides,
+};
 
-export const guideBootstrap = 'Before creating, joining or playing a match, load all four guides with get_guide: getting-started, turn-planning, card-catalog and rules (one call per guideId). Repeat after losing conversation context. Listing guides alone does not load their contents.';
+export const guideBootstrap = 'Before creating, joining or playing a match, call get_guide({"bundle":true}) to load all four full guides: getting-started, turn-planning, card-catalog and rules. Repeat after losing conversation context. Listing guides alone does not load their contents.';
 
-export const sequenceInstructions = 'Prefer play_turn: plan significant plays, targets, chosen resources, guarded costs and attacks as one complete public-information turn. The MCP inserts legal ordinary passes between intentions; do not predict exact priority windows or send pass after each expected own resolution. Known initial own stack objects and exact declared casts/triggers may resolve, while rival non-pass actions, new information, chosen stops and unknown mandatory choices interrupt. Opposing Ward requires its separate exact public target-derived expectation and guarded own cost, never permission to act for the rival. Auto-selected targets skip only with exact public spell-target proof. Zero mana never means no useful legal play: free/alternate-cost spells and useful abilities still stop final advance. pace is optional and bounded. Legacy play_sequence returns turn_changed across a turn boundary and never treats land drops as ignorable responses. Legacy play_sequence and standalone pass_until remain distinct: the latter deliberately declines optional responses, while guarded plans retain causal checks. END_TURN is an end-step name; use finish next_turn for the safe no-useful-play advance. Read get_sequence_status and a fresh state after interruptions; never repeat acknowledged actions or reveal hidden information.';
+export const sequenceInstructions = 'Prefer play_line for the longest justified line. Legacy play_sequence and submit_sequence accept guarded engine steps, return turn_changed across a turn boundary and never treat land drops as ignorable responses. The standalone pass_until actively declines optional responses through rival actions in the current turn. Use a guarded line when a rival action should return control. Inspect the legacy sequence receipt and current state after interruptions.';
 
 export const guideInstructions = [
   guideBootstrap,
+  'Use play_line for the longest justified line from your observed game state. Include known plays, targets, costs, choices and combat together. The executor handles routine priority handoffs. Stop and replan from the returned state on a meaningful opponent action, new information, or an unplanned required choice. Use choose for any visible engine prompt. Pass once deliberately with pass_priority, or use a terminal pass_until with my_upkeep to plan before drawing or my_draw to plan after drawing. The default if_no_play policy stops for legal plays, including free or alternate costs; use decline_optional only as a strategic choice.',
   'Keep the live decision loop active: null secondsRemaining is not unlimited decision time. It is a sampled cumulative match clock, separate from timing.inactivity. Use the server response-inactivity deadline when status is running; zero requires immediate attention, and unknown/null never means unlimited time. Resolve pending legal choices promptly; polling, chat, resync and webhook subscriptions do not answer or renew them. Inspect the state returned even after a wait timeout.',
-  'Call get_guide with no arguments to list the guides, then pass guideId to read one. You can also use resources/list and resources/read.',
-  sequenceInstructions,
+  'Use guideId to read one guide. Clients with native resource support can read the equivalent resources.',
   ...guideList.map(({ uri, description }) => `${uri} — ${description}`),
 ].join('\n');
 
@@ -44,12 +49,22 @@ export function registerGuides(mcp) {
     mcp.registerResource(name, uri, metadata, async () => ({ contents: [{ uri, mimeType, text }] }));
   }
   mcp.registerTool('get_guide', {
-    description: `Discover Playmat’s guides or read one by ID. ${guideBootstrap}`,
-    inputSchema: { guideId: GuideId.optional().describe('Omit to list every guide, or choose one ID to read its Markdown.') },
+    description: `Read the complete Playmat guide bundle, a single guide, or the guide index. ${guideBootstrap}`,
+    inputSchema: {
+      bundle: z.boolean().optional().describe('Set true to read all four full guides and their shared version in one call.'),
+      guideId: GuideId.optional().describe('Read one guide by ID. Omit both inputs to list the guide index.'),
+    },
     annotations: { readOnlyHint: true, openWorldHint: false },
     _meta: { securitySchemes: [{ type: 'oauth2', scopes: [] }] },
-  }, async ({ guideId }) => {
-    const result = guideId === undefined ? { guides: guideList } : guides.find(({ name }) => name === guideId);
+  }, async ({ bundle, guideId }) => {
+    if (bundle && guideId !== undefined) {
+      return { isError: true, content: [{ type: 'text', text: JSON.stringify({
+        code: 'conflicting_guide_selection',
+        message: 'Choose the full bundle or a single guide.',
+      }) }] };
+    }
+    const selected = guideId === undefined ? { guides: guideList } : guides.find(({ name }) => name === guideId);
+    const result = bundle ? guideBundle : selected;
     return { content: [{ type: 'text', text: JSON.stringify(result) }] };
   });
 }

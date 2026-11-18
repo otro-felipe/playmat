@@ -40,7 +40,7 @@ test('[PM-AC-04] an MCP invite shows and copies its endpoint, private link, reso
   const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined);
   const page = mount('coach');
   expect(await page.findByText(rules)).toBeTruthy();
-  expect(page.getByText(/get_guide without arguments to list the guides/)).toBeTruthy();
+  expect(page.getByText(/get_guide with/)).toBeTruthy();
   expect(page.getByText('Coach', { exact: false })).toBeTruthy();
   fireEvent.click(page.getByRole('button', { name: 'Copy agent instructions' }));
   expect(await page.findByText('Agent instructions copied')).toBeTruthy();
@@ -48,9 +48,9 @@ test('[PM-AC-04] an MCP invite shows and copies its endpoint, private link, reso
   for (const detail of [
     `${window.location.origin}/mcp`, `${window.location.origin}${invitePath}`,
     'playmat://guides/getting-started', 'playmat://guides/card-catalog', 'playmat://guides/turn-planning', rules,
-    'get_guide without arguments to list the guides', 'guideId', 'join_game', 'Coach',
+    'get_guide with {"bundle":true}', 'join_game', 'Coach',
     'Before creating, joining or playing, load all four guides', 'Repeat after losing context',
-    'END_TURN', 'skipOptionalResponses', 'land drops',
+    'play_line', 'as far as the visible state justifies',
   ]) expect(instructions).toContain(detail);
   expect(instructions.indexOf('get_guide')).toBeLessThan(instructions.indexOf('join_game'));
 });

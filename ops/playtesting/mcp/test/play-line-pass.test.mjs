@@ -1,0 +1,182 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { setTimeout as sleep } from 'node:timers/promises';
+import { GameSeat } from '../src/game-seat.mjs';
+
+const pass = { id: 'pass', type: 'pass' };
+const freePlay = { id: 'free-play', type: 'object' };
+const priority = (id, ...choices) => ({ id, kind: 'priority', choices: [pass, ...choices] });
+const evidence = { epoch: 'line-fixture', publicActions: { me: 0, opponent: 0 }, resolutions: {},
+  resolutionRevision: 0, combatDamage: [], combatRevision: 0, informationRevision: 0 };
+
+function game(t, transitions, initial) {
+  const listeners = new Set();
+  const applied = [];
+  let state = {
+    gameId: 'table-game', status: 'active', epoch: 1, cursor: 1, turn: 7, activePlayer: 'Opponent', activePlayerId: 'opponent',
+    priority: 'self', step: 'END_TURN', ownHand: [], stack: [], decision: priority('end'),
+    players: [{ id: 'me', yourSeat: true }, { id: 'opponent' }], sequenceEvidence: evidence, ...initial,
+  };
+  const publish = (change) => {
+    state = { ...state, ...change, cursor: state.cursor + 1 };
+    for (const listener of listeners) listener();
+  };
+  const seat = new GameSeat({
+    snapshot: () => state,
+    subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
+    async respond(decisionId, choiceId, value) {
+      applied.push([decisionId, choiceId, value]);
+      const transition = transitions[decisionId];
+      assert.ok(transition, `Unexpected engine response to ${decisionId}`);
+      if (typeof transition === 'function') transition(publish);
+      else publish(transition);
+      return { submitted: true };
+    },
+  }, { sequenceTimeoutMs: 250, maxSequenceWallMs: 1000 });
+  t.after(() => seat.invalidate());
+  return {
+    seat, applied,
+    submit: async (actions) => {
+      const { sequenceId } = seat.startTurn({ gameId: state.gameId, cursor: state.cursor, actions, finish: 'none', settle: false }, async () => true);
+      for (let i = 0; i < 100; i++) {
+        const receipt = seat.sequenceStatus({ gameId: state.gameId, sequenceId });
+        if (receipt.status !== 'running') return receipt;
+        await sleep(5);
+      }
+      assert.fail('Expected the line to stop within the test deadline');
+    },
+  };
+}
+
+const upkeep = { turn: 8, activePlayer: 'Pilot', activePlayerId: 'me', decision: priority('upkeep'), step: 'UPKEEP' };
+const drawnCard = { id: 'drawn-card', name: 'Island' };
+const draw = {
+  ...upkeep, step: 'DRAW', decision: priority('draw'), ownHand: [drawnCard],
+  sequenceEvidence: { ...evidence, informationRevision: 1 },
+};
+const main = { ...draw, step: 'PRECOMBAT_MAIN', decision: priority('main') };
+
+test('[PM-LINE-02] safe pass considers a legal free play even with an empty mana pool', async (t) => {
+  const table = game(t, {}, { decision: priority('end', freePlay) });
+  const receipt = await table.submit([{ kind: 'pass_until', destination: 'my_upkeep' }]);
+  assert.equal(receipt.reason, 'response_available');
+  assert.deepEqual(table.applied, []);
+});
+
+test('[PM-LINE-02] an explicit decline preserves secrecy and stops at own upkeep before the draw', async (t) => {
+  const table = game(t, { end: upkeep }, { decision: priority('end', freePlay) });
+  const receipt = await table.submit([{ kind: 'pass_until', destination: 'my_upkeep', policy: 'decline_optional' }]);
+  assert.equal(receipt.status, 'completed');
+  assert.equal(receipt.lastDestination.step, 'UPKEEP');
+  assert.equal(receipt.lastDestination.turn, 8);
+  assert.deepEqual(table.applied, [['end', 'pass', undefined]]);
+});
+
+test('[PM-LINE-02] own draw stops at the first actionable view with the new card', async (t) => {
+  const table = game(t, { end: upkeep, upkeep: (publish) => {
+    publish({ ...draw, decision: null });
+    setTimeout(() => publish({ decision: draw.decision }), 5);
+  } });
+  const receipt = await table.submit([{ kind: 'pass_until', destination: 'my_draw' }]);
+  assert.equal(receipt.status, 'completed');
+  assert.equal(receipt.lastDestination.step, 'DRAW');
+  assert.equal(receipt.observedNewInformation, true);
+  assert.equal(table.seat.snapshot().decision.id, 'draw');
+  assert.deepEqual(table.applied.map(([id]) => id), ['end', 'upkeep']);
+});
+
+test('[PM-LINE-02] skipped upkeep reports the actual decision and submits no draw-window pass', async (t) => {
+  const table = game(t, { end: main });
+  const receipt = await table.submit([{ kind: 'pass_until', destination: 'my_upkeep' }]);
+  assert.equal(receipt.reason, 'destination_skipped');
+  assert.equal(receipt.lastDestination.step, 'PRECOMBAT_MAIN');
+  assert.equal(receipt.observedNewInformation, true);
+  assert.equal(table.seat.snapshot().decision.id, 'main');
+  assert.deepEqual(table.applied.map(([id]) => id), ['end']);
+});
+
+test('[PM-LINE-02] a passed-over draw window returns the actual post-draw decision without another pass', async (t) => {
+  const table = game(t, { end: main });
+  const receipt = await table.submit([{ kind: 'pass_until', destination: 'my_draw' }]);
+  assert.equal(receipt.status, 'completed');
+  assert.equal(receipt.lastDestination.step, 'PRECOMBAT_MAIN');
+  assert.deepEqual(table.applied.map(([id]) => id), ['end']);
+});
+
+test('[PM-LINE-02] a line at own upkeep can advance to this turn’s draw', async (t) => {
+  const table = game(t, { upkeep: draw }, upkeep);
+  const receipt = await table.submit([{ kind: 'pass_until', destination: 'my_draw', policy: 'decline_optional' }]);
+  assert.equal(receipt.status, 'completed');
+  assert.equal(receipt.lastDestination.turn, 8);
+  assert.equal(receipt.lastDestination.step, 'DRAW');
+  assert.equal(receipt.observedNewInformation, true);
+  assert.deepEqual(table.applied.map(([id]) => id), ['upkeep']);
+});
+
+for (const [cause, transition, reason] of [
+  ['opponent action', { ...upkeep, sequenceEvidence: { ...evidence, publicActions: { me: 0, opponent: 1 } } }, 'opponent_action'],
+  ['unseen mandatory choice', { step: 'CLEANUP', decision: { id: 'trigger-choice', kind: 'target', choices: [] } }, 'response_available'],
+  ['unplanned new information before the draw boundary', { ...upkeep, ownHand: [drawnCard], sequenceEvidence: draw.sequenceEvidence }, 'new_information'],
+]) test(`[PM-LINE-02] explicit decline still stops for ${cause}`, async (t) => {
+  const table = game(t, { end: transition });
+  const receipt = await table.submit([{ kind: 'pass_until', destination: 'my_draw', policy: 'decline_optional' }]);
+  assert.equal(receipt.reason, reason);
+  assert.deepEqual(table.applied.map(([id]) => id), ['end']);
+});
+
+test('[PM-LINE-02] passing to the current end step does not consume the decision there', async (t) => {
+  const table = game(t, { main: { step: 'END_TURN', decision: priority('end') } }, { step: 'POSTCOMBAT_MAIN', decision: priority('main') });
+  const receipt = await table.submit([{ kind: 'pass_until', destination: 'end_step' }]);
+  assert.equal(receipt.status, 'completed');
+  assert.equal(receipt.lastDestination.step, 'END_TURN');
+  assert.deepEqual(table.applied.map(([id]) => id), ['main']);
+});
+
+test('[PM-LINE-02] a current-turn destination can stop on an opponent priority handoff', async (t) => {
+  const table = game(t, { end: { priority: 'opponent', decision: null, phase: 'ENDING' } });
+  const receipt = await table.submit([{ kind: 'pass_until', destination: 'current_turn', priority: 'opponent', phase: 'ENDING' }]);
+  assert.equal(receipt.status, 'completed');
+  assert.equal(receipt.lastDestination.step, 'END_TURN');
+  assert.deepEqual(table.applied.map(([id]) => id), ['end']);
+});
+
+test('[PM-LINE-02] missing a current-turn destination never passes into a new turn', async (t) => {
+  const table = game(t, { end: upkeep });
+  const receipt = await table.submit([{ kind: 'pass_until', destination: 'current_turn', step: 'CLEANUP', policy: 'decline_optional' }]);
+  assert.equal(receipt.reason, 'destination_skipped');
+  assert.equal(receipt.lastDestination.step, 'UPKEEP');
+  assert.deepEqual(table.applied.map(([id]) => id), ['end']);
+});
+
+test('[PM-LINE-02] a current-turn destination requires a phase, step or priority', async (t) => {
+  const table = game(t, {});
+  await assert.rejects(table.submit([{ kind: 'pass_until', destination: 'current_turn' }]), { code: 'bad_sequence' });
+  assert.deepEqual(table.applied, []);
+});
+
+test('[PM-LINE-02] a deliberate priority pass yields exactly once and waits for a fresh decision', async (t) => {
+  const table = game(t, { end: (publish) => {
+    publish({ decision: null, priority: 'opponent' });
+    setTimeout(() => publish({ ...upkeep, priority: 'self' }), 5);
+  } }, { decision: priority('end', freePlay) });
+  const receipt = await table.submit([{ kind: 'pass_priority' }]);
+  assert.equal(receipt.status, 'completed');
+  assert.equal(table.seat.snapshot().decision.id, 'upkeep');
+  assert.deepEqual(table.applied.map(([id]) => id), ['end']);
+});
+
+test('[PM-LINE-02] explicit passes must be the final action', async (t) => {
+  const table = game(t, {});
+  await assert.rejects(table.submit([{ kind: 'pass_priority' }, { kind: 'pass_until', destination: 'my_draw' }]), { code: 'bad_sequence' });
+  assert.deepEqual(table.applied, []);
+});
+
+test('[PM-LINE-01] a single exact observed choice waits for new state without an implicit pass', async (t) => {
+  const table = game(t, { selection: (publish) => {
+    setTimeout(() => publish({ decision: priority('later') }), 5);
+  } }, { decision: { id: 'selection', kind: 'unknownEnginePrompt', choices: [{ id: 'exact' }] }, sequenceEvidence: undefined });
+  const receipt = await table.submit([{ kind: 'choose', decisionId: 'selection', choiceId: 'exact', value: [1, 3] }]);
+  assert.equal(receipt.status, 'completed');
+  assert.equal(table.seat.snapshot().decision.id, 'later');
+  assert.deepEqual(table.applied, [['selection', 'exact', [1, 3]]]);
+});
