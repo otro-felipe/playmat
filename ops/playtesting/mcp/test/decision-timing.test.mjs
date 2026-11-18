@@ -158,12 +158,12 @@ test('authoritative own idle deadline survives polling independently of a disabl
 test('idle metadata is own-seat only and clears inactive or disabled deadlines', { timeout: 5000 }, async t => {
   const { actions, call, emit } = await fixture(t);
   for (const status of ['inactive', 'disabled']) {
-    await emit('GAME_UPDATE', { ...view(0), myPlayerId: playerId, responseIdle: { status } });
+    await emit('GAME_UPDATE', { ...view(0), myPlayerId: playerId, responseIdle: { status, timeoutSeconds: 900 } });
     assert.deepEqual((await call('get_game_state', { gameId })).timing.inactivity,
       { status, deadlineEpochMs: null, secondsRemaining: null, timeoutSeconds: null });
   }
   await emit('GAME_UPDATE', { ...view(0), myPlayerId: 'another-seat', responseIdle: {
-    status: 'running', sampledAtEpochMs: Date.now(), deadlineEpochMs: Date.now() + 900_000, remainingMillis: 900_000 } });
+    status: 'running', sampledAtEpochMs: Date.now(), deadlineEpochMs: Date.now() + 900_000, remainingMillis: 900_000, timeoutSeconds: 900 } });
   assert.deepEqual((await call('get_game_state', { gameId })).timing.inactivity,
     { status: 'unknown', deadlineEpochMs: null, secondsRemaining: null, timeoutSeconds: null });
   assert.deepEqual(actions, []);

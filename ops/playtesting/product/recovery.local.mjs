@@ -179,6 +179,7 @@ try {
     assert.equal(first.timing.matchClock.status, 'disabled')
     assert.equal(first.secondsRemaining, null)
     assert.ok(first.timing.inactivity.secondsRemaining > 55 && first.timing.inactivity.secondsRemaining <= 60)
+    assert.equal(first.timing.inactivity.timeoutSeconds, 60, 'The real engine window duration reaches MCP independently of the balance')
     await sleep(1200)
     assert.equal(await choose(firstIndex, first, false), true)
     pending = await until(state => state.some(s => s.status === 'active' && s.decision?.choices?.length
@@ -189,6 +190,7 @@ try {
     assert.equal(saved.timing.matchClock.status, 'disabled')
     assert.ok(saved.timing.inactivity.deadlineEpochMs > first.timing.inactivity.deadlineEpochMs + 500)
     assert.ok(saved.timing.inactivity.secondsRemaining > 55 && saved.timing.inactivity.secondsRemaining <= 60)
+    assert.equal(saved.timing.inactivity.timeoutSeconds, 60)
     const deadline = saved.timing.inactivity.deadlineEpochMs
     const end = Date.now() + 70_000
     let polls = 0, resyncs = 0
@@ -198,6 +200,7 @@ try {
       // Replaying an engine prompt may allocate a fresh local decision ID; its underlying deadline must not move.
       if (observed.status === 'active' && observed.gameId === saved.gameId && observed.timing?.inactivity.status === 'running') {
         assert.equal(observed.timing.inactivity.deadlineEpochMs, deadline)
+        assert.equal(observed.timing.inactivity.timeoutSeconds, 60, 'Polling preserves the actual duration without resetting the deadline')
         if (polls % 3 === 0) {
           if (idleIndex === 0) await browser.resync(saved.gameId)
           else await call('resync_game', { gameId: saved.gameId })
