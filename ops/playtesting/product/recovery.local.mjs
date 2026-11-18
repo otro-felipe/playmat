@@ -90,7 +90,8 @@ async function choose(index, state, cast = true) {
     else await call('submit_decision', { gameId: state.gameId, cursor: state.cursor, decisionId: state.decision.id, choiceId: picked.id, idempotencyKey: randomUUID() })
     return true
   } catch (e) {
-    if (['stale_decision', 'stale_state', 'engine_rejected', 'engine_timeout', 'illegal_choice', 'decision_busy'].includes(e.code)) return false
+    if (['stale_decision', 'stale_state', 'engine_rejected', 'engine_timeout', 'illegal_choice', 'decision_busy'].includes(e.code)
+      || (e.code === -32602 && e.message === 'The expected decision is no longer pending')) return false
     throw e
   }
 }
@@ -113,7 +114,7 @@ async function concedeAndWaitFor(status, description) {
   // point. Managed MCP seats can have priority in upkeep and draw as well.
   return until(async state => {
     if (state.every(s => s.status === status)) return true
-    for (let i = 0; i < 2; i++) await choose(i, state[i], false)
+    await choose(1, state[1], false)
     return false
   }, description)
 }
