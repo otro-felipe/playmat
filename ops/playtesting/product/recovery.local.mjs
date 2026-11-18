@@ -107,14 +107,18 @@ async function playTo(turn) {
   }
   throw Error('No durable turn reached')
 }
-async function completeMatch(fixture) {
+async function concedeAndWaitFor(status, description) {
   await browser.concede(browser.snapshot().gameId, false)
-  // Concession is observed at the next engine safe point; answer the other seat's open priority too.
-  const ended = await until(async state => {
-    if (state.every(s => s.status === 'match_over')) return true
+  // XMage processes a non-priority concession at the next game-thread safe
+  // point. Managed MCP seats can have priority in upkeep and draw as well.
+  return until(async state => {
+    if (state.every(s => s.status === status)) return true
     for (let i = 0; i < 2; i++) await choose(i, state[i], false)
     return false
-  }, 'whole best-of-three match completed')
+  }, description)
+}
+async function completeMatch(fixture) {
+  const ended = await concedeAndWaitFor('match_over', 'whole best-of-three match completed')
   assert.equal(ended[1].score.wins, 2)
   assert.equal(ended[0].score.wins, 0)
   assert.equal(ended[0].score.losses, 2)
@@ -299,8 +303,7 @@ try {
       await save({ ...fixture, restoredGameId: browser.snapshot().gameId, restoredTableId: restored.tableId })
       console.log(JSON.stringify({ phase: 'turn-recovered', generation: restored.generation, turn: restored.turn, gameNumber: restored.gameNumber }))
       if (mode === 'recover-sideboard') {
-        await browser.concede(browser.snapshot().gameId, false)
-        await until(s => s.every(x => x.status === 'sideboarding'), 'sideboarding after recovered game')
+        await concedeAndWaitFor('sideboarding', 'sideboarding after recovered game')
         const sideboard = browser.sideboardState()
         const changed = structuredClone(sideboard.deck)
         const forest = changed.cards.find(card => card.cardName === 'Forest')
