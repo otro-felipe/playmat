@@ -168,7 +168,9 @@ try {
     if (result.status !== 'running') break
     await sleep(15)
   }
-  assert.equal(result.status, 'completed', 'The real own-damage line must retain its unapplied second spell and complete')
+  assert.equal(result.status, 'completed', 'The real own-damage line must retain its unapplied second spell and complete: ' + JSON.stringify({
+    reason: result.reason, completedSteps: result.completedSteps, appliedDecisions: result.appliedDecisions,
+  }))
   assert.equal(result.completedSteps, steps.length)
   const after = await ownState()
   assert.equal(after.turn, boundary.turn)
