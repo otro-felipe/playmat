@@ -36,6 +36,12 @@ test('HTML 4 entity names preserve case and digits; invalid or unknown reference
   expect(decodeEntities('&madeup; &#x110000; &#xD800; &#0; &#xZZ;')).toBe('&madeup; &#x110000; &#xD800; &#0; &#xZZ;');
 });
 
+test('object prototype names are not named character references', () => {
+  const text = '&constructor; &toString; &hasOwnProperty;';
+  expect(decodeEntities(text)).toBe(text);
+  expect(chatText(text)).toBe(text);
+});
+
 test('only server notices and game logs interpret transport markup as formatting', () => {
   expect(toChatLines({ messageType: 'USER_INFO', message: '<b>S&iacute;</b><br>lleg&oacute;' }, 'notice').map((line) => line.text)).toEqual(['Sí', 'llegó']);
   expect(chatText('<b>sí</b>')).toBe('<b>sí</b>');

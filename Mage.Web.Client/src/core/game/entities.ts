@@ -7,6 +7,10 @@ const LEGACY_ENTITIES: Record<string, string> = {
   laquo: '«', raquo: '»',
 };
 
+function namedEntity(table: Readonly<Record<string, string>>, name: string): string | undefined {
+  return Object.prototype.hasOwnProperty.call(table, name) ? table[name] : undefined;
+}
+
 /**
  * Decodes HTML entities in one pass (so "&amp;lt;" stays "&lt;"). The server writes some without their semicolon
  * ("&bull Put a counter", from Modes and a few cards): a known name decodes either way (#204); anything else is left
@@ -20,8 +24,9 @@ export function decodeEntities(text: string, { literal = false }: { literal?: bo
     }
     if (literal) {
       // User chat preserves curly quotes too; log/prompt typography keeps its historical substitutions.
-      return HTML4_ENTITIES[body] ?? (body === 'apos' ? "'" : undefined) ?? match;
+      return namedEntity(HTML4_ENTITIES, body) ?? (body === 'apos' ? "'" : undefined) ?? match;
     }
-    return LEGACY_ENTITIES[body] ?? HTML4_ENTITIES[body] ?? LEGACY_ENTITIES[body.toLowerCase()] ?? match;
+    return namedEntity(LEGACY_ENTITIES, body) ?? namedEntity(HTML4_ENTITIES, body)
+      ?? namedEntity(LEGACY_ENTITIES, body.toLowerCase()) ?? match;
   });
 }
