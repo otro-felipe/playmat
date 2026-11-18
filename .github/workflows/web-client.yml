@@ -100,6 +100,20 @@ jobs:
           path: Mage.Web.Client/test-results/e2e-chat-social-*/**/*.png
           if-no-files-found: ignore
           retention-days: 7
+      - name: Build the actual private client and enforce its production budget
+        run: VITE_PRIVATE_PLAYTESTING=true VITE_IMAGE_PROXY= npm run build && npm run size
+      - name: Compile private presentation fixtures with production minification
+        run: VITE_PRIVATE_PLAYTESTING=true VITE_IMAGE_PROXY= PLAYMAT_UI_TEST_FIXTURES=yes npm run build
+      - name: Minified private account library and mana regressions
+        run: VITE_PRIVATE_PLAYTESTING=true MAGE_WEB_E2E_PREVIEW=1 PLAYMAT_PRIVATE_FIXTURE_BUILT=1 npx playwright test e2e/private-bootstrap.spec.ts e2e/private-library.spec.ts --project=chromium-desktop --workers=1 --output=test-results-private
+      - name: Private account library fixture screenshots
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: private-account-library-ui-fixtures
+          path: Mage.Web.Client/test-results-private/**/**/*.png
+          if-no-files-found: ignore
+          retention-days: 7
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
@@ -107,4 +121,5 @@ jobs:
           path: |
             Mage.Web.Client/playwright-report
             Mage.Web.Client/test-results
+            Mage.Web.Client/test-results-private
           retention-days: 7
