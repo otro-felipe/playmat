@@ -52,7 +52,7 @@ test('local XMage inactivity expires with a disabled match clock despite continu
     assert.match(pending.timing.warning, /response-inactivity timer/);
   } else {
     // Legacy image acceptance remains available; the full private-image fixture requires the new deadline.
-    assert.deepEqual(pending.timing.inactivity, { status: 'unknown', deadlineEpochMs: null, secondsRemaining: null });
+    assert.deepEqual(pending.timing.inactivity, { status: 'unknown', deadlineEpochMs: null, secondsRemaining: null, timeoutSeconds: null });
     assert.match(pending.timing.warning, /null does not mean unlimited time/);
   }
   // Deliberately leave only this disposable fixture unanswered while continuously reading state.

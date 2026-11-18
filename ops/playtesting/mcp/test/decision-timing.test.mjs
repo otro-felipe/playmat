@@ -91,7 +91,7 @@ test('MCP reports match-clock samples including paused and zero balances, never 
     const state = await call('get_game_state', { gameId });
     assert.deepEqual(state.timing.matchClock, expected);
     assert.equal(state.secondsRemaining, alias);
-    assert.deepEqual(state.timing.inactivity, { status: 'unknown', deadlineEpochMs: null, secondsRemaining: null });
+    assert.deepEqual(state.timing.inactivity, { status: 'unknown', deadlineEpochMs: null, secondsRemaining: null, timeoutSeconds: null });
     assert.equal(state.timing.warning, null);
   }
   assert.deepEqual(actions, []);
@@ -152,7 +152,7 @@ test('authoritative own idle deadline survives polling independently of a disabl
   await emit('GAME_UPDATE', { ...view(0), myPlayerId: playerId,
     responseIdle: { status: 'running', sampledAtEpochMs, deadlineEpochMs: 0, remainingMillis: 0, timeoutSeconds: 900 } });
   assert.deepEqual((await call('get_game_state', { gameId })).timing.inactivity,
-    { status: 'running', deadlineEpochMs: 0, secondsRemaining: 0 });
+    { status: 'running', deadlineEpochMs: 0, secondsRemaining: 0, timeoutSeconds: 900 });
 });
 
 test('idle metadata is own-seat only and clears inactive or disabled deadlines', { timeout: 5000 }, async t => {
@@ -160,11 +160,38 @@ test('idle metadata is own-seat only and clears inactive or disabled deadlines',
   for (const status of ['inactive', 'disabled']) {
     await emit('GAME_UPDATE', { ...view(0), myPlayerId: playerId, responseIdle: { status } });
     assert.deepEqual((await call('get_game_state', { gameId })).timing.inactivity,
-      { status, deadlineEpochMs: null, secondsRemaining: null });
+      { status, deadlineEpochMs: null, secondsRemaining: null, timeoutSeconds: null });
   }
   await emit('GAME_UPDATE', { ...view(0), myPlayerId: 'another-seat', responseIdle: {
     status: 'running', sampledAtEpochMs: Date.now(), deadlineEpochMs: Date.now() + 900_000, remainingMillis: 900_000 } });
   assert.deepEqual((await call('get_game_state', { gameId })).timing.inactivity,
-    { status: 'unknown', deadlineEpochMs: null, secondsRemaining: null });
+    { status: 'unknown', deadlineEpochMs: null, secondsRemaining: null, timeoutSeconds: null });
+  assert.deepEqual(actions, []);
+});
+
+for (const timeoutSeconds of [900, 600]) test(`[PM-AC-08-TIMING] 600 remaining seconds preserve the actual ${timeoutSeconds}-second idle window independently of a 15-minute match clock`, { timeout: 5000 }, async t => {
+  const { actions, call, emit } = await fixture(t);
+  const sampledAtEpochMs = Date.now();
+  const deadlineEpochMs = sampledAtEpochMs + 600_000;
+  await emit('GAME_ASK', { message: 'Keep this hand?', gameView: { ...view(900, { priorityTimeLeftSecs: 900 }), myPlayerId: playerId,
+    responseIdle: { status: 'running', sampledAtEpochMs, deadlineEpochMs, remainingMillis: 600_000, timeoutSeconds } }, options: { webPrompt: 'mulligan' } });
+  const state = await call('get_game_state', { gameId });
+  assert.equal(state.timing.inactivity.timeoutSeconds, timeoutSeconds, 'Copy the server window, not a default or the remaining balance');
+  assert.equal(state.timing.inactivity.deadlineEpochMs, deadlineEpochMs);
+  assert.ok(state.timing.inactivity.secondsRemaining > 595 && state.timing.inactivity.secondsRemaining <= 600);
+  assert.equal(state.timing.matchClock.lastReportedSecondsRemaining, 900);
+  assert.deepEqual(actions, [], 'Reading either clock never submits a choice or changes the engine deadline');
+});
+
+test('[PM-AC-08-TIMING] unavailable or invalid idle duration stays unknown even with a running deadline', { timeout: 5000 }, async t => {
+  const { actions, call, emit } = await fixture(t);
+  for (const timeoutSeconds of [undefined, -1, 1.5, '900']) {
+    const sampledAtEpochMs = Date.now();
+    await emit('GAME_UPDATE', { ...view(0), myPlayerId: playerId, responseIdle: { status: 'running', sampledAtEpochMs,
+      deadlineEpochMs: sampledAtEpochMs + 600_000, remainingMillis: 600_000, timeoutSeconds } });
+    const state = await call('get_game_state', { gameId });
+    assert.equal(state.timing.inactivity.status, 'running');
+    assert.equal(state.timing.inactivity.timeoutSeconds, null, 'Never invent 900 or copy 600 remaining as the configured duration');
+  }
   assert.deepEqual(actions, []);
 });

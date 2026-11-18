@@ -26,12 +26,14 @@ function seatTiming(view, own, decision) {
   };
   // This process shares the engine host's wall clock. Never derive idle from a match-clock sample.
   const idle = view?.myPlayerId === own?.playerId ? view?.responseIdle : null;
-  const inactivity = { status: 'unknown', deadlineEpochMs: null, secondsRemaining: null };
+  const inactivity = { status: 'unknown', deadlineEpochMs: null, secondsRemaining: null, timeoutSeconds: null };
   if (idle?.status === 'running' && Number.isFinite(idle.deadlineEpochMs) && idle.deadlineEpochMs >= 0
       && Number.isFinite(idle.remainingMillis) && idle.remainingMillis >= 0 && Number.isFinite(idle.sampledAtEpochMs)) {
     inactivity.status = 'running';
     inactivity.deadlineEpochMs = idle.deadlineEpochMs;
     inactivity.secondsRemaining = Math.max(0, Math.ceil((idle.deadlineEpochMs - Date.now()) / 1000));
+    // Duration of this actual server window, distinct from its decreasing remainder and any match clock.
+    inactivity.timeoutSeconds = Number.isSafeInteger(idle.timeoutSeconds) && idle.timeoutSeconds >= 0 ? idle.timeoutSeconds : null;
   } else if (idle?.status === 'inactive' || idle?.status === 'disabled') {
     inactivity.status = idle.status;
   }

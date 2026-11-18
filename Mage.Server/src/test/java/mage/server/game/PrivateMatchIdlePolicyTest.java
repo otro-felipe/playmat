@@ -5,6 +5,14 @@ import mage.game.match.MatchOptions;
 import static org.junit.jupiter.api.Assertions.*;
 
 class PrivateMatchIdlePolicyTest {
+    /** PM-AC-08-TIMING: ten minutes is a possible effective policy, not the private default. */
+    @Test void ordinaryTenMinutePolicyAndExplicitPrivateOverrideRemainDistinct() {
+        assertEquals(900, PrivateMatchIdlePolicy.seconds(true, true, true, 600, null));
+        assertEquals(600, PrivateMatchIdlePolicy.seconds(true, true, true, 600, "600"));
+        assertEquals(600, PrivateMatchIdlePolicy.seconds(true, false, true, 600, "900"));
+        assertEquals(600, PrivateMatchIdlePolicy.seconds(true, true, false, 600, "900"));
+        assertEquals(600, PrivateMatchIdlePolicy.seconds(false, true, true, 600, "900"));
+    }
     @Test void realMatchOptionsKeepRankedSpectatedTournamentAndNonHumanModesOut() {
         MatchOptions options = new MatchOptions("Private idle policy fixture", "Two Player Duel", false);
         options.setRated(false);
