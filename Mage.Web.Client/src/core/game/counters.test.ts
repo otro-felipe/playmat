@@ -51,4 +51,10 @@ describe('Saga chapter markers', () => {
     expect(counterBadges({ counters: [{ name: 'lore', count: 1 }] })[0]).toMatchObject({ count: 1, showCount: true });
     expect(counterBadges({ counters: [] })).toEqual([]);
   });
+
+  it('never prints Saga-specific state when the server hides card information', () => {
+    const hidden: PermanentView = { subTypes: ['SAGA'], hideInfo: true, counters: [] };
+    expect(counterBadges(hidden)).toEqual([]);
+    expect(counterBadges({ ...hidden, counters: [{ name: 'lore', count: 1 }] })[0]).not.toHaveProperty('saga');
+  });
 });

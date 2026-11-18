@@ -1,6 +1,9 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 
-test.skip(process.env.MAGE_WEB_E2E_PREVIEW === '1', 'component fixture uses Vite');
+test.skip(process.env.MAGE_WEB_E2E_PREVIEW === '1' && process.env.PLAYMAT_PAYMENT_FIXTURE_BUILT !== '1', 'isolated fixture requires its explicit test build');
+test.beforeEach(({ baseURL }) => {
+  if (!baseURL || !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(baseURL).hostname)) throw new Error('Saga/combat fixtures must remain on an isolated loopback server');
+});
 async function shot(page: Page, name: string) {
   await page.evaluate(async () => { await document.fonts.ready; });
   await page.screenshot({ path: test.info().outputPath(name) });

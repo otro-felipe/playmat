@@ -80,6 +80,7 @@ export default defineConfig({
         ...(process.env.PLAYMAT_UI_TEST_FIXTURES === 'yes' ? {
           'mana-payment': 'e2e/fixtures/mana-payment.html',
           'chat-social': 'e2e/fixtures/chat-social.html',
+          'saga-combat': 'e2e/fixtures/saga-combat.html',
         } : {}),
       },
       output: {

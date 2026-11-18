@@ -37,9 +37,9 @@ export function isImpending(permanent: Pick<PermanentView, 'counters' | 'cardTyp
     && (permanent.rules ?? []).some((line) => /\bimpending\b/i.test(line));
 }
 
-export function counterBadges(permanent: Pick<PermanentView, 'counters' | 'cardTypes' | 'rules' | 'subTypes' | 'faceDown'>): CounterBadge[] {
+export function counterBadges(permanent: Pick<PermanentView, 'counters' | 'cardTypes' | 'rules' | 'subTypes' | 'faceDown' | 'hideInfo'>): CounterBadge[] {
   const impending = isImpending(permanent);
-  const saga = !permanent.faceDown && (permanent.subTypes ?? []).includes('SAGA');
+  const saga = !permanent.faceDown && !permanent.hideInfo && (permanent.subTypes ?? []).includes('SAGA');
   const badges: CounterBadge[] = (permanent.counters ?? []).filter((counter) => (counter.count ?? 0) > 0).map((counter) => {
     const name = counter.name ?? '';
     const count = counter.count ?? 0;
