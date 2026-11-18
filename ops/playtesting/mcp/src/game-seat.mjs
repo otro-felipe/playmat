@@ -239,6 +239,8 @@ export class GameSeat {
     };
     accountTime(initial);
     const publicCardState = ({ hints: _derivedHints, ...card }) => card;
+    const publicCounters = (counters = []) => counters.map(({ name, count }) => ({ name, count }))
+      .sort((a, b) => String(a.name).localeCompare(String(b.name)));
     const opponentState = (state) => {
       const opponents = (state.players ?? []).filter((player) => !player.yourSeat);
       const opponentIds = new Set(opponents.map((player) => player.id));
@@ -250,8 +252,8 @@ export class GameSeat {
       const opposingCombatCard = (card) => opponentIds.has(card.controllerId) || opponentObjects.has(card.id)
         || (!card.controllerId && !ownObjects.has(card.id));
       return JSON.stringify({
-        players: opponents.map(({ id, life, handCount, libraryCount, battlefield, graveyard, exile }) =>
-          ({ id, life, handCount, libraryCount, battlefield: battlefield?.map(publicCardState), graveyard: graveyard?.map(publicCardState), exile: exile?.map(publicCardState) })),
+        players: opponents.map(({ id, life, counters, handCount, libraryCount, battlefield, graveyard, exile }) =>
+          ({ id, life, counters: publicCounters(counters), handCount, libraryCount, battlefield: battlefield?.map(publicCardState), graveyard: graveyard?.map(publicCardState), exile: exile?.map(publicCardState) })),
         combat: (state.combat ?? []).flatMap((group, index) => {
           const attackers = (group.attackers ?? []).filter(opposingCombatCard);
           const blockers = (group.blockers ?? []).filter(opposingCombatCard);
@@ -355,11 +357,21 @@ export class GameSeat {
       }
       const currentOpponentState = opponentState(state);
       let combatExplainsChange = false;
+      if (currentOpponentState !== expectedOpponentState) {
+        const priorPlayers = JSON.parse(expectedOpponentState).players;
+        const countersChanged = JSON.parse(currentOpponentState).players.some((player) =>
+          JSON.stringify(player.counters) !== JSON.stringify(priorPlayers.find((prior) => prior.id === player.id)?.counters));
+        // Ordinary turn advancement cannot conceal poison/toxic or another counter change.
+        if (countersChanged && !(witnessed && allowPlannedResolutions && (resolvingPlanned.size || settlingResolution))) {
+          throw new ToolError('opponent_state_changed', 'Public player counters changed outside a declared own resolution.');
+        }
+      }
       if (currentOpponentState !== expectedOpponentState && pendingCombatDamage.size) {
         const expected = JSON.parse(expectedOpponentState);
         for (const player of expected.players) if (pendingCombatDamage.has(player.id) && Number.isFinite(player.life)) player.life -= pendingCombatDamage.get(player.id);
         combatExplainsChange = JSON.stringify(expected) === currentOpponentState;
         if (combatExplainsChange) pendingCombatDamage.clear();
+        else throw new ToolError('opponent_state_changed', 'Combat damage did not match the exact life-only change.');
       }
       if (currentOpponentState !== expectedOpponentState
         && !(witnessed && ((allowPlannedResolutions && (resolvingPlanned.size || settlingResolution)) || advancingOwnTurn || combatExplainsChange))) {
@@ -476,6 +488,12 @@ export class GameSeat {
         && (step.guard.instruction === undefined || step.guard.instruction === state.decision.instruction))
       && (!step.requiresEmptyStack || state.stack.length === 0);
     const intentionReady = (state, step) => matchesAnswer(state, step) && (!step.semanticPlay || plannedChoice(state, state.decision, step));
+    const checkAttackWindow = (state, step) => {
+      if (autoAdvance && step.guard?.kind === 'declareAttackers'
+        && (state.activePlayerId !== ownPlayerId || ['DECLARE_BLOCKERS', 'FIRST_COMBAT_DAMAGE', 'COMBAT_DAMAGE', 'END_COMBAT', 'POSTCOMBAT_MAIN', 'END_TURN', 'CLEANUP'].includes(state.step))) {
+        throw new ToolError('illegal_choice', 'The intended attack has no current own attack window; replan before passing.');
+      }
+    };
     const canSkipTarget = (state, step) => {
       const targetId = step.select?.objectId ?? step.select?.cardId;
       if (!step.skipIfTargetedBy || step.guard?.kind !== 'target' || !targetId) return false;
@@ -483,9 +501,12 @@ export class GameSeat {
       const matching = state.stack.filter((card) => card.cardId === step.skipIfTargetedBy && card.controllerId === ownPlayerId && plannedStackIds.has(card.id));
       return publicTarget && matching.length === 1 && matching[0].targets?.includes(targetId);
     };
+    const requireSettledCombat = () => {
+      if (pendingCombatDamage.size) throw new ToolError('opponent_state_changed', 'Combat damage has not produced its exact witnessed life loss; read a fresh state.');
+    };
     const submit = async (args) => {
+      requireSettledCombat();
       settlingResolution = false;
-      pendingCombatDamage.clear();
       return this.submit(args, sequence.id);
     };
     const nextPredeterminedAnswer = (state) => {
@@ -511,6 +532,7 @@ export class GameSeat {
             state = await stateForStep();
           }
           if (autoAdvance && state.stop) throw new ToolError('response_available', 'The configured stop needs a fresh plan.');
+          checkAttackWindow(state, step);
           if ((!matchesAnswer(state, step) || step.semanticTarget && step.guard?.instruction === undefined) && canSkipTarget(state, step)) {
             sequence.skippedSteps = (sequence.skippedSteps ?? 0) + 1;
             sequence.completedSteps++;
@@ -518,6 +540,7 @@ export class GameSeat {
             continue;
           }
           while (autoAdvance && !intentionReady(state, step)) {
+            checkAttackWindow(state, step);
             const decision = visibleDecision(state);
             if (!decision || decision.id === previousDecisionId) {
               if (!await waitForNext()) throw new ToolError('timeout', 'The next intended decision did not arrive.');
@@ -536,6 +559,7 @@ export class GameSeat {
             }
             state = await stateForStep();
           }
+          checkAttackWindow(state, step);
           const decision = state.decision;
           if (step.semanticTarget && step.guard?.instruction === undefined) throw new ToolError('response_available', 'An unresolved target needs its exact instruction guard; an absent prompt is not target evidence.');
           if (pendingCast || state.turn !== turn || (step.decisionId ? decision.id !== step.decisionId :
@@ -690,6 +714,7 @@ export class GameSeat {
         // Preserve accepted-action counters, but never report that abort as success.
         signal.throwIfAborted();
       }
+      requireSettledCombat();
       sequence.status = 'completed';
     } catch (error) {
       const reason = signal.aborted ? signal.reason : error;

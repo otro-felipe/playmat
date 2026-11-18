@@ -76,6 +76,7 @@ export function visibleAgentGame(state: GameSessionState | undefined) {
       name: player.name,
       yourSeat: player.playerId === state?.playerId,
       life: player.life,
+      counters: (player.counters ?? []).map(({ name, count }) => ({ name, count })),
       handCount: player.handCount,
       libraryCount: player.libraryCount,
       topCard: player.topCard ? cardOnBoard(player.topCard, player.topCard.id) : undefined,
