@@ -34,5 +34,11 @@ All dependency and runtime commands ran in disposable Docker containers. The MCP
 
 The first full-suite attempt omitted the product's pure `sequence-driver.mjs` from the temporary runner and failed to import it. After mounting that exact source file read-only, all 124 cases completed with the results above. An earlier targeted invocation likewise lacked the generated engine bundle; it was rebuilt before the full suite. Neither import failure is counted as behavioral regression evidence.
 
-## Remaining validation
-Run the normal Java reactor and complete-image sequence acceptance during integration. No production deployment or live-match reproduction was performed. UI/typecheck work is unaffected because no frontend TypeScript or layout changed.
+## Integration verification
+The corrected runtime `f1dedd8813a1e029e07fdb23866b4f0f4bd0f544` passed integration on 2026-11-18:
+
+- Full Java reactor: [44308721461](https://github.com/otro-felipe/playmat/actions/runs/44308721461), successful.
+- MCP and complete-image real-engine sequence: [44308720683](https://github.com/otro-felipe/playmat/actions/runs/44308720683), 121 tests passed and three opt-in tests skipped. The running Java fixture completed two own damage resolutions through the original end step and separately interrupted on a real rival mana activation. Four own-effect regressions still fail on the deployed baseline as the controlled negative comparison.
+- Complete-image recovery, consistent backup/restore and idle acceptance: [44308726891](https://github.com/otro-felipe/playmat/actions/runs/44308726891), successful, including three forced restarts through modified sideboarding/game two, an actual Java restore-lock check and a deliberately configured 60-second inactivity expiry despite polling/resync.
+
+These results validate the corrected runtime, not the original helper-only candidate. No live-match reproduction was performed. UI/typecheck work is unaffected because no frontend TypeScript or layout changed. This evidence fix does not implement the separately planned semantic `play_turn` contract.
