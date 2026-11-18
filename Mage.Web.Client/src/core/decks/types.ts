@@ -48,6 +48,8 @@ export interface SideboardPlan {
 }
 
 export interface DeckCardLists {
+  /** Product-owned shelf classification; legacy decks remain personal. */
+  library?: 'personal' | 'agent';
   id?: string;
   name?: string;
   description?: string;

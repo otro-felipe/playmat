@@ -1,5 +1,6 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { Menu } from 'lucide-react';
+import { PRIVATE_PLAYTESTING } from '../playtesting';
 import { Fragment, lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { GameSession, GameSessionState } from '../../core/game/gameSession';
@@ -187,7 +188,7 @@ export function MatchStage({ session, state, replayLog, onLeave, seatDisplayName
   const navigate = useNavigate();
   const animations = useSettings((settings) => settings.settings.animations);
   const autoDismissReveals = useSettings((settings) => settings.settings.autoDismissReveals);
-  const autoPay = useSettings((settings) => settings.settings.autoPayMana);
+  const autoPay = useSettings((settings) => !PRIVATE_PLAYTESTING && settings.settings.autoPayMana);
   const automation = useAutomation();
   useManaPaymentSettings(session, mode === 'play' && !!playerId && !!view);
   // watching and replays: the broadcast options

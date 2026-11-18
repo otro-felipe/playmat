@@ -15,6 +15,8 @@ import { Mark } from '../ui/Mark';
 import { MatPrint } from '../ui/MatPrint';
 import { checkPassword } from './accountRules';
 import styles from './LoginScreen.module.css';
+import { PRIVATE_PLAYTESTING } from '../playtesting';
+import { PrivateSession } from '../PrivateSession';
 
 // Cloudflare's check loads only on servers that turn it on
 const TurnstileWidget = lazy(() => import('./TurnstileWidget').then((module) => ({ default: module.TurnstileWidget })));
@@ -49,6 +51,10 @@ const ART_EVERY_MS = 9000;
  * with nothing more than a name. Signing in deals the deck across the table on the way to Play.
  */
 export function LoginScreen() {
+  return PRIVATE_PLAYTESTING ? <PrivateSession /> : <ServerLoginScreen />;
+}
+
+function ServerLoginScreen() {
   const session = useSession();
   const t = useT();
   const navigate = useNavigate();

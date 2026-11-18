@@ -16,7 +16,8 @@ import { t as translate, useT } from '../i18n';
 import { RichText } from '../i18n/RichText';
 import { SLEEVE_COLORS, chosenSleeve, sleeveFor, useDecks, type RosterDeck } from '../stores/decks';
 import { useDeckRoster } from '../stores/useDeckRoster';
-import { useDeckSyncStatus } from '../stores/deckSyncStatus';
+import { useDeckSyncStatus, useLibraryReady } from '../stores/deckSyncStatus';
+import { PRIVATE_PLAYTESTING } from '../playtesting';
 import { useSettings } from '../stores/settings';
 import { useServerInfo } from '../queries';
 import { openImport, useImportSheet } from '../stores/importSheet';
@@ -42,7 +43,12 @@ const GhostActions = lazy(() => import('../solo/Ghosts').then((m) => ({ default:
 export function DecksScreen() {
   const decks = useDecks();
   const t = useT();
-  const roster = useDeckRoster();
+  const [library, setLibrary] = useState<'personal' | 'agent'>('personal');
+  const [moving, setMoving] = useState(false);
+  const roster = useDeckRoster(library);
+  const libraryReady = useLibraryReady();
+  const syncing = useDeckSyncStatus((state) => state.status === 'syncing');
+  const libraryError = useDeckSyncStatus((state) => state.status === 'error');
   // the shelf under its tag and drafts filter (#200); the chosen deck's panel stays put even when filtered out
   const shelfFilter = useDecks((state) => state.shelfFilter);
   const shelf = useMemo(() => {
@@ -54,7 +60,7 @@ export function DecksScreen() {
   const [renaming, setRenaming] = useState<RosterDeck | null>(null);
   // a sleeve up close (right-click its swatch)
   const [sleevePreview, setSleevePreview] = useState<{ color: string; name: string } | null>(null);
-  const selected = roster.find((deck) => deck.id === decks.selectedId) ?? null;
+  const selected = roster.find((deck) => deck.id === decks.selectedId) ?? (PRIVATE_PLAYTESTING ? roster[0] : null) ?? null;
   const arrivedId = useImportSheet((state) => state.arrivedId);
   const career = useSettings((state) => state.settings.careerOptIn);
   const accounts = useServerInfo().data?.accounts === true;
@@ -74,9 +80,19 @@ export function DecksScreen() {
   async function duplicate(deck: RosterDeck) {
     try {
       await useDecks.getState().duplicate(deck.id);
+      if (PRIVATE_PLAYTESTING) setLibrary('personal');
     } catch (error) {
       notify(translate('decks.duplicateFailed'), error instanceof Error ? error.message : String(error), 'error');
     }
+  }
+
+  async function moveLibrary(deck: RosterDeck) {
+    setMoving(true);
+    try {
+      await (await import('../stores/deckSync')).moveToLibrary(deck.id, library === 'agent' ? 'personal' : 'agent');
+    } catch (error) {
+      notify(t('decks.moveFailed'), error instanceof Error ? error.message : String(error), 'error');
+    } finally { setMoving(false); }
   }
 
   /** On a phone the chosen deck's panel sits under the shelf: bring it into view. */
@@ -113,12 +129,22 @@ export function DecksScreen() {
         aside={
           <>
             <SyncNote />
+            {PRIVATE_PLAYTESTING && <Button size="sm" busy={syncing} icon={<RefreshCw size={16} />} onClick={() => void import('../stores/deckSync').then((module) => module.syncNow())}>{t('decks.refresh')}</Button>}
             <SharedDecksButton />
-            <Button size="sm" icon={<Download size={16} />} onClick={() => openImport()}>{t('decks.import')}</Button>
-            <Button size="sm" icon={<PencilRuler size={16} />} onClick={() => navigate('/decks/new')}>{t('decks.build')}</Button>
+            {(!PRIVATE_PLAYTESTING || library === 'personal') && <>
+              <Button size="sm" icon={<Download size={16} />} onClick={() => openImport()}>{t('decks.import')}</Button>
+              <Button size="sm" icon={<PencilRuler size={16} />} onClick={() => navigate('/decks/new')}>{t('decks.build')}</Button>
+            </>}
           </>
         }
       >
+        {PRIVATE_PLAYTESTING && <>
+          <div className={styles.libraries} role="group" aria-label={t('decks.libraries')}>
+            <Button variant={library === 'personal' ? 'decision' : 'quiet'} aria-pressed={library === 'personal'} onClick={() => setLibrary('personal')}>{t('decks.personalLibrary')}</Button>
+            <Button variant={library === 'agent' ? 'decision' : 'quiet'} aria-pressed={library === 'agent'} onClick={() => setLibrary('agent')}>{t('decks.agentLibrary')}</Button>
+          </div>
+          <p className={styles.libraryHint}>{t(library === 'agent' ? 'decks.agentHint' : 'decks.personalHint')}</p>
+        </>}
         {dragging && (
           <div className={styles.dropHint} aria-hidden="true">
             <ClipboardPaste size={22} />
@@ -127,9 +153,10 @@ export function DecksScreen() {
         )}
         <ShelfFilterBar decks={roster} />
         <div className={styles.grid} role="list">
-          {decks.loaded && decks.saved.length === 0 && (
+          {!libraryReady && <div role="listitem"><p role="status" className={styles.emptyShelf}>{t('decks.loading')}</p></div>}
+          {libraryReady && decks.loaded && roster.length === 0 && (
             <p role="listitem" className={styles.emptyShelf}>
-              <RichText text={t('decks.empty')} parts={{ keys: <kbd>{PASTE_KEYS}</kbd> }} />
+              {PRIVATE_PLAYTESTING && libraryError ? t('decks.unavailable') : PRIVATE_PLAYTESTING && library === 'agent' ? t('decks.agentEmpty') : <RichText text={t('decks.empty')} parts={{ keys: <kbd>{PASTE_KEYS}</kbd> }} />}
             </p>
           )}
           {decks.loaded && roster.length > 0 && shelf.length === 0 && (
@@ -138,7 +165,7 @@ export function DecksScreen() {
           {shelf.map((deck) => (
             <div key={deck.id} role="listitem" className={[styles.cell, deck.id === arrivedId ? styles.arrived : ''].join(' ')}>
               <div onDoubleClick={() => navigate(`/decks/${encodeURIComponent(deck.id)}`)}>
-                <DeckBox deck={deck} sleeve={sleeveFor(decks.sleeves, deck)} selected={deck.id === decks.selectedId} onSelect={() => selectDeck(deck.id)} />
+                <DeckBox deck={deck} sleeve={sleeveFor(decks.sleeves, deck)} selected={deck.id === selected?.id} onSelect={() => selectDeck(deck.id)} />
               </div>
             </div>
           ))}
@@ -150,6 +177,7 @@ export function DecksScreen() {
           <div className={styles.detailBody}>
             <h2 className={styles.detailName}>{selected.name}</h2>
             <p className={styles.detailNote}>{selected.note}</p>
+            {PRIVATE_PLAYTESTING && <p className={styles.libraryHint}>{t(library === 'agent' ? 'decks.agentLibrary' : 'decks.personalLibrary')}</p>}
             {source && sourceSite && (
               <div className={styles.source}>
                 <SourceLine source={source} />
@@ -199,15 +227,16 @@ export function DecksScreen() {
             </Button>
             <div className={styles.actions}>
               <ExportMenu getDeck={() => useDecks.getState().loadList(selected.id)} />
-              <Button variant="print" size="sm" icon={<Copy size={16} />} onClick={() => void duplicate(selected)}>{t('decks.duplicate')}</Button>
+              <Button variant="print" size="sm" icon={<Copy size={16} />} onClick={() => void duplicate(selected)}>{t(PRIVATE_PLAYTESTING && library === 'agent' ? 'decks.copyToPersonal' : 'decks.duplicate')}</Button>
               {!selected.starter && (
                 <Button variant="print" size="sm" icon={<PencilLine size={16} />} onClick={() => setRenaming(selected)}>{t('decks.rename')}</Button>
               )}
-              <Suspense fallback={null}>
+              {(!PRIVATE_PLAYTESTING || library === 'personal') && <Suspense fallback={null}>
                 <GhostActions deckId={selected.id} deckName={selected.name} />
-              </Suspense>
+              </Suspense>}
             </div>
             {!selected.starter && <DeckOrganizer key={selected.id} deck={selected} />}
+            {PRIVATE_PLAYTESTING && !selected.starter && <Button variant="print" size="sm" busy={moving} onClick={() => void moveLibrary(selected)}>{t(library === 'agent' ? 'decks.moveToPersonal' : 'decks.moveToAgent')}</Button>}
             {!selected.starter && (
               <Button variant="danger" size="sm" className={styles.remove} icon={<Trash2 size={16} />} onClick={() => setRemoving(selected)}>{t('decks.remove')}</Button>
             )}

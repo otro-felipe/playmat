@@ -10,6 +10,43 @@ import { randomUUID } from 'node:crypto'
 const databaseUrl = process.env.PLAYMAT_TEST_DATABASE_URL
 const password = 'synthetic-fixture-credential'
 
+test('MCP decks have a reusable opponent shelf; only the owner moves legacy decks without losing revisions', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const owner = await signIn(f, 'LibraryOwner')
+  const other = await signIn(f, 'OtherOwner')
+  const agent = { Authorization: 'Bearer ' + await f.product.provisionAgent('LibraryOwner', 'LibraryMcp', ['library']) }
+  const noLibrary = { Authorization: 'Bearer ' + await f.product.provisionAgent('LibraryOwner', 'PlayOnly', ['play']) }
+  const root = '/api/playtesting/decks'
+  assert.deepEqual((await (await f.path(root, { headers: owner })).json()).decks, [])
+  const ownId = 'library', agentId = randomUUID()
+  const data = { name: 'Reusable deck', format: 'Pioneer', library: 'agent', cards: [{ cardName: 'Forest', amount: 60 }], sideboard: [] }
+  const put = (id, headers, expectedRevision = 0) => f.path(`${root}/${id}`, json('PUT', headers, { expectedRevision, data }))
+  const personal = await (await put(ownId, owner)).json()
+  const rival = await (await put(agentId, agent)).json()
+  assert.equal(personal.library, 'personal', 'a browser cannot spoof the MCP shelf through metadata')
+  assert.equal(rival.library, 'agent')
+  assert.equal((await (await put(ownId, agent, 1)).json()).library, 'personal', 'editing does not reclassify existing decks')
+  const listed = await (await f.path(root + '?library=agent', { headers: agent })).json()
+  assert.deepEqual(listed.decks.map(deck => deck.id), [agentId])
+  assert.equal((await f.path(root + '?library=invalid', { headers: owner })).status, 400)
+  assert.equal((await f.path(root, { headers: noLibrary })).status, 403)
+  assert.equal((await f.path(`${root}/${agentId}`, { headers: other })).status, 404)
+  const move = (headers, revision, library = 'agent') => f.path(`${root}/${ownId}/library`, json('POST', headers, { expectedRevision: revision, library }))
+  assert.equal((await move(agent, 2)).status, 403)
+  assert.equal((await move(other, 2)).status, 409)
+  assert.equal((await move(owner, 1)).status, 409)
+  assert.equal((await move(owner, 2, 'unknown')).status, 400)
+  const moved = await (await move(owner, 2)).json()
+  assert.equal(moved.id, ownId)
+  assert.equal(moved.revision, 2)
+  assert.equal(moved.library, 'agent')
+  assert.deepEqual(moved.data.cards, personal.data.cards)
+  const firstRevision = await (await f.path(`${root}/${ownId}?revision=1`, { headers: owner })).json()
+  assert.equal(firstRevision.revision, 1)
+  assert.deepEqual(firstRevision.data.cards, personal.data.cards)
+  assert.equal((await (await move(owner, 2, 'personal')).json()).library, 'personal')
+})
+
 async function fixture(t, store = new Map(), options = {}) {
   const { createProduct } = await import('./product.mjs')
   const replayDirectory = await mkdtemp(join(tmpdir(), 'playmat-replays-'))
@@ -456,6 +493,7 @@ test('[PM-AC-05] startup upgrades existing deck storage without changing its sav
     DROP CONSTRAINT IF EXISTS deck_revisions_library_format_check,
     DROP CONSTRAINT IF EXISTS deck_revisions_format_check,
     ADD CONSTRAINT deck_revisions_format_check CHECK (format IN ('Standard', 'Pioneer', 'Modern'))`))
+  await withTestDatabase(f, db => db.query('ALTER TABLE decks DROP COLUMN library'))
 
   const { createProduct } = await import('./product.mjs')
   const reopened = await createProduct({ databaseUrl, schema: f.schema, replayDirectory: f.replayDirectory, store: new Map() })
@@ -466,6 +504,7 @@ test('[PM-AC-05] startup upgrades existing deck storage without changing its sav
   assert.equal((await saved.json()).revision, 2)
   const previous = await (await f.path(route + '?revision=1', { headers: owner })).json()
   assert.deepEqual([previous.revision, previous.data.name, previous.data.format], [1, 'Existing list', 'Pioneer'])
+  assert.equal(previous.data.library, 'personal')
 })
 
 async function addReplay(f, matchId, gameId, names, events) {

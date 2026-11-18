@@ -12,6 +12,7 @@ import { readJson, writeJson } from './persist';
 import { useSession } from './session';
 import { DEFAULT_CARD_BACK, type CardBackId } from '../ui/cardBack';
 import type { MatchSize } from '../match/matchLayout';
+import { PRIVATE_PLAYTESTING } from '../playtesting';
 
 export interface PlaySettings {
   /** AI games run on the Rust engine when the server allows it and the decks qualify (beta; sent to the server) */
@@ -152,7 +153,7 @@ export const FULL_CONTROL: Partial<PlaySettings> = {
 
 export const DEFAULT_SETTINGS: PlaySettings = {
   rustEngine: false,
-  autoPayMana: true,
+  autoPayMana: !PRIVATE_PLAYTESTING,
   autoPayRestricted: true,
   confirmEmptyManaPool: true,
   autoOrderTriggers: true,
@@ -169,7 +170,7 @@ export const DEFAULT_SETTINGS: PlaySettings = {
   autoAssignDamage: true,
   autoAssignTrample: false,
   sortHand: true,
-  hideStarterDecks: false,
+  hideStarterDecks: PRIVATE_PLAYTESTING,
   autoDismissReveals: true,
   compactBoard: false,
   muteEmotes: false,
@@ -253,8 +254,8 @@ export function toUserData(settings: PlaySettings, fullControl = false, temporar
     userSkipPrioritySteps: serverStops(stops, fullControl),
     flagName: `${settings.flag || 'world'}.png`,
     askMoveToGraveOrder: false,
-    manaPoolAutomatic: !fullControl && (settings.autoPayMana || !settings.autoPayRestricted),
-    manaPoolAutomaticRestricted: settings.autoPayRestricted,
+    manaPoolAutomatic: !PRIVATE_PLAYTESTING && !fullControl && (settings.autoPayMana || !settings.autoPayRestricted),
+    manaPoolAutomaticRestricted: PRIVATE_PLAYTESTING || settings.autoPayRestricted,
     passPriorityCast: settings.passAfterCasting && !fullControl,
     passPriorityActivation: settings.passAfterCasting && !fullControl,
     autoOrderTrigger: settings.autoOrderTriggers,

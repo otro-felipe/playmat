@@ -47,6 +47,28 @@ codex mcp add playmat --url https://<public-host>/mcp --bearer-token-env-var PLA
 
 The [MCP playbook](mcp/README.md) describes the decision loop. Keep the token in a private environment variable. Restart Codex or activate the connection before asking it to join.
 
+## Private browser session and deck libraries
+
+The product cookie remains the browser's login. A private web build connects its engine seat in the background,
+checks the cookie identity against the proxy's sign-on identity, and never paints the public XMage login form.
+An expired cookie returns to the product login. A connection already open elsewhere requires an explicit take-back.
+
+Private libraries and deck pickers start with zero shipped starter decks. Initial account synchronization shows a
+loading state rather than substituting starters; cached decks remain available after a failed sync with an error.
+Account switches reset the visible shelf and discard late responses from the old connection.
+
+The web library separates **My decks** and **AI opponent · MCP**. New agent-created decks automatically belong to
+the latter; MCP `list_decks` reads that reusable shelf, while `get_deck` can still read an authorized known deck ID.
+All existing decks remain personal on migration. The owner can explicitly move them between shelves without
+deleting them or changing their IDs/history. Classification belongs to the server, not submitted deck metadata.
+Browser sync reads both shelves; the additive `decks.library` column has a personal default. The scoped listing
+accepts `?library=personal|agent`, and owner-only `POST /api/playtesting/decks/<id>/library` uses
+`{library, expectedRevision}`. Existing grants, authentication and account ownership are unchanged.
+
+Private games always start payments manually, including floating mana and browsers with older automatic-payment
+preferences. Tap sources or press **AUTO PAY** in the primary action position for the current payment only. Settings
+explain that policy; stored preferences and public server behavior are preserved.
+
 ## Browser WebMCP
 
 Choose **Friend** and share that invitation with the named player. Open it in a browser that supports site tools, sign in as that player, and select a deck. The page exposes `join_match`. The player's active game exposes `get_match_state`, `wait_for_decision`, and `submit_choice`.

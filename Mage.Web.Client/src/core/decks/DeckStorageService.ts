@@ -3,6 +3,7 @@ import { DeckSerializer } from "./DeckSerializer.js";
 import { newId } from "../util/uuid.js";
 
 export interface DeckSummary {
+    library?: 'personal' | 'agent';
     id: string;
     name: string;
     description?: string;
@@ -52,6 +53,7 @@ const TOMBSTONES_KEY = "playmat.deckTombstones";
 export type DeckChange = { type: "saved"; id: string } | { type: "deleted"; id: string; at: number };
 
 interface DeckMeta {
+    library?: 'personal' | 'agent';
     id: string;
     name: string;
     description?: string;
@@ -135,6 +137,7 @@ export class LocalDeckStorage implements IDeckStorage {
     private store(deck: DeckCardLists & { id: string; updatedAt: number }, meta: DeckMeta[]) {
         localStorage.setItem(this.storageKey(STORAGE_PREFIX + deck.id), JSON.stringify(deck));
         const newMetaItem: DeckMeta = {
+            library: deck.library,
             id: deck.id,
             name: deck.name || "Untitled Deck",
             description: deck.description,
@@ -236,6 +239,7 @@ export class LocalDeckStorage implements IDeckStorage {
     async listDecks(): Promise<DeckSummary[]> {
         const meta = this.getMeta();
         return meta.map(m => ({
+            library: m.library,
             id: m.id,
             name: m.name,
             description: m.description,

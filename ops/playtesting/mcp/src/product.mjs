@@ -53,7 +53,7 @@ export function createProductClient(baseUrl, publicUrl) {
         config = { method: 'POST', body: args };
         break;
       case 'list_decks':
-        path = `${root}/decks`;
+        path = `${root}/decks?library=agent`;
         break;
       case 'get_deck':
         path = `${root}/decks/${encode(args.deckId)}`;

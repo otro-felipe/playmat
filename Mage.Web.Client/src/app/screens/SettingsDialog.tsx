@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation } from 'react-router-dom';
 import { lazy, Suspense, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { api } from '../connection';
+import { PRIVATE_PLAYTESTING } from '../playtesting';
 import { MAT_CLOTHS, clothSwatch } from '../match/playmats';
 import bookmarkletSource from '../decks/import/bookmarklet.source.js?raw';
 import type { CareerState, SkipPrioritySteps } from '../../protocol/generated/views';
@@ -132,10 +133,12 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
           <Row label={t('settings.theirTurn')} detail={t('settings.theirTurn.detail')}>{toggle('abilitiesOnTheirTurn')}</Row>
           <Row label={t('settings.skipCombat')} detail={t('settings.skipCombat.detail')}>{toggle('autoSkipCombat')}</Row>
           <Row label={t('settings.passAfterCasting')} detail={t('settings.passAfterCasting.detail')}>{toggle('passAfterCasting')}</Row>
+          {PRIVATE_PLAYTESTING ? <p className={styles.intro}>{t('settings.manualMana')}</p> : <>
           <Row label={t('settings.autoPay')} detail={t('settings.autoPay.detail')}>{toggle('autoPayMana')}</Row>
           <Row label={t('settings.autoPayPool')} detail={t('settings.autoPayPool.detail')}>
             <Switch checked={!settings.autoPayRestricted} onChange={(value) => update({ autoPayRestricted: !value })} />
           </Row>
+          </>}
           <Row label={t('settings.emptyPool')} detail={t('settings.emptyPool.detail')}>{toggle('confirmEmptyManaPool')}</Row>
           <Row label={t('settings.orderTriggers')} detail={t('settings.orderTriggers.detail')}>{toggle('autoOrderTriggers')}</Row>
           <Row label={t('settings.autoTarget')} detail={t('settings.autoTarget.detail')}>
@@ -190,7 +193,7 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
         </Tabs.Content>
 
         <Tabs.Content value="display" className={styles.panel}>
-          <Row label={t('settings.hideStarterDecks')} detail={t('settings.hideStarterDecks.detail')}>{toggle('hideStarterDecks')}</Row>
+          {!PRIVATE_PLAYTESTING && <Row label={t('settings.hideStarterDecks')} detail={t('settings.hideStarterDecks.detail')}>{toggle('hideStarterDecks')}</Row>}
           <Row label={t('settings.motion')} detail={t('settings.motion.detail')}>{toggle('animations')}</Row>
           <Row label={t('settings.cardEffects')} detail={t('settings.cardEffects.detail')}>
             <select

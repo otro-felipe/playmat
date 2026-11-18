@@ -8,6 +8,7 @@ import { cleanTags, NO_SHELF_FILTER, type ShelfFilter } from '../../core/decks/t
 import { pickMetaDeck, type MetaDeck, type MetaDeckIndex } from '../../core/decks/metaDecks';
 import { readJson, writeJson } from './persist';
 import { RANDOM_SLEEVE, randomSleeveFor } from '../ui/sleeveArt';
+import { PRIVATE_PLAYTESTING } from '../playtesting';
 
 export interface StarterDeck {
   file: string;
@@ -20,6 +21,7 @@ export interface StarterDeck {
 
 /** A deck in the roster: one the player saved, or a starter deck not saved yet. */
 export interface RosterDeck {
+  library?: 'personal' | 'agent';
   id: string;
   name: string;
   note: string;
@@ -58,6 +60,7 @@ function summaryToRoster(deck: DeckSummary): RosterDeck {
   const colors = COLOR_ORDER.filter((color) => deck.colors?.[color]).map((color) => COLOR_LETTER[color]);
   const size = `${deck.cardCount ?? 0} cards${deck.sideboardCount ? ` + ${deck.sideboardCount}` : ''}`;
   return {
+    library: deck.library,
     id: deck.id,
     name: deck.name || 'Untitled deck',
     note: deck.format ? `${formatRules(deck.format).label} · ${size}` : size,
@@ -96,6 +99,7 @@ export interface DeckLibraryState {
   /** what the deck shelf shows: one tag, and whether drafts are left out (#200) */
   shelfFilter: ShelfFilter;
   loaded: boolean;
+  reset(): void;
   refresh(): Promise<void>;
   select(id: string): void;
   setSleeve(id: string, color: string): void;
@@ -151,6 +155,7 @@ function starterFormat(starters: StarterDeck[], id: string): string {
   return starters.find((starter) => STARTER_PREFIX + starter.file === id)?.format ?? 'Constructed - Freeform';
 }
 
+let libraryGeneration = 0;
 export const useDecks = create<DeckLibraryState>((set, get) => ({
   saved: [],
   starters: [],
@@ -160,17 +165,24 @@ export const useDecks = create<DeckLibraryState>((set, get) => ({
   shelfFilter: { ...NO_SHELF_FILTER, ...readJson<Partial<ShelfFilter>>(SHELF_FILTER_KEY, {}) },
   loaded: false,
 
+  reset() {
+    libraryGeneration += 1;
+    set({ saved: [], starters: [], selectedId: readJson<string | null>(SELECTED_KEY, null), loaded: false });
+  },
+
   async refresh() {
+    const generation = libraryGeneration;
     const [summaries, starters, metaDecks] = await Promise.all([
       deckStorage.listDecks(),
-      get().starters.length ? get().starters : fetchStarters(),
+      PRIVATE_PLAYTESTING ? [] : get().starters.length ? get().starters : fetchStarters(),
       get().metaDecks.length ? get().metaDecks : fetchMetaDecks(),
     ]);
+    if (generation !== libraryGeneration) return;
     const saved = summaries.map(summaryToRoster);
     let selectedId = get().selectedId;
     const known = new Set([...saved.map((deck) => deck.id), ...starters.map((starter) => STARTER_PREFIX + starter.file)]);
     if (!selectedId || !known.has(selectedId)) {
-      selectedId = saved[0]?.id ?? (starters[0] ? STARTER_PREFIX + starters[0].file : null);
+      selectedId = (PRIVATE_PLAYTESTING ? saved.find((deck) => deck.library !== 'agent') : saved[0])?.id ?? (starters[0] ? STARTER_PREFIX + starters[0].file : null);
     }
     set({ saved, starters, metaDecks, selectedId, loaded: true });
   },
@@ -243,7 +255,7 @@ export const useDecks = create<DeckLibraryState>((set, get) => ({
     const starter = id.startsWith(STARTER_PREFIX);
     const name = copyName(deck.name, taken);
     // a copy is the player's own deck: it no longer follows the site it was imported from
-    const copy: DeckCardLists = { ...deck, id: undefined, name, source: undefined, createdAt: undefined };
+    const copy: DeckCardLists = { ...deck, id: undefined, library: undefined, name, source: undefined, createdAt: undefined };
     if (starter) copy.format = starterFormat(get().starters, id);
     const newId = await deckStorage.saveDeck(copy, { forceNew: true });
     await get().refresh();
@@ -294,7 +306,7 @@ export function rosterOf(state: Pick<DeckLibraryState, 'saved' | 'starters'>, hi
   const starterNames = new Set(state.starters.map((starter) => starter.name));
   // starters already saved by the player don't show twice: the copy stands in for them, and says where it came from
   const saved = state.saved.map((deck) => (starterNames.has(deck.name) ? { ...deck, fromStarter: true } : deck));
-  if (hideStarterDecks) return saved;
+  if (PRIVATE_PLAYTESTING || hideStarterDecks) return saved;
   return [...saved, ...state.starters.filter((starter) => !savedNames.has(starter.name)).map(starterToRoster)];
 }
 

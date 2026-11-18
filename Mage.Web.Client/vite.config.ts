@@ -81,6 +81,7 @@ export default defineConfig({
           'mana-payment': 'e2e/fixtures/mana-payment.html',
           'chat-social': 'e2e/fixtures/chat-social.html',
           'saga-combat': 'e2e/fixtures/saga-combat.html',
+          'private-library': 'e2e/fixtures/private-library.html',
         } : {}),
       },
       output: {

@@ -9,6 +9,15 @@
   min-height: 0;
 }
 
+.shelf > header { flex-wrap: wrap; align-items: center; }
+.shelf > header > h2 { flex: none; }
+.shelf > header > div { flex-wrap: wrap; min-width: 0; max-width: 100%; }
+.shelf > header button { min-height: 44px; }
+
+.libraries { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.libraries button { min-height: 44px; }
+.libraryHint { color: var(--ink-soft); line-height: 1.4; margin-bottom: 12px; }
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -238,6 +247,7 @@
   margin-right: var(--space-2);
   color: var(--ink-dim);
   font-size: var(--text-sm);
+  white-space: nowrap;
 }
 
 .syncFailed {

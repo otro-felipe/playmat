@@ -102,13 +102,15 @@ function describe(error: unknown): string {
 
 let enabled = false;
 let running: Promise<void> | null = null;
+let generation = 0;
 const pending = new Map<string, ReturnType<typeof setTimeout>>();
 
 async function upload(id: string): Promise<void> {
+  const account = accountKey();
+  const started = generation;
   const deck = await deckStorage.exportForSync(id);
-  if (!deck) return;
+  if (!deck || started !== generation || account !== accountKey()) return;
   if (PRIVATE_PLAYTESTING) {
-    const account = accountKey();
     const version = await productRequest<ProductDeckStamp>('/' + encodeURIComponent(id), {
       method: 'PUT',
       body: JSON.stringify({
@@ -116,7 +118,7 @@ async function upload(id: string): Promise<void> {
         expectedRevision: revisions()[account]?.[id] ?? 0,
       }),
     });
-    rememberRevision(account, id, version.revision);
+    if (started === generation && account === accountKey()) rememberRevision(account, id, version.revision);
     return;
   }
   const result = await api.deckSyncPut(id, deck.name, deck.updatedAt, deck.data);
@@ -136,20 +138,39 @@ export async function uploadNow(id: string): Promise<void> {
   await upload(id);
 }
 
+/** Explicit owner organization, preserving the deck ID and every revision. */
+export async function moveToLibrary(id: string, library: 'personal' | 'agent'): Promise<void> {
+  const account = accountKey();
+  const started = generation;
+  await uploadNow(id);
+  if (started !== generation || account !== accountKey()) throw new Error('The browser session has changed');
+  const result = await productRequest<ProductDeckStamp & { data: object }>('/' + encodeURIComponent(id) + '/library', {
+    method: 'POST', body: JSON.stringify({ library, expectedRevision: revisions()[account]?.[id] }),
+  });
+  if (started !== generation || account !== accountKey()) return;
+  rememberRevision(account, id, result.revision);
+  deckStorage.importFromSync(id, JSON.stringify(result.data));
+  await useDecks.getState().refresh();
+}
+
 /** A full two-way sync with the account. */
 export async function syncNow(): Promise<void> {
   if (!enabled) return;
   if (running) return running;
+  const started = generation;
+  const current = () => generation === started && enabled;
   running = (async () => {
     useDeckSyncStatus.setState({ status: 'syncing', error: null });
     try {
       const remote = (await listRemote())
         .filter((entry) => !!entry.id)
         .map((entry) => ({ id: entry.id!, updatedAt: entry.updatedAt ?? 0, deleted: !!entry.deleted }));
+      if (!current()) return;
       const plan = planSync(deckStorage.stamps(), deckStorage.tombstones(), remote, foreignIds());
       let changedHere = false;
       let firstError: string | null = null;
       async function attempt(work: () => void | Promise<void>) {
+        if (!current()) return false;
         try {
           await work();
           return true;
@@ -162,7 +183,7 @@ export async function syncNow(): Promise<void> {
       for (const id of plan.download) {
         await attempt(async () => {
           const data = await download(id);
-          if (data && deckStorage.importFromSync(id, data)) changedHere = true;
+          if (current() && data && deckStorage.importFromSync(id, data)) changedHere = true;
         });
       }
       for (const id of plan.deleteLocal) {
@@ -177,14 +198,19 @@ export async function syncNow(): Promise<void> {
         if (!removed) tombstonesToDrop.delete(id);
       }
       for (const id of tombstonesToDrop) await attempt(() => deckStorage.forgetTombstone(id));
+      if (!current()) return;
       rememberKnown(deckStorage.stamps().map((deck) => deck.id), true);
-      if (changedHere || plan.upload.length) await useDecks.getState().refresh();
+      if (PRIVATE_PLAYTESTING || changedHere || plan.upload.length) await useDecks.getState().refresh();
+      if (!current()) return;
       if (firstError !== null) useDeckSyncStatus.setState({ status: 'error', error: firstError });
       else useDeckSyncStatus.setState({ status: 'synced', lastSyncedAt: Date.now() });
     } catch (error) {
-      useDeckSyncStatus.setState({ status: 'error', error: describe(error) });
+      if (current()) useDeckSyncStatus.setState({ status: 'error', error: describe(error) });
     } finally {
-      running = null;
+      if (current()) {
+        running = null;
+        useDeckSyncStatus.setState({ ready: true });
+      }
     }
   })();
   return running;
@@ -193,16 +219,19 @@ export async function syncNow(): Promise<void> {
 /** A change made here goes to the account a moment later (a deck being edited is saved often). */
 function push(change: DeckChange) {
   if (!enabled) return;
+  const started = generation;
+  const current = () => enabled && started === generation;
   clearTimeout(pending.get(change.id));
   pending.set(change.id, setTimeout(() => {
+    if (!current()) return;
     pending.delete(change.id);
     const work = change.type === 'saved'
       ? upload(change.id)
-      : removeRemote(change.id, change.at).then(() => deckStorage.forgetTombstone(change.id));
+      : removeRemote(change.id, change.at).then(() => { if (current()) deckStorage.forgetTombstone(change.id); });
     useDeckSyncStatus.setState({ status: 'syncing' });
     work
-      .then(() => useDeckSyncStatus.setState({ status: 'synced', lastSyncedAt: Date.now(), error: null }))
-      .catch((error) => useDeckSyncStatus.setState({ status: 'error', error: describe(error) }));
+      .then(() => { if (current()) useDeckSyncStatus.setState({ status: 'synced', lastSyncedAt: Date.now(), error: null }); })
+      .catch((error) => { if (current()) useDeckSyncStatus.setState({ status: 'error', error: describe(error) }); });
   }, PUSH_DELAY_MS));
 }
 
@@ -213,9 +242,13 @@ let lastLogin = 0;
 function onSession(state: ReturnType<typeof useSession.getState>) {
   if (state.phase !== 'signedIn') {
     if (PRIVATE_PLAYTESTING) {
+      generation += 1;
+      running = null;
       for (const timer of pending.values()) clearTimeout(timer);
       pending.clear();
       deckStorage.setAccountScope('signed-out');
+      useDecks.getState().reset();
+      useDeckSyncStatus.setState({ ready: false, lastSyncedAt: null, status: 'off', error: null });
     }
     if (enabled) {
       enabled = false;
@@ -226,8 +259,15 @@ function onSession(state: ReturnType<typeof useSession.getState>) {
   if (state.loginCount === lastLogin) return;
   lastLogin = state.loginCount;
   if (PRIVATE_PLAYTESTING) {
+    generation += 1;
+    running = null;
     deckStorage.setAccountScope(accountKey());
+    useDecks.getState().reset();
+    useDeckSyncStatus.setState({ ready: false, lastSyncedAt: null, status: 'syncing', error: null });
     void useDecks.getState().refresh();
+    enabled = true;
+    void syncNow();
+    return;
   }
   api.serverInfo()
     .then((info) => {

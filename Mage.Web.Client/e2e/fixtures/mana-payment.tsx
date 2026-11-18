@@ -12,7 +12,7 @@ import '../../src/app/styles/base.css';
 
 // Isolated local UI scenario: all game answers are recorded, no game server is contacted.
 const params = new URLSearchParams(location.search);
-useSettings.getState().update({ autoPayMana: false, autoPayRestricted: true, autoPass: false, sound: false, animations: false, matArt: 'none', locale: params.get('lang') === 'es' ? 'es' : 'en' });
+useSettings.getState().update({ autoPayMana: params.has('legacyAutoPay'), autoPayRestricted: !params.has('legacyAutoPay'), autoPass: false, sound: false, animations: false, matArt: 'none', locale: params.get('lang') === 'es' ? 'es' : 'en' });
 queryClient.setQueryData(['serverInfo'], { accounts: false });
 const session = new GameSession(api, events, { gameId: 'payment-fixture', playerId: 'me', mode: 'play' });
 const calls: string[] = [];
@@ -62,7 +62,12 @@ api.sendPlayerManaType = async (_gameId, _playerId, type) => {
   }, 300);
 };
 show(params.get('scenario') === 'priority' ? null : remaining);
-Object.assign(window, { paymentFixture: { calls, session } });
+Object.assign(window, { paymentFixture: { calls, session, resetPayment() {
+  view.players![0].battlefield = { forest, island };
+  view.stack = { spell: { id: 'spell', name: 'Elvish Visionary', manaCostLeftStr: ['{1}', '{G}'], cardTypes: ['CREATURE'] } };
+  remaining = '{1}{G}';
+  show(remaining);
+} } });
 export function Fixture() {
   const state = useStore(session.store);
   return <QueryClientProvider client={queryClient}><MemoryRouter><MatchStage session={session} state={state} /></MemoryRouter></QueryClientProvider>;

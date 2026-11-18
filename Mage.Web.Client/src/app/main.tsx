@@ -13,6 +13,8 @@ import { queryClient } from './queries';
 import { ImportRoute } from './decks/import/ImportRoute';
 import { HomeScreen } from './screens/HomeScreen';
 import { LoginScreen } from './screens/LoginScreen';
+import { PRIVATE_PLAYTESTING } from './playtesting';
+import { PrivateSession } from './PrivateSession';
 import { RequestDialog } from './RequestDialog';
 import { RouteError } from './screens/RouteError';
 import { useEvents } from './stores/events';
@@ -49,7 +51,7 @@ function SignedIn() {
   }, [redirect, navigate]);
 
   // come back here after signing in
-  if (phase !== 'signedIn') return <Navigate to="/login" replace state={{ from: location.pathname + location.search + location.hash }} />;
+  if (phase !== 'signedIn') return PRIVATE_PLAYTESTING ? <PrivateSession /> : <Navigate to="/login" replace state={{ from: location.pathname + location.search + location.hash }} />;
   return (
     <>
       <Outlet />
@@ -160,7 +162,7 @@ const pictureLinks = Promise.race([imageResolver().ready, new Promise<void>((res
 
 // a Spanish (or other non-English) player's catalog loads first, so the first paint is already in their language; and
 // the picture links stored on this device, so a card already seen shows its picture on the first frame, not a blank
-void Promise.all([i18nReady, pictureLinks]).then(() => createRoot(document.getElementById('root')!).render(
+void Promise.all([i18nReady, pictureLinks, PRIVATE_PLAYTESTING ? import('./stores/deckSync') : Promise.resolve()]).then(() => createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <Tooltip.Provider delayDuration={300}>

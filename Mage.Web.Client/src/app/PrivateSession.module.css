@@ -1,0 +1,11 @@
+.page {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: max(24px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
+  background: radial-gradient(ellipse at top, var(--mat-600), var(--mat-950));
+}
+.status { width: min(100%, 400px); text-align: center; }
+.status h1 { margin-block: 24px 12px; font-size: var(--text-3xl); color: var(--ink-strong); }
+.status p { color: var(--ink-soft); line-height: 1.5; }
+.status button { min-height: 44px; margin: 8px; }

@@ -3,6 +3,7 @@ import { lazy, Suspense, useEffect, useMemo, useState, type CSSProperties } from
 import { useNavigate } from 'react-router-dom';
 import { META_PREFIX, RANDOM_META_PREFIX, sleeveFor, useDecks } from '../stores/decks';
 import { useDeckRoster } from '../stores/useDeckRoster';
+import { useDeckSyncStatus, useLibraryReady } from '../stores/deckSyncStatus';
 import { formatRules } from '../../core/decks/formats';
 import { metaDecksFor } from '../../core/decks/metaDecks';
 import { readJson } from '../stores/persist';
@@ -44,7 +45,7 @@ export const META_FORMAT_KEY = 'playmat.metaFormat';
 // open tables and events have their own pages in the rail; here the only question is who you play
 const MODES: { id: Mode; label: MessageKey }[] = [
   { id: 'ai', label: 'home.mode.ai' },
-  { id: 'meta', label: 'home.mode.meta' },
+  ...(!PRIVATE_PLAYTESTING ? [{ id: 'meta', label: 'home.mode.meta' } as const] : []),
   { id: 'practice', label: 'home.mode.practice' },
   { id: 'friend', label: 'home.mode.friend' },
   ...(PRIVATE_PLAYTESTING ? [{ id: 'mcp', label: 'home.mode.mcp' } as const] : []),
@@ -64,6 +65,8 @@ export function HomeScreen() {
   const emailStatus = useEmailStatus().data;
   const emailUnconfirmed = !!emailStatus?.email && !emailStatus.verified && !!emailStatus.mail;
   const roster = useDeckRoster();
+  const libraryReady = useLibraryReady();
+  const libraryError = useDeckSyncStatus((state) => state.status === 'error');
   // a meta, ghost or mirror opponent, or adaptive skill, is described with the solo messages
   const soloReady = useCareerMessages(mode === 'meta' || play.aiOptions.adaptive || opponentSource(play.aiOptions.opponentDeckId).kind !== 'roster');
   const selected = roster.find((deck) => deck.id === decks.selectedId) ?? roster[0] ?? null;
@@ -148,8 +151,9 @@ export function HomeScreen() {
               />
             </div>
           ))}
-          {decks.loaded && roster.length === 0 && (
-            <p className={styles.empty}>{t('home.empty')}</p>
+          {!libraryReady && <p className={styles.empty} role="status">{t('decks.loading')}</p>}
+          {libraryReady && decks.loaded && roster.length === 0 && (
+            <p className={styles.empty}>{t(PRIVATE_PLAYTESTING && libraryError ? 'decks.unavailable' : 'home.empty')}</p>
           )}
         </div>
       </aside>

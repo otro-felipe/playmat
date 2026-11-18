@@ -42,22 +42,22 @@ export async function transaction(pool, work) {
   }
 }
 
-export async function listDecks(db, account, includeDeleted = false) {
+export async function listDecks(db, account, includeDeleted = false, library = null) {
   const { rows } = await db.query(
-    'SELECT d.id, d.head AS revision, r.name, r.format, d.updated_at, d.removed FROM decks d LEFT JOIN deck_revisions r ON (r.account_id, r.deck_id, r.revision) = (d.account_id, d.id, d.head) WHERE d.account_id=$1 AND ($2 OR NOT d.removed) ORDER BY d.updated_at DESC, d.id',
-    [account, includeDeleted],
+    'SELECT d.id, d.head AS revision, d.library, r.name, r.format, d.updated_at, d.removed FROM decks d LEFT JOIN deck_revisions r ON (r.account_id, r.deck_id, r.revision) = (d.account_id, d.id, d.head) WHERE d.account_id=$1 AND ($2 OR NOT d.removed) AND ($3::text IS NULL OR d.library=$3) ORDER BY d.updated_at DESC, d.id',
+    [account, includeDeleted, library],
   )
-  return rows.map(row => ({ id: row.id, name: row.name, format: row.format, revision: row.revision, updatedAt: Number(row.updated_at), deleted: row.removed }))
+  return rows.map(row => ({ id: row.id, name: row.name, format: row.format, library: row.library, revision: row.revision, updatedAt: Number(row.updated_at), deleted: row.removed }))
 }
 
 export async function getDeck(db, account, deckId, revision) {
   if (!isId(deckId)) return null
   const { rows: [row] } = await db.query(
-    'SELECT d.id, d.updated_at, d.removed, r.revision, r.name, r.format, r.metadata FROM decks d JOIN deck_revisions r ON (r.account_id, r.deck_id) = (d.account_id, d.id) WHERE d.account_id=$1 AND d.id=$2 AND r.revision=COALESCE($3, d.head) AND ($3 IS NOT NULL OR NOT d.removed)',
+    'SELECT d.id, d.library, d.updated_at, d.removed, r.revision, r.name, r.format, r.metadata FROM decks d JOIN deck_revisions r ON (r.account_id, r.deck_id) = (d.account_id, d.id) WHERE d.account_id=$1 AND d.id=$2 AND r.revision=COALESCE($3, d.head) AND ($3 IS NOT NULL OR NOT d.removed)',
     [account, deckId, revision ?? null],
   )
   if (!row) return null
-  const data = { ...row.metadata, id: row.id, name: row.name, format: row.format, updatedAt: Number(row.updated_at), cards: [], sideboard: [] }
+  const data = { ...row.metadata, id: row.id, name: row.name, format: row.format, library: row.library, updatedAt: Number(row.updated_at), cards: [], sideboard: [] }
   const { rows: entries } = await db.query(
     'SELECT zone, card_name, set_code, card_number, amount FROM deck_revision_cards WHERE account_id=$1 AND deck_id=$2 AND revision=$3 ORDER BY position',
     [account, deckId, row.revision],
@@ -65,7 +65,7 @@ export async function getDeck(db, account, deckId, revision) {
   for (const entry of entries) data[entry.zone].push({
     cardName: entry.card_name, setCode: entry.set_code, cardNumber: entry.card_number, amount: entry.amount,
   })
-  return { id: deckId, name: row.name, format: row.format, revision: row.revision, updatedAt: data.updatedAt, data }
+  return { id: deckId, name: row.name, format: row.format, library: row.library, revision: row.revision, updatedAt: data.updatedAt, data }
 }
 
 function validateEntry(entry) {
@@ -89,7 +89,7 @@ function canonicalCards(entries) {
   }))
 }
 
-export async function putDeck(pool, account, deckId, { data, name, format, expectedRevision, updatedAt }) {
+export async function putDeck(pool, account, deckId, { data, name, format, expectedRevision, updatedAt }, createdLibrary = 'personal') {
   const headName = String(name ?? data?.name ?? '').trim()
   const headFormat = libraryFormat(format ?? data?.format)
   if (!isId(deckId) || !Number.isInteger(expectedRevision) || expectedRevision < 0) {
@@ -99,14 +99,14 @@ export async function putDeck(pool, account, deckId, { data, name, format, expec
     || data.cards.length + data.sideboard.length > 300 || ![...data.cards, ...data.sideboard].every(validateEntry)) {
     throw new ProductError(400, 'Provide a valid deck name, format and card list')
   }
-  const { cards: rawCards, sideboard: rawSideboard, id, name: ignoredName, format: ignoredFormat, updatedAt: ignoredTime, ...metadata } = data
+  const { cards: rawCards, sideboard: rawSideboard, id, name: ignoredName, format: ignoredFormat, library: ignoredLibrary, updatedAt: ignoredTime, ...metadata } = data
   const cards = canonicalCards(rawCards)
   const sideboard = canonicalCards(rawSideboard)
   return transaction(pool, async db => {
     if (expectedRevision === 0) {
-      await db.query('INSERT INTO decks (account_id, id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [account, deckId])
+      await db.query('INSERT INTO decks (account_id, id, library) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [account, deckId, createdLibrary])
     }
-    const { rows: [entry] } = await db.query('SELECT head, updated_at, removed FROM decks WHERE account_id=$1 AND id=$2 FOR UPDATE', [account, deckId])
+    const { rows: [entry] } = await db.query('SELECT head, library, updated_at, removed FROM decks WHERE account_id=$1 AND id=$2 FOR UPDATE', [account, deckId])
     if (!entry) throw new ProductError(404, 'Deck not found')
     if (entry.head !== expectedRevision || entry.removed) throw new ProductError(409, 'Deck revision has changed')
     const time = Math.max(Number(entry.updated_at) + 1, Number.isSafeInteger(updatedAt) ? updatedAt : Date.now())
@@ -123,8 +123,20 @@ export async function putDeck(pool, account, deckId, { data, name, format, expec
       )
     }
     await db.query('UPDATE decks SET head=$3, updated_at=$4 WHERE account_id=$1 AND id=$2', [account, deckId, revision, time])
-    return { id: deckId, name: headName, format: headFormat, revision, updatedAt: time, data: { ...metadata, id: deckId, name: headName, format: headFormat, updatedAt: time, cards, sideboard } }
+    return { id: deckId, name: headName, format: headFormat, library: entry.library, revision, updatedAt: time, data: { ...metadata, id: deckId, name: headName, format: headFormat, library: entry.library, updatedAt: time, cards, sideboard } }
   })
+}
+
+export async function moveDeckLibrary(db, account, deckId, library, expectedRevision) {
+  if (!isId(deckId) || !['personal', 'agent'].includes(library) || !Number.isInteger(expectedRevision) || expectedRevision < 1) {
+    throw new ProductError(400, 'A valid library and deck revision are required')
+  }
+  const { rowCount } = await db.query(
+    'UPDATE decks SET library=$3, updated_at=GREATEST(updated_at+1,$5) WHERE account_id=$1 AND id=$2 AND head=$4 AND NOT removed',
+    [account, deckId, library, expectedRevision, Date.now()],
+  )
+  if (!rowCount) throw new ProductError(409, 'Deck revision has changed')
+  return getDeck(db, account, deckId)
 }
 
 export async function deleteDeck(db, account, deckId, expectedRevision, updatedAt = Date.now()) {

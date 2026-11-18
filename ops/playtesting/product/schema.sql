@@ -48,6 +48,10 @@ CREATE TABLE IF NOT EXISTS deck_revisions (
   FOREIGN KEY (account_id, deck_id) REFERENCES decks(account_id, id)
 );
 
+-- Legacy decks remain personal until the owner explicitly moves them. No name-based inference.
+ALTER TABLE decks ADD COLUMN IF NOT EXISTS library text NOT NULL DEFAULT 'personal'
+  CHECK (library IN ('personal', 'agent'));
+
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint

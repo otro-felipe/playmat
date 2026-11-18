@@ -9,7 +9,7 @@ import { createIdentity, identityView } from './identity.mjs'
 import { createInvitations } from './invitations.mjs'
 import { createMcpEvents } from './mcp-events.mjs'
 import { createOAuth } from './oauth.mjs'
-import { ProductError, deleteDeck, getDeck, isUuid, listDecks, normalize, putDeck, transaction } from './decks.mjs'
+import { ProductError, deleteDeck, getDeck, isUuid, listDecks, moveDeckLibrary, normalize, putDeck, transaction } from './decks.mjs'
 
 const maxBody = 300 * 1024
 const directory = dirname(fileURLToPath(import.meta.url))
@@ -267,22 +267,32 @@ export async function createProduct({
     }
     if (endpoint === 'decks' && req.method === 'GET') {
       requireScope(actor, 'library')
-      return send(res, 200, { decks: await listDecks(pool, actor.accountId, url.searchParams.get('deleted') === '1') })
+      const library = url.searchParams.get('library')
+      if (library !== null && !['personal', 'agent'].includes(library)) throw new ProductError(400, 'Invalid deck library')
+      return send(res, 200, { decks: await listDecks(pool, actor.accountId, url.searchParams.get('deleted') === '1', library) })
     }
     if (endpoint.startsWith('decks/')) {
       requireScope(actor, 'library')
+      const libraryMove = /^decks\/[^/]+\/library$/.test(endpoint)
+      const deckPath = endpoint.slice('decks/'.length)
       let deckId
       try {
-        deckId = decodeURIComponent(endpoint.slice('decks/'.length))
+        deckId = decodeURIComponent(libraryMove ? deckPath.slice(0, -'/library'.length) : deckPath)
       } catch {
         throw new ProductError(400, 'Invalid deck ID')
+      }
+      if (libraryMove) {
+        if (req.method !== 'POST') throw new ProductError(405, 'Use POST to move a deck')
+        if (actor.agent) throw new ProductError(403, 'Only the owner can move decks between libraries')
+        const { library, expectedRevision } = await body(req)
+        return send(res, 200, await moveDeckLibrary(pool, actor.accountId, deckId, library, expectedRevision))
       }
       if (req.method === 'GET') {
         const revision = url.searchParams.get('revision')
         if (revision && !/^\d{1,8}$/.test(revision)) throw new ProductError(400, 'Invalid revision')
         return send(res, 200, rejectMissing(await getDeck(pool, actor.accountId, deckId, revision), 'Deck not found'))
       }
-      if (req.method === 'PUT') return send(res, 200, await putDeck(pool, actor.accountId, deckId, await body(req)))
+      if (req.method === 'PUT') return send(res, 200, await putDeck(pool, actor.accountId, deckId, await body(req), actor.agent ? 'agent' : 'personal'))
       if (req.method === 'DELETE') {
         const data = await body(req)
         await deleteDeck(pool, actor.accountId, deckId, data.expectedRevision)

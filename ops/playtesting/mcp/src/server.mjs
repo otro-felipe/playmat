@@ -221,9 +221,9 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
   }, 'catalog', (args) => possibleResponses(getSeat().engine, args), true);
   tool('validate_deck', 'Check the submitted list against XMage constructed rules and card implementation.', { format: Format, deck: Deck }, 'decks',
     (args) => getSeat().engine.validateDeck(args), true);
-  tool('list_decks', 'List your private library deck revisions.', {}, 'decks', () => fromProduct('list_decks', {}), true);
+  tool('list_decks', 'List the reusable MCP opponent decks in your private account library. These appear in the web library under MCP opponent decks.', {}, 'decks', () => fromProduct('list_decks', {}), true);
   tool('get_deck', 'Read one deck in your library.', { deckId: Uuid }, 'decks', (args) => fromProduct('get_deck', args), true);
-  tool('create_deck', 'Create a new private library deck.', { name: z.string().min(1).max(120), format: Format, deck: Deck },
+  tool('create_deck', 'Save a reusable MCP opponent deck in your private library. It remains available in later sessions and appears under MCP opponent decks on the web.', { name: z.string().min(1).max(120), format: Format, deck: Deck },
     'decks', (args) => fromProduct('create_deck', args));
   tool('update_deck', 'Save a revision if your current deck revision still matches.', {
     deckId: Uuid, expectedRevision: z.number().int().positive(), name: z.string().min(1).max(120), format: Format, deck: Deck,

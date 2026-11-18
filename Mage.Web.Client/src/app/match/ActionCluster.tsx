@@ -14,6 +14,7 @@ import { useMatchUi } from './matchUi';
 import { ignoreMatchKey, matchKeysBlocked, promptKey } from './keyboard';
 import { useKeyboardHints } from './useKeyboardHints';
 import styles from './ActionCluster.module.css';
+import { PRIVATE_PLAYTESTING } from '../playtesting';
 
 export interface ActionClusterProps {
   interaction: Interaction;
@@ -271,7 +272,7 @@ export function ActionCluster({
         )}
         {autoPayment ? (
           <Button variant="decision" size="xl" className={styles.main} disabled={!canAct || paymentBusy || !payment.available} aria-busy={paymentBusy || undefined} onClick={payment.onAutoPay}>
-            <span className={styles.mainLabel}>{t(paymentBusy ? 'match.payment.paying' : 'match.payment.autoPay')}</span>
+            <span className={styles.mainLabel}>{paymentBusy ? t('match.payment.paying') : PRIVATE_PLAYTESTING ? 'AUTO PAY' : t('match.payment.autoPay')}</span>
           </Button>
         ) : autoPassing ? (
           <div className={[styles.waiting, styles.passing].join(' ')} role="status">Passing</div>

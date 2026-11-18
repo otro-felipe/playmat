@@ -1,5 +1,6 @@
 /** English for the Settings dialog, which loads the first time it opens. */
 export default {
+  'settings.manualMana': 'Mana stays under your control. During a payment, tap your sources or press AUTO PAY to pay that spell only.',
   'settings.title': 'Settings',
   'settings.restore': 'Restore defaults',
   // the dialog's footer: "Playmat v1.2.3"
