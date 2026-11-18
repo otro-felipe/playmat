@@ -35,7 +35,7 @@ public class SpellStack extends ArrayDeque<StackObject> {
         }
     }
 
-    //resolve top StackObject
+    // Alternate simulation/helper entry; real games resolve through GameImpl.resolve without delegating here.
     public void resolve(Game game) {
         StackObject top = null;
         try {

@@ -2203,6 +2203,8 @@ public abstract class GameImpl implements Game {
         boolean applied = false;
         try {
             top = state.getStack().peek();
+            // Real game resolution does not delegate to SpellStack.resolve (the simulation/helper entry).
+            if (top != null && !isSimulation()) PublicActionObservations.resolving(getId(), top.getId());
             DataCollectorServices.getInstance().onTestsStackResolveStart(this, top);
             applied = top.resolve(this);
             resetControlAfterSpellResolve(top.getId());
