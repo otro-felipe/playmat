@@ -10,6 +10,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -77,6 +78,37 @@ public class PlayerDirectoryTest {
 
         String json = new Gson().toJson(page);
         assertThat(json).doesNotContain("@").doesNotContain("secret");
+    }
+
+    @Test
+    void technicalIdentitiesAreFilteredBeforeSearchTotalsAndPaginationWithoutChangingAccounts() throws Exception {
+        accounts.add("mcp_1234567890", "secret12", "rival@example.test");
+        accounts.add("LegacyRival", "secret12", "legacy@example.test");
+        accounts.add("mcp_abcdef1234", "secret12", "human@example.test");
+        Set<String> agents = new HashSet<>(Arrays.asList("mcp_1234567890", "legacyrival"));
+        PlayerDirectory.DirectoryPage social = PlayerDirectory.page(accounts, "", 0, "bob", true, name -> true, names -> levels, agents);
+        assertThat(names(social)).containsExactly("Alice", "bob", "Carol", "mcp_abcdef1234");
+        assertThat(social.total).isEqualTo(4);
+        PlayerDirectory.DirectoryPage later = PlayerDirectory.page(accounts, "", 3, "bob", false, name -> true, null, agents);
+        assertThat(names(later)).containsExactly("mcp_abcdef1234");
+        assertThat(later.total).isEqualTo(4);
+        assertThat(PlayerDirectory.page(accounts, "123456", 0, "bob", false, name -> true, null, agents).total).isZero();
+        assertThat(accounts.countActiveNames("")).isEqualTo(6);
+        assertThat(accounts.getByName("LegacyRival")).isNotNull();
+    }
+
+    @Test
+    void humanPagesStayFullAcrossDatabasePageBoundaries() throws Exception {
+        for (int i = 0; i < 52; i++) accounts.add(String.format("Human%02d", i), "secret12", "human" + i + "@example.test");
+        accounts.add("HumanAgent", "secret12", "agent@example.test");
+        Set<String> agents = new HashSet<>(Collections.singletonList("humanagent"));
+        PlayerDirectory.DirectoryPage first = PlayerDirectory.page(accounts, "Human", 0, "bob", false, name -> false, null, agents);
+        PlayerDirectory.DirectoryPage second = PlayerDirectory.page(accounts, "Human", 50, "bob", false, name -> false, null, agents);
+        assertThat(first.total).isEqualTo(52);
+        assertThat(first.players).hasSize(50);
+        assertThat(names(first)).doesNotContain("HumanAgent");
+        assertThat(names(second)).containsExactly("Human50", "Human51");
+        assertThat(second.total).isEqualTo(52);
     }
 
     @Test

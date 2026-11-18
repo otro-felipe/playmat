@@ -185,3 +185,19 @@ describe('GameLog (#249)', () => {
     expect(connection.api.chatJoin).toHaveBeenCalledTimes(1);
   });
 });
+
+test('chat text keeps accents, literal entities and HTML as text while the MCP opponent keeps its seat alias', async () => {
+  const { GameLog, useMatchUi, connection } = await load();
+  connection.api.chatFindByGame.mockResolvedValue('chat1');
+  const { container } = render(<GameLog gameId="g1" notices={[]} canChat view={null} seatDisplayNames={{ mcp_1234567890: 'Rakún' }} />);
+  act(() => useMatchUi.getState().toggleLog(true));
+  await waitFor(() => expect(connection.api.chatJoin).toHaveBeenCalled());
+  act(() => connection.rpc.emit({ method: 'CHATMESSAGE', objectId: 'chat1', messageId: 20, data: {
+    username: 'mcp_1234567890', messageType: 'TALK', message: 'Ahora s&iacute; 😈 &amp;iacute; [abc] {G} &lt;img src=x onerror=alert(1)&gt;',
+  } }));
+  await screen.findByText('Rakún:');
+  expect(container.textContent).toContain('Ahora sí 😈 &iacute; [abc] {G} <img src=x onerror=alert(1)>');
+  expect(container.querySelector('img[src="x"], [onerror], script')).toBeNull();
+  expect(container.querySelector('.ms-g')).toBeNull();
+  expect(container.textContent).not.toContain('mcp_1234567890');
+});

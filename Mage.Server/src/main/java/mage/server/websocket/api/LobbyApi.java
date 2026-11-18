@@ -12,6 +12,7 @@ import mage.server.playtesting.ProductGateway;
 import mage.server.social.PlayerDirectory;
 import mage.server.social.Presence;
 import mage.server.social.PresenceStore;
+import mage.server.social.SocialPlayers;
 import mage.server.social.UserRelations;
 import mage.server.websocket.rpc.RpcException;
 import mage.server.websocket.rpc.RpcMethod;
@@ -63,6 +64,7 @@ final class LobbyApi {
         List<RoomUsersView> rooms = ctx.managers == null
                 ? ctx.server.roomGetUsers(roomId)
                 : ctx.managers.gamesRoomManager().getRoom(roomId).map(GamesRoom::getRoomUsersInfo).orElse(Collections.emptyList());
+        rooms = SocialPlayers.withoutAgents(rooms, ProductGateway.socialAgents());
         boolean anyHidden = rooms != null && rooms.stream().anyMatch(room -> room.getUsersView().stream()
                 .anyMatch(user -> Presence.HIDDEN.equals(user.getStatus())));
         if (!anyHidden) {
@@ -92,7 +94,8 @@ final class LobbyApi {
                         .params(of("roomId", UUID))
                         .returns("RoomUsersView[]")
                         .doc("Users and server statistics of a room. Players who chose to appear offline (presenceSet) are left out, "
-                                + "except the caller themselves and for staff; each user's status says online, looking (to play) or hidden.")
+                                + "except the caller themselves and for staff; each user's status says online, looking (to play) or hidden. "
+                                + "Private delegated agent identities are excluded from human social discovery.")
                         .handler(call -> roomUsers(ctx, call)),
 
                 RpcMethod.named("presenceGet")
@@ -132,7 +135,8 @@ final class LobbyApi {
                         .returns("DirectoryPage")
                         .doc("The server's registered players, " + PlayerDirectory.PAGE_SIZE + " at a time, by name: each one's name, Career "
                                 + "level (when Career is on) and whether they are online (hidden players show offline, except to staff). "
-                                + "query matches names only. enabled is false when staff turned the directory off or the server has no accounts.")
+                                + "query matches names only. enabled is false when staff turned the directory off or the server has no accounts. "
+                                + "Private delegated agent identities are excluded before counting and pagination.")
                         .handler(call -> {
                             String viewer = signedIn(ctx, call);
                             if (ctx.managers == null || !ctx.managers.configSettings().isAuthenticationActivated()
@@ -143,7 +147,7 @@ final class LobbyApi {
                             return PlayerDirectory.page(AuthorizedUserRepository.getInstance(), call.optString(0, ""), call.optInteger(1, 0),
                                     viewer, staff,
                                     name -> ctx.managers.userManager().getUserByName(name).map(User::isOnlineUser).orElse(false),
-                                    CareerApi.enabled(ctx) ? LobbyApi::levels : null);
+                                    CareerApi.enabled(ctx) ? LobbyApi::levels : null, ProductGateway.socialAgents());
                         }),
 
                 RpcMethod.named("roomGetAllTables")

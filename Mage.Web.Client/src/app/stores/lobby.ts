@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { api, events } from '../connection';
-import { stripMarkup } from '../../core/game/prompt';
+import { chatText } from '../../core/social/chatText';
 import type { ChatMessage, UsersView } from '../../protocol/generated/views';
 import { attention } from './attention';
 import { useGames } from './games';
@@ -133,7 +133,7 @@ events.on('CHATMESSAGE', (message, event) => {
     unread: fromOther && !hidden && !(open && tab === 'chat') ? state.unread + 1 : state.unread,
   }));
   if (type === 'WHISPER_FROM' && who && !hidden) {
-    const text = stripMarkup(message.message);
+    const text = chatText(message.message);
     if (!(open && tab === 'chat')) {
       notify(`Whisper from ${who}`, text, 'info', { label: 'Reply', run: () => useLobby.getState().whisper(who) });
     }

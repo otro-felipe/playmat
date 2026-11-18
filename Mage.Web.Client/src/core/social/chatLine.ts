@@ -1,5 +1,6 @@
 import type { ChatMessage } from '../../protocol/generated/views';
-import { decodeEntities, parseLogHtml, segmentsText, type LogSegment } from '../game/gameLog';
+import { parseLogHtml, segmentsText, type LogSegment } from '../game/gameLog';
+import { chatText } from './chatText';
 
 export type ChatLineKind = 'talk' | 'whisperFrom' | 'whisperTo' | 'info' | 'status' | 'game';
 
@@ -31,7 +32,7 @@ export function toChatLines(message: ChatMessage, key: string, now = Date.now())
   const at = message.time ?? now;
   const who = message.username || null;
   if (kind === 'talk' || kind === 'whisperFrom' || kind === 'whisperTo') {
-    const text = decodeEntities((message.message ?? '').replace(/<[^>]*>/g, '')).replace(/\s+/g, ' ').trim();
+    const text = chatText(message.message);
     return text ? [{ key, at, kind, who, segments: [{ kind: 'text', text }], text }] : [];
   }
   return (message.message ?? '')

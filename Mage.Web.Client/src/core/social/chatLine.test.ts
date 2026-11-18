@@ -4,7 +4,7 @@ import { inviteLink, splitInviteLinks, toChatLines, withoutIgnored } from './cha
 describe('toChatLines', () => {
   it('keeps what players type as text', () => {
     const [line] = toChatLines({ username: 'Bob', message: 'gg &amp; <b>wp</b>', messageType: 'TALK', time: 5 }, 'k');
-    expect(line).toMatchObject({ kind: 'talk', who: 'Bob', text: 'gg & wp', at: 5 });
+    expect(line).toMatchObject({ kind: 'talk', who: 'Bob', text: 'gg & <b>wp</b>', at: 5 });
   });
 
   it('marks whispers with the other player', () => {

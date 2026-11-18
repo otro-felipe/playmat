@@ -98,8 +98,8 @@ describe('parseChatMessage', () => {
   });
 
   it('keeps what players type as text, markup included', () => {
-    const entry = parseChatMessage({ messageType: 'TALK', username: 'Bob', message: "gg <font color='#20B2AA'>wp</font> &lt;3" }, 'k3', 1);
-    expect(entry).toMatchObject({ tone: 'chat', who: 'Bob', text: 'gg wp <3', icon: 'chat', segments: [{ kind: 'text', text: 'gg wp <3' }] });
+    const entry = parseChatMessage({ messageType: 'TALK', username: 'Bob', message: "gg &lt;font color='#20B2AA'&gt;wp&lt;/font&gt; &lt;3" }, 'k3', 1);
+    expect(entry).toMatchObject({ tone: 'chat', who: 'Bob', text: "gg <font color='#20B2AA'>wp</font> <3", icon: 'chat', segments: [{ kind: 'text', text: "gg <font color='#20B2AA'>wp</font> <3" }] });
   });
 
   it('skips empty messages', () => {

@@ -94,6 +94,16 @@ The parsing and matching live in `src/core/deckImport` (pure, unit tested); the 
 - **Alerts**: while the tab is in the background, its title counts what waits for you (your move, a draft pick, a
   game starting, a whisper); Settings → Alerts adds browser notifications.
 
+Chat messages and whispers are plain user text, HTML 4 escaped once by the Java server. The client decodes one
+transport layer and renders text nodes: Spanish accents and emoji display normally, while a player typing
+`&iacute;`, `<b>hello</b>`, `[abc]` or `{G}` keeps those literal characters. Server notices and game log lines use
+the separate structured markup parser; chat never enters an HTML renderer or the mana/short-ID formatter.
+
+Private servers exclude registered delegated agent identities from human discovery (`roomGetUsers` and
+`playerDirectory`, including counts and pagination). Classification comes from the product's grant registry, not
+an `mcp_` prefix. Accounts, user-curated friend lists, direct profiles, game seats, display aliases, XP and history
+are preserved. Public servers keep their existing lists; an unavailable private registry falls back to them too.
+
 ## Dev loop
 
 ```bash

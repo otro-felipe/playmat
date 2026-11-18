@@ -714,3 +714,26 @@ test('[PM-AC-12] grouped stats use finalized games and the requesting player’s
   assert.doesNotMatch(JSON.stringify(group), /private:Bob/)
   assert.deepEqual(await (await f.path('/api/playtesting/stats', { headers: carol })).json(), { groups: [] })
 })
+
+test('social discovery classifies real delegated identities without guessing from names or deleting progress', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  await signIn(f, 'SocialOwner')
+  await signIn(f, 'mcp_abcdef1234') // a real human can have a technical-looking name
+  const grant = await f.product.provisionAgent('SocialOwner', 'LegacyRival', ['play', 'chat'])
+  const before = await f.path('/internal/verify?scope=play', { headers: { Authorization: 'Bearer ' + grant } })
+  assert.equal(before.status, 200)
+  await withTestDatabase(f, db => db.query(`INSERT INTO agent_grants(digest,account_id,engine_name,engine_key,scopes,oauth_managed)
+    SELECT $1,id,'mcp_1234567890','mcp_1234567890',ARRAY['play','chat'],true FROM accounts WHERE username_key='socialowner'`, [randomUUID()]))
+  const response = await f.path('/internal/social/agents')
+  assert.equal(response.status, 200)
+  assert.deepEqual(await response.json(), ['legacyrival', 'mcp_1234567890'])
+  assert.equal((await f.path('/internal/verify?scope=play', { headers: { Authorization: 'Bearer ' + grant } })).status, 200)
+  await withTestDatabase(f, async db => {
+    const { rows: [row] } = await db.query("SELECT count(*)::int AS count FROM agent_grants WHERE engine_key='legacyrival'")
+    assert.equal(row.count, 1)
+    await db.query("UPDATE agent_grants SET revoked_at=now() WHERE engine_key='legacyrival'")
+  })
+  assert.deepEqual(await (await f.path('/internal/social/agents')).json(), ['legacyrival', 'mcp_1234567890'])
+  const external = await fixture(t, new Map(), { enableInternal: false })
+  assert.equal((await external.path('/internal/social/agents')).status, 404)
+})

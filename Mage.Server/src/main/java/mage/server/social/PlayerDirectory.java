@@ -55,6 +55,12 @@ public final class PlayerDirectory {
      */
     public static DirectoryPage page(AuthorizedUserRepository accounts, String query, int offset, String viewer, boolean staff,
                                      Predicate<String> online, Function<Collection<String>, Map<String, Integer>> levels) {
+        return page(accounts, query, offset, viewer, staff, online, levels, Collections.emptySet());
+    }
+
+    public static DirectoryPage page(AuthorizedUserRepository accounts, String query, int offset, String viewer, boolean staff,
+                                     Predicate<String> online, Function<Collection<String>, Map<String, Integer>> levels,
+                                     java.util.Set<String> agents) {
         String search = query == null ? "" : query.trim();
         if (search.length() > MAX_QUERY) {
             search = search.substring(0, MAX_QUERY);
@@ -63,8 +69,25 @@ public final class PlayerDirectory {
         DirectoryPage page = new DirectoryPage();
         page.enabled = true;
         page.offset = start;
-        page.total = accounts.countActiveNames(search);
-        List<String> names = accounts.listActiveNames(search, start, PAGE_SIZE);
+        List<String> names;
+        if (agents.isEmpty()) {
+            page.total = accounts.countActiveNames(search);
+            names = accounts.listActiveNames(search, start, PAGE_SIZE);
+        } else {
+            // Filter before counting/paging, so an agent cannot cause sparse pages or a misleading total.
+            names = new ArrayList<>();
+            long count = 0;
+            for (long position = 0; ; position += PAGE_SIZE) {
+                List<String> batch = accounts.listActiveNames(search, position, PAGE_SIZE);
+                for (String name : batch) {
+                    if (!SocialPlayers.human(name, agents)) continue;
+                    if (count >= start && names.size() < PAGE_SIZE) names.add(name);
+                    count++;
+                }
+                if (batch.size() < PAGE_SIZE) break;
+            }
+            page.total = count;
+        }
         Map<String, Integer> found = levels == null || names.isEmpty() ? Collections.emptyMap() : levels.apply(names);
         for (String name : names) {
             DirectoryPlayer player = new DirectoryPlayer();

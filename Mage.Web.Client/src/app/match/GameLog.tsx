@@ -340,7 +340,7 @@ const LogLine = memo(function LogLine({ entry, cards, seatDisplayNames }: {
       <Icon className={[styles.icon, styles[`icon_${entry.icon}`] ?? ''].join(' ')} size={16} aria-hidden="true" />
       <span className={styles.body}>
         {entry.who && <b>{seatDisplayName(entry.who, seatDisplayNames)}: </b>}
-        {entry.segments.map((segment, index) => <Segment key={index} segment={segment} cards={cards} seatDisplayNames={seatDisplayNames} />)}
+        {entry.tone === 'chat' ? entry.text : entry.segments.map((segment, index) => <Segment key={index} segment={segment} cards={cards} seatDisplayNames={seatDisplayNames} />)}
         {notes.length > 0 && (
           <button
             type="button"

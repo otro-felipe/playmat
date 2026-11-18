@@ -1,5 +1,6 @@
 import type { CardView, ChatMessage, GameView } from '../../protocol/generated/views';
 import { decodeEntities } from './entities';
+import { chatText } from '../social/chatText';
 
 /**
  * The game log, from the server's chat stream. Game messages arrive as small HTML snippets: player names and card
@@ -217,7 +218,7 @@ export function parseChatMessage(message: ChatMessage, key: string, now = Date.n
   const chat = type === 'TALK' || type === 'WHISPER_FROM' || type === 'WHISPER_TO';
   // what players type is text, not markup: show it as written (the server may escape it; decode that)
   const segments: LogSegment[] = chat
-    ? [{ kind: 'text', text: decodeEntities((message.message ?? '').replace(/<[^>]*>/g, '')).replace(/\s+/g, ' ').trim() }]
+    ? [{ kind: 'text', text: chatText(message.message) }]
     : parseLogHtml(message.message);
   const text = segmentsText(segments);
   if (!text) return null;

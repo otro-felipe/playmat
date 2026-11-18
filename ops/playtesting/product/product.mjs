@@ -195,6 +195,13 @@ export async function createProduct({
       return res.writeHead(303, { 'Set-Cookie': await id.signOut(req), Location: '/login' }).end()
     }
     if (enableInternal && path === '/internal/legacy' && req.method === 'POST') return legacy(req, res)
+    // Presentation metadata for the colocated Java social lists, never an authentication decision.
+    if (enableInternal && path === '/internal/social/agents' && req.method === 'GET') {
+      const { rows } = await pool.query(`SELECT DISTINCT g.engine_key FROM agent_grants g
+        WHERE NOT EXISTS (SELECT 1 FROM accounts a WHERE a.username_key=g.engine_key)
+        ORDER BY g.engine_key`)
+      return send(res, 200, rows.map(row => row.engine_key))
+    }
     if (enableInternal && path === '/internal/recovery/validate' && req.method === 'POST') {
       const principal = await body(req, 'json', 1024)
       const valid = await id.validateRecoveryPrincipal(principal)

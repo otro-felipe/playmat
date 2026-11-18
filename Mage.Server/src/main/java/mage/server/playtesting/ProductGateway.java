@@ -31,6 +31,22 @@ public final class ProductGateway {
         return ENABLED;
     }
 
+    /** Known delegated identities, including legacy names. Only social discovery uses this metadata. */
+    public static Set<String> socialAgents() {
+        if (!enabled()) return Collections.emptySet();
+        try {
+            Response response = request("/internal/social/agents", 2000, null, null, true);
+            if (response.status != 200) return Collections.emptySet();
+            Set<String> names = new HashSet<>();
+            JsonParser.parseString(response.body).getAsJsonArray().forEach(name ->
+                    names.add(name.getAsString().toLowerCase(java.util.Locale.ROOT)));
+            return names;
+        } catch (IOException | RuntimeException exception) {
+            // Older/unavailable product process: preserve discovery instead of hiding guessed human names.
+            return Collections.emptySet();
+        }
+    }
+
     public static boolean recoveryPrincipalValid(mage.server.recovery.RecoveryPrincipal principal) {
         if (!enabled() || principal == null) return false;
         JsonObject body = new JsonObject();
