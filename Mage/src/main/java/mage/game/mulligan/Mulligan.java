@@ -2,6 +2,7 @@ package mage.game.mulligan;
 
 import mage.game.Game;
 import mage.game.events.GameEvent;
+import mage.game.trace.ReplayDecision;
 import mage.players.Player;
 
 import java.io.Serializable;
@@ -52,9 +53,8 @@ public abstract class Mulligan implements Serializable {
                         if (!game.replaceEvent(event)) {
                             game.fireEvent(event);
                             game.getState().setChoosingPlayerId(playerId);
-                            if (player.chooseMulligan(game)) {
-                                keep = false;
-                            }
+                            keep = !player.chooseMulligan(game);
+                            ReplayDecision.openingHand(game, player, !keep);
                             break;
                         }
                     }

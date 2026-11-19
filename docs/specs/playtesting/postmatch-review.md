@@ -11,6 +11,11 @@ Private Playmat participants can revisit a completed encounter, inspect the evid
 - **PM-REVIEW-CAPTURE-1** For a protected private testing recording, an authoritative draw preserves the card drawn, actor, game order and phase even if the card leaves the hand between snapshots. An exile play, a look, a reveal, a return, and a search into hand remain different events. Legacy coverage identifies where draw identity is unavailable.
 - **PM-REVIEW-CAPTURE-2** Capture and projection preserve the recorded mulligans, zones, stack, priority, spell and target evidence, combat and sideboard boundaries. An erased branch from rollback does not contribute candidate decisions or ratings. Protected capture data stays in the private raw archive. Existing live messages, legacy replays, shared links and exports keep their redaction.
 
+- **PM-REVIEW-CAPTURE-3** At a protected opening decision, the completed replay records the deciding seat, keep or mulligan outcome, hand before it changes, and any committed card placement separately. A legacy keep may use the first post-keep hand when the log proves continuity before any subsequent change. Missing rejected hands remain unavailable.
+- **PM-REVIEW-CAPTURE-4** A protected choice records the actual chooser, the affected seat, source, legal choices, and selection when recorded. A priority pass preserves material opportunities and whether the pass was manual or automatic when the engine can determine that. Opening hands and private options are available only in permitted post-match perspectives.
+
+- **PM-REVIEW-CAPTURE-5** Supported shared engine prompts emit a normalized selection with their semantic kind and committed answer. A replay can explain choices for unrelated cards that use the same prompt, including modes, targets, card selections, and optional effects. When a committed move already owns the corresponding choice, review preserves the course of the move without counting a second independent decision. Protected options remain scoped to the choosing seat or authorized full view.
+
 ## Evidence and saved analysis
 
 - **PM-REVIEW-API-1** An authenticated participant can read review capabilities for an authorized match or game and query page-sized evidence by cursor or turn. Cursors remain stable across projections. Evidence explicitly identifies the archive version, coverage and whether an action was directly recorded or reconstructed from an archive observation.
@@ -21,6 +26,10 @@ Private Playmat participants can revisit a completed encounter, inspect the evid
 - **PM-REVIEW-API-6** Once an encounter ends, its review can show the viewing seat which cards entered and left its main deck between two adjacent completed games with complete submitted lists from the same card pool. The comparison groups copies by card name and omits unchanged cards. It gives no information about another seat's lists, even when full-hand review is authorized. Missing or ambiguous snapshots leave the comparison unavailable. The resulting difference describes the lists used when each game started. It establishes no order or timing for the underlying sideboard changes.
 
 - **PM-REVIEW-API-7** The requested MCP review workflow visits the recorded decisions for both acting seats and resumes from saved annotations. It saves a rationale and comparators per supported decision and indicates when the archive cannot support a strategic grade.
+
+- **PM-REVIEW-API-8** The optional replay guide and native review prompt teach matchup research using prior games, own sideboard context, rules, and dated public sources. They distinguish observed cards, public archetype hypotheses, and later revelations. The player and live coach receive the same canonical matchup strategy in the four-guide gameplay bundle. The replay prompt embeds that source with role-specific review instructions.
+- **PM-REVIEW-API-9** Review may save a material inferred omission on an observed window when the acting seat, legal comparison, and later closing evidence are supported. Review labels the inference separately from a recorded choice. Routine passes remain outside grading where no decision mattered.
+- **PM-REVIEW-API-10** A coarse snapshot can support a qualified grade when other archived observations and a credible comparator establish the material facts. Exceptional grades require an exact position. Existing annotations preserve their archive anchors and revisions when reviewed again.
 
 ## Strategic rubric
 
@@ -37,6 +46,8 @@ The [review rubric](review-rubric.md) defines how to assess decisions. In replay
 - **PM-REVIEW-UI-4** The review occupies a collapsible desktop side panel and an accessible mobile control. Opening or closing it keeps the current replay frame and the board available.
 - **PM-REVIEW-UI-5** Each recorded strategic decision is navigable. The decision list and board show the saved rating with the same icon and color. Notes use a descriptive heading with linked card previews, then the rationale and alternatives. An unreviewed decision has a pending state. A decision with insufficient evidence is explicitly identified.
 
+- **PM-REVIEW-UI-6** Left and Right navigate replay decisions or adjacent frames when decision metadata is unavailable. Shift with Left or Right moves by turn. Editing controls and active dialogs keep their key behavior. Notes show strategic confidence and identify recorded opening-hand context and inferred omissions when available.
+
 Verify API and MCP permissions with both participants and an unrelated account, archived legacy data, an active best-of-three sideboard, and frozen complete replays. Verify a real engine record with committed draw and known cast events, plus desktop and mobile navigation to a persisted annotation.
 
 ## Executable evidence
@@ -44,6 +55,7 @@ Verify API and MCP permissions with both participants and an unrelated account, 
 - `ops/playtesting/product/product.test.mjs` covers automatic capture and historical access in PM-REVIEW-PRIV-1 through PM-REVIEW-PRIV-4 and the persisted review API boundaries.
 - The PM-REVIEW-API-6 tests in `ops/playtesting/product/product.test.mjs` verify adjacent submitted-list differences for both seats, opponent hand visibility, incomplete lists and the inter-game boundary.
 - `ops/playtesting/product/replay-capture.local.mjs` and `replay-review.local.mjs` exercise native Java capture and authenticated native MCP for owned, alternate and full views. The script archives the actual recorded game into an isolated store and checks a committed draw, cast, target, payment, and annotation retry.
+- The `[PM-REVIEW-API-8]` test in `ops/playtesting/mcp/test/acceptance.test.mjs` verifies matchup guidance in the native prompt. The guide resource is checked against the tools-only interface and four-game-guide bootstrap.
 - `ops/playtesting/product/review-presentation.test.mjs` covers PM-REVIEW-CAPTURE-2 with a witnessed stack, recorded modes and targets, and legacy spell and discard references.
 - `Mage.Server/src/test/java/mage/server/replay/ReplayStoreTest.java` verifies protected replay fields stay out of legacy projections.
 - `Mage.Web.Client/e2e/private-replay-review.spec.ts` verifies desktop and mobile acceptance with authorized synthetic fixtures. `ReplayReview.test.tsx` and `HistoryReview.test.tsx` exercise stable cursors, authority transitions and counts.

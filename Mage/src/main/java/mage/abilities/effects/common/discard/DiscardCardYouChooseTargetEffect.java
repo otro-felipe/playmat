@@ -13,6 +13,7 @@ import mage.constants.Zone;
 import mage.filter.FilterCard;
 import mage.filter.StaticFilters;
 import mage.game.Game;
+import mage.game.trace.ReplayDecision;
 import mage.players.Player;
 import mage.target.TargetCard;
 import mage.util.CardUtil;
@@ -133,9 +134,11 @@ public class DiscardCardYouChooseTargetEffect extends OneShotEffect {
             return true;
         }
         TargetCard target = new TargetCard(optional ? 0 : numberToDiscard, numberToDiscard, Zone.HAND, filter);
-        if (!controller.choose(Outcome.Benefit, revealedCards, target, source, game)) {
+        if (!ReplayDecision.specificChoice(game, () -> controller.choose(Outcome.Benefit, revealedCards, target, source, game))) {
             return true;
         }
+        ReplayDecision.discardChoice(game, controller, player, source,
+                () -> revealedCards.getCards(filter, controller.getId(), source, game), target.getTargets());
         return !player.discard(new CardsImpl(target.getTargets()), false, source, game).isEmpty();
     }
 

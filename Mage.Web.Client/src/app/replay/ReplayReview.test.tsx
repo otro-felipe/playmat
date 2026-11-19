@@ -261,3 +261,218 @@ test('[PM-REVIEW-UI-2] a missing archived opponent hand never displays the actin
   await waitFor(() => expect(screen.getByTestId('seat').textContent).toBe('bob-player'));
   expect(screen.getByTestId('hand').textContent).toBe('');
 });
+
+test('[PM-REVIEW-UI-6] Left and Right use the same action cursor as the playback buttons without taking focus', async () => {
+  const { container } = openReplay();
+  const next = await screen.findByRole('button', { name: 'Next play' });
+  await screen.findByText('Played Island');
+  const replay = container.querySelector('[data-replay-cursor]')!;
+  expect(replay.getAttribute('data-replay-cursor')).toBe('1');
+
+  next.focus();
+  fireEvent.keyDown(next, { key: 'ArrowRight' });
+  await waitFor(() => expect(replay.getAttribute('data-replay-cursor')).toBe('3'));
+  expect(screen.getByTestId('stack').textContent).toBe('Burst Lightning');
+  expect(document.activeElement).toBe(next);
+
+  fireEvent.keyDown(next, { key: 'ArrowLeft' });
+  expect(replay.getAttribute('data-replay-cursor')).toBe('1');
+  expect(document.activeElement).toBe(next);
+  fireEvent.click(next);
+  expect(replay.getAttribute('data-replay-cursor')).toBe('3');
+});
+
+test('[PM-REVIEW-UI-6] keyboard stepping leaves range, editable controls, menus and modified chords alone', async () => {
+  const { container } = openReplay();
+  const next = await screen.findByRole('button', { name: 'Next play' });
+  const replay = container.querySelector('[data-replay-cursor]')!;
+  const slider = screen.getByRole('slider', { name: 'Position in the replay' });
+  const perspective = screen.getByLabelText('Perspective');
+  for (const control of [slider, perspective]) {
+    control.focus();
+    expect(fireEvent.keyDown(control, { key: 'ArrowRight' })).toBe(true);
+    expect(replay.getAttribute('data-replay-cursor')).toBe('1');
+  }
+  expect(fireEvent.keyDown(next, { key: 'ArrowRight', altKey: true })).toBe(true);
+  expect(fireEvent.keyDown(next, { key: 'ArrowRight', metaKey: true })).toBe(true);
+  const dialog = document.createElement('div');
+  dialog.setAttribute('role', 'dialog');
+  document.body.append(dialog);
+  try {
+    expect(fireEvent.keyDown(document.body, { key: 'ArrowRight' })).toBe(true);
+    expect(replay.getAttribute('data-replay-cursor')).toBe('1');
+  } finally {
+    dialog.remove();
+  }
+});
+
+test('[PM-REVIEW-UI-6] a public replay still steps over consecutive snapshots with the arrow keys', async () => {
+  request.mockImplementation(() => json({}, 404));
+  const { container } = openReplay('/replay/game?frame=0');
+  await screen.findByRole('button', { name: 'Step forward' });
+  const replay = container.querySelector('[data-replay-cursor]')!;
+  expect(replay.getAttribute('data-replay-cursor')).toBe('0');
+  fireEvent.keyDown(document.body, { key: 'ArrowRight' });
+  expect(replay.getAttribute('data-replay-cursor')).toBe('2');
+  fireEvent.keyDown(document.body, { key: 'ArrowLeft' });
+  expect(replay.getAttribute('data-replay-cursor')).toBe('0');
+});
+
+test('[PM-REVIEW-UI-6] opening-hand context and confidence follow the current authorized decision', async () => {
+  const mulligan = {
+    ...moments[0], actor: 'Alice', seatId: 'alice-seat',
+    actual: { kind: 'mulligan', text: 'Alice mulligans' },
+  };
+  const original = request.getMockImplementation()!;
+  request.mockImplementation((raw, options) => {
+    const url = new URL(raw, 'http://localhost');
+    if (url.pathname.endsWith('/annotations')) return json({ annotations: [{
+      ...annotation, ...mulligan, confidence: 'low', category: 'insufficient',
+      rationale: 'The matchup was unknown.',
+    }], next: null });
+    if (url.searchParams.get('scope') === 'public') return json({ events: [mulligan, moments[1]], next: null });
+    if (url.searchParams.get('cursor') === '1' && url.searchParams.get('count') === '1') {
+      return json({ events: [url.searchParams.get('seatId') === 'bob-seat' ? mulligan : {
+        ...mulligan, decision: { cards: [{ id: 'opening-land', name: 'Mountain' }] },
+      }], next: null });
+    }
+    return original(raw, options);
+  });
+  openReplay('/replay/game?cursor=1&analysis=1');
+  expect(await screen.findByText('Low confidence')).toBeTruthy();
+  const hand = await screen.findByRole('region', { name: 'Hand before the decision' });
+  expect(within(hand).getByRole('button', { name: 'Mountain, show card' })).toBeTruthy();
+
+  fireEvent.click(screen.getByRole('switch', { name: 'Show both hands' }));
+  fireEvent.change(screen.getByLabelText('Perspective'), { target: { value: 'bob-seat' } });
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Mountain, show card' })).toBeNull());
+});
+
+test('[PM-REVIEW-UI-6] a saved omission is accessible and identified as inferred', async () => {
+  const omitted = {
+    ...moments[1], cursor: 2, frameCursor: 2, actionFrameCursor: undefined,
+    actual: { kind: 'omission', text: 'Alice · omission' },
+    evidence: { basis: 'inferred_omission', frameQuality: 'preceding_snapshot', window: 'before_combat' },
+  };
+  const original = request.getMockImplementation()!;
+  request.mockImplementation((raw, options) => {
+    const url = new URL(raw, 'http://localhost');
+    if (url.pathname.endsWith('/annotations')) return json({ annotations: [{
+      ...annotation, ...omitted, confidence: 'medium', category: 'inaccuracy', rationale: 'Waiting gave up early tempo.',
+    }], next: null });
+    if (url.searchParams.get('scope') === 'public') return json({ events: [moments[0], omitted, moments[1]], next: null });
+    return original(raw, options);
+  });
+  openReplay('/replay/game?cursor=1&analysis=1');
+  const markers = await screen.findByRole('group', { name: 'Reviewed decisions' });
+  await within(markers).findByRole('button', { name: /Inaccuracy.*Alice lets an opportunity pass/ });
+  fireEvent.keyDown(document.body, { key: 'ArrowRight' });
+  expect(await screen.findByRole('heading', { name: 'Alice lets an opportunity pass before combat' })).toBeTruthy();
+  expect(screen.getByText('Medium confidence')).toBeTruthy();
+  expect(screen.getByText('Inferred from the recorded priority window.')).toBeTruthy();
+});
+
+test.each([
+  { kind: 'mulligan', cards: undefined, heading: null, message: 'The replay has no opening hand capture for this decision.' },
+  {
+    kind: 'pass', cards: [{ id: 'bolt', name: 'Burst Lightning' }], heading: 'Recorded options',
+    message: 'Manual pass · End step · 0 objects on the stack · 1 playable option recorded',
+  },
+])('[PM-REVIEW-UI-6] a recorded $kind shows its available context', async ({ kind, cards, heading, message }) => {
+  const play = { ...moments[0], actor: 'Alice', seatId: 'alice-seat', actual: { kind, text: 'Alice acts' } };
+  const original = request.getMockImplementation()!;
+  request.mockImplementation((raw, options) => {
+    const url = new URL(raw, 'http://localhost');
+    if (url.searchParams.get('scope') === 'public') return json({ events: [play], next: null });
+    if (url.searchParams.get('scope') === 'full' && url.searchParams.get('count') === '1') {
+      return json({
+        events: [cards ? { ...play, decision: { cards, passKind: 'manual', endsTurn: true, stackSize: 0, playableCount: 1 } } : play],
+        next: null,
+      });
+    }
+    return original(raw, options);
+  });
+  openReplay('/replay/game?cursor=1&analysis=1');
+  if (heading) {
+    const context = await screen.findByRole('region', { name: heading });
+    expect(within(context).getByRole('button', { name: 'Burst Lightning, show card' })).toBeTruthy();
+  }
+  expect(await screen.findByText(message)).toBeTruthy();
+});
+
+test('[PM-REVIEW-UI-6] attached choices show the selected mode, opponent or card target, and declined options only in authorized context', async () => {
+  const cast = { ...moments[1], seatId: 'alice-seat', hasDecisionContext: true };
+  const mode = {
+    id: 'decision-mode', choiceKind: 'mode',
+    optionDetails: [{ id: 'opaque-mode-0', label: 'Draw two cards' }, { id: 'opaque-mode-1', label: 'Deal damage' }],
+    selectedOptionIds: ['opaque-mode-1'],
+  };
+  const target = {
+    id: 'decision-target', choiceKind: 'target',
+    optionDetails: [
+      { id: 'opaque-target-0', label: 'Bob', playerId: 'bob-player' },
+      { id: 'opaque-target-1', label: 'Fatal Push', card: { id: 'private-card', name: 'Fatal Push' } },
+    ],
+    selectedOptionIds: ['opaque-target-1'],
+  };
+  const confirmation = { id: 'decision-confirmation', choiceKind: 'use', prompt: 'Pay the additional cost?', declined: true };
+  const original = request.getMockImplementation()!;
+  request.mockImplementation((raw, options) => {
+    const url = new URL(raw, 'http://localhost');
+    if (url.searchParams.get('scope') === 'public') return json({ events: [cast], next: null });
+    if (url.searchParams.get('cursor') === '3' && url.searchParams.get('count') === '1') {
+      const includeChoices = url.searchParams.get('seatId') !== 'bob-seat';
+      return json({ events: [includeChoices ? { ...cast, decision: mode, decisions: [mode, target, confirmation] } : cast], next: null });
+    }
+    return original(raw, options);
+  });
+  openReplay('/replay/game?cursor=3&analysis=1');
+  const modes = await screen.findByRole('region', { name: 'Modes' });
+  expect(within(modes).getByText('Draw two cards')).toBeTruthy();
+  expect(within(modes).getByText('Deal damage').closest('li')?.textContent).toContain('Selected');
+  const targets = screen.getByRole('region', { name: 'Targets' });
+  expect(within(targets).getByText('Bob')).toBeTruthy();
+  expect(within(targets).queryByRole('button', { name: 'Bob, show card' })).toBeNull();
+  expect(within(targets).getByRole('button', { name: 'Fatal Push, show card' }).closest('li')?.textContent).toContain('Selected');
+  const confirm = screen.getByRole('region', { name: 'Confirmation' });
+  expect(within(confirm).getByText('Pay the additional cost?')).toBeTruthy();
+  expect(within(confirm).getByText('Declined')).toBeTruthy();
+  expect(modes.textContent).not.toContain('opaque-mode-');
+
+  fireEvent.click(screen.getByRole('switch', { name: 'Show both hands' }));
+  fireEvent.change(screen.getByLabelText('Perspective'), { target: { value: 'bob-seat' } });
+  await waitFor(() => expect(request.mock.calls.some(([raw]) => {
+    const params = new URL(raw, 'http://localhost').searchParams;
+    return params.get('scope') === 'seat' && params.get('seatId') === 'bob-seat' && params.get('count') === '1';
+  })).toBe(true));
+  expect(screen.queryByText('Pay the additional cost?')).toBeNull();
+  expect(screen.queryByText('Draw two cards')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Fatal Push, show card' })).toBeNull();
+});
+
+test('[PM-REVIEW-UI-6] a forced choice names the chooser and affected seat and previews its source', async () => {
+  const discard = {
+    ...moments[1], actor: 'Bob', seatId: 'bob-seat', decisionActor: 'Alice', decisionSeatId: 'alice-seat',
+    affectedActor: 'Bob', hasDecisionContext: true,
+    actual: { kind: 'discard', text: 'Bob discards a card', cardRef: { name: 'Lightning Strike' } },
+  };
+  const context = {
+    choiceKind: 'discard', sourceCard: { name: 'Duress' },
+    cards: [{ id: 'chosen-card', name: 'Lightning Strike' }], selectedIds: ['chosen-card'],
+  };
+  const original = request.getMockImplementation()!;
+  request.mockImplementation((raw, options) => {
+    const url = new URL(raw, 'http://localhost');
+    if (url.searchParams.get('scope') === 'public') return json({ events: [discard], next: null });
+    if (url.searchParams.get('cursor') === '3' && url.searchParams.get('count') === '1') {
+      return json({ events: [{ ...discard, decision: context }], next: null });
+    }
+    return original(raw, options);
+  });
+  openReplay('/replay/game?cursor=3&analysis=1');
+  const title = await screen.findByRole('heading', { name: /Alice chooses Lightning Strike.*for Bob to discard/ });
+  expect(within(title).getByRole('button', { name: 'Lightning Strike, show card' })).toBeTruthy();
+  const choices = await screen.findByRole('region', { name: 'Discard choices' });
+  expect(within(choices).getByRole('button', { name: 'Duress, show card' })).toBeTruthy();
+  expect(within(choices).getByRole('button', { name: 'Lightning Strike, show card' }).closest('li')?.textContent).toContain('Selected');
+});

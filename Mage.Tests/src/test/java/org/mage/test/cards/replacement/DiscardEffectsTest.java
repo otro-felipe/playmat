@@ -2,8 +2,17 @@ package org.mage.test.cards.replacement;
 
 import mage.constants.PhaseStep;
 import mage.constants.Zone;
+import mage.game.trace.ReplayDecision;
 import org.junit.Test;
 import org.mage.test.serverside.base.CardTestPlayerBase;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Collectors;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+
 
 /**
  *
@@ -19,12 +28,31 @@ public class DiscardEffectsTest extends CardTestPlayerBase {
         // Loxodon Smiter can't be countered.
         // If a spell or ability an opponent controls causes you to discard Loxodon Smiter, put it onto the battlefield instead of putting it into your graveyard.
         addCard(Zone.HAND, playerB, "Loxodon Smiter");
+        addCard(Zone.HAND, playerB, "Shock");
+        addCard(Zone.HAND, playerB, "Mountain");
+
 
         castSpell(1, PhaseStep.PRECOMBAT_MAIN, playerA, "Thoughtseize");
         addTarget(playerA, playerB);
         setChoice(playerA, "Loxodon Smiter");
         setStopAt(1, PhaseStep.BEGIN_COMBAT);
-        execute();
+        List<ReplayDecision> decisions = new ArrayList<>();
+        try (ReplayDecision.Subscription ignored = ReplayDecision.observe(currentGame, decisions::add)) {
+            execute();
+        }
+        List<ReplayDecision> choices = decisions.stream()
+                .filter(decision -> decision.kind == ReplayDecision.Kind.SELECT)
+                .collect(Collectors.toList());
+        assertEquals(1, choices.size());
+        ReplayDecision choice = choices.get(0);
+        assertEquals(playerA.getId(), choice.chooserId);
+        assertEquals(playerB.getId(), choice.affectedPlayerId);
+        assertEquals("Thoughtseize", currentGame.getCard(choice.sourceId).getName());
+        assertEquals(2, choice.cards.size());
+        assertFalse(choice.cards.stream().anyMatch(card -> card.getName().equals("Mountain")));
+        assertEquals(1, choice.selectedIds.size());
+        assertEquals("Loxodon Smiter", currentGame.getCard(choice.selectedIds.get(0)).getName());
+
         
         assertLife(playerA, 18);
         assertGraveyardCount(playerA, "Thoughtseize", 1);

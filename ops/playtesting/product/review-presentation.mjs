@@ -6,6 +6,7 @@ const choicePattern = /\s+(?:targeting|choosing)\s+/i
 const objectTag = /<font\b([^>]*)>([^<>]*)<\/font>/gi
 const objectIdAttribute = /\bobject_id\s*=\s*['"]([^'"]+)['"]/i
 const shortId = /\s+\[([0-9a-f]{3})\]/i
+const targetedDiscardChoosers = new Set(['Thoughtseize', 'Duress', 'Inquisition of Kozilek', 'Thought Erasure', 'Despise', 'Dread Fugue'])
 
 function cardRef(id, card) {
   const shown = card?.sourceCard ?? card
@@ -29,6 +30,14 @@ function visibleCards(view) {
     }
   }
   return cards
+}
+
+export function publicSourceCard(view, id) {
+  if (!isUuid(id)) return undefined
+  const exact = visibleCards(view).get(id)
+  if (exact) return exact
+  const stackEntry = Object.values(view?.stack ?? {}).find(item => item.cardId === id || item.sourceCard?.id === id)
+  return stackEntry ? cardRef(id, stackEntry) : undefined
 }
 
 function linkedCards(text) {
@@ -59,6 +68,11 @@ function legacySource(kind, headline, cards) {
   if (!marker) return null
   const ref = { name: body.slice(0, marker.index).trim(), shortId: marker[1] }
   return matchVisibleCard(ref, cards) ?? ref
+}
+
+export function publicDiscardLinks(message) {
+  const [discard, source] = (message ?? '').split(/\(source:\s*/i, 2)
+  return { card: linkedCards(discard)[0], source: source ? linkedCards(source)[0] : undefined }
 }
 
 function loggedTargets(choice, cards, players) {
@@ -165,8 +179,12 @@ function decideAction(position, actor, before, after, row) {
   const sourceLink = discardSource && legacySource('cast', `casts ${discardSource}`, preceding)
   const { shortId: _shortId, ...cardReference } = card ?? {}
   const { shortId: _sourceShortId, ...sourceReference } = sourceLink || {}
+  const stackEntry = targetedDiscardChoosers.has(sourceReference.name)
+    ? witnessedStackObject(before?.view, { kind: 'cast' }, sourceLink)?.[1] : undefined
+  const decisionPlayerId = row?.decisionPlayerId ?? stackEntry?.controllerId
   return {
     ...(actor ? { actor: actor.name, actorPlayerId: actor.playerId } : {}),
+    ...(decisionPlayerId ? { decisionActorPlayerId: decisionPlayerId } : {}),
     ...(witnessed ? { actionFrameCursor: after.cursor } : {}),
     actual: { ...actual,
       ...(cardReference.name ? { cardRef: cardReference } : {}),
@@ -185,6 +203,7 @@ export function indexReplayPresentation(rows, positions, perspectives, capture) 
   const actionRows = new Map(positions.map(position => [position.cursor, position]))
   const nearest = new Map()
   const actors = new Map(perspectives.map(actor => [actor.seatId, actor]))
+  const byPlayer = new Map(perspectives.filter(actor => actor.playerId).map(actor => [actor.playerId, actor]))
   let next = null
   for (let i = rows.length - 1; i >= 0; i -= 1) {
     const row = rows[i]
@@ -197,9 +216,34 @@ export function indexReplayPresentation(rows, positions, perspectives, capture) 
       next = null
     }
   }
+  const exactCasters = new Map()
+  const inferredChoosers = new Map()
+  for (const position of positions) {
+    const event = nearest.get(position.cursor).event
+    const message = event.log?.message ?? capture.get(position.cursor)?.logMessage
+    if (position.actual.kind === 'cast') {
+      const source = linkedCards(message ?? '')[0]
+      const id = source?.id ?? position.actual.sourceId
+      if (id) exactCasters.set(id, position)
+    } else if (position.actual.kind === 'discard' && position.evidence.basis === 'engine_log') {
+      const { source } = publicDiscardLinks(message)
+      const cast = source && targetedDiscardChoosers.has(source.name) ? exactCasters.get(source.id) : undefined
+      if (cast && cast.evidence.turn === position.evidence.turn && position.cursor - cast.cursor <= 64) {
+        inferredChoosers.set(position.cursor, actors.get(cast.seatId)?.playerId)
+      }
+    }
+  }
   return position => {
     const { after, event } = nearest.get(position.cursor)
-    return decideAction({ ...position, ...capture.get(position.cursor) }, actors.get(position.seatId),
+    const displayed = decideAction({ ...position, ...capture.get(position.cursor) }, actors.get(position.seatId),
       frames.get(position.frameCursor), after, event)
+    const chooser = byPlayer.get(displayed.decisionActorPlayerId ?? inferredChoosers.get(position.cursor))
+    if (!chooser) {
+      delete displayed.decisionActorPlayerId
+      return displayed
+    }
+    const affected = byPlayer.get(event.affectedPlayerId)
+    return { ...displayed, decisionActorPlayerId: chooser.playerId, decisionSeatId: chooser.seatId, decisionActor: chooser.name,
+      ...(affected ? { affectedPlayerId: affected.playerId, affectedActor: affected.name } : {}) }
   }
 }

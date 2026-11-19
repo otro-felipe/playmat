@@ -1,0 +1,27 @@
+# Shared matchup strategy
+
+Use these criteria while piloting, while coaching, and while reviewing a completed match. Apply the information and timing rules of the current role. Treat any example as a test of a broader strategic principle. Before promoting a playtest into guidance, check how the result changes with the other matchup, game number, sideboard, phase, mana, or available responses. Record what remains conditional.
+
+## Build a matchup model from evidence
+
+1. Establish the format, game number, who played first, and what both players knew before the decision. In games two and three, use public cards and lines from earlier games and the acting player's own sideboard changes. Use an opponent's submitted list only if it was shared with the player before the decision. A later reveal belongs in the retrospective.
+2. Describe each deck's likely route to winning this game. Compare its early threats, interaction, ability to rebuild, and the turn or board where it can stabilize. Reassess after sideboarding or when the board or life totals change the race.
+3. Name plausible responses and their timing. Distinguish cards seen in this game, cards established in earlier games, and hypotheses supported only by comparable public lists. A common card can inform the range without establishing that it was in hand. Read card text to verify targets, mana, timing, and whether a card draws, exiles, or reveals.
+4. When role, card range, or stabilization changes the decision, research the generic format and matchup before play, between games when time permits, or during post-match review. Resolve any pending engine choice on time. Start with official strategy material and dated tournament decklists. Check several actual lists before treating an inclusion or exclusion as typical. Leave private names, hands, decklists, and replay identifiers out of web queries. Cite public URLs and explain what each source supports.
+
+Role is a working hypothesis. Aggro typically wants to apply pressure before slower threats and life gain stabilize the game. Midrange often trades early resources and turns the corner with a stronger board. The same aggro deck can become the defender against a faster start or keep removal to clear a pivotal blocker. [Role Assignment, Gavin Verhey, 2015-01-05](https://magic.wizards.com/en/news/feature/role-assignment-2015-01-05) · [Aggro Decks, Reid Duke, 2014-09-29](https://magic.wizards.com/en/news/feature/aggro-decks-2014-09-29) · [Midrange Decks, Reid Duke, 2014-10-27](https://magic.wizards.com/en/news/feature/midrange-decks-2014-10-27)
+
+| Matchup | Compare these plans |
+| --- | --- |
+| Aggro vs midrange | Establish a clock, sequence around cheap removal, and preserve reach or a line to remove the stabilizer. Check whether reload improves damage or delays development. |
+| Aggro vs aggro | Compare the lethal clocks, removal that changes combat, and which creature can attack or block profitably. Reassign roles after a fast start or a swing in life totals. |
+| Aggro vs control | Compare early pressure, protection, and rebuilding after a sweeper. Compare adding a threat now with holding one against the known clean answer. |
+| Midrange vs combo | Compare fast pressure backed by disruption, the opponent's likely combo window, and the value of holding an answer through priority. |
+| Midrange mirror | Compare card advantage, mana efficiency, and which threat or land will dominate after trades. Re-evaluate the clock after each meaningful exchange. |
+
+## Pioneer example: Izzet Prowess vs Golgari Midrange
+
+- If earlier games establish a Golgari list with limited early creature development, a turn-one Stormchaser's Talent creates an immediate clock and a future reload engine. Compare holding Burst Lightning against credible targets and account for cheap disruption such as Fatal Push and Thoughtseize. Low creature density on turn one is different from having no one-mana interaction.
+- With an Otter and open mana, compare Wrenn's Resolve before attacks with attacking first or holding interaction. A precombat Resolve triggers prowess and may set up your next turn. It exiles two cards and allows play until the end of your next turn. Check land drops, available mana, and the opponent's removal window. Spending two mana can shut off protection now, and exiling cards does not trigger Sheoldred's draw ability.
+- For Thoughtseize, compare stripping the reload spell with taking Precise Redaction. Taking the reload can strand lands and protect the long game. Taking the counter can protect a follow-up black spell, especially when a second spell must resolve. If the counter is still known, casting the second Thoughtseize can trade for it and clear that copy for Fatal Push. Passing can leave their mana unused while preserving Push for an Otter. If they counter, they choose to spend the counter and keep the other card and its identity private. Review those choices separately.
+- When an Emberheart Challenger attacks into Sheoldred, verify the two paths. If she blocks, two damage from Burst Lightning plus three combat damage after prowess can remove the 4/5 even if Challenger dies. If she declines to block, Izzet advances the clock and can hold the burn. Compare that pressure with keeping Challenger back while Sheoldred gains and drains life, including any credible opposing protection and whether available mana supports the line.

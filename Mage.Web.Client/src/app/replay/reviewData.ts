@@ -77,6 +77,44 @@ export interface ReviewAction {
   paidMana?: Record<string, number>;
 }
 
+interface ReviewDecisionOption {
+  id: string;
+  label?: string;
+  card?: ReviewReference;
+  playerId?: string;
+}
+
+export interface ReviewDecisionContext {
+  id?: string;
+  choiceKind?: string;
+  cards?: ReviewReference[];
+  selectedId?: string;
+  selectedIds?: string[];
+  optionDetails?: ReviewDecisionOption[];
+  selectedOptionIds?: string[];
+  selectedText?: string;
+  declined?: boolean;
+  optionCount?: number;
+  sourceCard?: ReviewReference;
+  passKind?: 'manual' | 'automatic';
+  stackSize?: number;
+  endsTurn?: boolean;
+  manaPool?: number;
+  availableManaSources?: number;
+  playableCount?: number;
+  handKind?: 'opening_choice' | 'kept_hand';
+  prompt?: string;
+  options?: string[];
+}
+
+interface ReviewEvidence {
+  basis: string;
+  frameCursor?: number;
+  turn?: number;
+  observation?: string;
+  window?: 'before_combat' | 'before_end_turn';
+}
+
 export interface ReviewMoment {
   cursor: number;
   frameCursor?: number | null;
@@ -84,13 +122,21 @@ export interface ReviewMoment {
   turn?: number;
   text?: string;
   actor?: string;
+  seatId?: string;
+  decisionActor?: string;
+  affectedActor?: string;
+  decisionSeatId?: string;
+  hasDecisionContext?: boolean;
   actual?: ReviewAction;
+  evidence?: ReviewEvidence;
   category?: ReviewCategory;
 }
 
 export interface ReviewEvent extends ReviewMoment {
   type?: string;
   actorPlayerId?: string;
+  decision?: ReviewDecisionContext;
+  decisions?: ReviewDecisionContext[];
   card?: { id?: string; name?: string };
   view?: GameView;
   myHand?: Record<string, CardView> | null;
@@ -98,7 +144,7 @@ export interface ReviewEvent extends ReviewMoment {
   log?: { message?: string };
 }
 
-export interface ReviewAnnotation {
+export interface ReviewAnnotation extends Pick<ReviewMoment, 'decisionActor' | 'decisionSeatId'> {
   cursor: number;
   frameCursor: number;
   seatId: string;
@@ -108,7 +154,7 @@ export interface ReviewAnnotation {
   benefit?: string;
   risk?: string;
   confidence: 'low' | 'medium' | 'high';
-  evidence?: { basis: string; frameCursor?: number; turn?: number };
+  evidence?: ReviewEvidence;
   alternatives: { line: string; legality: string; condition?: string; benefit?: string; risk?: string }[];
   opponentResponses?: { line: string; basis: string; impact?: string }[];
   sources?: { url: string; date?: string; format?: string; applicability?: string }[];

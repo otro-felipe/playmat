@@ -15,6 +15,11 @@ const actionTitles: Partial<Record<string, MessageKey>> = {
 const cardlessTitles: Partial<Record<string, MessageKey>> = {
   keep: 'replay.action.keep',
   mulligan: 'replay.action.mulligan',
+  select: 'replay.action.chooseOption',
+  attack: 'replay.action.declareAttackers',
+  block: 'replay.action.declareBlockers',
+  pass: 'replay.action.pass',
+  omission: 'replay.action.omission',
 };
 
 const directedTitles: Partial<Record<string, MessageKey>> = {
@@ -39,12 +44,20 @@ export function decisionPresentation(moment: ReviewMoment, t: Translate) {
   const card = actual?.cardRef ?? (actual?.card ? { name: actual.card } : null);
   const targets = (actual?.targets ?? []).map((target) => target.kind === 'player'
     ? { ...target, name: replayName(target.name, t) } : target);
-  const actor = moment.actor ? replayName(moment.actor, t) : t('replay.player');
-  const titleKey = actual && (card ? actionTitles[actual.kind] : cardlessTitles[actual.kind]);
+  const actingName = moment.decisionActor ?? moment.actor;
+  const actor = actingName ? replayName(actingName, t) : t('replay.player');
+  const window = actual?.kind === 'omission' ? moment.evidence?.window : undefined;
+  const affected = moment.affectedActor ?? (actual?.kind === 'discard' ? moment.actor : undefined);
+  const forcedDiscard = actual?.kind === 'discard' && card && affected && affected !== actingName;
+  const titleKey = window === 'before_combat' ? 'replay.action.omissionCombat'
+    : window === 'before_end_turn' ? 'replay.action.omissionEndTurn'
+      : forcedDiscard ? 'replay.action.chooseDiscard'
+        : actual && (card ? actionTitles[actual.kind] : cardlessTitles[actual.kind]);
   const directedKey = actual && card && targets.length ? directedTitles[actual.kind] : undefined;
   const targetNames = targets.map(({ name }) => name).join(', ');
   const title = titleKey
-    ? t(directedKey ?? titleKey, { actor, ...(card ? { card: card.name } : {}), ...(directedKey ? { targets: targetNames } : {}) })
+    ? t(directedKey ?? titleKey, { actor, ...(card ? { card: card.name } : {}), ...(directedKey ? { targets: targetNames } : {}),
+      ...(forcedDiscard ? { affected: replayName(affected, t) } : {}) })
     : cleanDecisionText(moment.text ?? actual?.text ?? '', t) || t('replay.decision');
   const targetPart = titleKey && !directedKey && targetNames ? ` ${t('replay.action.targets', { targets: targetNames })}` : '';
   const source = actual?.sourceCardRef;

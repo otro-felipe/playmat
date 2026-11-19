@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { ChevronFirst, ChevronLast, GitBranch, Pause, Play, StepBack, StepForward } from 'lucide-react';
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useEffectEvent, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useStore } from 'zustand';
 import { GameSession } from '../../core/game/gameSession';
@@ -11,6 +11,7 @@ import { api } from '../connection';
 import { useT } from '../i18n';
 import { MatchErrorBoundary } from '../match/MatchErrorBoundary';
 import { MatchStage } from '../match/MatchStage';
+import { ignoreMatchKey, matchKeysBlocked } from '../match/keyboard';
 import { useMatchUi } from '../match/matchUi';
 import { PRIVATE_PLAYTESTING } from '../playtesting';
 import { playFromTurn, useSoloTurns } from '../solo/soloData';
@@ -113,7 +114,7 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
   });
   const manifest = manifestQuery.data;
   const privacy = manifest?.privacy;
-  const perspectives = perspectivesFor(manifest);
+  const perspectives = useMemo(() => perspectivesFor(manifest), [manifest]);
   const viewerSeat = privacy?.viewerSeatId ?? manifest?.viewerSeatId;
   const perspective = perspectives.find((seat) => seat.seatId === requestedSeat)
     ?? perspectives.find((seat) => seat.seatId === viewerSeat)
@@ -152,11 +153,14 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
     for (const annotation of allAnnotations) {
       byCursor.set(annotation.cursor, {
         cursor: annotation.cursor, frameCursor: annotation.frameCursor, turn: annotation.evidence?.turn,
-        actual: annotation.actual, text: annotation.actual.text, ...byCursor.get(annotation.cursor), category: annotation.category,
+        actual: annotation.actual, text: annotation.actual.text, evidence: annotation.evidence, seatId: annotation.seatId,
+        actor: perspectives.find((seat) => seat.seatId === annotation.seatId)?.name,
+        decisionActor: annotation.decisionActor, decisionSeatId: annotation.decisionSeatId,
+        ...byCursor.get(annotation.cursor), category: annotation.category,
       });
     }
     return [...byCursor.values()].sort((a, b) => a.cursor - b.cursor);
-  }, [allAnnotations, playsByCursor]);
+  }, [allAnnotations, perspectives, playsByCursor]);
 
   // Notes are lightweight. Load the remaining archive evidence as the viewer opens the decision list.
   const { fetchNextPage: fetchNextAnnotations, hasNextPage: hasMoreAnnotations, isFetching: fetchingAnnotations, isError: annotationsFailed } = annotations;
@@ -236,9 +240,25 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
   }, [playing, index, speed, timeline, frames.length, loaded]);
 
   function go(next: number) {
+    const position = Math.max(0, Math.min(last, next));
     setAction(undefined);
-    setFrameIndex(Math.max(0, Math.min(last, next)));
+    setFrameIndex(position);
     setPlaying(false);
+    setSearch((prior) => {
+      const query = new URLSearchParams(prior);
+      query.set('frame', String(position));
+      query.delete('cursor');
+      return query;
+    }, { replace: true });
+  }
+
+  function togglePlayback() {
+    if (playing) {
+      go(index);
+    } else {
+      go(index >= last && loaded ? 0 : index);
+      setPlaying(true);
+    }
   }
 
   function jump(moment: ReviewMoment) {
@@ -257,39 +277,62 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
   const chosen = selectedNote ?? (playbackMoment && allAnnotations.find((item) => item.cursor === playbackMoment.cursor));
   const decision = playAtCursor || chosen || playbackMoment ? {
     cursor: currentCursor, text: chosen?.actual.text, actual: chosen?.actual, category: chosen?.category,
+    evidence: chosen?.evidence, seatId: chosen?.seatId,
+    decisionActor: chosen?.decisionActor, decisionSeatId: chosen?.decisionSeatId,
     actor: perspectives.find((seat) => seat.seatId === chosen?.seatId)?.name,
     ...playbackMoment, ...playAtCursor,
   } : undefined;
+  const decisionKind = decision?.actual?.kind;
+  const handDecision = decisionKind === 'mulligan' || decisionKind === 'keep';
+  const decisionSeat = decision?.decisionSeatId ?? decision?.seatId;
+  const contextAllowed = !!scope && (scope === 'full' || decision?.hasDecisionContext
+    || !!decisionSeat && decisionSeat === perspective?.seatId);
+  const contextCursor = decision?.cursor;
+  const batchContext = privateFrameQuery.data?.events.find((item) => item.cursor === contextCursor
+    && (item.decision || item.decisions?.length));
+  const contextQuery = useQuery({
+    queryKey: ['match-review', userName, gameId, 'decision-context', scope, perspective?.seatId, contextCursor, manifest?.archiveRevision],
+    queryFn: ({ signal }) => loadReviewEvents(gameId, contextCursor!, scope!, 1, signal, otherSeat ? perspective?.seatId : undefined),
+    enabled: analysisOpen && !playing && contextAllowed && contextCursor !== undefined
+      && (decision?.hasDecisionContext || handDecision || decisionKind === 'select' || decisionKind === 'discard' || decisionKind === 'pass')
+      && !batchContext,
+    gcTime: 0,
+    retry: false,
+  });
+  const contextEvent = contextAllowed ? batchContext ?? contextQuery.data?.events.find((item) => item.cursor === contextCursor) : undefined;
+  const decisionContexts = contextEvent?.decisions?.length ? contextEvent.decisions : contextEvent?.decision ? [contextEvent.decision] : [];
+  const missingDecisionHand = handDecision && contextAllowed && (contextQuery.isSuccess || !!batchContext)
+    && !decisionContexts.some(({ cards }) => cards?.length);
   const previousMoment = moments.filter((item) => item.cursor < currentCursor).at(-1);
   const nextMoment = moments.find((item) => item.cursor > currentCursor);
+  const canStepBack = !!previousMoment || index > 0;
+  const canStepForward = !!nextMoment || index < last;
 
+  function step(direction: -1 | 1) {
+    const moment = direction === -1 ? previousMoment : nextMoment;
+    if (moment) jump(moment);
+    else if (direction === -1 ? canStepBack : canStepForward) go(index + direction);
+  }
+
+  const onReplayKey = useEffectEvent((event: KeyboardEvent) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!frame || ignoreMatchKey(event) || event.altKey || event.ctrlKey || event.metaKey || matchKeysBlocked()) return;
+    const widget = target?.closest('button, input, select, textarea, a, [contenteditable]:not([contenteditable="false"]), [role="button"], [role="switch"], [role="slider"], [role="tab"], [role="combobox"], [role="listbox"], [role="radiogroup"]');
+    if (event.key === ' ' && !widget && !event.shiftKey) {
+      event.preventDefault();
+      togglePlayback();
+      return;
+    }
+    if ((widget && !widget.hasAttribute('data-replay-step-focus')) || (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft')) return;
+    event.preventDefault();
+    const direction = event.key === 'ArrowLeft' ? -1 : 1;
+    if (event.shiftKey) go(turnJump(timeline, index, direction));
+    else step(direction);
+  });
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      const target = event.target instanceof Element ? event.target : null;
-      if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey
-        || target?.closest('button, input, select, textarea, a, [contenteditable="true"], [role="dialog"]')) return;
-      if (event.key === ' ') {
-        event.preventDefault();
-        if (!playing) {
-          setFrameIndex(index >= last && loaded ? 0 : index);
-          setAction(undefined);
-        }
-        setPlaying((current) => !current);
-      } else if (event.key === 'ArrowRight') {
-        event.preventDefault();
-        setPlaying(false);
-        setAction(undefined);
-        setFrameIndex(event.shiftKey ? turnJump(timeline, index, 1) : Math.min(last, index + 1));
-      } else if (event.key === 'ArrowLeft') {
-        event.preventDefault();
-        setPlaying(false);
-        setAction(undefined);
-        setFrameIndex(event.shiftKey ? turnJump(timeline, index, -1) : Math.max(0, index - 1));
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [timeline, last, index, loaded, playing]);
+    window.addEventListener('keydown', onReplayKey);
+    return () => window.removeEventListener('keydown', onReplayKey);
+  }, []);
 
   // your own games against the computer keep every turn: take over from the start of one (S014)
   const turns = useSoloTurns(gameId);
@@ -343,7 +386,7 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
   };
   const panel = manifest && analysisOpen && <ReplayReviewPanel analysis={manifest.analysis} moments={moments} current={decision?.cursor}
     sideboardDelta={manifest.status === 'completed' && manifest.gameNumber > 1 ? manifest.sideboardDelta : undefined}
-    annotation={chosen} decision={decision}
+    annotation={chosen} decision={decision} decisionContexts={decisionContexts} missingDecisionHand={missingDecisionHand}
     showRetrospective={showBoth && !!recorded} onMoment={jump} error={reviewError}
     onRetry={() => {
       void eventQuery.refetch();
@@ -395,19 +438,14 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
           </div>
           <div className={styles.transport} role="toolbar" aria-label="Replay controls">
             <div className={styles.playback}>
-              <IconButton label="Previous turn" icon={<ChevronFirst size={18} />} onClick={() => go(turnJump(timeline, index, -1))} />
+              <IconButton label="Previous turn" icon={<ChevronFirst size={18} />} aria-keyshortcuts="Shift+ArrowLeft" data-replay-step-focus onClick={() => go(turnJump(timeline, index, -1))} />
               <IconButton label={manifest ? t('replay.previousPlay') : 'Step back'} icon={<StepBack size={18} />}
-                onClick={() => previousMoment ? jump(previousMoment) : go(index - 1)} disabled={!previousMoment && index === 0} />
-              <IconButton label={playing ? 'Pause' : 'Play'} icon={playing ? <Pause size={18} /> : <Play size={18} />} pressed={playing} onClick={() => {
-                if (!playing) {
-                  setFrameIndex(index >= last && loaded ? 0 : index);
-                  setAction(undefined);
-                }
-                setPlaying(!playing);
-              }} />
+                aria-keyshortcuts="ArrowLeft" aria-disabled={!canStepBack} data-replay-step-focus onClick={() => step(-1)} />
+              <IconButton label={playing ? 'Pause' : 'Play'} icon={playing ? <Pause size={18} /> : <Play size={18} />}
+                pressed={playing} data-replay-step-focus onClick={togglePlayback} />
               <IconButton label={manifest ? t('replay.nextPlay') : 'Step forward'} icon={<StepForward size={18} />}
-                onClick={() => nextMoment ? jump(nextMoment) : go(index + 1)} disabled={!nextMoment && index >= last} />
-              <IconButton label="Next turn" icon={<ChevronLast size={18} />} onClick={() => go(turnJump(timeline, index, 1))} />
+                aria-keyshortcuts="ArrowRight" aria-disabled={!canStepForward} data-replay-step-focus onClick={() => step(1)} />
+              <IconButton label="Next turn" icon={<ChevronLast size={18} />} aria-keyshortcuts="Shift+ArrowRight" data-replay-step-focus onClick={() => go(turnJump(timeline, index, 1))} />
               <span className={styles.where}>
                 Turn {turn}{frame.view.activePlayerName ? ` · ${replayName(frame.view.activePlayerName, t)}` : ''}
                 {!loaded && total ? <span className={styles.loading}> · loading {Math.round((timeline.read / total) * 100)}%</span> : null}

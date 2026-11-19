@@ -688,7 +688,8 @@ test('[PM-REVIEW-API-6] active or incomplete adjacent lists do not become inferr
   assert.deepEqual(await own(second), { status: 'unavailable' })
 })
 
-async function analysisFixture(t, { completed = true, fresh = false, rollback = false } = {}) {
+async function analysisFixture(t, { completed = true, fresh = false, rollback = false, missedOpportunity = false,
+  transition = false, targetedDiscard = false, coalesced = false } = {}) {
   const f = await fixture(t)
   const alice = await signIn(f, 'Alice')
   const bob = await signIn(f, 'Bob')
@@ -697,9 +698,15 @@ async function analysisFixture(t, { completed = true, fresh = false, rollback = 
   const gameId = randomUUID()
   const aliceId = randomUUID()
   const bobId = randomUUID()
+  const opportunityObjectId = randomUUID()
+  const discardSourceId = randomUUID()
+  const discardedCardId = randomUUID()
+  const logRef = (id, name) => `<font color='#fff' object_id='${id}'>${name}</font> [${id.slice(0, 3)}]`
   const lobby = { turn: 2, step: 'PRECOMBAT_MAIN', activePlayerName: 'Alice', priorityPlayerName: 'Alice',
     players: [{ name: 'Alice', playerId: aliceId }, { name: 'Bob', playerId: bobId }] }
-  const hand = { Alice: { forest: { name: 'Forest', cardTypes: ['LAND'] } }, Bob: { obscured: { name: 'Rival hand sentinel' } } }
+  const hand = { Alice: { forest: { name: 'Forest', cardTypes: ['LAND'] },
+    ...(missedOpportunity ? { [opportunityObjectId]: { id: opportunityObjectId, name: 'Opt' } } : {}) },
+    Bob: { obscured: { name: 'Rival hand sentinel' } } }
   const opening = { t: 10, view: lobby, hands: hand,
     ...(fresh ? { review: { seatViews: {
       [aliceId]: { myHand: hand.Alice, lookedAt: { own: { name: 'Alice known-only sentinel' } } },
@@ -709,11 +716,21 @@ async function analysisFixture(t, { completed = true, fresh = false, rollback = 
   await addReplay(f, matchId, gameId, ['Alice', 'Bob'], [
     opening,
     { t: 11, log: { messageType: 'GAME', message: 'Alice plays Forest', unrelated: 'Unknown log field sentinel' } },
+    ...(coalesced ? [{ t: 11, log: { messageType: 'GAME', message: 'Alice casts Opt [abc] targeting Bob from hand' } }] : []),
     { t: 12, view: lobby, hands: { ...hand, Alice: { future: { name: 'Later visibility sentinel' } } } },
     { t: 13, kind: 'draw', actorPlayerId: bobId, turn: 2, step: 'DRAW', card: { id: randomUUID(), name: 'Exact draw sentinel' } },
     { t: 15, log: { messageType: 'GAME', message: 'Bob passes priority' } },
     ...(rollback ? [{ t: 16, kind: 'rollback', turn: 2 }, { ...opening, t: 17 },
       { t: 18, log: { messageType: 'GAME', message: 'Alice activates a retained ability' } }] : []),
+    ...(missedOpportunity ? [
+      { ...opening, t: 19, view: { ...lobby, priorityPlayerName: transition ? 'Bob' : 'Alice' } },
+      ...(transition ? [{ t: 20, log: { messageType: 'GAME', message: 'Alice plays Island' } }] : []),
+      { ...opening, t: 21, view: { ...lobby, priorityPlayerName: 'Bob', step: transition ? 'BEGIN_COMBAT' : lobby.step } },
+    ] : []),
+    ...(targetedDiscard ? [
+      { t: 22, log: { messageType: 'GAME', message: `Alice casts ${logRef(discardSourceId, 'Thoughtseize')} targeting Bob from hand` } },
+      { t: 23, log: { messageType: 'GAME', message: `Bob discards ${logRef(discardedCardId, 'Go for the Throat')} (source: ${logRef(discardSourceId, 'Thoughtseize')})` } },
+    ] : []),
   ])
   if (fresh) {
     const capture = await f.path('/internal/review-capture', json('POST', {}, { matchId, tableId: matchId, seats: [
@@ -731,8 +748,120 @@ async function analysisFixture(t, { completed = true, fresh = false, rollback = 
   if (completed) await writeFile(join(f.replayDirectory, matchId + '.match.json'), JSON.stringify({ matchId, endedAt: Date.now() }))
   await f.product.archiveGames()
   const root = '/api/playtesting/review'
-  return { ...f, alice, bob, outsider, matchId, gameId, aliceId, bobId, root, replay: `${root}/games/${gameId}` }
+  return { ...f, alice, bob, outsider, matchId, gameId, aliceId, bobId, opportunityObjectId, root, replay: `${root}/games/${gameId}` }
 }
+
+test('[PM-REVIEW-API-9] inferred omissions require a witnessed opportunity and remain distinguishable from engine actions', { skip: !databaseUrl }, async t => {
+  const f = await analysisFixture(t, { missedOpportunity: true })
+  const { archiveRevision } = await (await f.path(f.replay, { headers: f.alice })).json()
+  const entry = {
+    cursor: 5, seatId: 'alice', assessment: 'small_loss', confidence: 'high',
+    omission: { observedThroughCursor: 6, opportunityObjectId: f.opportunityObjectId },
+    rationale: 'Priority moved to Bob while the caster could use their cantrip.', benefit: 'Saves mana.',
+    risk: 'Loses the opportunity to select the next draw.',
+    alternatives: [{ line: 'Cast Opt with the visible mana source.', legality: 'confirmed', benefit: 'Improve the draw.', risk: 'Spend mana.' }],
+  }
+  const put = value => f.path(f.replay + '/annotations', json('POST', f.alice, { archiveRevision, entries: [value] }))
+  assert.equal((await put({ ...entry, seatId: 'bob' })).status, 400)
+  assert.equal((await put({ ...entry, omission: { ...entry.omission, opportunityObjectId: randomUUID() } })).status, 400)
+  assert.equal((await put({ ...entry, omission: { ...entry.omission, observedThroughCursor: 2 } })).status, 400)
+  const saved = await put(entry)
+  assert.equal(saved.status, 200)
+  const [annotation] = (await saved.json()).annotations
+  assert.equal(annotation.category, 'inaccuracy')
+  assert.equal(annotation.confidence, 'medium')
+  assert.equal(annotation.evidence.basis, 'inferred_omission')
+  const history = await (await f.path(f.replay + '/evidence?purpose=analysis&scope=public&includeBefore=false', { headers: f.alice })).json()
+  const marker = history.events.find(event => event.cursor === entry.cursor)
+  assert.equal(marker.actual.kind, 'omission')
+  assert.equal(marker.evidence.observedThroughCursor, 6)
+  assert.doesNotMatch(JSON.stringify(history), /Opt/)
+  assert.equal(JSON.stringify(history).includes(f.opportunityObjectId), false)
+})
+
+test('[PM-REVIEW-API-9] a committed precombat action and combat frame can witness a missed window despite coalesced priority', { skip: !databaseUrl }, async t => {
+  const f = await analysisFixture(t, { missedOpportunity: true, transition: true })
+  const { archiveRevision } = await (await f.path(f.replay, { headers: f.alice })).json()
+  const entry = {
+    cursor: 7, seatId: 'alice', assessment: 'small_loss', confidence: 'medium',
+    omission: { openingCursor: 6, observedThroughCursor: 7, opportunityObjectId: f.opportunityObjectId, window: 'before_combat' },
+    rationale: 'Moving to combat used the opportunity to cast a precombat spell.', benefit: 'Keeps resources open.',
+    risk: 'Reduces the opportunity to affect attacks.',
+    alternatives: [{ line: 'Cast the selected spell before combat.', legality: 'confirmed', benefit: 'Changes the attack.', risk: 'Spends mana.' }],
+  }
+  const put = value => f.path(f.replay + '/annotations', json('POST', f.alice, { archiveRevision, entries: [value] }))
+  assert.equal((await put({ ...entry, omission: { ...entry.omission, window: 'before_end_turn' } })).status, 400)
+  const accepted = await put(entry)
+  assert.equal(accepted.status, 200)
+  const [annotation] = (await accepted.json()).annotations
+  assert.equal(annotation.evidence.window, 'before_combat')
+  assert.equal(annotation.evidence.openingCursor, 6)
+  const playback = await (await f.path(f.replay + '/evidence?purpose=replay&scope=public', { headers: f.alice })).json()
+  const closure = playback.events.find(event => event.cursor === 7)
+  assert.equal(closure.type, 'frame')
+  assert.equal(closure.inferredDecision.actual.kind, 'omission')
+  assert.equal(closure.view.step, 'BEGIN_COMBAT')
+})
+
+test('[PM-REVIEW-CAPTURE-4] legacy saved discard notes keep revisions and can be read and edited by the witnessed chooser', { skip: !databaseUrl }, async t => {
+  const f = await analysisFixture(t, { targetedDiscard: true })
+  const { archiveRevision } = await (await f.path(f.replay, { headers: f.alice })).json()
+  const entry = {
+    cursor: 6, seatId: 'bob', assessment: 'sound', confidence: 'medium',
+    rationale: 'The choice took away the recorded removal spell.', benefit: 'Protects a future threat.', risk: 'Leaves another threat.',
+    alternatives: [{ line: 'Take the other legally revealed threat.', legality: 'confirmed', benefit: 'Reduces pressure.', risk: 'Leaves removal.' }],
+  }
+  const path = f.replay + '/annotations'
+  const put = value => f.path(path, json('POST', f.alice, { archiveRevision, entries: [value] }))
+  const original = await put(entry)
+  assert.equal(original.status, 200)
+  const [note] = (await original.json()).annotations
+  const read = await (await f.path(path + '?seatId=alice', { headers: f.alice })).json()
+  assert.equal(read.annotations[0].decisionSeatId, 'alice')
+  assert.equal(read.annotations[0].revision, note.revision)
+  const affected = await (await f.path(path + '?seatId=bob', { headers: f.alice })).json()
+  assert.deepEqual(affected.annotations, [])
+  const edited = await put({ ...entry, seatId: 'alice', expectedRevision: note.revision })
+  assert.equal(edited.status, 200)
+  const [updated] = (await edited.json()).annotations
+  assert.equal(updated.seatId, 'bob')
+  assert.equal(updated.decisionSeatId, 'alice')
+  assert.equal(updated.cursor, note.cursor)
+  assert.equal(updated.category, 'good')
+  const manifest = await (await f.path(f.replay, { headers: f.alice })).json()
+  assert.equal(manifest.analysis.bySeat.find(seat => seat.seatId === 'alice').reviewed, 1)
+  assert.equal(manifest.analysis.bySeat.find(seat => seat.seatId === 'bob').reviewed, 0)
+})
+
+test('[PM-REVIEW-API-10] a witnessed decision can earn a medium grade in a coalesced frame', { skip: !databaseUrl }, async t => {
+  const f = await analysisFixture(t, { coalesced: true })
+  const { archiveRevision } = await (await f.path(f.replay, { headers: f.alice })).json()
+  const entry = {
+    cursor: 2, seatId: 'alice', assessment: 'optimal', confidence: 'high',
+    rationale: 'The announced timing avoids leaving unused mana.', benefit: 'Improves card selection.', risk: 'Uses mana before combat.',
+    alternatives: [{ line: 'Keep mana available.', legality: 'confirmed', benefit: 'Represents interaction.', risk: 'May waste a draw step.' }],
+  }
+  const put = value => f.path(f.replay + '/annotations', json('POST', f.alice, { archiveRevision, entries: [value] }))
+  const original = (await (await put(entry)).json()).annotations[0]
+  assert.equal(original.category, 'insufficient')
+  const decisionEvidence = { observationCursor: 2, summary: 'The engine log records the cast during the main phase.' }
+  const edited = { ...entry, expectedRevision: original.revision, decisionEvidence }
+  assert.equal((await put({ ...edited, decisionEvidence: { ...decisionEvidence, observationCursor: 3 } })).status, 400)
+  assert.equal((await put({ ...edited, assessment: 'exceptional' })).status, 400)
+  assert.equal((await put({ ...edited, alternatives: [] })).status, 400)
+  const response = await put(edited)
+  assert.equal(response.status, 200)
+  const [review] = (await response.json()).annotations
+  assert.equal(review.category, 'best')
+  assert.equal(review.confidence, 'medium')
+  assert.equal(review.evidence.frameQuality, 'coalesced_snapshot')
+  assert.equal(review.evidence.observationCursor, 2)
+  const oldClientResponse = await put({ ...entry, expectedRevision: review.revision })
+  assert.equal(oldClientResponse.status, 200)
+  const [oldClientReview] = (await oldClientResponse.json()).annotations
+  assert.equal(oldClientReview.category, 'best')
+  assert.equal(oldClientReview.evidence.observationCursor, 2)
+})
 
 test('[PM-REVIEW-API-1] completed replay manifests preserve legacy authorization and refuse foreign IDs', { skip: !databaseUrl }, async t => {
   const f = await analysisFixture(t)

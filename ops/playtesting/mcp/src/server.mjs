@@ -374,16 +374,16 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
   tool('score_match_evaluation', 'Calculate game accuracy and coverage from reviewed positions. Low-confidence positions are excluded from the score.', {
     gameId: Uuid, positions: scoredPositions,
   }, 'history', (args) => fromProduct('score_match_evaluation', args), true);
-  tool('get_match_review', 'Read the match or game review manifest, available perspectives, coverage and saved counts. Supply one matchId or gameId.',
+  tool('get_match_review', 'Read the match or game review manifest, available perspectives, coverage and saved counts. Supply one matchId or gameId. For qualitative review, read get_guide with guideId replay-analysis or start the review_playmat_replay prompt.',
     reviewManifestInput, 'history', (args) => {
       if (Boolean(args.matchId) === Boolean(args.gameId)) throw new ToolError('invalid_input', 'Supply one matchId or gameId.');
       return fromProduct('get_match_review', args);
     }, true);
-  tool('read_review_evidence', 'Read bounded recorded evidence by turn or exact archive cursor. Analysis returns the acting seat’s preceding position. Use replay purpose for an authorized retrospective.',
+  tool('read_review_evidence', 'Read bounded recorded evidence by turn or exact archive cursor. Analysis returns the acting seat’s preceding position and any recorded opening, choice or priority context. Use replay purpose for an authorized retrospective.',
     reviewEvidenceInput, 'history', (args) => fromProduct('read_review_evidence', args), true);
   tool('list_review_annotations', 'Read saved event-linked annotations by game, turn, cursor or authorized seat.',
     reviewAnnotationsInput, 'history', (args) => fromProduct('list_review_annotations', args), true);
-  tool('save_review_annotations', 'Persist bounded qualitative annotations on exact recorded events. Send the archive revision and the annotation revision when editing.',
+  tool('save_review_annotations', 'Persist qualitative annotations on recorded decisions or witnessed inferred omissions. Send the archive revision and the annotation revision when editing. Include a confirmed comparator for an inferred omission or when reconstructing a decision from supporting evidence.',
     saveReviewAnnotationsInput, 'history', (args) => fromProduct('save_review_annotations', args));
   registerTheorycraftTools(tool, fromProduct);
   tool('export_matches', 'Request an authorized download handle for selected games.', {

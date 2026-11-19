@@ -7,6 +7,8 @@ import mage.game.events.GameEvent;
 import mage.game.match.Match;
 import mage.game.match.MatchPlayer;
 import mage.game.mulligan.LondonMulligan;
+import mage.game.trace.ReplayDecision;
+import mage.game.trace.ReplayPrompt;
 import mage.players.Player;
 import mage.server.game.GameChangeKey;
 import mage.server.playtesting.ProductGateway;
@@ -27,6 +29,7 @@ import java.nio.file.attribute.PosixFilePermissions;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.function.Consumer;
 import java.util.zip.GZIPOutputStream;
 
 /**
@@ -50,6 +53,9 @@ public final class ReplayRecorder {
     private final UUID watcherId = UUID.randomUUID();
     private Writer out;
     private String lastFrame;
+    private int lastFrameCursor = -1;
+    private long replayBranch;
+    private ReplayDecision.Subscription decisionSubscription;
     /** what the game looked like at the last snapshot, cheaply (see {@link GameChangeKey}) */
     private String lastKey;
     private boolean finished;
@@ -104,6 +110,9 @@ public final class ReplayRecorder {
             if (ProductGateway.enabled()) {
                 store.markActive(info);
                 BY_GAME.put(game.getId(), recorder);
+                if (info.reviewVersion != null) {
+                    recorder.decisionSubscription = ReplayDecision.observe(game, recorder::recordDecision, recorder::offerPrompt);
+                }
             }
             recorder.frame(true);
             return recorder;
@@ -150,6 +159,52 @@ public final class ReplayRecorder {
         }
     }
 
+    private synchronized Consumer<ReplayPrompt.Answer> offerPrompt(ReplayPrompt prompt) {
+        // An announcement can still be canceled. Keep its exact offered options but do not publish
+        // a new replay board frame revealing a tentative spell to another perspective.
+        int frameCursor = prompt.parentActionId == null ? frame(true) : lastFrameCursor;
+        if (frameCursor < 0 || !canWrite()) {
+            return ReplayPrompt.NO_CAPTURE;
+        }
+        long branch = replayBranch;
+        ReplayEvidence.PreparedPrompt prepared = ReplayEvidence.prompt(game, prompt, frameCursor, elapsed());
+        return answer -> recordPrompt(branch, prepared, answer);
+    }
+
+    private synchronized void recordPrompt(long branch, ReplayEvidence.PreparedPrompt prepared, ReplayPrompt.Answer answer) {
+        if (branch != replayBranch || !canWrite()) {
+            return;
+        }
+        try {
+            ReplayEvidence.applyPromptAnswer(game, prepared, answer);
+            prepared.row.addProperty("decisionId", "decision-" + info.events);
+            write(prepared.row.toString());
+        } catch (RuntimeException error) {
+            info.reviewIncomplete = true;
+            logger.warn("A protected replay prompt could not be captured for game " + game.getId());
+        }
+    }
+
+    private synchronized void recordDecision(ReplayDecision committed) {
+        if (!canWrite()) {
+            return;
+        }
+        try {
+            JsonObject row = ReplayEvidence.decision(game, committed, elapsed());
+            if (row == null) {
+                return;
+            }
+            int frameCursor = frame(true);
+            if (frameCursor >= 0 && canWrite()) {
+                row.addProperty("preActionCursor", frameCursor);
+                write(row.toString());
+            }
+        } catch (RuntimeException error) {
+            info.reviewIncomplete = true;
+            logger.warn("A protected replay decision could not be captured for game " + info.gameId);
+        }
+    }
+
     private synchronized void recordRulesEvent(GameEvent event) {
         if (!canWrite()) {
             return;
@@ -177,6 +232,10 @@ public final class ReplayRecorder {
         event.addProperty("kind", "rollback");
         event.addProperty("turn", turn);
         write(event.toString());
+        replayBranch++;
+        lastKey = null;
+        lastFrame = null;
+        lastFrameCursor = -1;
     }
 
     public static void onMatchEnded(Table table) {
@@ -288,9 +347,9 @@ public final class ReplayRecorder {
         frame(false);
     }
 
-    private void frame(boolean always) {
+    private int frame(boolean always) {
         if (!canWrite()) {
-            return;
+            return -1;
         }
         try {
             // building a spectator's view costs far more than this key: skip it while nothing visible has changed
@@ -299,7 +358,7 @@ public final class ReplayRecorder {
                 key += ReplayEvidence.knowledgeKey(game);
             }
             if (!always && key.equals(lastKey)) {
-                return;
+                return lastFrameCursor;
             }
             // written straight to text, {"view":...,"hands":{"name":...},"t":ms}: a JSON tree first would cost as
             // much again
@@ -327,15 +386,18 @@ public final class ReplayRecorder {
             String snapshot = frame.toString();
             lastKey = key;
             if (snapshot.equals(lastFrame)) {
-                return;
+                return lastFrameCursor;
             }
             lastFrame = snapshot;
+            lastFrameCursor = info.events;
             write(snapshot + ",\"t\":" + elapsed() + "}");
+            return broken ? -1 : lastFrameCursor;
         } catch (Throwable e) {
             if (info.reviewVersion != null) {
                 info.reviewIncomplete = true;
             }
             logger.warn("Replay of game " + info.gameId + " missed a snapshot (" + e.getClass().getSimpleName() + ')');
+            return -1;
         }
     }
 
@@ -360,6 +422,9 @@ public final class ReplayRecorder {
         }
         frame(true);
         finished = true;
+        if (decisionSubscription != null) {
+            decisionSubscription.close();
+        }
         if (chatId != null) {
             BY_CHAT.remove(chatId, this);
         }

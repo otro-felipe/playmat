@@ -76,6 +76,13 @@ export async function verifyReplayCapture({ startFixture, call, ownPlayer, rival
   await move(state.decision.choices.find(choice => byObject(choice, land.id)))
   assert.equal(state.stack[0]?.name, cast.name)
   const spellId = state.stack[0].id
+  await move(state.decision.choices.find(choice => choice.type === 'pass'))
+  const castTurn = state.turn
+  while (state.turn <= castTurn + 2 && Date.now() < totalDeadline) {
+    const ownEnd = state.turn > castTurn && state.activePlayerId === playerId && state.step === 'END_TURN'
+    await move(fallback(state))
+    if (ownEnd) break
+  }
   await call('concede', { gameId: state.gameId, entireMatch: true })
   const { info, rows } = await archived(state.gameId, Math.min(totalDeadline, Date.now() + 10_000))
 
@@ -91,6 +98,24 @@ export async function verifyReplayCapture({ startFixture, call, ownPlayer, rival
   assert.equal(castEvent.fromZone, 'HAND')
   assert.deepEqual(castEvent.targetIds, [rivalId])
   assert.deepEqual(castEvent.paidMana, { R: 1 })
+  const announcedTarget = rows.find(row => row.action === 'select'
+    && row.parentActionId === spellId && row.decision?.choiceKind === 'target')
+  assert.equal(announcedTarget?.actorPlayerId, playerId)
+  assert.equal(announcedTarget?.decisionPlayerId, playerId)
+  assert.deepEqual(announcedTarget.decision.selectedIds, [rivalId])
+  assert.ok(announcedTarget.decision.optionDetails.some(option => option.playerId === rivalId))
+  assert.ok(rows[announcedTarget.preActionCursor]?.view, 'Target choices anchor the pre-response frame')
+  for (const seatId of [playerId, rivalId]) {
+    const keep = rows.find(row => row.action === 'keep' && row.actorPlayerId === seatId)
+    assert.equal(keep?.decision.cards.length, 7)
+    assert.ok(Object.hasOwn(rows[keep.preActionCursor]?.review?.seatViews?.[seatId] ?? {}, 'myHand'))
+  }
+  const pass = rows.find((row, index) => index > castCursor && row.action === 'pass' && row.actorPlayerId === playerId
+    && row.decision.stackSize > 0 && row.decision.passKind === 'manual')
+  assert.ok(pass, 'A committed priority pass over a spell is captured')
+  assert.ok(rows[pass.preActionCursor]?.view?.stack?.[spellId], 'The pass anchors the unresolved stack')
+  assert.ok(rows.some(row => row.action === 'pass' && row.actorPlayerId === playerId
+    && row.decision.endsTurn && row.decision.availableManaSources > 0), 'Own end-step pass with an untapped mana source is retained')
   const firstDraw = rows.findIndex(row => row.kind === 'draw' && row.actorPlayerId === playerId && row.card?.id === cast.id)
   assert.ok(firstDraw >= 0 && firstDraw < castCursor, 'Playing an already drawn card has its own event')
   assert.ok(rows.some(row => row.view && row.review?.seatViews?.[playerId]?.myHand?.[cast.id]
@@ -112,6 +137,7 @@ export async function verifyHumanReplayCapture({ startHumanReviewFixture, totalD
   requireIsolatedFixture()
   return startHumanReviewFixture(async (seats) => {
     let activeId
+    let tookMulligan = false
     while (Date.now() < totalDeadline) {
       const observations = seats.map(seat => seat.snapshot())
       const [first, second] = observations
@@ -122,10 +148,15 @@ export async function verifyHumanReplayCapture({ startHumanReviewFixture, totalD
       }
       for (const [index, state] of observations.entries()) {
         if (state.status !== 'active' || !state.decision || state.decision.kind === 'waiting') continue
-        const choice = fallback(state)
-        assert.ok(choice, 'Human fixture replies to observed opening prompts only')
+        const mulligan = index === 0 && !tookMulligan
+          && state.decision.choices.find(({ label }) => /^Mulligan\b/.test(label))
+        const choice = mulligan || fallback(state) || state.decision.choices.find(option =>
+          tookMulligan && state.decision.kind === 'mulliganBottom'
+          && state.ownHand.some(card => byObject(option, card.id)))
+        assert.ok(choice, 'Unexpected opening prompt: ' + state.decision.kind + ' ' + state.decision.instruction)
         try {
           await seats[index].respond(state.decision.id, choice.id)
+          if (mulligan) tookMulligan = true
         } catch (error) {
           if (!['stale_decision', 'engine_rejected'].includes(error.code)) throw error
         }
@@ -153,9 +184,92 @@ export async function verifyHumanReplayCapture({ startHumanReviewFixture, totalD
     assert.equal(info.reviewVersion, 2)
     assert.ok(rows.some(row => row.kind === 'draw'))
     assert.ok(rows.some(row => Object.keys(row.review?.seatViews ?? {}).length === 2))
+    const mulliganCursor = rows.findIndex(row => row.action === 'mulligan')
+    const mulligan = rows[mulliganCursor]
+    const keep = rows.slice(mulliganCursor + 1).find(row => row.action === 'keep' && row.actorPlayerId === mulligan?.actorPlayerId)
+    const bottom = rows.slice(mulliganCursor + 1).find(row => row.decision?.choiceKind === 'bottom'
+      && row.actorPlayerId === mulligan?.actorPlayerId)
+    assert.equal(mulligan?.decision.cards.length, 7)
+    assert.equal(bottom?.decision.cards.length, 7)
+    assert.equal(bottom.decision.selectedIds.length, 1)
+    assert.equal(keep?.decision.cards.length, 6)
+    assert.ok(bottom.decision.cards.some(({ id }) => id === bottom.decision.selectedId))
+    assert.ok(!keep.decision.cards.some(({ id }) => id === bottom.decision.selectedId))
     const frameCursor = rows.findIndex(row => row.view && Object.keys(row.hands ?? {}).length === 2)
     assert.ok(frameCursor >= 0, 'Normal replay capture remains available')
     console.log(JSON.stringify({ phase: '[PM-REV-02] real Java Pioneer human table', automatic: true, protectedCapture: true }))
     return { gameId: activeId, frameCursor }
   })
+}
+
+export async function verifyDiscardChoiceCapture({ startFixture, ownPlayer, rivalPlayer, call, answer, waitNextOwn, totalDeadline }) {
+  requireIsolatedFixture()
+  const actingDeck = { name: 'Isolated Thoughtseize choice fixture', cards: [
+    { cardName: 'Swamp', amount: 52 }, { cardName: 'Thoughtseize', amount: 4 }, { cardName: 'Duress', amount: 4 },
+  ], sideboard: [] }
+  // Playable Modern lists, biased toward a real nonland alternative in the revealed hand.
+  const opposingDeck = { name: 'Isolated revealed options fixture', cards: [
+    { cardName: 'Mountain', amount: 24 }, ...['Lightning Bolt', 'Shock', 'Play with Fire', 'Burst Lightning',
+      'Lava Spike', 'Monastery Swiftspear', 'Bonecrusher Giant', 'Rift Bolt', 'Flame Slash'].map(cardName => ({ cardName, amount: 4 })),
+  ], sideboard: [] }
+  let state = await startFixture('Isolated chosen versus affected player', actingDeck, 77, opposingDeck)
+  const move = async choice => {
+    assert.ok(choice, 'The discard fixture follows engine-offered decisions')
+    const prior = state.decision.id
+    await answer(state, choice)
+    state = await waitNextOwn(prior)
+  }
+  const chooserId = ownPlayer(state).id
+  const affectedId = rivalPlayer(state).id
+  let cast, manaSource
+  while (Date.now() < totalDeadline) {
+    if (state.step === 'PRECOMBAT_MAIN' && state.activePlayerId === chooserId && state.decision.kind === 'priority') {
+      const card = state.ownHand.find(card => card.name === 'Thoughtseize')
+      cast = card && state.decision.choices.find(choice => byObject(choice, card.id))
+      manaSource = ownPlayer(state).battlefield.find(({ name, tapped }) => name === 'Swamp' && !tapped)
+      if (cast && manaSource) break
+      const land = state.decision.choices.find(choice => choice.canPlayLand
+        && state.ownHand.some(card => card.name === 'Swamp' && byObject(choice, card.id)))
+      if (land) { await move(land); continue }
+    }
+    await move(fallback(state) ?? state.decision.choices.find(choice => state.step === 'CLEANUP' && choice.card?.name === 'Swamp'))
+  }
+  assert.ok(cast && manaSource)
+  await move(cast)
+  await move(state.decision.choices.find(choice => byObject(choice, affectedId)))
+  await move(state.decision.choices.find(choice => byObject(choice, manaSource.id)))
+  if (state.decision.kind === 'priority') await move(state.decision.choices.find(choice => choice.type === 'pass'))
+  assert.equal(state.decision.kind, 'pickCards')
+  const chosen = state.decision.choices.find(choice => choice.card && choice.card.name !== 'Mountain')
+  assert.ok(chosen?.card)
+  await move(chosen)
+  await call('concede', { gameId: state.gameId, entireMatch: true })
+  const { rows } = await archived(state.gameId, Math.min(totalDeadline, Date.now() + 10_000))
+  const selection = rows.find(row => row.action === 'select' && row.decision?.sourceCard?.name === 'Thoughtseize')
+  assert.equal(selection?.decisionPlayerId, chooserId)
+  assert.equal(selection.actorPlayerId, chooserId)
+  assert.equal(selection.affectedPlayerId, affectedId)
+  assert.equal(selection.decision.selectedId, chosen.card.id)
+  assert.equal(rows.filter(row => row.action === 'select' && row.sourceId === selection.sourceId
+    && row.decision?.selectedIds?.includes(chosen.card.id)).length, 1, 'Specific forced-discard choices are recorded once')
+  assert.ok(selection.decision.cards.length >= 2, 'A real selection has legal alternatives')
+  assert.ok(selection.decision.cards.some(card => card.id === chosen.card.id))
+  assert.ok(selection.decision.cards.every(card => card.name !== 'Mountain'))
+  assert.ok(rows[selection.preActionCursor]?.view, 'The decision anchors the revealed pre-discard position')
+  console.log(JSON.stringify({ phase: '[PM-REV-02] real Java discard choice', exactChooser: true, legalAlternatives: true }))
+}
+
+export async function verifyModeAndUseCapture(gameId, deadline) {
+  requireIsolatedFixture()
+  const { rows } = await archived(gameId, Math.min(deadline, Date.now() + 10_000))
+  const mode = rows.find(row => row.decision?.choiceKind === 'mode' && /Patrol Night/i.test(row.decision.selectedText ?? ''))
+  assert.ok(mode?.decision.optionDetails.some(option => /Date Night/i.test(option.label ?? '')), 'Other legal mode is preserved')
+  assert.ok(rows.some(row => row.action === 'cast' && row.objectId === mode.parentActionId), 'Modal choice is linked to its cast')
+  const use = rows.find(row => row.decision?.choiceKind === 'use'
+    && /Discard a card and draw a card/i.test(row.decision.prompt ?? ''))
+  assert.equal(use?.decision.selectedText, 'No')
+  assert.ok(use.decision.optionDetails.some(option => option.label === 'Yes'))
+  assert.equal(use.parentActionId, undefined, 'Resolution decision remains separate from the cast')
+  assert.ok(rows[use.preActionCursor]?.view, 'A resolution prompt has a real before frame')
+  console.log(JSON.stringify({ phase: '[PM-REV-02] generic choice archive', modeLinked: true, optionalChoiceSeparate: true }))
 }
