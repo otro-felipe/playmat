@@ -97,6 +97,8 @@ export interface WebCardFilters {
 
 /** One recorded moment of a replay: a snapshot of the table, or a log line (see the server's ReplayStore). */
 export interface ReplayEvent {
+  /** canonical event offset, when the archive publishes one */
+  cursor?: number;
   /** milliseconds since the game started */
   t?: number;
   view?: GameView;

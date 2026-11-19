@@ -13,6 +13,8 @@ public class ReplayInfo {
     public static class ReplayPlayer {
         public String name;
         public boolean human;
+        /** Server-owned seat ID. The public replay list does not return it. */
+        public String playerId;
         /** Private capture metadata. Product replay responses project only the viewer's list. */
         public DeckCardLists deck;
         public Integer mulligans;
@@ -27,6 +29,9 @@ public class ReplayInfo {
     }
 
     public int version = 1;
+    /** Capability of this immutable capture. An absent value means legacy recording. */
+    public Integer reviewVersion;
+    public Boolean reviewIncomplete;
     public String gameId;
     public String tableId;
     public String matchId;

@@ -3,6 +3,7 @@ package mage.server.replay;
 import com.google.gson.JsonObject;
 import mage.game.Game;
 import mage.game.Table;
+import mage.game.events.GameEvent;
 import mage.game.match.Match;
 import mage.game.match.MatchPlayer;
 import mage.game.mulligan.LondonMulligan;
@@ -21,6 +22,8 @@ import java.io.OutputStreamWriter;
 import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -81,11 +84,20 @@ public final class ReplayRecorder {
                 info.deckType = table.getDeckType();
             }
             fillPlayers(info, game, table);
+            info.reviewVersion = ProductGateway.reviewCaptureVersion(info.matchId, info.tableId, game.getPlayers().values());
 
             Files.createDirectories(store.settings().dir);
             ReplayRecorder recorder = new ReplayRecorder(store, game, chatId, info);
+            Path part = store.partFile(info.gameId);
+            if (info.reviewVersion != null && Files.getFileStore(store.settings().dir).supportsFileAttributeView("posix")) {
+                if (!Files.exists(part)) {
+                    Files.createFile(part, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
+                } else {
+                    Files.setPosixFilePermissions(part, PosixFilePermissions.fromString("rw-------"));
+                }
+            }
             recorder.out = new BufferedWriter(new OutputStreamWriter(
-                    new GZIPOutputStream(Files.newOutputStream(store.partFile(info.gameId))), StandardCharsets.UTF_8));
+                    new GZIPOutputStream(Files.newOutputStream(part)), StandardCharsets.UTF_8));
             if (chatId != null) {
                 BY_CHAT.put(chatId, recorder);
             }
@@ -112,6 +124,7 @@ public final class ReplayRecorder {
         for (Player player : game.getPlayers().values()) {
             ReplayInfo.ReplayPlayer seat = new ReplayInfo.ReplayPlayer(player.getName(), player.isHuman());
             if (privateProduct) {
+                seat.playerId = player.getId().toString();
                 MatchPlayer matchPlayer = match.getPlayer(player.getId());
                 if (matchPlayer != null && matchPlayer.getDeck() != null) {
                     seat.deck = matchPlayer.getDeck().prepareCardsOnlyDeck();
@@ -126,6 +139,32 @@ public final class ReplayRecorder {
         ReplayRecorder recorder = BY_GAME.get(game.getId());
         if (recorder != null) {
             recorder.rollback(game.getTurnNum());
+        }
+    }
+
+    /** The rules watcher sends accepted actions and actual draws directly to the protected spool. */
+    public static void onRulesEvent(Game game, GameEvent event) {
+        ReplayRecorder recorder = BY_GAME.get(game.getId());
+        if (recorder != null && recorder.info.reviewVersion != null) {
+            recorder.recordRulesEvent(event);
+        }
+    }
+
+    private synchronized void recordRulesEvent(GameEvent event) {
+        if (!canWrite()) {
+            return;
+        }
+        try {
+            JsonObject row = ReplayEvidence.rulesEvent(game, event, elapsed());
+            if (row != null) {
+                if (event.getType() == GameEvent.EventType.DREW_CARD && !row.has("card")) {
+                    info.reviewIncomplete = true;
+                }
+                write(row.toString());
+            }
+        } catch (RuntimeException exception) {
+            info.reviewIncomplete = true;
+            logger.warn("A protected replay event could not be captured for game " + info.gameId);
         }
     }
 
@@ -256,14 +295,25 @@ public final class ReplayRecorder {
         try {
             // building a spectator's view costs far more than this key: skip it while nothing visible has changed
             String key = GameChangeKey.of(game);
+            if (info.reviewVersion != null) {
+                key += ReplayEvidence.knowledgeKey(game);
+            }
             if (!always && key.equals(lastKey)) {
                 return;
             }
-            lastKey = key;
             // written straight to text, {"view":...,"hands":{"name":...},"t":ms}: a JSON tree first would cost as
             // much again
             StringBuilder frame = new StringBuilder(32 * 1024).append("{\"view\":");
-            JsonCodec.GSON.toJson(new GameView(game.getState(), game, null, watcherId), frame);
+            GameView spectator = info.reviewVersion == null
+                    ? new GameView(game.getState(), game, null, watcherId) : GameView.forReplay(game, null, watcherId);
+            if (info.reviewVersion == null) {
+                JsonCodec.GSON.toJson(spectator, frame);
+            } else {
+                JsonObject visible = ReplayEvidence.spectatorFrame(spectator);
+                JsonCodec.GSON.toJson(visible, frame);
+                frame.append(",\"review\":");
+                JsonCodec.GSON.toJson(ReplayEvidence.protectedFrame(game, visible), frame);
+            }
             frame.append(",\"hands\":{");
             boolean first = true;
             for (Player player : game.getPlayers().values()) {
@@ -275,13 +325,17 @@ public final class ReplayRecorder {
             }
             frame.append('}');
             String snapshot = frame.toString();
+            lastKey = key;
             if (snapshot.equals(lastFrame)) {
                 return;
             }
             lastFrame = snapshot;
             write(snapshot + ",\"t\":" + elapsed() + "}");
         } catch (Throwable e) {
-            logger.warn("Replay of game " + info.gameId + " missed a snapshot: " + e);
+            if (info.reviewVersion != null) {
+                info.reviewIncomplete = true;
+            }
+            logger.warn("Replay of game " + info.gameId + " missed a snapshot (" + e.getClass().getSimpleName() + ')');
         }
     }
 

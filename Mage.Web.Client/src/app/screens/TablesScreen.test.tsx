@@ -99,6 +99,33 @@ test('[PM-AC-16] the host creates an account-private MCP invitation without sele
   expect(fetcher.mock.calls.every(([url]) => url !== '/api/playtesting/event-rivals')).toBe(true);
 });
 
+test('[PM-REVIEW-PRIV-1] the host sees the post-match notice and grants only the chosen table before sitting down', async () => {
+  tables = [];
+  calls.create.mockResolvedValue({ tableId });
+  const operations: string[] = [];
+  calls.join.mockImplementationOnce(async () => { operations.push('engine join'); return true; });
+  const fetcher = vi.fn(async (url: string, request?: RequestInit) => {
+    if (request?.method === 'PUT') operations.push('privacy consent');
+    return Response.json({ tableId, version: 2, granted: true }, { status: request?.method === 'POST' ? 201 : 200 });
+  });
+  vi.stubGlobal('fetch', fetcher);
+  const { page } = mount();
+  fireEvent.click(page.getByRole('button', { name: 'Host a table' }));
+  const dialog = within(await page.findByRole('dialog', { name: 'Host a table' }));
+  fireEvent.change(dialog.getByLabelText('Invited player'), { target: { value: 'Guest' } });
+  const consent = dialog.getByRole('switch', { name: 'Share the complete replay with participants' });
+  expect(consent.getAttribute('aria-checked')).toBe('false');
+  expect(dialog.getByText(/after the whole match ends/i)).toBeTruthy();
+  expect(fetcher.mock.calls.some(([, request]) => request?.method === 'PUT')).toBe(false);
+  fireEvent.click(consent);
+  expect(consent.getAttribute('aria-checked')).toBe('true');
+  fireEvent.click(dialog.getByRole('button', { name: /^Host$/ }));
+  await waitFor(() => expect(operations).toEqual(['privacy consent', 'engine join']));
+  const [url, request] = fetcher.mock.calls.find(([, init]) => init?.method === 'PUT')!;
+  expect(url).toBe('/api/playtesting/review/privacy/tables/' + tableId);
+  expect(JSON.parse(String(request?.body))).toEqual({ version: 2 });
+});
+
 test('[PM-AC-04] the play entry shows the connection guide and remembers the host’s choice', async () => {
   tables = [];
   const { page } = mount({ host: deck.id, opponent: 'mcp' });

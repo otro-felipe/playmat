@@ -7,7 +7,10 @@ import { formatRules } from '../../core/decks/formats';
 import { matchPlayers, matchWinner } from '../../core/history/matchRecord';
 import { describeResult, replayWinner } from '../../core/replay/timeline';
 import { api } from '../connection';
+import { useT } from '../i18n';
 import { PRIVATE_PLAYTESTING } from '../playtesting';
+import { RatingCounts } from '../replay/ReplayReviewPanel';
+import type { ReviewSummary } from '../replay/reviewData';
 import { NameLevel } from '../social/LevelBadge';
 import { useSession } from '../stores/session';
 import { Button } from '../ui/Button';
@@ -49,7 +52,8 @@ interface PracticeGame {
   startPlayer?: string;
   turns?: number;
   ownMulligans?: number;
-  players: { name: string }[];
+  players: { name: string; seatId?: string }[];
+  analysis?: ReviewSummary;
 }
 
 interface PracticeMatch {
@@ -60,6 +64,7 @@ interface PracticeMatch {
   winner?: string;
   startedAt: number;
   games: PracticeGame[];
+  analysis?: ReviewSummary;
 }
 
 interface PracticeHistoryPage {
@@ -212,12 +217,51 @@ function PrivateHistoryScreen() {
                     )}
                   </div>
                 ))}
+                {match.status === 'completed' && match.analysis && (
+                  <HistoryAnalysis match={match} onOpen={(gameId) => navigate(`/replay/${gameId}?analysis=1`)} />
+                )}
               </div>
             </li>
           ))}
         </ul>
         {history.hasNextPage && <Button disabled={history.isFetchingNextPage} onClick={() => void history.fetchNextPage()}>Ver más partidas</Button>}
       </Zone>
+    </div>
+  );
+}
+
+function HistoryAnalysis({ match, onOpen }: { match: PracticeMatch; onOpen: (gameId: string) => void }) {
+  const t = useT();
+  const review = match.analysis!;
+  const games = match.games.filter((game) => game.replayAvailable);
+  const gamesWithReviews = games.filter((game) => !!game.analysis?.reviewed);
+  return (
+    <div className={styles.analysisSummary}>
+      <p className={styles.result}>{t(`replay.status.${review.status}`)}</p>
+      {review.reviewed > 0 && <>
+        <p className={styles.meta}>{review.eligible === null
+          ? t('replay.reviewedCount', { count: review.reviewed })
+          : t('replay.reviewed', { reviewed: review.reviewed, eligible: review.eligible })}</p>
+        <RatingCounts counts={review.counts} />
+      </>}
+      {gamesWithReviews.length > 0 && (
+        <details>
+          <summary>{t('replay.historyBreakdown')}</summary>
+          {gamesWithReviews.map((game) => (
+            <section key={game.gameId} role="group" aria-label={`Juego ${game.gameNumber}`} className={styles.gameBreakdown}>
+              <Button type="button" variant="quiet" size="sm" onClick={() => onOpen(game.gameId)}>
+                {t('replay.analysis')} · Juego {game.gameNumber}
+              </Button>
+              {game.analysis?.bySeat?.filter((seat) => !!seat.reviewed || Object.values(seat.counts).some((count) => !!count)).map((seat) => (
+                <div key={seat.seatId} className={styles.seatBreakdown}>
+                  <strong>{seat.name ?? game.players.find((player) => player.seatId === seat.seatId)?.name ?? t('replay.perspective')}</strong>
+                  <RatingCounts counts={seat.counts} />
+                </div>
+              ))}
+            </section>
+          ))}
+        </details>
+      )}
     </div>
   );
 }

@@ -174,13 +174,16 @@ export interface MatchStageProps {
   state: GameSessionState;
   /** replays: the game log as it stood at the moment shown (the stage doesn't join a chat) */
   replayLog?: ChatMessage[];
+  /** explicitly authorized replay hands keyed by engine player ID */
+  replayHands?: Readonly<Record<string, Readonly<Record<string, CardView>>>>;
+  reviewLayout?: boolean;
   /** where leaving goes, instead of closing the game and going back to Play */
   onLeave?: () => void;
   /** presentation names chosen by seats, keyed by their engine account name */
   seatDisplayNames?: SeatDisplayNames;
 }
 
-export function MatchStage({ session, state, replayLog, onLeave, seatDisplayNames }: MatchStageProps) {
+export function MatchStage({ session, state, replayLog, replayHands, reviewLayout, onLeave, seatDisplayNames }: MatchStageProps) {
   const { view, interaction, playerId, mode, awaitingServer, prediction } = state;
   const revealedHands = useRevealedHands(view, mode !== 'replay');
   const reveals = useReveals(view, mode !== 'replay');
@@ -609,7 +612,7 @@ export function MatchStage({ session, state, replayLog, onLeave, seatDisplayName
 
   return (
     // basic lands show their players' land styles anywhere on the stage (B301, ui/landStyles.ts)
-    <LandStyleContext.Provider value={landStyleOf}><TokenArtContext.Provider value={tokenArtOf}><CardStyleContext.Provider value={cardStylesOf}><Stage style={matStyle}>
+    <LandStyleContext.Provider value={landStyleOf}><TokenArtContext.Provider value={tokenArtOf}><CardStyleContext.Provider value={cardStylesOf}><Stage style={matStyle} contained={mode === 'replay' && reviewLayout}>
       {(stage) => {
         // the stage widens with the window and the field takes the extra width; a portrait window gets the tall layout
         // "Match size" grows the creatures and the hand for a laptop screen (#147)
@@ -654,6 +657,7 @@ export function MatchStage({ session, state, replayLog, onLeave, seatDisplayName
                 displayName={displayName(opponent.player.name)}
                 look={lookOf(opponent.player)}
                 handCount={opponent.player.handCount ?? 0}
+                replayHand={mode === 'replay' ? replayHands?.[opponent.player.playerId ?? ''] : undefined}
                 revealed={revealedInHand(revealedHands, opponent.player.playerId)}
                 clickable={clickable}
                 selected={interaction.selected}
@@ -773,7 +777,7 @@ export function MatchStage({ session, state, replayLog, onLeave, seatDisplayName
             ) : (
               <>
                 <div className={styles.viewPhases}>{phaseLadder}</div>
-                <SpectatorBar session={session} state={state} onLeave={leave} />
+                <SpectatorBar session={session} state={state} onLeave={leave} externalPerspective={mode === 'replay' && reviewLayout} />
               </>
             )}
 
@@ -965,7 +969,7 @@ function landTaps(groups: PermanentGroup[]) {
 }
 
 /** An opponent's half: their rows mirrored above the seam, their seat, piles and hidden hand. */
-function OpponentSide({ board, index, count, sleeve, handCount, revealed, deciding, layout, commanders, commanderDamage, outOfRange, look, displayName, ...row }: RowProps & {
+function OpponentSide({ board, index, count, sleeve, handCount, replayHand, revealed, deciding, layout, commanders, commanderDamage, outOfRange, look, displayName, ...row }: RowProps & {
   layout: MatchLayout;
   look: PlayerLook | undefined;
   displayName?: string;
@@ -973,6 +977,7 @@ function OpponentSide({ board, index, count, sleeve, handCount, revealed, decidi
   index: number;
   count: number;
   handCount: number;
+  replayHand?: Readonly<Record<string, CardView>>;
   /** cards revealed from this hand and still in it */
   revealed: CardView[];
   deciding: boolean;
@@ -1016,8 +1021,31 @@ function OpponentSide({ board, index, count, sleeve, handCount, revealed, decidi
         </div>
       )}
       {count > 1 && !layout.tall && <span className={styles.seatName} style={{ left: place.left + 16 }} aria-hidden="true">{displayName ?? player.name}</span>}
-      <HiddenHand playerId={player.playerId!} count={handCount} revealed={revealed} sleeve={sleeve} left={layout.hiddenHandX(index, count)} />
+      {replayHand ? (
+        <RecordedHand cards={replayHand} name={displayName ?? player.name ?? ''} sleeve={sleeve} left={layout.hiddenHandX(index, count)} />
+      ) : <HiddenHand playerId={player.playerId!} count={handCount} revealed={revealed} sleeve={sleeve} left={layout.hiddenHandX(index, count)} />}
     </>
+  );
+}
+
+function RecordedHand({ cards, name, sleeve, left }: { cards: Readonly<Record<string, CardView>>; name: string; sleeve: string; left: number }) {
+  const t = useT();
+  const setZoom = useMatchUi((state) => state.setZoom);
+  const openCard = (card: CardView, anchor: HTMLElement) => {
+    const bounds = anchor.getBoundingClientRect();
+    setZoom({ card, x: bounds.x + bounds.width / 2, y: bounds.bottom, sleeve, anchor });
+  };
+  return (
+    <div className={styles.recordedHand} style={{ left }} role="group" aria-label={t('replay.handOf', { name })}>
+      {Object.entries(cards).map(([id, card]) => (
+        <button key={id} type="button" aria-label={card.displayName ?? card.name ?? t('replay.recordedCard')}
+          onPointerEnter={(event) => openCard(card, event.currentTarget)} onPointerLeave={() => setZoom(null)}
+          onFocus={(event) => openCard(card, event.currentTarget)} onBlur={() => setZoom(null)}
+          onClick={(event) => openCard(card, event.currentTarget)}>
+          <CardFace card={card} sleeve={sleeve} size="small" />
+        </button>
+      ))}
+    </div>
   );
 }
 

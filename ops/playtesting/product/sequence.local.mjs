@@ -8,6 +8,8 @@ import { createProduct } from './product.mjs'
 import { PlaymatEngineSeat } from '../mcp/src/engine-seat.mjs'
 import { mayDriveRival } from './sequence-driver.mjs'
 import { verifyTypedManaTalent } from './mana-semantics.local.mjs'
+import { verifyHumanReplayCapture, verifyReplayCapture } from './replay-capture.local.mjs'
+import { verifyReplayReviewOverMcp } from './replay-review.local.mjs'
 
 if (process.env.PLAYMAT_SEQUENCE_LOCAL_TEST !== 'yes'
   || !process.env.DATABASE_URL?.includes('@playmat-sequence-pg:5432/sequence_fixture')) throw Error('Explicit isolated sequence fixture required')
@@ -125,17 +127,64 @@ async function waitNextOwn(oldId) {
   }
   throw Error('No next own fixture decision before the bounded deadline')
 }
-async function startFixture(name, deck, seed) {
+async function startFixture(name, deck, seed, beforeStart) {
   const created = await browser.createGame({ name, format: 'Modern', deck: rivalDeck, matchTimeLimit: 'MIN__15', seed }, async record => {
     const response = await fetch(base + '/api/playtesting/invites', { method: 'POST', headers: { 'content-type': 'application/json', Cookie: browserCookie }, body: JSON.stringify({ ...record, guestEngineName: engineName }) })
     assert.equal(response.status, 201)
     return response.json()
   })
   await call('join_game', { tableId: created.tableId, deck })
+  await beforeStart?.(created.tableId)
   await browser.startMatch(created.tableId)
   return waitNextOwn()
 }
 let browserCookie
+
+async function acknowledgeReview(tableId) {
+  await acknowledgeReviewFrom(tableId, [browserCookie, await browserLogin('SequenceBob')])
+}
+
+async function acknowledgeReviewFrom(tableId, cookies) {
+  for (const cookie of cookies) {
+    const receipt = await fetch(base + '/api/playtesting/review/privacy/tables/' + tableId, { method: 'PUT',
+      headers: { 'content-type': 'application/json', Cookie: cookie }, body: JSON.stringify({ version: 2 }) })
+    assert.ok(receipt.ok, 'Both synthetic accounts acknowledge the private archive policy before play')
+  }
+}
+
+async function browserLogin(username) {
+  const response = await fetch(base + '/login', { method: 'POST', redirect: 'manual',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ username, password }) })
+  assert.equal(response.status, 303)
+  return response.headers.get('set-cookie').split(';')[0]
+}
+
+async function startHumanReviewFixture(armed, run) {
+  const login = await browserLogin('SequenceBob')
+  const peer = new PlaymatEngineSeat({ engineUrl: 'ws://127.0.0.1:8080/ws', engineName: 'SequenceBob',
+    trustedHeader: 'X-Playmat-User', authenticationHeaders: { Cookie: login } })
+  const name = armed ? 'Isolated human review available' : 'Isolated human review declined'
+  try {
+    const created = await browser.createGame({ name, format: 'Pioneer', deck: rivalDeck, matchTimeLimit: 'MIN__15', seed: 77 }, async record => {
+      const response = await fetch(base + '/api/playtesting/invites', { method: 'POST',
+        headers: { 'content-type': 'application/json', Cookie: browserCookie },
+        body: JSON.stringify({ ...record, guestEngineName: 'SequenceBob' }) })
+      assert.equal(response.status, 201)
+      return response.json()
+    })
+    await peer.joinGame({ tableId: created.tableId, deck: rivalDeck }, created, async () => {
+      const response = await fetch(base + '/api/playtesting/invites/' + created.tableId + '/claim', {
+        method: 'POST', headers: { 'content-type': 'application/json', Cookie: login }, body: '{}' })
+      assert.ok(response.ok)
+      return response.json()
+    })
+    await acknowledgeReviewFrom(created.tableId, armed ? [browserCookie, login] : [browserCookie])
+    await browser.startMatch(created.tableId)
+    await run([browser, peer])
+  } finally {
+    peer.close()
+  }
+}
 
 async function playPreparedTurnDecisionByDecision(state, { hangoutId, actId, attackerId, lands }) {
   let castCount = 0, payments = 0
@@ -258,12 +307,10 @@ try {
   try {
     await product.provisionHuman('SequenceAlice', password)
     await product.provisionHuman('SequenceBob', password)
-    await product.provisionAgent('SequenceBob', engineName, ['play'], token)
+    const withReview = ['review', 'all'].includes(process.env.PLAYMAT_SEQUENCE_SCENARIOS)
+    await product.provisionAgent('SequenceBob', engineName, withReview ? ['play', 'history'] : ['play'], token)
   } finally { await product.close() }
-  const login = await fetch(base + '/login', { method: 'POST', redirect: 'manual',
-    headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ username: 'SequenceAlice', password }) })
-  assert.equal(login.status, 303)
-  browserCookie = login.headers.get('set-cookie').split(';')[0]
+  browserCookie = await browserLogin('SequenceAlice')
   browser = new PlaymatEngineSeat({ engineUrl: 'ws://127.0.0.1:8080/ws', engineName: 'SequenceAlice', trustedHeader: 'X-Playmat-User', authenticationHeaders: { Cookie: browserCookie } })
   await browser.open()
   client = new Client({ name: 'isolated-real-sequence-fixture', version: '1.0.0' })
@@ -281,11 +328,19 @@ try {
   assert.equal(guideBundle.guides.length, 4)
   assert.ok(guideBundle.guides.every(guide => guide.text?.length > 0))
   assert.ok(JSON.stringify(discovered.tools.find(tool => tool.name === 'play_sequence').inputSchema).includes('allowPlannedResolutions'))
-  await verifyPreparedModeLine('Patrol Night')
-  await verifyPreparedModeLine('Date Night')
-  await verifyPreparedModeLine('Improvised Act Yes')
-  await verifyPreparedModeLine('Low-level control')
-  if (process.env.PLAYMAT_SEQUENCE_SCENARIOS !== 'modal') {
+  const scenarios = process.env.PLAYMAT_SEQUENCE_SCENARIOS
+  if (scenarios === 'review' || scenarios === 'all') {
+    const capture = await verifyReplayCapture({ startFixture, call, ownPlayer, rivalPlayer, answer, waitNextOwn, acknowledgeReview, totalDeadline })
+    const humanCaptures = await verifyHumanReplayCapture({ startHumanReviewFixture, totalDeadline })
+    await verifyReplayReviewOverMcp({ capture, humanCaptures, Client, StreamableHTTPClientTransport, token })
+  }
+  if (scenarios !== 'review') {
+    await verifyPreparedModeLine('Patrol Night')
+    await verifyPreparedModeLine('Date Night')
+    await verifyPreparedModeLine('Improvised Act Yes')
+    await verifyPreparedModeLine('Low-level control')
+  }
+  if (scenarios !== 'modal' && scenarios !== 'review') {
     await verifyTypedManaTalent({ startFixture, ownPlayer, answer, waitNextOwn, playLineWithPeer, call, totalDeadline })
     await verifyCausalBurn()
   }

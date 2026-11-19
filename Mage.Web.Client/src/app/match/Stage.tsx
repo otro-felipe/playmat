@@ -16,7 +16,12 @@ const TOUCH_TARGET = 44;
  * asks, with the zones re-placed for it (`data-layout="tall"` on the stage). On a touch screen the stage publishes
  * `--touch-target`, the stage pixels that make a 44 pixel tap target at the current scale.
  */
-export function Stage({ children, background, style }: { children: ReactNode | ((stage: StageContextValue) => ReactNode); background?: ReactNode; style?: CSSProperties }) {
+export function Stage({ children, background, style, contained = false }: {
+  children: ReactNode | ((stage: StageContextValue) => ReactNode);
+  background?: ReactNode;
+  style?: CSSProperties;
+  contained?: boolean;
+}) {
   const frame = useRef<HTMLDivElement>(null);
   const [stage, setStage] = useState<StageContextValue>(DEFAULT_STAGE);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -48,7 +53,7 @@ export function Stage({ children, background, style }: { children: ReactNode | (
   } as CSSProperties;
 
   return (
-    <div ref={frame} className={styles.frame} style={style}>
+    <div ref={frame} className={styles.frame} data-contained={contained || undefined} style={style}>
       {background}
       <div ref={stageRef} className={styles.stage} style={stageStyle} data-layout={stage.layout} data-touch={coarse ? '' : undefined}>
         <StageContext.Provider value={stage}>{typeof children === 'function' ? children(stage) : children}</StageContext.Provider>

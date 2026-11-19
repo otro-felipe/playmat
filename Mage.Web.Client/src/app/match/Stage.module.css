@@ -35,6 +35,11 @@
   pointer-events: none;
 }
 
+.frame[data-contained] {
+  position: absolute;
+  inset: 0;
+}
+
 .stage {
   position: absolute;
   left: 50%;

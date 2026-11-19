@@ -4,6 +4,7 @@ import type { ReplayEvent } from '../../protocol/options';
 export type { ReplayEvent };
 
 export interface ReplayFrame {
+  cursor: number;
   at: number;
   view: GameView;
   myHand: Record<string, CardView> | null;
@@ -25,11 +26,28 @@ export function appendEvents(timeline: ReplayTimeline, events: readonly ReplayEv
   if (events.length === 0) return timeline;
   const frames = [...timeline.frames];
   const logs = [...timeline.logs];
-  for (const event of events) {
+  for (const [offset, event] of events.entries()) {
     if (event.log) logs.push(event.log);
-    if (event.view) frames.push({ at: event.t ?? frames[frames.length - 1]?.at ?? 0, view: event.view, myHand: event.myHand ?? null, logCount: logs.length });
+    if (event.view) frames.push({
+      cursor: event.cursor ?? timeline.read + offset,
+      at: event.t ?? frames[frames.length - 1]?.at ?? 0,
+      view: event.view,
+      myHand: event.myHand ?? null,
+      logCount: logs.length,
+    });
   }
   return { frames, logs, read: timeline.read + events.length };
+}
+
+/** Replay cursor is an event position. Log-only events use the preceding snapshot. */
+export function frameIndexAt(timeline: ReplayTimeline, cursor: number): number {
+  let left = 0, right = timeline.frames.length;
+  while (left < right) {
+    const middle = (left + right) >>> 1;
+    if (timeline.frames[middle].cursor <= cursor) left = middle + 1;
+    else right = middle;
+  }
+  return Math.max(0, left - 1);
 }
 
 /** The log as it stood at a frame. */

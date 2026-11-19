@@ -66,6 +66,125 @@
   font-size: var(--text-sm);
 }
 
+.review {
+  position: fixed;
+  inset: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+    env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  background: var(--mat-900);
+}
+
+.review[data-panel='open'] {
+  grid-template-columns: minmax(0, 1fr) clamp(290px, 28vw, 430px);
+}
+
+.table {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+
+.board {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+
+.review .transport {
+  position: absolute;
+  width: min(880px, calc(100% - 24px));
+}
+
+.reviewToolbar {
+  z-index: var(--z-rail);
+  display: grid;
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
+  border-bottom: 1px solid var(--ink-faint);
+  background: var(--mat-800);
+}
+
+.reviewControls,
+.legacyPermission {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--space-2);
+}
+
+.legacyPermission {
+  padding-bottom: var(--space-1);
+  color: var(--ink-soft);
+  font-size: var(--text-sm);
+}
+
+.legacyPermission p,
+.coverage {
+  margin: 0;
+}
+
+.coverage {
+  padding-bottom: var(--space-1);
+  color: var(--ink-soft);
+  font-size: var(--text-xs);
+}
+
+.perspective {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: 44px;
+  color: var(--ink-soft);
+}
+
+.perspective select {
+  max-width: min(40vw, 200px);
+  min-height: 34px;
+  border: 1px solid var(--ink-faint);
+  border-radius: var(--radius-control);
+  background: var(--mat-700);
+  color: var(--ink-strong);
+  font: inherit;
+}
+
+.analysis {
+  overflow: auto;
+  min-width: 0;
+  min-height: 0;
+  padding: var(--space-4);
+  border-left: 1px solid var(--ink-faint);
+  background: var(--mat-800);
+}
+
+.analysis > h2 {
+  margin: 0 0 var(--space-3);
+  font-family: var(--font-print);
+  font-size: var(--text-2xl);
+}
+
+.recordedDraws,
+.reviewFailure {
+  position: absolute;
+  top: var(--space-2);
+  left: var(--space-2);
+  z-index: var(--z-overlay);
+  max-width: calc(100% - 2 * var(--space-2));
+  margin: 0;
+  padding: 4px var(--space-2);
+  border: 1px solid var(--ink-faint);
+  border-radius: var(--radius-control);
+  background: var(--mat-800);
+  color: var(--ink-strong);
+  list-style: none;
+}
+
+.reviewFailure {
+  position: fixed;
+}
+
 @media (max-width: 640px) {
   .where {
     display: none;

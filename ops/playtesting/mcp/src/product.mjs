@@ -86,6 +86,21 @@ export function createProductClient(baseUrl, publicUrl) {
         path = `${root}/evaluations/${encode(args.gameId)}`;
         config = { method: 'POST', body: { positions: args.positions } };
         break;
+      case 'get_match_review':
+        path = args.matchId ? `${root}/review/matches/${encode(args.matchId)}` : `${root}/review/games/${encode(args.gameId)}`;
+        break;
+      case 'read_review_evidence':
+      case 'list_review_annotations': {
+        const { gameId, ...values } = args;
+        const params = new URLSearchParams(Object.entries(values).filter(([, value]) => value !== undefined));
+        const resource = name === 'read_review_evidence' ? 'evidence' : 'annotations';
+        path = `${root}/review/games/${encode(gameId)}/${resource}?${params}`;
+        break;
+      }
+      case 'save_review_annotations':
+        path = `${root}/review/games/${encode(args.gameId)}/annotations`;
+        config = { method: 'POST', body: { archiveRevision: args.archiveRevision, entries: args.entries } };
+        break;
       case 'export_matches':
         path = `${root}/exports`;
         config = { method: 'POST', body: { gameIds: args.gameIds, mode: 'handle' } };
@@ -95,6 +110,13 @@ export function createProductClient(baseUrl, publicUrl) {
     }
     const response = await request(token, path, config);
     if (!response.ok) {
+      if (response.status === 409 && path.startsWith(root + '/review/')) {
+        const result = await response.json().catch(() => null);
+        if (result?.error === 'Wait for the completed match and its replay archive' || result?.error === 'Replay is not ready for review') {
+          throw new ToolError('review_not_ready', 'Wait for the whole match and its replay archive.');
+        }
+        throw new ToolError('review_conflict', 'Read the current archive and annotation revisions before retrying.');
+      }
       if (response.status === 409 && (name === 'evaluate_match' || name === 'score_match_evaluation')) {
         throw new ToolError('replay_not_ready', 'Wait for the completed game to be archived.');
       }

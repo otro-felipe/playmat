@@ -21,7 +21,12 @@ export function WatcherCount({ watchers, className }: { watchers: string[]; clas
 }
 
 /** Watching or replaying: whose seat to see the table from, who else is watching, and the way out. */
-export function SpectatorBar({ session, state, onLeave }: { session: GameSession; state: GameSessionState; onLeave(): void }) {
+export function SpectatorBar({ session, state, onLeave, externalPerspective = false }: {
+  session: GameSession;
+  state: GameSessionState;
+  onLeave(): void;
+  externalPerspective?: boolean;
+}) {
   const players = state.view?.players ?? [];
   const watchers = useWatchers(state.gameId, state.mode === 'watch' && !state.gameOver);
   const seat = state.playerId ?? players[0]?.playerId ?? '';
@@ -32,7 +37,7 @@ export function SpectatorBar({ session, state, onLeave }: { session: GameSession
       {delaySeconds > 0 && (
         <span className={styles.delay} role="status">Delayed {delayLabel(delaySeconds)}</span>
       )}
-      {players.length > 1 && (
+      {players.length > 1 && !externalPerspective && (
         <label className={styles.seat}>
           <span>Seat</span>
           <select value={seat} onChange={(event) => session.setPerspective(event.target.value || null)}>

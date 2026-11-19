@@ -10,6 +10,7 @@ import mage.game.events.ZoneChangeEvent;
 import mage.game.permanent.Permanent;
 import mage.game.stack.Spell;
 import mage.players.Player;
+import mage.server.replay.ReplayRecorder;
 import mage.view.GameEventView;
 import mage.view.GameEventView.GameEventKind;
 import mage.watchers.Watcher;
@@ -48,10 +49,13 @@ public class GameEventRecorder extends Watcher {
             case SPELL_CAST:
             case LAND_PLAYED:
             case ACTIVATED_ABILITY:
-            case TAKEN_SPECIAL_ACTION:
-            case TAKEN_SPECIAL_MANA_PAYMENT:
             case ATTACKER_DECLARED:
             case BLOCKER_DECLARED:
+                feed.publicAction(event.getPlayerId());
+                ReplayRecorder.onRulesEvent(game, event);
+                break;
+            case TAKEN_SPECIAL_ACTION:
+            case TAKEN_SPECIAL_MANA_PAYMENT:
                 feed.publicAction(event.getPlayerId());
                 break;
             case COIN_FLIPPED:
@@ -108,6 +112,7 @@ public class GameEventRecorder extends Watcher {
                         .source(event.getSourceId(), nameOf(game, event.getSourceId())), null);
                 break;
             case DREW_CARD:
+                ReplayRecorder.onRulesEvent(game, event);
                 feed.newInformation(event.getPlayerId());
                 feed.add(view(feed, GameEventKind.DRAW, game, event).player(event.getPlayerId()).zones(Zone.LIBRARY.name(), Zone.HAND.name()), event.getPlayerId());
                 break;
