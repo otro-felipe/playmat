@@ -248,7 +248,7 @@ public class GameController implements GameCallback {
                                 if (event.getChoices() != null && !event.getChoices().isEmpty()) {
                                     objectName = event.getChoices().iterator().next();
                                 }
-                                chooseAbility(event.getPlayerId(), objectName, event.getAbilities(), event.getMessage());
+                                chooseAbility(event.getPlayerId(), objectName, event.getChoiceSourceId(), event.getAbilities(), event.getMessage());
                                 break;
                             case CHOOSE_PILE:
                                 choosePile(event.getPlayerId(), event.getMessage(), event.getPile1(), event.getPile2());
@@ -793,7 +793,7 @@ public class GameController implements GameCallback {
             RollbackVote vote = new RollbackVote(turn, turn - turnsBack, voters.keySet(), now.plusSeconds(30));
             rollbackVote = vote;
             for (GameSessionPlayer voter : voters.values()) {
-                voter.requestPermissionToRollbackTurn(userId, vote.id, vote.targetTurn);
+                voter.requestPermissionToRollbackTurn(userId, vote.id, vote.targetTurn, now.toEpochMilli());
             }
         }
     }
@@ -1160,8 +1160,8 @@ public class GameController implements GameCallback {
 
     }
 
-    private synchronized void chooseAbility(UUID playerId, final String objectName, final List<? extends Ability> choices, String message) throws MageException {
-        perform(playerId, playerId1 -> getGameSession(playerId1).chooseAbility(new AbilityPickerView(getGameView(playerId), objectName, choices, message)));
+    private synchronized void chooseAbility(UUID playerId, final String objectName, UUID sourceId, final List<? extends Ability> choices, String message) throws MageException {
+        perform(playerId, playerId1 -> getGameSession(playerId1).chooseAbility(new AbilityPickerView(getGameView(playerId), objectName, sourceId, choices, message)));
     }
 
     private synchronized void choosePile(UUID playerId, final String message, final List<? extends Card> pile1, final List<? extends Card> pile2) throws MageException {

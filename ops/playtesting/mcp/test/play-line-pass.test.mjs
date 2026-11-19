@@ -56,6 +56,111 @@ const draw = {
 };
 const main = { ...draw, step: 'PRECOMBAT_MAIN', decision: priority('main') };
 
+const urborg = { id: 'urborg', cardId: 'urborg', name: 'Urborg, Tomb of Yawgmoth', types: ['LAND'] };
+const playUrborg = { kind: 'play', select: { cardId: urborg.id, zone: 'hand' } };
+const openingUpkeep = { ...upkeep, turn: 1, ownHand: [urborg] };
+const openingMain = {
+  ...openingUpkeep, step: 'PRECOMBAT_MAIN', decision: priority('main', { id: 'play-urborg', card: urborg }),
+};
+const landPlayed = { ...openingMain, ownHand: [], decision: priority('after-land') };
+const keep = { id: 'keep-prompt', kind: 'mulligan', choices: [{ id: 'keep', label: 'Keep', type: 'button' }] };
+const keepHand = { kind: 'choose', decisionId: keep.id, choiceId: 'keep' };
+const pregame = { turn: 0, activePlayerId: null, activePlayer: null, step: null, ownHand: [urborg], decision: keep };
+
+test('[PM-LINE-01] keep, the first land on the play and its following priority pass form one line', async (t) => {
+  const table = game(t, { 'keep-prompt': (publish) => {
+    publish({ turn: 1, activePlayerId: 'me', activePlayer: 'Pilot', step: null, decision: null });
+    publish(openingUpkeep);
+  }, upkeep: openingMain, main: landPlayed, 'after-land': { decision: priority('combat') } }, pregame);
+  const receipt = await table.submit([keepHand, playUrborg, { kind: 'pass_priority' }]);
+  assert.equal(receipt.status, 'completed', JSON.stringify(receipt));
+  assert.equal(table.seat.snapshot().turn, 1);
+  assert.deepEqual(table.applied.map(([id, choice]) => [id, choice]), [
+    ['keep-prompt', 'keep'], ['upkeep', 'pass'], ['main', 'play-urborg'], ['after-land', 'pass'],
+  ]);
+});
+
+test('[PM-LINE-01] an unplanned London bottom stops a keep and land line before the land', async (t) => {
+  const bottom = { id: 'bottom', kind: 'mulliganBottom', choices: [{ id: 'bottom-urborg', card: urborg }] };
+  const table = game(t, { 'keep-prompt': { decision: bottom } }, pregame);
+  const receipt = await table.submit([keepHand, playUrborg]);
+  assert.equal(receipt.reason, 'response_available');
+  assert.equal(table.seat.snapshot().decision, bottom);
+  assert.deepEqual(table.applied, [['keep-prompt', 'keep', undefined]]);
+});
+
+test('[PM-LINE-01] an exact London bottom stays in the opening line through public hand count updates', async (t) => {
+  const island = { id: 'island', cardId: 'island', name: 'Island', types: ['LAND'] };
+  const bottom = { id: 'bottom', kind: 'mulliganBottom', instruction: 'Choose a card to put on the bottom', choices: [
+    { id: 'bottom-island', card: island }, { id: 'bottom-urborg', card: urborg },
+  ] };
+  const players = [{ id: 'me', yourSeat: true }, { id: 'opponent', handCount: 7, libraryCount: 53 }];
+  const table = game(t, {
+    'keep-prompt': { turn: 1, decision: bottom },
+    bottom: { ...openingMain, players: [players[0], { ...players[1], handCount: 6, libraryCount: 54 }] },
+    main: landPlayed,
+  }, { ...pregame, players, ownHand: [urborg, island] });
+  const receipt = await table.submit([keepHand, {
+    kind: 'choose', guard: { kind: 'mulliganBottom', instruction: bottom.instruction }, select: { cardId: island.id },
+  }, playUrborg]);
+  assert.equal(receipt.status, 'completed', JSON.stringify(receipt));
+  assert.deepEqual(table.applied.map(([id, choice]) => [id, choice]), [
+    ['keep-prompt', 'keep'], ['bottom', 'bottom-island'], ['main', 'play-urborg'],
+  ]);
+});
+
+test('[PM-LINE-01] a keep cannot carry a queued land through the opponent’s first turn', async (t) => {
+  const table = game(t, { 'keep-prompt': { ...openingUpkeep, activePlayerId: 'opponent', activePlayer: 'Opponent' } }, pregame);
+  const receipt = await table.submit([keepHand, playUrborg]);
+  assert.equal(receipt.reason, 'turn_changed');
+  assert.deepEqual(table.applied, [['keep-prompt', 'keep', undefined]]);
+});
+
+test('[PM-LINE-01] submitting a keep alone observes the new turn without passing', async (t) => {
+  const table = game(t, { 'keep-prompt': openingUpkeep }, pregame);
+  const receipt = await table.submit([keepHand]);
+  assert.equal(receipt.status, 'completed', JSON.stringify(receipt));
+  assert.equal(table.seat.snapshot().decision.id, openingUpkeep.decision.id);
+  assert.deepEqual(table.applied, [['keep-prompt', 'keep', undefined]]);
+});
+
+test('[PM-LINE-02] an explicit draw destination started in opening upkeep reports the omitted draw', async (t) => {
+  const table = game(t, { upkeep: openingMain, main: landPlayed, 'after-land': { decision: priority('combat') } }, openingUpkeep);
+  const receipt = await table.submit([{ kind: 'pass_until', destination: 'my_draw' }]);
+  assert.equal(receipt.reason, 'destination_skipped');
+  assert.equal(receipt.lastDestination.step, 'PRECOMBAT_MAIN');
+  assert.equal(receipt.lastDestination.turn, 1);
+  assert.deepEqual(table.applied, [['upkeep', 'pass', undefined]]);
+});
+
+test('[PM-LINE-02] after playing Urborg the terminal draw destination aims beyond the skipped opening draw', async (t) => {
+  const nextDraw = { ...draw, turn: 3 };
+  const table = game(t, { 'keep-prompt': openingUpkeep, upkeep: openingMain, main: landPlayed, 'after-land': nextDraw }, pregame);
+  const receipt = await table.submit([keepHand, playUrborg, { kind: 'pass_until', destination: 'my_draw' }]);
+  assert.equal(receipt.status, 'completed', JSON.stringify(receipt));
+  assert.equal(receipt.lastDestination.step, 'DRAW');
+  assert.equal(receipt.lastDestination.turn, 3);
+  assert.equal(receipt.observedNewInformation, true);
+  assert.deepEqual(table.applied.map(([id]) => id), ['keep-prompt', 'upkeep', 'main', 'after-land']);
+});
+
+test('[PM-LINE-02] on the play, a terminal priority pass can follow Urborg in the same line', async (t) => {
+  const table = game(t, { upkeep: openingMain, main: landPlayed, 'after-land': { decision: priority('combat') } }, openingUpkeep);
+  const receipt = await table.submit([playUrborg, { kind: 'pass_priority' }]);
+  assert.equal(receipt.status, 'completed');
+  assert.deepEqual(table.applied, [
+    ['upkeep', 'pass', undefined], ['main', 'play-urborg', undefined], ['after-land', 'pass', undefined],
+  ]);
+});
+
+test('[PM-LINE-01] on the draw, the revealed opening draw interrupts the queued land and pass', async (t) => {
+  const table = game(t, { upkeep: { ...draw, turn: 1, ownHand: [urborg, drawnCard] } }, openingUpkeep);
+  const receipt = await table.submit([playUrborg, { kind: 'pass_priority' }]);
+  assert.equal(receipt.reason, 'new_information');
+  assert.equal(table.seat.snapshot().step, 'DRAW');
+  assert.deepEqual(table.applied, [['upkeep', 'pass', undefined]]);
+});
+
 test('[PM-LINE-02] safe pass considers a legal free play even with an empty mana pool', async (t) => {
   const table = game(t, {}, { decision: priority('end', freePlay) });
   const receipt = await table.submit([{ kind: 'pass_until', destination: 'my_upkeep' }]);
@@ -183,7 +288,7 @@ test('[PM-LINE-02] a deliberate pass waits for a declared activation to appear o
     end: { decision: priority('after-activation') },
     'after-activation': { decision: priority('next') },
   }, {
-    decision: priority('end', { id: 'activate', type: 'object' }),
+    decision: priority('end', { id: 'activate', type: 'object', objectId: source.id, card: source }),
     players: [{ id: 'me', yourSeat: true, battlefield: [source] }, { id: 'opponent' }],
   });
   const receipt = await table.submit([

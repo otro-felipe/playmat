@@ -70,6 +70,57 @@ test('safe turn advance still stops on a public poison change after matched comb
   assert.equal(result.status, 'interrupted'); assert.equal(result.reason, 'opponent_state_changed'); assert.deepEqual(applied, ['damage']);
 });
 
+for (const variant of ['matched', 'one-view', 'marks-first', 'unwitnessed', 'wrong-pair', 'wrong-mark', 'wrong-graveyard', 'unrelated-tap', 'opponent-action']) test(`[PM-LINE-01] mixed Cottage and Sheoldred combat requires exact public evidence: ${variant}`, async (t) => {
+  const cottage = { id: 'cottage-object', cardId: 'cottage-card', name: 'Restless Cottage', controllerId: 'me', types: ['LAND', 'CREATURE'], power: '4', toughness: '4', damage: 0 };
+  const attacker = { id: 'attacker', name: 'Sheoldred, the Apocalypse', controllerId: 'me', types: ['CREATURE'], power: '4', toughness: '5', damage: 0 };
+  const blocker = { ...attacker, id: 'blocker', controllerId: 'rival', tapped: false };
+  const cottageInGrave = { id: 'cottage-card', cardId: 'cottage-card', name: cottage.name, types: ['LAND'] };
+  const pilot = { id: 'me', yourSeat: true, battlefield: [cottage, attacker] };
+  const rival = { id: 'rival', life: 13, battlefield: [blocker], counters: [] };
+  let state = { gameId: 'boundary', status: 'active', epoch: 1, cursor: 1, turn: 10, activePlayer: 'Pilot', activePlayerId: 'me',
+    step: 'DECLARE_BLOCKERS', priority: 'self', ownHand: [], stack: [], sequenceEvidence: evidence(), decision: priority('blocks'),
+    combat: [{ attackers: [cottage], blockers: [blocker] }, { attackers: [attacker], blockers: [] }], players: [pilot, rival] };
+  const listeners = new Set(), applied = [];
+  const update = (change) => { state = { ...state, ...change, cursor: state.cursor + 1 }; for (const listener of [...listeners]) listener(); };
+  const seat = new GameSeat({ snapshot: () => state, subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener); }, respond: async (id) => {
+    applied.push(id);
+    if (id === 'postcombat') return { submitted: true };
+    assert.equal(id, 'blocks');
+    const damagedCottage = { ...cottage, damage: 4 };
+    const damagedBlocker = { ...blocker, damage: variant === 'wrong-mark' ? 3 : 4, tapped: variant === 'unrelated-tap' };
+    const damage = [{ revision: 1, sourceId: attacker.id, controllerId: 'me', targetId: 'rival', amount: 4 }];
+    if (variant !== 'unwitnessed') damage.push(
+      { revision: 2, sourceId: variant === 'wrong-pair' ? attacker.id : cottage.id, controllerId: 'me', targetId: blocker.id, amount: 4, targetPermanent: true },
+      { revision: 3, sourceId: blocker.id, controllerId: 'rival', targetId: cottage.id, amount: 4, targetPermanent: true });
+    const sequenceEvidence = { ...evidence(true), combatRevision: damage.length, combatDamage: damage,
+      publicActions: { me: 0, rival: variant === 'opponent-action' ? 1 : 0 } };
+    const rivalAfter = { ...rival, life: 9, battlefield: [damagedBlocker] };
+    const pilotAfter = { ...pilot, battlefield: [attacker], graveyard: variant === 'wrong-graveyard' ? [] : [cottageInGrave] };
+    if (variant !== 'one-view') {
+      update({ step: 'COMBAT_DAMAGE', decision: null,
+        combat: [{ attackers: [damagedCottage], blockers: [damagedBlocker] }, { attackers: [attacker], blockers: [] }],
+        players: [{ ...pilot, battlefield: [damagedCottage, attacker] }, variant === 'marks-first' ? { ...rivalAfter, life: 13 } : rivalAfter], sequenceEvidence });
+      update({ step: 'END_COMBAT', decision: null,
+        combat: [{ attackers: [], blockers: [damagedBlocker] }, { attackers: [attacker], blockers: [] }], players: [pilotAfter, rivalAfter] });
+    }
+    update({ step: 'POSTCOMBAT_MAIN', decision: priority('postcombat'), combat: [], players: [pilotAfter, rivalAfter], sequenceEvidence });
+    return { submitted: true };
+  } });
+  t.after(() => seat.invalidate());
+  const result = await settled(seat, seat.startSequence({ gameId: 'boundary', cursor: 1, allowPlannedCombatDamage: true,
+    steps: [{ kind: 'pass_until', step: 'POSTCOMBAT_MAIN' }, { kind: 'answer', choiceId: 'pass', guard: { kind: 'priority', step: 'POSTCOMBAT_MAIN' } }] }, async () => true));
+  const matched = ['matched', 'one-view', 'marks-first'].includes(variant);
+  assert.equal(result.status, matched ? 'completed' : 'interrupted', JSON.stringify(result));
+  if (!matched) assert.equal(result.reason, variant === 'opponent-action' ? 'opponent_action' : 'opponent_state_changed');
+  assert.deepEqual(applied, matched ? ['blocks', 'postcombat'] : ['blocks']);
+});
+
+test('[PM-LINE-01] permanent combat witnesses retain only public evidence fields', () => {
+  const hit = { revision: 2, sourceId: 'attacker', controllerId: 'me', targetId: 'blocker', amount: 4, targetPermanent: true };
+  const projected = visibleAgentGame({ view: { sequenceEvidence: { combatDamage: [{ ...hit, privateField: 'omit' }] } } });
+  assert.deepEqual(projected.sequenceEvidence.combatDamage, [hit]);
+});
+
 for (const [step, activePlayerId] of [['POSTCOMBAT_MAIN', 'me'], ['END_TURN', 'me'], ['PRECOMBAT_MAIN', 'rival']]) {
   test(`an impossible attack cannot pass another window: ${step}/${activePlayerId}`, async (t) => {
     const state = { gameId: 'boundary', status: 'active', epoch: 1, cursor: 1, turn: 3, activePlayerId, step, priority: 'self', ownHand: [], stack: [], players: [{ id: 'me', yourSeat: true, battlefield: [] }, { id: 'rival', battlefield: [] }], sequenceEvidence: evidence(), decision: priority('keep-this-choice') };

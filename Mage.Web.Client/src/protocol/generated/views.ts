@@ -2,9 +2,12 @@
 /* eslint-disable */
 
 export interface AbilityPickerView extends Serializable {
+    abilityTypes?: { [index: string]: AbilityType };
     choices?: { [index: string]: string };
     gameView?: GameView;
     message?: string;
+    sourceObjectId?: string;
+    spellNames?: { [index: string]: string };
 }
 
 export interface AccessOverview {
@@ -2476,6 +2479,7 @@ export interface UserRequestMessage extends Serializable {
     message?: string;
     relatedUserId?: string;
     relatedUserName?: string;
+    requestedAtEpochMs?: number;
     roomId?: string;
     tableId?: string;
     title?: string;
@@ -2605,4 +2609,5 @@ export interface SequenceCombatDamageView extends Serializable {
     controllerId?: string;
     targetId?: string;
     amount?: number;
+    targetPermanent?: boolean;
 }

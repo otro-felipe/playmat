@@ -62,9 +62,9 @@ public final class GameEventFeed {
         return sequenceEvidence(null);
     }
 
-    public synchronized void combatDamage(UUID source, UUID controller, UUID target, int amount) {
+    public synchronized void combatDamage(UUID source, UUID controller, UUID target, int amount, boolean targetPermanent) {
         if (source == null || controller == null || target == null || amount <= 0) return;
-        combatDamage.addLast(new SequenceCombatDamageView(++combatRevision, source, controller, target, amount));
+        combatDamage.addLast(new SequenceCombatDamageView(++combatRevision, source, controller, target, amount, targetPermanent));
         while (combatDamage.size() > RESOLUTION_CAPACITY) combatDamage.removeFirst();
     }
 

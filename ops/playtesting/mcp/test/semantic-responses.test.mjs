@@ -34,6 +34,47 @@ for (const plot of [false,true]) test(`[PM-AC-09-RESPONSES] Bird cast/plot picke
   assert.equal(result.status,'completed'); assert.equal(applied.length,plot?3:4);
 });
 
+for (const variant of ['pending', 'observed', 'wrong-source', 'wrong-type', 'wrong-face']) {
+  test(`[PM-LINE-01] Room face, payment and resolution use the typed picker: ${variant}`, async (t) => {
+    const room = { id: 'room-card', cardId: 'room-card', name: 'Unholy Annex // Ritual Chamber', types: ['ENCHANTMENT'] };
+    const land = { id: 'swamp', name: 'Swamp', types: ['LAND'] };
+    const face = { ...room, id: 'room-stack', name: variant === 'wrong-face' ? 'Ritual Chamber' : 'Unholy Annex', controllerId: 'me' };
+    const instruction = 'Choose spell or ability to play Unholy Annex // Ritual Chamber';
+    const panel = { id: 'room-panel', kind: 'panel', instruction,
+      sourceObjectId: variant === 'wrong-source' ? 'different-card' : room.id,
+      choices: [{ id: 'annex', label: 'Cast Unholy Annex', type: 'option',
+        abilityType: variant === 'wrong-type' ? 'SPECIAL_ACTION' : 'SPELL', spellName: 'Unholy Annex' }] };
+    const choice = variant === 'observed'
+      ? { decisionId: panel.id, choiceId: 'annex' }
+      : { guard: { kind: 'panel', instruction }, select: { label: 'Cast Unholy Annex' } };
+    const { result, applied } = await plan(t, {
+      initial: { ownHand: [room], players: [{ id: 'me', yourSeat: true, battlefield: [land] }, { id: 'rival', battlefield: [] }],
+        decision: variant === 'observed' ? panel : priority('open-room', { id: 'room', card: room }) },
+      actions: [
+        ...(variant === 'observed' ? [] : [{ kind: 'play', select: { cardId: room.id, zone: 'hand' } }]),
+        { kind: 'choose', ...choice, expectCast: true },
+        { kind: 'choose', guard: { kind: 'payMana' }, select: { objectId: land.id, zone: 'battlefield' } },
+      ],
+      respond: ({ id, update }) => {
+        if (id === 'open-room') return update({ decision: panel });
+        if (id === 'room-panel') return update({ ownHand: [], stack: [face],
+          decision: { id: 'room-pay', kind: 'payMana', choices: [{ id: 'tap', objectId: land.id, card: land }] } });
+        if (id === 'room-pay') return update({ decision: priority('room-resolve') });
+        if (id === 'room-resolve') return update({ stack: [], decision: priority('done'),
+          sequenceEvidence: { ...evidence(), resolutions: { [face.id]: 1 }, resolutionRevision: 1 } });
+        assert.fail(`Unexpected room decision ${id}`);
+      },
+    });
+    assert.equal(result.reason, { 'wrong-source': 'bad_cast_expectation', 'wrong-type': 'bad_cast_expectation',
+      'wrong-face': 'state_changed' }[variant] ?? null, JSON.stringify(result));
+    const expected = {
+      pending: ['room', 'annex', 'tap', 'pass'], observed: ['annex', 'tap', 'pass'],
+      'wrong-source': ['room'], 'wrong-type': ['room'], 'wrong-face': ['room', 'annex'],
+    };
+    assert.deepEqual(applied.map(([, answer]) => answer), expected[variant]);
+  });
+}
+
 for (const variant of ['own','rival','trigger','other-text']) test(`[PM-AC-09-RESPONSES] exact Class activation forecast keeps triggers and rival sources separate: ${variant}`,async(t)=>{
   const text='{3}{U}: Level 2';
   const {result,applied}=await plan(t,{initial:{decision:priority('level',{id:'level-choice',card:talent})},actions:[{kind:'choose',select:{cardId:'talent',zone:'battlefield'},guard:{kind:'priority'},expectAbility:{sourceId:variant==='rival'?'enemy':'talent',abilityText:text}}],respond:({id,update})=>{
@@ -41,6 +82,76 @@ for (const variant of ['own','rival','trigger','other-text']) test(`[PM-AC-09-RE
     else update({stack:[],sequenceEvidence:{...evidence(),resolutions:{'level-stack':1},resolutionRevision:1},decision:priority('done')});
   }});
   assert.equal(result.status,variant==='own'?'completed':'interrupted'); assert.equal(applied.length,variant==='own'?2:variant==='rival'?0:1);
+});
+
+for (const forecastAtPanel of [true, false]) test(`[PM-LINE-01] Fel ${forecastAtPanel ? 'casts, pays, activates from the projected panel and proceeds to combat' : 'can target and attack when the activation is forecast before the panel'}`, async (t) => {
+  const fel = { id: 'fel', cardId: 'fel', name: 'Professor Dellian Fel', controllerId: 'me', types: ['PLANESWALKER'] };
+  const felSpell = { ...fel, id: 'fel-spell' };
+  const lands = ['Swamp', 'Forest', 'Swamp', 'Forest'].map((name, index) => ({ id: `land-${index}`, name, types: ['LAND'] }));
+  const attacker = { id: 'own-attacker', name: 'Graveyard Glutton', controllerId: 'me', types: ['CREATURE'] };
+  const target = { id: 'target-creature', name: 'Badgermole Cub', controllerId: 'rival', types: ['CREATURE'] };
+  const abilityText = '-3: Destroy target creature.';
+  const pickerInstruction = 'Choose spell or ability to play Professor Dellian Fel';
+  const targetInstruction = 'Select a creature';
+  const mode = { id: 'loyalty-option', label: abilityText, type: 'option', abilityType: 'ACTIVATED_NONMANA' };
+  const ability = { id: 'fel-activation', sourceId: fel.id, controllerId: 'me', abilityType: 'ACTIVATED_NONMANA', abilityText };
+  const expectAbility = { sourceId: fel.id, abilityText };
+  const own = { id: 'me', yourSeat: true, battlefield: [...lands, attacker] };
+  const ownWithFel = { ...own, battlefield: [...own.battlefield, fel] };
+  const rival = { id: 'rival', life: 20, battlefield: [target] };
+  const openFel = priority('open-fel', { id: 'open-loyalty', card: fel, objectId: fel.id });
+  const selectFel = { objectId: fel.id, zone: 'battlefield' };
+  const { result, applied, state } = await plan(t, {
+    initial: forecastAtPanel
+      ? { ownHand: [fel], players: [own, rival], decision: priority('cast-fel', { id: 'cast-choice', card: fel }) }
+      : { ownHand: [], players: [ownWithFel, rival], decision: openFel },
+    actions: [
+      ...(forecastAtPanel ? [
+        { kind: 'play', select: { cardId: fel.id, zone: 'hand' }, payWith: lands.map(({ id }) => id) },
+        { kind: 'play', select: selectFel, expectCast: false },
+      ] : [{ kind: 'choose', select: selectFel, guard: { kind: 'priority' }, expectAbility }]),
+      { kind: 'choose', select: { label: mode.label }, guard: { kind: 'panel', instruction: pickerInstruction },
+        ...(forecastAtPanel ? { expectAbility } : {}) },
+      { kind: 'choose', select: { objectId: target.id }, guard: { kind: 'target', instruction: targetInstruction } },
+      { kind: 'attack', attackers: [attacker.id] },
+    ],
+    respond: ({ id, choice, update, state }) => {
+      const payment = (index) => ({ id: `pay-${index}`, kind: 'payMana', choices: lands.slice(index)
+        .map((card) => ({ id: `tap-${card.id}`, objectId: card.id, card, type: 'manaAbility' })) });
+      if (id === 'cast-fel') return update({ ownHand: [], stack: [felSpell], decision: payment(0) });
+      if (id.startsWith('pay-')) {
+        const index = Number(id.slice('pay-'.length));
+        assert.equal(choice, `tap-${lands[index].id}`);
+        return update({ decision: index + 1 < lands.length ? payment(index + 1) : priority('resolve-fel') });
+      }
+      if (id === 'resolve-fel') return update({ stack: [], players: [ownWithFel, rival],
+        sequenceEvidence: { ...evidence(), resolutions: { [felSpell.id]: 1 }, resolutionRevision: 1 },
+        decision: openFel });
+      if (id === 'open-fel') return update({ decision: { id: 'loyalty-panel', kind: 'panel', instruction: pickerInstruction, sourceObjectId: fel.id,
+        choices: [{ id: 'gain', label: '+2: You gain 3 life.' }, mode] } });
+      if (id === 'loyalty-panel') return update({ stack: [ability], decision: { id: 'choose-target', kind: 'target',
+        instruction: targetInstruction, choices: [{ id: 'target-choice', card: target, objectId: target.id }] } });
+      if (id === 'choose-target') return update({ stack: [{ ...ability, targets: [target.id] }], decision: priority('resolve-loyalty') });
+      if (id === 'resolve-loyalty') {
+        const prior = state.sequenceEvidence;
+        const revision = prior.resolutionRevision + 1;
+        return update({ stack: [], players: [state.players[0], { ...rival, battlefield: [], graveyard: [target] }],
+          sequenceEvidence: { ...prior, resolutions: { ...prior.resolutions, [ability.id]: revision }, resolutionRevision: revision },
+          decision: priority('begin-combat') });
+      }
+      if (id === 'begin-combat') return update({ step: 'DECLARE_ATTACKERS', decision: { id: 'choose-attacker', kind: 'declareAttackers',
+        choices: [{ id: 'attack-choice', card: attacker, objectId: attacker.id }] } });
+      if (id === 'choose-attacker') return update({ combat: [{ attackers: [attacker], blockers: [] }],
+        decision: { id: 'confirm-attack', kind: 'declareAttackers', choices: [{ id: 'confirm', intent: 'confirm_attack' }] } });
+      if (id === 'confirm-attack') return update({ decision: priority('after-attack') });
+      assert.fail(`Unexpected action ${id}`);
+    },
+  });
+  assert.equal(result.status, 'completed', JSON.stringify(result));
+  const cast = forecastAtPanel ? ['cast-choice', ...lands.map(({ id }) => `tap-${id}`), 'pass'] : [];
+  assert.deepEqual(applied.map(([, choice]) => choice), [...cast, 'open-loyalty', mode.id, 'target-choice', 'pass', 'pass', 'attack-choice', 'confirm']);
+  assert.deepEqual(state.players[1].graveyard, [target]);
+  assert.equal(state.combat[0].attackers[0].id, attacker.id);
 });
 
 for(const boundary of ['library_choice','revealed_piles','random_result']) test(`[PM-AC-09-RESPONSES] a future ${boundary} blocks predecisions even when the card ID was already known`,async(t)=>{

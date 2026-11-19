@@ -67,9 +67,12 @@ public class GameEventRecorder extends Watcher {
         switch (event.getType()) {
             case DAMAGED_PLAYER:
             case DAMAGED_PERMANENT:
-                if (event.getType() == GameEvent.EventType.DAMAGED_PLAYER && event instanceof DamagedEvent && ((DamagedEvent) event).isCombatDamage()) {
+                if (event instanceof DamagedEvent && ((DamagedEvent) event).isCombatDamage()) {
                     Permanent source = game.getPermanentOrLKIBattlefield(event.getSourceId());
-                    if (source != null) feed.combatDamage(event.getSourceId(), source.getControllerId(), event.getTargetId(), event.getAmount());
+                    if (source != null) {
+                        feed.combatDamage(event.getSourceId(), source.getControllerId(), event.getTargetId(), event.getAmount(),
+                                event.getType() == GameEvent.EventType.DAMAGED_PERMANENT);
+                    }
                 }
                 feed.add(view(feed, GameEventKind.DAMAGE, game, event)
                         .source(event.getSourceId(), nameOf(game, event.getSourceId()))

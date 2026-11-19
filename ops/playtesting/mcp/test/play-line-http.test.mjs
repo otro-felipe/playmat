@@ -11,7 +11,7 @@ const choice = (id, kind = 'amount', instruction = 'Choose an amount') => ({
   id, kind, instruction, choices: [{ id: `${id}-answer`, type: 'number', label: `Answer for ${id}` }],
 });
 
-async function fixture(t, { first = choice('first'), onResponse = () => {}, evidence = true } = {}) {
+async function fixture(t, { first = choice('first'), onResponse = () => {}, evidence = true, initial = {} } = {}) {
   const listeners = new Set();
   const applied = [];
   const players = [
@@ -26,6 +26,7 @@ async function fixture(t, { first = choice('first'), onResponse = () => {}, evid
       epoch: 'fixture', resolutionRevision: 0, resolutions: {}, publicActions: { pilot: 0, rival: 0 },
       informationRevision: 0, combatRevision: 0, combatDamage: [],
     } } : {}),
+    ...initial,
   };
   const update = (patch) => {
     state = { ...state, cursor: state.cursor + 1, ...patch };
@@ -168,6 +169,115 @@ test('[PM-LINE-03] a decision wait can return a rollback vote without a gameplay
   assert.equal(result.event, 'rollback');
   assert.equal(result.state.rollbackRequest.id, 'rewind-1');
 });
+
+test('[PM-LINE-03] a rollback callback invalidates a running line and returns the pending vote', async (t) => {
+  const submitted = Promise.withResolvers();
+  const f = await fixture(t, { onResponse: (_answer, update) => {
+    update({ priority: 'opponent', decision: null });
+    submitted.resolve();
+  } });
+  const { result: running } = await f.call('play_line', { ...f.request, waitMs: 0 });
+  assert.equal(running.planOwnsExecution, true);
+  await submitted.promise;
+
+  const invalidWait = await f.call('wait_for_decision', {
+    gameId, commandId: f.request.commandId, afterCursor: f.request.cursor,
+  });
+  assert.equal(invalidWait.result.code, 'invalid_line_wait');
+
+  const next = f.call('wait_for_decision', { gameId, commandId: f.request.commandId, timeoutMs: 1000 });
+  // EngineSeat invalidates the epoch when it publishes USER_REQUEST_DIALOG.
+  f.update({ epoch: 2, rollbackRequest: { id: 'rewind-1' } });
+  const { result } = await next;
+  assert.equal(result.sequenceId, running.sequenceId);
+  assert.equal(result.event, 'rollback');
+  assert.equal(result.reason, 'invalidated');
+  assert.equal(result.planOwnsExecution, false);
+  assert.equal(result.needsAgent, true);
+  assert.equal(result.state.rollbackRequest.id, 'rewind-1');
+  assert.equal(f.applied.length, 1);
+});
+
+test('[PM-LINE-03] a rollback wakes a command wait even while its engine acknowledgement is pending', async (t) => {
+  const submitted = Promise.withResolvers();
+  const acknowledge = Promise.withResolvers();
+  const f = await fixture(t, { onResponse: async () => {
+    submitted.resolve();
+    await acknowledge.promise;
+  } });
+  t.after(() => acknowledge.resolve());
+  const { result: running } = await f.call('play_line', { ...f.request, waitMs: 0 });
+  assert.equal(running.planOwnsExecution, true);
+  await submitted.promise;
+  const next = f.call('wait_for_decision', { gameId, commandId: f.request.commandId, timeoutMs: 200 });
+  f.update({ epoch: 2, decision: null, rollbackRequest: { id: 'rewind-2' } });
+  const { result } = await next;
+  assert.equal(result.event, 'rollback');
+  assert.equal(result.needsAgent, true);
+  assert.equal(result.state.rollbackRequest.id, 'rewind-2');
+  assert.equal(f.applied.length, 1);
+  acknowledge.resolve();
+});
+
+test('[PM-LINE-03] a pending rollback takes priority over filters and gameplay', async (t) => {
+  const f = await fixture(t, { initial: { rollbackRequest: { id: 'pending' } } });
+  const { result } = await f.call('wait_for_decision', { gameId, afterCursor: f.request.cursor });
+  assert.equal(result.event, 'rollback');
+  assert.equal((await f.call('play_line', f.request)).result.code, 'rollback_pending');
+  assert.equal((await f.call('submit_decision', {
+    gameId, cursor: f.request.cursor, decisionId: 'first', choiceId: 'first-answer', idempotencyKey: 'pending-choice',
+  })).result.code, 'rollback_pending');
+  assert.deepEqual(f.applied, []);
+});
+
+test('[PM-LINE-03] an opt-in compact view retains exact options and available state fields', async (t) => {
+  const cottage = { id: 'cottage', name: 'Restless Cottage', types: ['LAND', 'CREATURE'], power: '4', toughness: '4',
+    hints: ['Use this permanent as a mana source or animate it.'], rules: ['Restless Cottage enters tapped.'], setCode: 'WOE', cardNumber: '258' };
+  const first = { id: 'first', kind: 'priority', instruction: 'Play spells and abilities',
+    choices: [{ id: 'tap', label: cottage.name, objectId: cottage.id, type: 'manaAbility', card: cottage }] };
+  const f = await fixture(t, { first, initial: { ownHand: [cottage] } });
+  const { result: full } = await f.call('get_game_state', { gameId });
+  const { result: compact } = await f.call('get_game_state', { gameId, view: 'compact' });
+  const { setCode, cardNumber, ...playable } = cottage;
+  assert.deepEqual(compact.ownHand, [playable]);
+  const { card, ...choiceWithoutCard } = first.choices[0];
+  assert.deepEqual(compact.decision.choices, [{ ...choiceWithoutCard, cardRef: cottage.id }]);
+  assert.equal(compact.cursor, full.cursor);
+  assert.ok(Buffer.byteLength(JSON.stringify(compact)) < Buffer.byteLength(JSON.stringify(full)));
+});
+
+for (const variant of ['channel-only', 'land-only', 'land-and-channel', 'different-source', 'two-land-faces']) {
+  test(`[PM-LINE-01] Boseiju land intent acts only on a verified land action: ${variant}`, async (t) => {
+    const boseiju = { id: 'boseiju', name: 'Boseiju, Who Endures', cardId: 'boseiju', types: ['LAND'] };
+    const landPlayable = variant !== 'channel-only';
+    const first = { id: 'first', kind: 'priority', choices: [{ id: 'land-object', type: 'object', card: boseiju,
+      objectId: boseiju.id, ...(landPlayable ? { canPlayLand: true } : {}) }] };
+    const picker = { id: 'picker', kind: 'panel', panelKind: 'chooseAbility', sourceObjectId: variant === 'different-source' ? 'different-land' : boseiju.id,
+      choices: [{ id: 'channel', label: 'Channel', abilityType: 'ACTIVATED_NONMANA' },
+        { id: 'land', label: 'Play Boseiju, Who Endures', abilityType: 'PLAY_LAND' },
+        ...(variant === 'two-land-faces' ? [{ id: 'other-land', label: 'Play the other face', abilityType: 'PLAY_LAND' }] : []),
+      ] };
+    const f = await fixture(t, { first, initial: { ownHand: [boseiju] }, onResponse: ({ choiceId }, update, state) => {
+      assert.notEqual(choiceId, 'channel');
+      if (variant !== 'land-only' && choiceId === 'land-object') update({ decision: picker });
+      else update({ decision: choice('after', 'priority'), ownHand: [], players: [{ ...state.players[0], battlefield: [boseiju] }, state.players[1]] });
+    } });
+    const { result } = await f.call('play_line', { ...f.request, actions: [
+      { kind: 'play', playAs: 'land', select: { cardId: boseiju.id, zone: 'hand' } },
+    ] });
+    if (!landPlayable) {
+      assert.equal(result.reason, 'illegal_choice');
+      assert.deepEqual(f.applied, []);
+    } else if (variant === 'different-source' || variant === 'two-land-faces') {
+      assert.equal(result.reason, 'response_available');
+      assert.equal(result.state.decision.id, picker.id);
+      assert.deepEqual(f.applied.map(({ choiceId }) => choiceId), ['land-object']);
+    } else {
+      assert.equal(result.status, 'completed', JSON.stringify(result));
+      assert.deepEqual(f.applied.map(({ choiceId }) => choiceId), variant === 'land-only' ? ['land-object'] : ['land-object', 'land']);
+    }
+  });
+}
 
 test('[PM-LINE-03] a stale request returns the current same-game state without sending an answer', async (t) => {
   const f = await fixture(t);

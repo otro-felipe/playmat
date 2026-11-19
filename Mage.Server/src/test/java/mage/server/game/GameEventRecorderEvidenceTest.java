@@ -14,6 +14,7 @@ import mage.constants.MultiplayerAttackOption;
 import mage.constants.RangeOfInfluence;
 import mage.game.GameState;
 import mage.game.events.GameEvent;
+import mage.game.events.DamagedPermanentEvent;
 import mage.game.events.DamagedPlayerEvent;
 import mage.game.permanent.Permanent;
 import mage.game.events.PublicActionObservations;
@@ -214,6 +215,22 @@ public class GameEventRecorderEvidenceTest {
         assertEquals(own, evidence.getCombatDamage().get(0).getControllerId());
         assertEquals(rival, evidence.getCombatDamage().get(0).getTargetId());
         assertEquals(3, evidence.getCombatDamage().get(0).getAmount());
+        assertFalse(evidence.getCombatDamage().get(0).isTargetPermanent());
+        assertTrue(evidence.getPublicActions().isEmpty());
+    }
+
+    @Test public void publicCombatDamageToPermanentsDistinguishesItsTargetFromPlayerLife() {
+        UUID attackerId = UUID.randomUUID(), blockerId = UUID.randomUUID();
+        Permanent attacker = stub(Permanent.class, values("getId", attackerId, "getControllerId", own));
+        Game combatGame = stub(Game.class, values("getId", gameId, "isSimulation", false, "getPermanentOrLKIBattlefield", attacker));
+        recorder.watch(new DamagedPermanentEvent(blockerId, attackerId, rival, 2, false), combatGame);
+        recorder.watch(new DamagedPermanentEvent(blockerId, attackerId, rival, 4, true), combatGame);
+        SequenceEvidenceView evidence = feed.sequenceEvidence(own);
+        assertEquals(1, evidence.getCombatRevision());
+        assertEquals(attackerId, evidence.getCombatDamage().get(0).getSourceId());
+        assertEquals(blockerId, evidence.getCombatDamage().get(0).getTargetId());
+        assertEquals(4, evidence.getCombatDamage().get(0).getAmount());
+        assertTrue(evidence.getCombatDamage().get(0).isTargetPermanent());
         assertTrue(evidence.getPublicActions().isEmpty());
     }
 
@@ -238,7 +255,7 @@ public class GameEventRecorderEvidenceTest {
 
     @Test public void boundedCombatHistoryExposesGapsAndDoesNotMutateOldSnapshots() {
         SequenceEvidenceView before = feed.sequenceEvidence(own);
-        for (int i = 0; i < GameEventFeed.RESOLUTION_CAPACITY + 2; i++) feed.combatDamage(UUID.randomUUID(), own, rival, 1);
+        for (int i = 0; i < GameEventFeed.RESOLUTION_CAPACITY + 2; i++) feed.combatDamage(UUID.randomUUID(), own, rival, 1, false);
         SequenceEvidenceView after = feed.sequenceEvidence(own);
         assertEquals(GameEventFeed.RESOLUTION_CAPACITY, after.getCombatDamage().size());
         assertEquals(GameEventFeed.RESOLUTION_CAPACITY + 2, after.getCombatRevision());

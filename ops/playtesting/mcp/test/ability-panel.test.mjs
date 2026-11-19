@@ -13,6 +13,7 @@ const playerId = '22222222-2222-4222-8222-222222222222';
 const roomId = '33333333-3333-4333-8333-333333333333';
 const front = '44444444-4444-4444-8444-444444444444';
 const back = '55555555-5555-4555-8555-555555555555';
+const pathway = '77777777-7777-4777-8777-777777777777';
 
 test('[PM-AC-08] selects or cancels the engine ability panel through guarded MCP choices', async (t) => {
   const engineServer = new WebSocketServer({ host: '127.0.0.1', port: 0 });
@@ -20,6 +21,7 @@ test('[PM-AC-08] selects or cancels the engine ability panel through guarded MCP
   const played = [];
   const concessions = [];
   const gameView = { players: [{ playerId, name: 'FixtureRival', hasPriority: true }], myPlayerId: playerId, priorityPlayerName: 'FixtureRival', step: 'PRECOMBAT_MAIN', turn: 3,
+    myHand: { [pathway]: { id: pathway, cardId: pathway, name: 'Branchloft Pathway', cardTypes: ['LAND'] } },
     sequenceEvidence: { epoch: 'panel-fixture', publicActions: {}, resolutions: {}, resolutionRevision: 0, informationRevision: 0, combatRevision: 0, combatDamage: [] } };
   const responses = { connectUser: true, serverGetMainRoomId: roomId, gameJoin: true, sendPlayerUUID: true, sendPlayerAction: true, matchQuit: true };
   const connected = once(engineServer, 'connection');
@@ -66,6 +68,8 @@ test('[PM-AC-08] selects or cancels the engine ability panel through guarded MCP
   event('GAME_INIT', 2, gameView);
   const abilityPanel = {
     message: 'Choose spell or ability to play Branchloft Pathway',
+    sourceObjectId: pathway,
+    abilityTypes: { [front]: 'PLAY_LAND', [back]: 'PLAY_LAND' },
     choices: { [front]: '1. <b>Play Branchloft Pathway</b>', [back]: '2. <b>Play Boulderloft Pathway</b>' },
   };
   event('GAME_CHOOSE_ABILITY', 3, abilityPanel);
@@ -74,6 +78,9 @@ test('[PM-AC-08] selects or cancels the engine ability panel through guarded MCP
   assert.equal(observed.result.event, 'decision');
   assert.equal(observed.result.state.gameId, gameId);
   const { decision } = observed.result.state;
+  assert.equal(decision.kind, 'panel');
+  assert.equal(decision.sourceObjectId, pathway);
+  assert.deepEqual(decision.choices.map(({ abilityType }) => abilityType), ['PLAY_LAND', 'PLAY_LAND', undefined]);
   assert.deepEqual(decision.choices.map(({ label, type }) => [label, type]), [
     ['Play Branchloft Pathway', 'option'],
     ['Play Boulderloft Pathway', 'option'],
@@ -96,10 +103,13 @@ test('[PM-AC-08] selects or cancels the engine ability panel through guarded MCP
     [gameId, back, 3],
   ]);
 
-  event('GAME_CHOOSE_ABILITY', 4, abilityPanel);
+  event('GAME_CHOOSE_ABILITY', 4, { ...abilityPanel, gameView: { ...gameView,
+    myHand: { [pathway]: { ...gameView.myHand[pathway], faceDown: true } } } });
   const second = await call('wait_for_decision', { gameId, afterDecisionId: decision.id, timeoutMs: 1_000 });
   assert.equal(second.result.event, 'decision');
   const current = second.result.state.decision;
+  assert.equal(current.sourceObjectId, undefined);
+  assert.ok(current.choices.every(({ abilityType, spellName }) => abilityType === undefined && spellName === undefined));
   const stale = await call('submit_decision', { ...action, idempotencyKey: 'stale-face' });
   assert.equal(stale.result.code, 'stale_decision');
   const cancel = current.choices.find((choice) => choice.label === 'Cancel');
@@ -110,7 +120,7 @@ test('[PM-AC-08] selects or cancels the engine ability panel through guarded MCP
     [gameId, back, 3],
     [gameId, null, 4],
   ]);
-  event('GAME_CHOOSE_ABILITY', 5, abilityPanel);
+  event('GAME_CHOOSE_ABILITY', 5, { ...abilityPanel, gameView });
   const third = (await call('wait_for_decision', { gameId, afterDecisionId: current.id, timeoutMs: 1000 })).result.state;
   const invalid = await client.callTool({ name: 'play_turn', arguments: { gameId, cursor: third.cursor, actions: [{ kind: 'choose', decisionId: third.decision.id,
     choiceId: third.decision.choices[0].id, select: { label: 'Play Branchloft Pathway' } }], finish: 'none' } });

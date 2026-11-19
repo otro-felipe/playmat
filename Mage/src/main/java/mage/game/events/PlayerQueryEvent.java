@@ -62,6 +62,7 @@ public class PlayerQueryEvent extends EventObject implements ExternalEvent, Seri
     private List<? extends Card> pile2;
     private Choice choice;
     private List<MultiAmountMessage> messages;
+    private UUID choiceSourceId;
 
     private PlayerQueryEvent(UUID playerId, String message, List<? extends Ability> abilities, Set<String> choices,
             Set<UUID> targets, Cards cards, QueryType queryType, int min, int max,
@@ -156,13 +157,15 @@ public class PlayerQueryEvent extends EventObject implements ExternalEvent, Seri
         return new PlayerQueryEvent(playerId, message, null, null, null, null, QueryType.ASK, 0, 0, false, options, null);
     }
 
-    public static PlayerQueryEvent chooseAbilityEvent(UUID playerId, String message, String objectName, List<? extends ActivatedAbility> choices) {
+    public static PlayerQueryEvent chooseAbilityEvent(UUID playerId, String message, String objectName, UUID sourceId, List<? extends ActivatedAbility> choices) {
         Set<String> nameAsSet = null;
         if (objectName != null) {
             nameAsSet = new HashSet<>();
             nameAsSet.add(objectName);
         }
-        return new PlayerQueryEvent(playerId, message, choices, nameAsSet, null, null, QueryType.CHOOSE_ABILITY, 0, 0, false, null, null);
+        PlayerQueryEvent event = new PlayerQueryEvent(playerId, message, choices, nameAsSet, null, null, QueryType.CHOOSE_ABILITY, 0, 0, false, null, null);
+        event.choiceSourceId = sourceId;
+        return event;
     }
 
     public static PlayerQueryEvent choosePileEvent(UUID playerId, String message, List<? extends Card> pile1, List<? extends Card> pile2) {
@@ -249,6 +252,10 @@ public class PlayerQueryEvent extends EventObject implements ExternalEvent, Seri
 
     public Set<String> getChoices() {
         return choices;
+    }
+
+    public UUID getChoiceSourceId() {
+        return choiceSourceId;
     }
 
     public Set<UUID> getTargets() {

@@ -149,7 +149,7 @@ public class GameSessionPlayer extends GameSessionWatcher {
         }
     }
 
-    public void requestPermissionToRollbackTurn(UUID requestingUserId, UUID requestId, int targetTurn) {
+    public void requestPermissionToRollbackTurn(UUID requestingUserId, UUID requestId, int targetTurn, long requestedAtEpochMs) {
         if (!killed) {
             Optional<User> requestingUser = userManager.getUser(requestingUserId);
             Optional<User> requestedUser = userManager.getUser(userId);
@@ -160,6 +160,7 @@ public class GameSessionPlayer extends GameSessionWatcher {
                 // The rollback response carries the vote ID; hand-reveal requests still use a user ID.
                 userRequestMessage.setRelatedUser(requestId, requestingUser.get().getName());
                 userRequestMessage.setGameId(game.getId());
+                userRequestMessage.setRequestedAtEpochMs(requestedAtEpochMs);
                 userRequestMessage.setButton1("Accept", PlayerAction.ADD_PERMISSION_TO_ROLLBACK_TURN);
                 userRequestMessage.setButton2("Deny", PlayerAction.DENY_PERMISSION_TO_ROLLBACK_TURN);
                 requestedUser.get().fireCallback(new ClientCallback(ClientCallbackMethod.USER_REQUEST_DIALOG, game.getId(), userRequestMessage));

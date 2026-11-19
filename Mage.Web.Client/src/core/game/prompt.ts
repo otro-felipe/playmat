@@ -1,6 +1,7 @@
 import type { CallbackMethodName, CallbackPayloads } from '../../protocol/generated/protocol';
 import type {
   AbilityPickerView,
+  AbilityType,
   CardView,
   ChoiceImpl,
   GameClientMessage,
@@ -84,8 +85,9 @@ export interface AskPrompt extends PromptBase {
 
 export interface ChooseAbilityPrompt extends PromptBase {
   kind: 'chooseAbility';
+  sourceObjectId?: string;
   /** ability id -> rule text, in server order */
-  choices: { id: string; text: string }[];
+  choices: { id: string; text: string; abilityType?: AbilityType; spellName?: string }[];
 }
 
 export interface ChoosePilePrompt extends PromptBase {
@@ -229,7 +231,12 @@ export function parsePrompt<M extends PromptEventName>(method: M, data: Callback
         text: stripMarkup(view.message),
         options: {},
         kind: 'chooseAbility',
-        choices: Object.entries(view.choices ?? {}).map(([id, text]) => ({ id, text })),
+        ...(view.sourceObjectId ? { sourceObjectId: view.sourceObjectId } : {}),
+        choices: Object.entries(view.choices ?? {}).map(([id, text]) => {
+          const abilityType = view.abilityTypes?.[id];
+          const spellName = view.spellNames?.[id];
+          return { id, text, ...(abilityType ? { abilityType } : {}), ...(spellName ? { spellName } : {}) };
+        }),
       };
     }
     case 'GAME_CHOOSE_PILE': {

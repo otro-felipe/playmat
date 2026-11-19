@@ -24,6 +24,7 @@ public class UserRequestMessage implements Serializable {
     private UUID gameId;
     private UUID roomId;
     private UUID tableId;
+    private Long requestedAtEpochMs;
 
     private String button1Text;
     private PlayerAction button1Action;
@@ -56,6 +57,14 @@ public class UserRequestMessage implements Serializable {
 
     public void setGameId(UUID gameId) {
         this.gameId = gameId;
+    }
+
+    public void setRequestedAtEpochMs(long requestedAtEpochMs) {
+        this.requestedAtEpochMs = requestedAtEpochMs;
+    }
+
+    public Long getRequestedAtEpochMs() {
+        return requestedAtEpochMs;
     }
 
     public void setRelatedUser(UUID userId, String name) {

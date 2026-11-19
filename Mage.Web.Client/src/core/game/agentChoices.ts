@@ -1,9 +1,10 @@
-import type { CardView, PermanentView, StackAbilityView } from '../../protocol/generated/views';
+import type { AbilityType, CardView, PermanentView, StackAbilityView } from '../../protocol/generated/views';
 import type { GameSessionState } from './gameSession';
 import type { Command } from './interaction';
 import { pregameChoice } from './pregame';
 import { stripMarkup } from './prompt';
 import { splitRules } from './glossary';
+import { isTriggerOrderPrompt } from './autoAnswer';
 
 /** An allowlisted view of a card for both MCP transports. Face-down cards keep their public object ID. */
 function cardOnBoard(card: CardView, id: string | undefined) {
@@ -53,7 +54,8 @@ function sequenceEvidence(view: GameSessionState['view'] | undefined) {
     resolutions: evidence.resolutions ? { ...evidence.resolutions } : undefined,
     resolutionRevision: evidence.resolutionRevision,
     combatRevision: evidence.combatRevision,
-    combatDamage: evidence.combatDamage?.map((entry) => ({ revision: entry.revision, sourceId: entry.sourceId, controllerId: entry.controllerId, targetId: entry.targetId, amount: entry.amount })),
+    combatDamage: evidence.combatDamage?.map(({ revision, sourceId, controllerId, targetId, amount, targetPermanent }) =>
+      ({ revision, sourceId, controllerId, targetId, amount, ...(targetPermanent ? { targetPermanent } : {}) })),
     informationRevision: evidence.informationRevision,
   };
 }
@@ -73,7 +75,9 @@ export function visibleAgentGame(state: GameSessionState | undefined) {
     revealed: (view?.revealed ?? []).map((group) => ({ name: group.name, cards: cardsOnBoard(group.cards) })),
     // GameView includes lookedAt only for this viewer; never read opponentHands/watchedHands.
     lookedAt: (view?.lookedAt ?? []).map((group) => ({ name: group.name, cards: cardsOnBoard(group.cards) })),
-    stack: cardsOnBoard(view?.stack),
+    stack: cardsOnBoard(view?.stack).map((card) =>
+      'types' in card && card.types?.some((type) => type === 'INSTANT' || type === 'SORCERY')
+      && card.id && view?.stack?.[card.id]?.paid === false ? { ...card, unpaid: true } : card),
     players: (view?.players ?? []).map((player) => ({
       id: player.playerId,
       name: player.name,
@@ -104,6 +108,10 @@ interface AgentChoice {
   card?: ReturnType<typeof cardOnBoard>;
   cards?: ReturnType<typeof cardOnBoard>[];
   objectId?: string;
+  triggerSourceId?: string;
+  canPlayLand?: true;
+  abilityType?: AbilityType;
+  spellName?: string;
   intent?: 'attack_all' | 'confirm_attack';
 }
 
@@ -134,6 +142,9 @@ export function projectedChoices(state: GameSessionState, promptId: string) {
   });
   const visible = { ...view.myHand, ...view.stack, ...(prompt.kind === 'target' ? prompt.cards : undefined) };
   for (const player of view.players ?? []) Object.assign(visible, player.battlefield, player.graveyard, player.exile);
+  const pickerSourceId = prompt.kind === 'chooseAbility' ? prompt.sourceObjectId : undefined;
+  const pickerSource = pickerSourceId && visible[pickerSourceId];
+  const sourceObjectId = pickerSource && !pickerSource.faceDown && !pickerSource.hideInfo ? pickerSourceId : undefined;
 
   const buttons = [interaction.mainButton, ...interaction.secondaryButtons].filter((button) => button !== null);
   const choices = buttons.map((button, index) => {
@@ -147,22 +158,37 @@ export function projectedChoices(state: GameSessionState, promptId: string) {
     }
     return choice;
   });
+  const triggerOrder = isTriggerOrderPrompt(prompt);
   for (const [id, command] of interaction.clickable) {
     const card = visible[id] ? cardOnBoard(visible[id], id) : undefined;
     const legal = view.canPlayObjects?.objects?.[id];
     const manaOnly = prompt.kind === 'priority' && !!legal?.basicManaAbilities?.length
       && !legal?.basicCastAbilities?.length && !legal?.basicPlayAbilities?.length && !legal?.other?.length;
-    const label = pregame === 'startingPlayer' ? id === state.playerId ? 'Play first' : 'Draw first'
+    let label = pregame === 'startingPlayer' ? id === state.playerId ? 'Play first' : 'Draw first'
       : card?.name ?? playerNames.get(id) ?? 'Choose object';
-    choices.push({ ...projectChoice(command, `object-${id}`, label, manaOnly ? 'manaAbility' : 'object', card), objectId: id });
+    const trigger = triggerOrder ? prompt.cards?.[id] as StackAbilityView | undefined : undefined;
+    const sourceId = trigger?.sourceCard?.id;
+    const source = sourceId ? (view.players ?? []).map((player) => player.battlefield?.[sourceId]).find(Boolean) : undefined;
+    const triggerSourceId = source && !source.faceDown && !source.hideInfo ? sourceId : undefined;
+    if (triggerSourceId && trigger?.rules?.[0]) {
+      label = `${source?.name ?? source?.displayName ?? label} — ${stripMarkup(trigger.rules[0])}`;
+    }
+    const canPlayLand = prompt.kind === 'priority' && !card?.faceDown && !!legal?.basicPlayAbilities?.length;
+    choices.push({ ...projectChoice(command, `object-${id}`, label, manaOnly ? 'manaAbility' : 'object', card), objectId: id,
+      ...(canPlayLand ? { canPlayLand: true } : {}),
+      ...(triggerSourceId ? { triggerSourceId } : {}),
+    });
   }
 
   const details: { amount?: Limits; amounts?: Amounts } = {};
   switch (prompt.kind) {
     case 'chooseAbility':
-      prompt.choices.forEach(({ id, text }, index) => {
+      prompt.choices.forEach(({ id, text, abilityType, spellName }, index) => {
         const label = stripMarkup(text).replace(/^\d+\.\s*/, '') || `Ability ${index + 1}`;
-        choices.push(projectChoice({ type: 'uuid', id }, `ability-${index}`, label, 'option'));
+        choices.push({ ...projectChoice({ type: 'uuid', id }, `ability-${index}`, label, 'option'),
+          ...(sourceObjectId && abilityType ? { abilityType } : {}),
+          ...(sourceObjectId && abilityType === 'SPELL' && spellName ? { spellName } : {}),
+        });
       });
       choices.push(projectChoice({ type: 'uuid', id: null }, 'cancel', 'Cancel', 'button'));
       break;
@@ -204,6 +230,8 @@ export function projectedChoices(state: GameSessionState, promptId: string) {
     : prompt.kind === 'choosePile' ? 'revealed_piles'
       : /^(?:Choose which flip to keep|Choose which die roll result to keep|Re-roll\b)/i.test(prompt.text) ? 'random_result' : null;
   return { id: promptId, kind: pregame ?? interaction.mode, instruction: stripMarkup(interaction.headline), choices,
+    ...(triggerOrder ? { triggerOrder: true } : {}),
+    ...(sourceObjectId ? { sourceObjectId } : {}),
     ...(informationBoundary ? { informationBoundary } : {}), ...details };
 }
 
@@ -213,8 +241,12 @@ type AgentDecision = NonNullable<ReturnType<typeof projectedChoices>>;
 export function describeAgentDecision(decision: AgentDecision | null) {
   return decision && {
     ...decision,
-    choices: decision.choices.map(({ id, label, type, card, cards, objectId, intent }) => ({
+    choices: decision.choices.map(({ id, label, type, card, cards, objectId, intent, canPlayLand, abilityType, spellName, triggerSourceId }) => ({
       id, label, type, ...(card ? { card } : {}), ...(cards ? { cards } : {}), ...(objectId ? { objectId } : {}), ...(intent ? { intent } : {}),
+      ...(canPlayLand ? { canPlayLand } : {}),
+      ...(abilityType ? { abilityType } : {}),
+      ...(spellName ? { spellName } : {}),
+      ...(triggerSourceId ? { triggerSourceId } : {}),
     })),
   };
 }

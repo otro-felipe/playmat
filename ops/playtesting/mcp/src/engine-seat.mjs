@@ -159,8 +159,11 @@ export class PlaymatEngineSeat {
       this.#invalidate();
     });
     this.bus.on('USER_REQUEST_DIALOG', (request) => {
-      if (request?.gameId !== this.#session?.getState().gameId || request.button1Action !== ROLLBACK_VOTE || !request.relatedUserId) return;
-      this.#vote = { id: request.relatedUserId, requester: request.relatedUserName ?? null, message: stripMarkup(request.message) };
+      if (request?.button1Action !== ROLLBACK_VOTE || request.gameId !== this.#session?.getState().gameId || !request.relatedUserId) return;
+      const receivedAtEpochMs = Date.now();
+      this.#vote = { id: request.relatedUserId, requester: request.relatedUserName ?? null, message: stripMarkup(request.message),
+        requestedAtEpochMs: Number.isSafeInteger(request.requestedAtEpochMs) ? request.requestedAtEpochMs : null,
+        receivedAtEpochMs };
       this.#invalidate();
     });
     this.bus.on('GAME_ROLLBACK', (_turn, event) => {
@@ -273,7 +276,7 @@ export class PlaymatEngineSeat {
       secondsRemaining: timing.matchClock.status === 'running' ? timing.matchClock.lastReportedSecondsRemaining : null,
       timing,
       score: state?.endInfo ? { wins: state.endInfo.wins, losses: state.endInfo.loses, winsNeeded: state.endInfo.winsNeeded } : null,
-      rollbackRequest: this.#vote,
+      rollbackRequest: this.#pendingRollback(),
       sideboard: this.#sideboard ? { decisionId: this.#sideboard.decisionId, submitted: this.#sideboard.submitted } : null,
       decision: describeAgentDecision(decision),
     };
@@ -433,12 +436,17 @@ export class PlaymatEngineSeat {
 
   async voteRollback({ gameId, requestId, accept }) {
     this.#requireGame(gameId);
-    if (this.#vote?.id !== requestId) throw new ToolError('stale_rollback', 'The request is no longer current.');
+    if (this.#pendingRollback()?.id !== requestId) throw new ToolError('stale_rollback', 'The request is no longer current.');
     const action = accept ? ROLLBACK_VOTE : 'DENY_PERMISSION_TO_ROLLBACK_TURN';
     rejectOnFalse(await this.api.sendPlayerAction(action, gameId, requestId), 'rollback_refused', 'The engine refused the vote.');
     this.#vote = null;
     this.#invalidate();
     return { submitted: true };
+  }
+
+  #pendingRollback() {
+    const vote = this.#vote;
+    return vote && Date.now() - (vote.requestedAtEpochMs ?? vote.receivedAtEpochMs) < 30_000 ? vote : null;
   }
 
   async #joinChat(gameId) {

@@ -8,12 +8,14 @@ import { listArchetypes, possibleResponses, searchCards } from './catalog.mjs';
 import { guideBootstrap, guideInstructions, registerGuides, sequenceInstructions } from './guides.mjs';
 import { registerMatchReviewPrompt, scoredPositions } from './match-review.mjs';
 import { playLine, waitForLine } from './line-runtime.mjs';
+import { compactGameState, formatGameReceipt } from './state-view.mjs';
 
 const Uuid = z.uuid();
 const StringId = z.string().min(1).max(120);
 const Format = z.enum(['Standard', 'Pioneer', 'Modern']);
 const Cursor = z.number().int().nonnegative();
 const Value = z.union([z.number().int(), z.array(z.number().int().nonnegative()).max(128)]);
+const StateView = z.enum(['full', 'compact']).optional().describe('Use compact for gameplay. A choice cardRef identifies a visible card in the same state. Use full (the default) for inline choice cards and printing details.');
 const GameCondition = {
   phase: z.string().min(1).max(32).optional(),
   step: z.string().min(1).max(40).optional(),
@@ -56,17 +58,23 @@ const PassUntil = z.object({
 }).strict().refine((value) => hasDestination(value) || value.stackEmpty === true, 'A pass needs a phase, step, priority or empty-stack destination.');
 const Sequence = { gameId: Uuid, cursor: Cursor, expectedStackIds: z.array(StringId).max(16).optional(), allowPlannedCombatDamage: z.boolean().default(false), steps: z.array(z.union([Hold, Pace, Answer, PassUntil, YieldPriority, AdvanceToOwnTurn])).min(1).max(32) };
 const TurnPlay = z.object({ kind: z.literal('play'), select: ChoiceSelector, when: z.enum(['stack_empty', 'priority']).default('stack_empty'),
+  playAs: z.literal('land').optional().describe('Require an engine-confirmed land play. If the object opens a picker, use the unique land option for that exact source. Omit for other plays.'),
   reevaluateAfter: z.boolean().optional().describe('Make this the last strategic intention and return control after settlement. Only guarded costs for its tracked cast/activation may follow before resolution; an untracked no-stack choice must be last. Use for uncertain effects not recognized automatically.'),
   expectCast: z.boolean().optional().describe('False for an intentional no-stack special action such as plot; lands are detected automatically. Unexpected stack additions still stop.'),
   targets: z.array(z.object({ select: ChoiceSelector, instruction: z.string().min(1).max(2000).optional() }).strict()).max(8).optional(), payWith: z.array(StringId).max(16).optional(),
   expectTriggers: z.array(OwnTrigger).max(4).optional(), expectTargetTriggers: z.array(TargetTrigger).max(2).optional(),
-}).strict();
-const TurnChoose = z.object({ kind: z.literal('choose'), choiceId: StringId.optional(), select: ChoiceSelector.optional(), decisionId: StringId.optional(),
+}).strict().refine(({ playAs, expectCast, targets, payWith }) => playAs !== 'land' || (expectCast !== true && !targets?.length && !payWith?.length),
+  'A land action cannot include spell targets, casting mana or a spell forecast.');
+const TurnChoose = z.object({ kind: z.literal('choose'),
+  choiceId: StringId.optional().describe('Copy the id of a legal option from decision.choices. Pair it with the observed decisionId.'),
+  select: ChoiceSelector.optional().describe('For a planned prompt, uniquely identify the legal option by object ID or exact option label.'),
+  decisionId: StringId.optional().describe('Copy decision.id from the same observed state as the choice.'),
   guard: z.object({ kind: StringId, instruction: z.string().min(1).max(2000).optional(), ...GameCondition }).strict().optional(),
   value: Value.optional(), reevaluateAfter: z.boolean().optional(), expectCast: z.boolean().optional(), expectAbility: OwnActivation.optional(), skipIfTargetedBy: StringId.optional(), expectTriggers: z.array(OwnTrigger).max(4).optional(), expectTargetTriggers: z.array(TargetTrigger).max(2).optional(),
 }).strict().refine(({ choiceId, select }) => !!choiceId !== !!select, 'Use one exact choiceId or one semantic select, as with submit_decision.')
   .refine(({ decisionId, guard }) => decisionId || guard && (['priority', 'payMana'].includes(guard.kind) || guard.instruction !== undefined), 'Use the observed decisionId, or guard the future mandatory choice with its exact instruction.');
-const TurnAttack = z.object({ kind: z.literal('attack'), attackers: z.union([z.literal('all'), z.array(StringId).max(16)]).default('all') }).strict()
+const TurnAttack = z.object({ kind: z.literal('attack'), attackers: z.union([z.literal('all'), z.array(StringId).max(16)]).default('all'),
+  expectTriggers: z.array(OwnTrigger).max(4).optional() }).strict()
   .refine(({ attackers }) => attackers === 'all' || new Set(attackers).size === attackers.length, 'Name each attacker once.');
 const Turn = { gameId: Uuid, cursor: Cursor, actions: z.array(z.union([TurnPlay, TurnChoose, TurnAttack, Pace])).max(32),
   expectedStackIds: z.array(StringId).max(16).optional(), finish: z.enum(['next_turn', 'end_step', 'none']).default('next_turn') };
@@ -85,6 +93,7 @@ const Line = {
     .describe('Plan as far as current information justifies. Use exact choices for visible engine prompts. Put pass_until or pass_priority last.'),
   expectedStackIds: z.array(StringId).max(16).optional(),
   waitMs: z.number().int().min(0).max(25_000).default(5_000).describe('Bound how long this call waits for the result. If the plan still owns execution, wait_for_decision with this gameId and commandId.'),
+  view: StateView,
 };
 const Catalog = {
   format: Format.optional(), query: z.string().trim().min(1).max(160).optional(),
@@ -132,7 +141,10 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
         if (!actor.scopes.includes(scope)) throw new ToolError('forbidden', 'This credential lacks the required scope.');
         return textResult(await run(args, extra.signal));
       } catch (error) {
-        if (error instanceof ToolError) return textResult({ code: error.code, message: error.message, ...(error.state ? { state: error.state } : {}) }, true);
+        if (error instanceof ToolError) {
+          const receipt = { code: error.code, message: error.message, ...(error.state ? { state: error.state } : {}) };
+          return textResult(formatGameReceipt(receipt, args.view), true);
+        }
         if (extra.signal.aborted) return textResult({ code: 'cancelled', message: 'The request was cancelled.' }, true);
         return textResult({ code: 'operation_failed', message: 'Playmat could not verify completion. Read the latest state before retrying.' }, true);
       }
@@ -143,8 +155,8 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
     if (!callProduct) throw new ToolError('unavailable', 'The product service is unavailable.');
     return callProduct(operation, args);
   };
-  tool('get_game_state', 'Read the public battlefield and your own seat, hand, current decision and timing. secondsRemaining is a last reported cumulative match clock, not an inactivity countdown. A null clock or unknown inactivity deadline never means unlimited decision time; answer pending legal choices promptly.', { gameId: Uuid.optional() },
-    'play', ({ gameId }) => getSeat().snapshot(gameId), true);
+  tool('get_game_state', 'Read the public battlefield and your own seat, hand, current decision and timing. secondsRemaining is a last reported cumulative match clock, not an inactivity countdown. A null clock or unknown inactivity deadline never means unlimited decision time; answer pending legal choices promptly.', { gameId: Uuid.optional(), view: StateView },
+    'play', ({ gameId, view }) => view === 'compact' ? compactGameState(getSeat().snapshot(gameId)) : getSeat().snapshot(gameId), true);
   tool('list_recoverable_matches', 'List matches reserved to this exact account or agent grant, with stable participant links and confirmed boundaries.', {},
     'play', () => getSeat().engine.recoveryList(), true);
   tool('get_recovery_status', 'Read only the confirmed recovery boundary and current engine ID mapping; no hidden checkpoint state.', { matchId: Uuid },
@@ -154,15 +166,18 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
   }, 'play', (args) => getSeat().engine.recoveryJoin(args));
   tool('resync_game', 'Ask XMage for the current decision after a lost or uncertain acknowledgement.', { gameId: Uuid },
     'play', ({ gameId }) => getSeat().engine.resync(gameId));
-  tool('wait_for_decision', 'Wait for an engine decision, rollback vote, sideboarding or game end. When play_line still owns execution, pass its gameId and commandId to wait for the line to stop and return the next visible state. A timeout includes the current state. Waiting does not answer prompts or pause inactivity.', {
-    gameId: Uuid.optional(), afterDecisionId: StringId.optional(), afterCursor: Cursor.optional(),
-    commandId: StringId.optional(), timeoutMs: z.number().int().min(100).max(25_000).optional(),
-  }, 'play', (args, signal) => {
-    if (args.commandId === undefined) return getSeat().wait(args, signal);
+  tool('wait_for_decision', 'Wait for an engine decision, rollback vote, sideboarding or game end. Use gameId and commandId together for a running line, without cursor or decision filters. A pending rollback returns immediately and takes priority. A timeout includes the current state. Waiting does not answer prompts or pause inactivity.', {
+    gameId: Uuid.optional().describe('Required with commandId. Use the gameId from the line receipt.'),
+    afterDecisionId: StringId.optional().describe('Ordinary wait only. Wait for a decision with a different ID. Omit with commandId.'),
+    afterCursor: Cursor.optional().describe('Ordinary wait only. Wait beyond the last observed cursor. Omit with commandId.'),
+    commandId: StringId.optional().describe('Wait for this gameId and commandId from play_line. Omit afterCursor and afterDecisionId.'),
+    timeoutMs: z.number().int().min(100).max(25_000).optional(), view: StateView,
+  }, 'play', async (args, signal) => {
+    if (args.commandId === undefined) return formatGameReceipt(await getSeat().wait(args, signal), args.view);
     if (!args.gameId || args.afterCursor !== undefined || args.afterDecisionId !== undefined) {
-      throw new ToolError('invalid_line_wait', 'Waiting for a line requires its gameId and commandId without a decision or cursor filter.');
+      throw new ToolError('invalid_line_wait', 'Use the gameId and commandId from play_line together. Omit afterCursor and afterDecisionId when waiting for that line.');
     }
-    return waitForLine(getSeat(), args, signal);
+    return formatGameReceipt(await waitForLine(getSeat(), args, signal), args.view);
   }, true);
   tool('wait_until', 'Observe a phase, step or priority destination without passing or modifying play.', {
     gameId: Uuid, ...GameCondition, afterCursor: Cursor.optional(),
@@ -187,7 +202,7 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
     'play', ({ gameId, cursor }) => getSeat().startSequence({ gameId, cursor, steps: [{ kind: 'advance_to_own_turn' }] }, reauthorize));
   const playSequence = (args) => getSeat().startSequence(args, reauthorize);
   tool('play_line', 'Submit the longest justified line of plays, choices, attacks and passes from the current cursor, on either turn. Ordinary handoffs are automatic. The line stops on new information, rival actions or a required choice it cannot answer. Returns the applied progress and visible game state together. For an exact choice use its current decisionId and choiceId. Prefer this tool for gameplay.', Line, 'play',
-    (args, signal) => playLine(getSeat(), args, reauthorize, signal));
+    async (args, signal) => formatGameReceipt(await playLine(getSeat(), args, reauthorize, signal), args.view));
   tool('play_turn', 'Plan a complete turn with significant plays, public targets, chosen mana sources, guarded costs/choices and attacks. The executor makes legal ordinary passes between intentions; do not enumerate passes or predict priority windows. Own declared spells/triggers and the initial own stack may resolve; real rival actions, new information, unknown mandatory choices and chosen stops interrupt. finish next_turn advances only while no useful legal action remains, never because mana is zero.', Turn, 'play', (args) => getSeat().startTurn(args, reauthorize));
   tool('play_sequence', 'Queue guarded choices by exact ID, card or label. Mark a planned cast with expectCast to let later steps pay for that same spell.', Sequence, 'play', playSequence);
   tool('submit_sequence', 'Start a conditional, bounded sequence of choices, brief waits and ordinary passes.', Sequence, 'play', playSequence);

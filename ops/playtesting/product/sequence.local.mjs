@@ -24,13 +24,41 @@ let browser, client
 const totalDeadline = Date.now() + 300_000
 let acceptedSetup = 0
 let injectRivalMana = false, rivalManaAccepted = false
-async function call(name, args = {}) {
+async function call(name, args = {}, measure) {
   const result = await client.callTool({ name, arguments: args })
   const data = JSON.parse(result.content[0].text)
   if (result.isError) throw Object.assign(Error('Isolated MCP action failed: ' + name), { code: data.code })
+  measure?.(Buffer.byteLength(result.content[0].text, 'utf8'))
   return data
 }
 async function ownState() { return call('get_game_state') }
+async function comparePlayerViews(scenario, tool, args) {
+  let fullBytes, compactBytes
+  const fullResult = await call(tool, { ...args, view: 'full' }, bytes => { fullBytes = bytes })
+  const compactResult = await call(tool, { ...args, view: 'compact' }, bytes => { compactBytes = bytes })
+  const full = fullResult.state ?? fullResult
+  const compact = compactResult.state ?? compactResult
+  assert.equal(compact.cursor, full.cursor, 'Compare the same engine callback')
+  assert.equal(compact.decision?.id, full.decision?.id)
+  assert.equal(compact.priority, full.priority)
+  const cards = new Map([
+    ...compact.ownHand, ...compact.stack,
+    ...compact.players.flatMap(player => [...player.battlefield, ...player.graveyard, ...player.exile]),
+  ].map(card => [card.id, card]))
+  function actionableChoices(state) {
+    return state.decision?.choices.map(({ cardRef, card, ...choice }) => {
+      const visible = cardRef ? cards.get(cardRef) : card
+      if (cardRef) assert.ok(visible, 'Card reference resolves within this receipt')
+      if (!visible) return choice
+      const { hints, setCode, cardNumber, ...playable } = visible
+      return { ...choice, card: hints?.length ? { ...playable, hints } : playable }
+    })
+  }
+  assert.deepEqual(actionableChoices(compact), actionableChoices(full))
+  assert.ok(compactBytes < fullBytes)
+  console.log(JSON.stringify({ scenario, tool, fullBytes, compactBytes }))
+  return { state: compact, choices: actionableChoices(compact) }
+}
 const ownPlayer = state => state.players.find(player => player.yourSeat)
 const rivalPlayer = state => state.players.find(player => !player.yourSeat)
 const burnCards = state => state.ownHand.filter(card => /^(Lightning Bolt|Shock)$/.test(card.name))
@@ -120,6 +148,7 @@ try {
   await browser.startMatch(created.tableId)
   let state
   let testedOwnStops = false
+  let testedLandIntent = false
   while (Date.now() < totalDeadline) {
     await rivalPass()
     state = await ownState()
@@ -149,7 +178,21 @@ try {
     }
     const land = decision.kind === 'priority' && decision.choices.find(choice => choice.card?.name === 'Mountain'
       && state.ownHand.some(card => card.id === choice.card.id))
-    if (land) { await answer(state, land); continue }
+    if (land) {
+      if (testedLandIntent) await answer(state, land)
+      else {
+        assert.equal(land.canPlayLand, true, 'Java must publish a legal land choice for this exact object')
+        const result = await playLineWithPeer({ gameId: state.gameId, cursor: state.cursor, commandId: randomUUID(),
+          actions: [{ kind: 'play', playAs: 'land', select: { objectId: land.objectId, zone: 'hand' } }] },
+        { gameId: state.gameId, turn: state.turn, activePlayerId: state.activePlayerId })
+        assert.equal(result.status, 'completed', String(result.reason))
+        assert.equal(result.appliedDecisions, 1)
+        assert.ok(ownPlayer(result.state).battlefield.some(card => card.id === land.objectId))
+        testedLandIntent = true
+        console.log(JSON.stringify({ phase: 'real-java-typed-land', playedDeclaredObject: true }))
+      }
+      continue
+    }
     if (decision.kind === 'priority' && state.priority === 'self' && state.step === 'PRECOMBAT_MAIN' && state.activePlayerId === ownPlayer(state).id
       && burnCards(state).length >= 3 && freeLands(state).length >= 3 && rivalPlayer(state).battlefield.length > 0) break
     const discard = cleanupMountain(state)
@@ -160,22 +203,31 @@ try {
   }
   assert.ok(state?.step === 'PRECOMBAT_MAIN' && state.activePlayerId === ownPlayer(state).id && burnCards(state).length >= 3 && freeLands(state).length >= 3, 'Fixed-seed setup must reach three burn spells and their public mana sources')
   assert.equal(testedOwnStops, true, 'PM-LINE-02 must exercise both priority windows in real Java')
+  assert.equal(testedLandIntent, true, 'PM-LINE-01 must use the legal land metadata in real Java')
   // Learn target/payment prompt order with one real identical-cost burn spell. Never infer missing callbacks.
   const warmup = burnCards(state)[0]
-  const warmupChoice = state.decision.choices.find(choice => choice.card?.id === warmup.id)
+  const compactPriority = await comparePlayerViews('priority_with_cast_and_mana', 'get_game_state', { gameId: state.gameId })
+  const warmupChoice = compactPriority.choices.find(choice => choice.card?.id === warmup.id)
   assert.ok(warmupChoice)
-  await answer(state, warmupChoice)
+  const warmupCommand = { gameId: compactPriority.state.gameId, cursor: compactPriority.state.cursor, commandId: randomUUID(),
+    actions: [{ kind: 'choose', decisionId: compactPriority.state.decision.id, choiceId: warmupChoice.id }] }
+  const warmupReceipt = await call('play_line', { ...warmupCommand, view: 'compact' })
+  assert.equal(warmupReceipt.appliedDecisions, 1)
   const learned = []
   state = await waitNextOwn(state.decision.id)
+  assert.equal(state.decision.kind, 'target', 'Compare retained command receipts while the target prompt holds play')
+  await comparePlayerViews('retained_target_line', 'play_line', { ...warmupCommand, waitMs: 0 })
+  await comparePlayerViews('retained_target_command_wait', 'wait_for_decision', { gameId: warmupCommand.gameId, commandId: warmupCommand.commandId })
   for (;;) {
     const decision = state.decision
     if (decision.kind === 'priority') break
+    const prompt = await comparePlayerViews(decision.kind, 'wait_for_decision', { gameId: state.gameId })
     let choice
-    if (decision.kind === 'target') choice = decision.choices.find(item => item.id === 'object-' + rivalPlayer(state).id || item.label === rivalPlayer(state).name)
-    else if (decision.kind === 'payMana') choice = decision.choices.find(item => freeLands(state).some(land => land.id === item.card?.id))
+    if (decision.kind === 'target') choice = prompt.choices.find(item => item.id === 'object-' + rivalPlayer(state).id || item.label === rivalPlayer(state).name)
+    else if (decision.kind === 'payMana') choice = prompt.choices.find(item => freeLands(state).some(land => land.id === item.card?.id))
     if (!choice) throw Error('Unplanned warm-up prompt: ' + decision.kind)
-    learned.push({ kind: decision.kind, instruction: decision.instruction })
-    await answer(state, choice)
+    learned.push({ kind: prompt.state.decision.kind, instruction: prompt.state.decision.instruction })
+    await answer(prompt.state, choice)
     state = await waitNextOwn(decision.id)
   }
   assert.equal(state.stack.length, 1, 'Leave the paid warm-up spell in the initial visible stack for semantic adoption')

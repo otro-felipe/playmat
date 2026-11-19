@@ -35,13 +35,14 @@ async function lineResult(seat, { gameId, commandId, sequenceId }, timeoutMs, si
     state = currentGameState(seat, gameId);
   }
   const planOwnsExecution = receipt.status === 'running';
+  const rollback = Boolean(state?.rollbackRequest);
   return {
     ...receipt,
     commandId,
     actionIndex: receipt.error?.actionIndex ?? receipt.actionIndex ?? null,
     planOwnsExecution,
-    needsAgent: !planOwnsExecution && requiresDecision(state),
-    event: planOwnsExecution ? 'line_running' : 'line_stopped',
+    needsAgent: rollback || !planOwnsExecution && requiresDecision(state),
+    event: rollback ? 'rollback' : planOwnsExecution ? 'line_running' : 'line_stopped',
     state,
   };
 }
