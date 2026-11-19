@@ -86,8 +86,10 @@ export interface AskPrompt extends PromptBase {
 export interface ChooseAbilityPrompt extends PromptBase {
   kind: 'chooseAbility';
   sourceObjectId?: string;
+  modePicker?: boolean;
   /** ability id -> rule text, in server order */
-  choices: { id: string; text: string; abilityType?: AbilityType; spellName?: string }[];
+  choices: { id: string; text: string; abilityType?: AbilityType; spellName?: string;
+    manaColors?: NonNullable<AbilityPickerView['manaColors']>[string] }[];
 }
 
 export interface ChoosePilePrompt extends PromptBase {
@@ -232,10 +234,13 @@ export function parsePrompt<M extends PromptEventName>(method: M, data: Callback
         options: {},
         kind: 'chooseAbility',
         ...(view.sourceObjectId ? { sourceObjectId: view.sourceObjectId } : {}),
+        ...(view.modePicker ? { modePicker: true } : {}),
         choices: Object.entries(view.choices ?? {}).map(([id, text]) => {
           const abilityType = view.abilityTypes?.[id];
           const spellName = view.spellNames?.[id];
-          return { id, text, ...(abilityType ? { abilityType } : {}), ...(spellName ? { spellName } : {}) };
+          const manaColors = view.manaColors?.[id];
+          return { id, text, ...(abilityType ? { abilityType } : {}), ...(spellName ? { spellName } : {}),
+            ...(manaColors?.length ? { manaColors } : {}) };
         }),
       };
     }

@@ -221,8 +221,9 @@ test('[PM-VIEW-03] compact wait keeps rollback state and rejects incompatible co
   const commandId = 'missing-line';
   for (const args of [{ commandId }, { gameId, commandId, afterCursor: 0 }, { gameId, commandId, afterDecisionId: priority.id }]) {
     const invalid = await call('wait_for_decision', { ...args, view: 'compact' });
-    assert.equal(invalid.isError, true);
+    assert.equal(invalid.isError, false);
     assert.equal(invalid.payload.code, 'invalid_line_wait');
+    assert.equal(invalid.payload.stage, 'schema');
     assert.match(invalid.payload.message, /gameId.*commandId/i);
   }
   const rollbackRequest = { id: 'rewind-42', message: 'Return to previous turn?' };
@@ -258,7 +259,7 @@ test('[PM-VIEW-03] timeout and stale-line recovery keep the current cursor in co
   const staleFull = await call('play_line', staleRequest);
   const staleCompact = await call('play_line', { ...staleRequest, view: 'compact' });
   for (const receipt of [staleFull, staleCompact]) {
-    assert.equal(receipt.isError, true);
+    assert.equal(receipt.isError, false);
     assert.equal(receipt.payload.code, 'stale_decision');
     assert.equal(receipt.payload.state.cursor, cursor + 1);
     assert.equal(receipt.payload.state.decision.id, target.id);

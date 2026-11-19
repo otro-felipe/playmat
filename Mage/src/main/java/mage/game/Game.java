@@ -397,7 +397,7 @@ public interface Game extends MageItem, Serializable, Copyable<Game> {
 
     void fireGetChoiceEvent(UUID playerId, String message, MageObject object, List<? extends ActivatedAbility> choices);
 
-    void fireGetModeEvent(UUID playerId, String message, Map<UUID, String> modes);
+    void fireGetModeEvent(UUID playerId, String message, UUID sourceId, Map<UUID, String> modes);
 
     void fireGetAmountEvent(UUID playerId, String message, int min, int max);
 

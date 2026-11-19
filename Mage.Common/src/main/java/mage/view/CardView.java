@@ -129,6 +129,7 @@ public class CardView extends SimpleCardView {
 
     protected List<UUID> targets;
     protected UUID pairedCard;
+    protected UUID preparedFromId;
     protected List<UUID> bandedCards;
     protected boolean paid;
     protected List<CounterView> counters;
@@ -193,6 +194,7 @@ public class CardView extends SimpleCardView {
         this.id = UUID.randomUUID();
         this.parentId = cardView.parentId;
         this.cardId = cardView.cardId;
+        this.preparedFromId = cardView.preparedFromId;
         this.ownerId = cardView.ownerId;
         this.controllerId = cardView.controllerId;
 
@@ -349,6 +351,13 @@ public class CardView extends SimpleCardView {
         // use isFaceDown(game) only here to find real status, all other code must use this.faceDown
         this.faceDown = game != null && sourceCard.isFaceDown(game);
         boolean showFaceUp = !this.faceDown;
+        if (game != null && showFaceUp && sourceCard instanceof PreparedSpellCopy) {
+            UUID permanentId = ((PreparedSpellCopy) sourceCard).getPreparedPermanentId();
+            Permanent source = game.getPermanent(permanentId);
+            if (source != null && !source.isFaceDown(game)) {
+                this.preparedFromId = permanentId;
+            }
+        }
 
         // show real name and day/night button for controller or any player at the game's end
         boolean showHiddenFaceDownData = showAsControlled || (game != null && game.hasEnded());
@@ -1571,6 +1580,10 @@ public class CardView extends SimpleCardView {
 
     public boolean isBackFace() {
         return this.backFace;
+    }
+
+    public UUID getPreparedFromId() {
+        return this.preparedFromId;
     }
 
     public UUID getPairedCard() {

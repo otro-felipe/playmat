@@ -5,7 +5,9 @@ export interface AbilityPickerView extends Serializable {
     abilityTypes?: { [index: string]: AbilityType };
     choices?: { [index: string]: string };
     gameView?: GameView;
+    manaColors?: { [index: string]: ManaType[] };
     message?: string;
+    modePicker?: boolean;
     sourceObjectId?: string;
     spellNames?: { [index: string]: string };
 }
@@ -322,6 +324,7 @@ export interface CardView extends SimpleCardView {
     pairedCard?: string;
     parentId?: string;
     power?: string;
+    preparedFromId?: string;
     rarity?: Rarity;
     rightSplitCostsStr?: string;
     rightSplitName?: string;
@@ -1863,7 +1866,10 @@ export interface PlaneView extends CommandObjectView, Serializable {
 }
 
 export interface PlayableObjectRecord extends Serializable, Copyable<PlayableObjectRecord> {
+    abilityType?: AbilityType;
     id?: string;
+    manaColors?: ManaType[];
+    plainMana?: boolean;
     value?: string;
 }
 

@@ -333,3 +333,149 @@ test('[PM-LINE-01] a single exact observed choice waits for new state without an
   assert.equal(table.seat.snapshot().decision.id, 'later');
   assert.deepEqual(table.applied, [['selection', 'exact', [1, 3]]]);
 });
+
+test('[PM-LINE-SEM-4] a conditional source with only tap-for-mana options permits a safe automatic pass', async (t) => {
+  const verge = { id: 'verge', name: 'Riverpyre Verge', rules: ['{T}: Add {R}.', '{T}: Add {U}. Activate only if you control an Island or a Mountain.'] };
+  const ownUpkeep = { ...upkeep, decision: priority('upkeep', {
+    id: 'use-verge', type: 'manaAbility', card: verge, plainMana: true,
+  }) };
+  const table = game(t, { upkeep: draw }, ownUpkeep);
+  const receipt = await table.submit([{ kind: 'pass_until', destination: 'my_draw' }]);
+  assert.equal(receipt.status, 'completed');
+  assert.equal(receipt.observedNewInformation, true);
+  assert.equal(table.seat.snapshot().step, 'DRAW');
+  assert.deepEqual(table.applied, [['upkeep', 'pass', undefined]]);
+});
+
+test('[PM-LINE-SEM-4] playable mana with a side effect stays actionable', async (t) => {
+  const reef = { id: 'reef', name: 'Shivan Reef', rules: ['{T}: Add {C}.', '{T}: Add {U} or {R}. Shivan Reef deals 1 damage to you.'] };
+  const ownUpkeep = { ...upkeep, decision: priority('upkeep', {
+    id: 'use-reef', type: 'manaAbility', card: reef, plainMana: false,
+  }) };
+  const table = game(t, {}, ownUpkeep);
+  const receipt = await table.submit([{ kind: 'pass_until', destination: 'my_draw' }]);
+  assert.equal(receipt.reason, 'response_available');
+  assert.deepEqual(table.applied, []);
+});
+
+test('[PM-LINE-SEM-1] a colored payment selects an exact ability at its source and witnesses pain', async (t) => {
+  const spell = { id: 'cast-object', cardId: 'talent-card', name: 'Stormchaser’s Talent', types: ['ENCHANTMENT'] };
+  const source = { id: 'reef', cardId: 'reef-card', name: 'Shivan Reef', types: ['LAND'] };
+  const players = [{ id: 'me', yourSeat: true, life: 20, battlefield: [source] }, { id: 'opponent' }];
+  const panel = { id: 'panel', kind: 'panel', sourceObjectId: source.id, choices: [
+    { id: 'colorless', abilityId: 'colorless-ability', abilityType: 'ACTIVATED_MANA', manaColors: ['C'] },
+    { id: 'blue', abilityId: 'blue-ability', abilityType: 'ACTIVATED_MANA', manaColors: ['U'] },
+    { id: 'red', abilityId: 'red-ability', abilityType: 'ACTIVATED_MANA', manaColors: ['R'] },
+  ] };
+  const current = { ...openingMain, ownHand: [spell], players, decision: priority('start', { id: 'cast', card: spell, objectId: spell.id }) };
+  const waiting = { id: 'pay', kind: 'payMana', choices: [{ id: 'tap-reef', card: source, objectId: source.id,
+    manaAbilities: panel.choices.map(({ abilityId, manaColors }) => ({ abilityId, manaColors })),
+  }] };
+  const table = game(t, { start: { decision: waiting }, pay: { decision: panel },
+    panel: { decision: priority('next'), players: [{ ...players[0], life: 19 }, players[1]],
+      stack: [{ ...spell, id: 'spell-stack', controllerId: 'me' }] } }, current);
+  const receipt = await table.submit([{ kind: 'play', select: { objectId: spell.id }, payWith: [{ sourceId: source.id, color: 'U' }] }]);
+  assert.equal(receipt.status, 'completed', JSON.stringify(receipt));
+  assert.deepEqual(table.applied, [['start', 'cast', undefined], ['pay', 'tap-reef', undefined], ['panel', 'blue', undefined]]);
+  assert.equal(table.seat.snapshot().players[0].life, 19);
+});
+
+test('[PM-LINE-SEM-3] an ordered public target uses its live role without an instruction', async (t) => {
+  const spell = { id: 'spell-object', cardId: 'spell-card', name: 'Temporary Strength', types: ['INSTANT'] };
+  const creature = { id: 'creature-object', cardId: 'creature-card', name: 'Creature', types: ['CREATURE'] };
+  const current = { ...openingMain, ownHand: [spell], players: [{ id: 'me', yourSeat: true, battlefield: [creature] }, { id: 'opponent' }],
+    decision: priority('start', { id: 'cast', card: spell, objectId: spell.id }) };
+  const target = { id: 'target', kind: 'target', targetZone: 'BATTLEFIELD', targetSourceId: spell.id, targetRole: 0,
+    instruction: 'Select a creature', choices: [{ id: 'creature', objectId: creature.id, card: creature }] };
+  const table = game(t, { start: { decision: target },
+    target: { decision: priority('next'), stack: [{ ...spell, id: 'spell-stack', controllerId: 'me', targets: [creature.id] }] } }, current);
+  const receipt = await table.submit([{ kind: 'play', select: { objectId: spell.id },
+    targets: [{ select: { objectId: creature.id }, targetZone: 'BATTLEFIELD', role: 0 }] }]);
+  assert.equal(receipt.status, 'completed', JSON.stringify(receipt));
+  assert.deepEqual(table.applied, [['start', 'cast', undefined], ['target', 'creature', undefined]]);
+});
+
+for (const knownTarget of [true, false]) test(`[PM-LINE-SEM-3] a named cast resumes payment after its exact automatic stack target, matched: ${knownTarget}`, async (t) => {
+  const counter = { id: 'counter-hand', cardId: 'counter-source', name: 'Precise Redaction', types: ['INSTANT'] };
+  const target = { id: 'rival-spell', name: 'Visible rival spell', controllerId: 'opponent' };
+  const land = { id: 'island', name: 'Island', types: ['LAND'] };
+  const players = [{ id: 'me', yourSeat: true, battlefield: [land] }, { id: 'opponent' }];
+  const current = { ...openingMain, ownHand: [counter], stack: [target], players,
+    decision: priority('start', { id: 'cast', card: counter, objectId: counter.id }) };
+  const cast = { ...counter, id: 'counter-stack', controllerId: 'me', targets: [knownTarget ? target.id : 'different-object'] };
+  const payment = { id: 'pay', kind: 'payMana', choices: [{ id: 'tap-island', card: land, objectId: land.id }] };
+  const table = game(t, {
+    start: { ownHand: [], stack: [cast, target], decision: payment },
+    pay: { decision: priority('after-payment') },
+  }, current);
+  const receipt = await table.submit([{ kind: 'play', when: 'priority', select: { cardName: counter.name, zone: 'hand' },
+    targets: [{ select: { objectId: target.id }, targetZone: 'STACK', role: 0 }], payWith: [land.id] }]);
+  assert.equal(receipt.status, knownTarget ? 'completed' : 'interrupted', JSON.stringify(receipt));
+  assert.deepEqual(table.applied.map(([id, choice]) => [id, choice]),
+    [['start', 'cast'], ...(knownTarget ? [['pay', 'tap-island']] : [])]);
+});
+
+test('[PM-LINE-FLOW-2] a boolean answer selects the current legal engine action by meaning', async (t) => {
+  const decision = { id: 'question', kind: 'question', choices: [
+    { id: 'one', label: 'Let it go', answer: false }, { id: 'two', label: 'Do it', answer: true },
+  ] };
+  const table = game(t, { question: { decision: priority('next') } }, { ...openingMain, decision });
+  const receipt = await table.submit([{ kind: 'choose', decisionId: decision.id, select: { answer: false } }]);
+  assert.equal(receipt.status, 'completed', JSON.stringify(receipt));
+  assert.deepEqual(table.applied, [['question', 'one', undefined]]);
+});
+
+
+for (const matchingSource of [true, false]) {
+  test(`[PM-LINE-SEM-2] a named mode stays bound to the cast source: ${matchingSource}`, async (t) => {
+    const spell = { id: 'known-spell', cardId: 'print', name: 'Two options', types: ['SORCERY'] };
+    const panel = { id: 'mode-panel', kind: 'panel', modePicker: true, sourceObjectId: matchingSource ? spell.id : 'other-source', choices: [
+      { id: 'fence', abilityId: 'fence-id', label: 'Fence — Put a counter on target creature.', type: 'option' },
+    ] };
+    const current = { ...openingMain, ownHand: [spell], decision: priority('start', { id: 'cast', card: spell, objectId: spell.id }) };
+    const table = game(t, { start: { decision: panel },
+      'mode-panel': { decision: priority('next'), stack: [{ ...spell, id: 'stack', controllerId: 'me' }] } }, current);
+    const receipt = await table.submit([{ kind: 'play', select: { objectId: spell.id }, mode: 'Fence' }]);
+    assert.equal(receipt.status, matchingSource ? 'completed' : 'interrupted', JSON.stringify(receipt));
+    assert.deepEqual(table.applied.map(([id, choice]) => [id, choice]), matchingSource ? [['start', 'cast'], ['mode-panel', 'fence']] : [['start', 'cast']]);
+  });
+}
+
+test('[PM-LINE-SEM-2] a unique typed prepared-cast option can follow the exact exile object', async (t) => {
+  const prepared = { id: 'prepared', cardId: 'print', name: 'Prepared side', types: ['SORCERY'] };
+  const players = [{ id: 'me', yourSeat: true, exile: [prepared] }, { id: 'opponent' }];
+  const current = { ...openingMain, ownHand: [], players, decision: priority('start', { id: 'from-exile', objectId: prepared.id, card: prepared }) };
+  const table = game(t, {
+    start: { decision: { id: 'options', kind: 'panel', sourceObjectId: prepared.id, choices: [
+      { id: 'cast-prepared', abilityId: 'spell-id', abilityType: 'SPELL', spellName: prepared.name, type: 'option' },
+      { id: 'other', abilityId: 'special-action-id', abilityType: 'SPECIAL_ACTION', type: 'option' },
+    ] } },
+    options: { decision: priority('next'), stack: [{ ...prepared, id: 'stack', controllerId: 'me' }] },
+  }, current);
+  const receipt = await table.submit([{ kind: 'play', select: { objectId: prepared.id, zone: 'exile' } }]);
+  assert.equal(receipt.status, 'completed', JSON.stringify(receipt));
+  assert.deepEqual(table.applied.map(([id, choice]) => [id, choice]), [['start', 'from-exile'], ['options', 'cast-prepared']]);
+});
+
+for (const extraTarget of [false, true]) {
+  test(`[PM-LINE-SEM-3] a same-role finish confirms precisely the declared targets: extraneous=${extraTarget}`, async (t) => {
+    const spell = { id: 'sorcery-object', cardId: 'spell-card', name: 'Boost One or Two', types: ['SORCERY'] };
+    const creature = { id: 'creature-object', cardId: 'creature-card', name: 'Creature', types: ['CREATURE'] };
+    const current = { ...openingMain, ownHand: [spell], players: [{ id: 'me', yourSeat: true, battlefield: [creature] }, { id: 'opponent' }],
+      decision: priority('start', { id: 'cast', card: spell, objectId: spell.id }) };
+    const role = { kind: 'target', targetZone: 'BATTLEFIELD', targetSourceId: spell.id, targetRole: 0 };
+    const table = game(t, {
+      start: { decision: { id: 'target', ...role, choices: [{ id: 'creature', objectId: creature.id, card: creature }] } },
+      target: { decision: { id: 'done', ...role, chosenTargetIds: extraTarget ? [creature.id, 'other'] : [creature.id],
+        choices: [{ id: 'confirm', intent: 'confirm_targets' }] } },
+      done: { decision: priority('next'), stack: [{ ...spell, id: 'stack', controllerId: 'me', targets: [creature.id] }] },
+    }, current);
+    const receipt = await table.submit([{ kind: 'play', select: { objectId: spell.id }, targets: [
+      { select: { objectId: creature.id }, role: 0, targetZone: 'BATTLEFIELD' },
+    ] }]);
+    assert.equal(receipt.status, extraTarget ? 'interrupted' : 'completed', JSON.stringify(receipt));
+    assert.deepEqual(table.applied.map(([id, choice]) => [id, choice]), [
+      ['start', 'cast'], ['target', 'creature'], ...(extraTarget ? [] : [['done', 'confirm']]),
+    ]);
+  });
+}

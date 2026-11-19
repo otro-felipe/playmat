@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
@@ -15,14 +16,21 @@ try {
     requestInit: { headers: { Authorization: `Bearer ${token}` } },
   }));
   const { tools } = await client.listTools();
-  assert.ok(tools.some((tool) => tool.name === 'wait_for_decision'));
+  const gameToolSchemas = ['get_game_state', 'play_line', 'wait_for_decision'].map((name) => {
+    const inputSchema = tools.find((tool) => tool.name === name)?.inputSchema;
+    assert.deepEqual(inputSchema?.properties?.view?.enum, ['full', 'compact']);
+    assert.ok(!inputSchema.required?.includes('view'));
+    return inputSchema;
+  });
   assert.ok(tools.some((tool) => tool.name === 'submit_sideboard'));
   const response = await client.callTool({ name: 'get_card', arguments: { format: 'Pioneer', name: 'Forest' } });
   assert.equal(response.isError ?? false, false);
   const result = JSON.parse(response.content[0].text);
   assert.equal(result.card?.name, 'Forest');
   assert.equal(result.formatLegal, true);
-  console.log(JSON.stringify({ mcp: 'ready', tools: tools.length, catalog: 'verified', unauthenticated: 'rejected' }));
+  console.log(JSON.stringify({ mcp: 'ready', version: client.getServerVersion()?.version, tools: tools.length,
+    gameplaySchema: createHash('sha256').update(JSON.stringify(gameToolSchemas)).digest('hex'),
+    compact: 'advertised', catalog: 'verified', unauthenticated: 'rejected' }));
 } catch {
   console.error('The MCP smoke check did not verify all assertions.');
   process.exitCode = 1;

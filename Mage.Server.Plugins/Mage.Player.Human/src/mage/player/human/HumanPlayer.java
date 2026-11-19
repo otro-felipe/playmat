@@ -539,6 +539,7 @@ public class HumanPlayer extends PlayerImpl {
         }
         if (source != null) {
             //options.put(Constants.Option.ORIGINAL_ID, "")
+            options.put("abilitySourceId", source.getSourceId());
             String sourceName = getRelatedObjectName(source, game);
             if (sourceName != null) {
                 autoAnswerMessage = autoAnswerMessage.replace(sourceName, "{this}");
@@ -826,7 +827,7 @@ public class HumanPlayer extends PlayerImpl {
 
                 prepareForResponse(game);
                 if (!isExecutingMacro()) {
-                    game.fireSelectTargetEvent(getId(), new MessageToClient(target.getMessage(game), getRelatedObjectName(source, game)), possibleTargets, required, getOptions(target, options));
+                    game.fireSelectTargetEvent(getId(), new MessageToClient(target.getMessage(game), getRelatedObjectName(source, game)), possibleTargets, required, getOptions(target, options, source));
                 }
                 waitForResponse(game);
                 responseId = getFixedResponseUUID(game);
@@ -904,7 +905,7 @@ public class HumanPlayer extends PlayerImpl {
                 prepareForResponse(game);
                 if (!isExecutingMacro()) {
                     game.fireSelectTargetEvent(getId(), new MessageToClient(target.getMessage(game), getRelatedObjectName(source, game)),
-                            possibleTargets, required, getOptions(target, options));
+                            possibleTargets, required, getOptions(target, options, source));
                 }
                 waitForResponse(game);
                 responseId = getFixedResponseUUID(game);
@@ -941,7 +942,7 @@ public class HumanPlayer extends PlayerImpl {
         return target.isChosen(game) && target.getTargets().size() > 0;
     }
 
-    private Map<String, Serializable> getOptions(Target target, Map<String, Serializable> options) {
+    private Map<String, Serializable> getOptions(Target target, Map<String, Serializable> options, Ability source) {
         if (options == null) {
             options = new HashMap<>();
         }
@@ -950,6 +951,13 @@ public class HumanPlayer extends PlayerImpl {
             options.put("UI.right.btn.text", "Done");
         }
         options.put("targetZone", target.getZone());
+        if (source != null) {
+            options.put("targetSourceId", source.getSourceId());
+            int role = source.getTargets().indexOf(target);
+            if (role >= 0) {
+                options.put("targetRole", role);
+            }
+        }
         return options;
     }
 
@@ -994,7 +1002,7 @@ public class HumanPlayer extends PlayerImpl {
 
             // manual choice
             if (responseId == null) {
-                Map<String, Serializable> options = getOptions(target, null);
+                Map<String, Serializable> options = getOptions(target, null, source);
                 options.put("chosenTargets", new HashSet<>(target.getTargets()));
                 if (!possibleTargets.isEmpty()) {
                     options.put("possibleTargets", (Serializable) possibleTargets);
@@ -1086,7 +1094,7 @@ public class HumanPlayer extends PlayerImpl {
 
             // manual choice
             if (responseId == null) {
-                Map<String, Serializable> options = getOptions(target, null);
+                Map<String, Serializable> options = getOptions(target, null, source);
                 options.put("chosenTargets", new HashSet<>(target.getTargets()));
 
                 if (!possibleTargets.isEmpty()) {
@@ -1193,7 +1201,7 @@ public class HumanPlayer extends PlayerImpl {
                 }
 
                 // selected
-                Map<String, Serializable> options = getOptions(target, null);
+                Map<String, Serializable> options = getOptions(target, null, source);
                 options.put("chosenTargets", new HashSet<>(target.getTargets()));
                 if (!possibleTargets.isEmpty()) {
                     options.put("possibleTargets", (Serializable) possibleTargets);
@@ -1747,6 +1755,7 @@ public class HumanPlayer extends PlayerImpl {
             Map<String, Serializable> options = new HashMap<>();
             prepareForResponse(game);
             if (!isExecutingMacro()) {
+                options.put("paymentSourceId", abilityToCast.getSourceId());
                 game.firePlayManaEvent(playerId, "Pay " + promptText, options);
             }
             waitForResponse(game);
@@ -2265,7 +2274,7 @@ public class HumanPlayer extends PlayerImpl {
             } else {
                 prepareForResponse(game);
                 game.fireSelectTargetEvent(playerId, new MessageToClient("Select attacker to block", getRelatedObjectName(blockerId, game)),
-                        possibleAttackersToBlock, false, getOptions(target, null));
+                        possibleAttackersToBlock, false, getOptions(target, null, null));
                 waitForResponse(game);
             }
         }
@@ -2655,7 +2664,7 @@ public class HumanPlayer extends PlayerImpl {
                 }
 
                 if (mode.getTargets().canChoose(source.getControllerId(), source, game)) { // and needed targets have to be available
-                    String modeText = mode.getEffects().getText(mode);
+                    String modeText = mode.getEffects().getTextStartingUpperCase(mode);
                     if (obj != null) {
                         modeText = modeText.replace("{this}", obj.getName());
                     }
@@ -2713,7 +2722,7 @@ public class HumanPlayer extends PlayerImpl {
 
             prepareForResponse(game);
             if (!isExecutingMacro()) {
-                game.fireGetModeEvent(playerId, message, modeMap);
+                game.fireGetModeEvent(playerId, message, source.getSourceId(), modeMap);
             }
             waitForResponse(game);
 

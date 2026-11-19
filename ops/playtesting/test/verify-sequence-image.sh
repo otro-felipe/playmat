@@ -27,9 +27,11 @@ if [[ -n ${PLAYMAT_SEQUENCE_TEST_IMAGE:-} ]]; then
 else
  docker build --build-arg PLAYMAT_COMMIT="$stamp" -t "$image" .
 fi
-network_options=()
-[[ -z ${PLAYMAT_SEQUENCE_TEST_SUBNET:-} ]] || network_options+=(--subnet "$PLAYMAT_SEQUENCE_TEST_SUBNET")
-docker network create "${network_options[@]}" "$network" >/dev/null
+if [[ -n ${PLAYMAT_SEQUENCE_TEST_SUBNET:-} ]]; then
+ docker network create --subnet "$PLAYMAT_SEQUENCE_TEST_SUBNET" "$network" >/dev/null
+else
+ docker network create "$network" >/dev/null
+fi
 docker run -d --name "$pg" --network "$network" --network-alias playmat-sequence-pg --memory 256m \
  -v "$prefix-postgres:/var/lib/postgresql/data" -e POSTGRES_USER=playmat -e POSTGRES_DB=sequence_fixture \
  -e POSTGRES_PASSWORD=isolated-sequence-fixture postgres:17-alpine >/dev/null
@@ -47,5 +49,6 @@ app_created=true
 docker exec "$app" node -e '
 const end=Date.now()+60000;
 while(Date.now()<end){try{const r=await fetch("http://127.0.0.1:8080/healthz");if(r.ok){const h=await r.json();if(h.status==="ok")process.exit(0)}}catch{}await new Promise(r=>setTimeout(r,500));}process.exit(1);'
-docker exec --user xmage -w /opt/xmage "$app" node /opt/playtesting/product/sequence.local.mjs
+docker exec --user xmage -w /opt/xmage -e PLAYMAT_SEQUENCE_SCENARIOS="${PLAYMAT_SEQUENCE_SCENARIOS:-all}" \
+ "$app" node /opt/playtesting/product/sequence.local.mjs
 echo 'Complete isolated real-engine causal sequence acceptance passed'

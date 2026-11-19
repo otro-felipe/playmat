@@ -95,6 +95,8 @@ import java.util.stream.Collectors;
  */
 public abstract class GameImpl implements Game {
 
+    private static final long serialVersionUID = -5776958208326164287L;
+
     private final static AtomicInteger GLOBAL_INDEX = new AtomicInteger();
     public final static AtomicInteger COPIED_COUNT = new AtomicInteger();
 
@@ -3504,11 +3506,11 @@ public abstract class GameImpl implements Game {
     }
 
     @Override
-    public void fireGetModeEvent(UUID playerId, String message, Map<UUID, String> modes) {
+    public void fireGetModeEvent(UUID playerId, String message, UUID sourceId, Map<UUID, String> modes) {
         if (simulation) {
             return;
         }
-        playerQueryEventSource.chooseMode(playerId, message + getControllingPlayerHint(playerId), modes);
+        playerQueryEventSource.chooseMode(playerId, message + getControllingPlayerHint(playerId), sourceId, modes);
     }
 
     @Override

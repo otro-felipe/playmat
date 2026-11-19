@@ -1,4 +1,4 @@
-import type { AbilityType, CardView, PermanentView, StackAbilityView } from '../../protocol/generated/views';
+import type { AbilityType, CardView, ManaType, PermanentView, StackAbilityView } from '../../protocol/generated/views';
 import type { GameSessionState } from './gameSession';
 import type { Command } from './interaction';
 import { pregameChoice } from './pregame';
@@ -26,6 +26,7 @@ function cardOnBoard(card: CardView, id: string | undefined) {
     } : {}),
     types: card.cardTypes ?? [],
     ...(card.isToken ? { isToken: true } : {}),
+    ...(card.preparedFromId ? { preparedFromId: card.preparedFromId } : {}),
     rules: text.rules.map(stripMarkup),
     hints: text.hints,
     manaCost: card.manaCostLeftStr,
@@ -75,9 +76,19 @@ export function visibleAgentGame(state: GameSessionState | undefined) {
     revealed: (view?.revealed ?? []).map((group) => ({ name: group.name, cards: cardsOnBoard(group.cards) })),
     // GameView includes lookedAt only for this viewer; never read opponentHands/watchedHands.
     lookedAt: (view?.lookedAt ?? []).map((group) => ({ name: group.name, cards: cardsOnBoard(group.cards) })),
-    stack: cardsOnBoard(view?.stack).map((card) =>
-      'types' in card && card.types?.some((type) => type === 'INSTANT' || type === 'SORCERY')
-      && card.id && view?.stack?.[card.id]?.paid === false ? { ...card, unpaid: true } : card),
+    stack: cardsOnBoard(view?.stack).map((card) => {
+      if (!('rules' in card) || !card.rules) return card;
+      // CardView and StackAbilityView append selected modes after the printed rules.
+      const prefix = 'Chosen mode: ';
+      const selectedModeRules = card.rules.filter((rule) => rule.startsWith(prefix)).map((rule) => rule.slice(prefix.length));
+      const casting = card.types?.some((type) => type === 'INSTANT' || type === 'SORCERY')
+        && card.id && view?.stack?.[card.id]?.paid === false;
+      return {
+        ...card,
+        ...(selectedModeRules.length ? { selectedModeRules } : {}),
+        ...(casting ? { unpaid: true } : {}),
+      };
+    }),
     players: (view?.players ?? []).map((player) => ({
       id: player.playerId,
       name: player.name,
@@ -94,10 +105,20 @@ export function visibleAgentGame(state: GameSessionState | undefined) {
       manaPool: player.playerId === state?.playerId ? player.manaPool : undefined,
     })),
     combat: (view?.combat ?? []).map((group) => ({
+      defenderId: group.defenderId,
+      isBlocked: group.isBlocked,
       attackers: cardsOnBoard(group.attackers),
       blockers: cardsOnBoard(group.blockers),
     })),
   };
+}
+
+const manaSymbols = { WHITE: 'W', BLUE: 'U', BLACK: 'B', RED: 'R', GREEN: 'G', COLORLESS: 'C' } as const;
+type ManaColor = typeof manaSymbols[keyof typeof manaSymbols];
+
+function colorSymbols(colors?: ManaType[]): ManaColor[] | undefined {
+  const symbols = colors?.flatMap((color) => color in manaSymbols ? [manaSymbols[color as keyof typeof manaSymbols]] : []);
+  return symbols?.length ? symbols : undefined;
 }
 
 interface AgentChoice {
@@ -111,8 +132,14 @@ interface AgentChoice {
   triggerSourceId?: string;
   canPlayLand?: true;
   abilityType?: AbilityType;
+  abilityId?: string;
   spellName?: string;
-  intent?: 'attack_all' | 'confirm_attack';
+  manaColors?: ManaColor[];
+  plainMana?: boolean;
+  manaAbilities?: { abilityId: string; manaColors?: ManaColor[] }[];
+  spellAbilities?: { abilityId: string; label?: string }[];
+  answer?: boolean;
+  intent?: 'attack_all' | 'confirm_attack' | 'confirm_block' | 'confirm_targets';
 }
 
 type Limits = { min?: number; max?: number };
@@ -142,9 +169,17 @@ export function projectedChoices(state: GameSessionState, promptId: string) {
   });
   const visible = { ...view.myHand, ...view.stack, ...(prompt.kind === 'target' ? prompt.cards : undefined) };
   for (const player of view.players ?? []) Object.assign(visible, player.battlefield, player.graveyard, player.exile);
-  const pickerSourceId = prompt.kind === 'chooseAbility' ? prompt.sourceObjectId : undefined;
-  const pickerSource = pickerSourceId && visible[pickerSourceId];
-  const sourceObjectId = pickerSource && !pickerSource.faceDown && !pickerSource.hideInfo ? pickerSourceId : undefined;
+  const visibleSourceId = (id: unknown) => {
+    if (typeof id !== 'string') return undefined;
+    const source = visible[id] ?? Object.values(view.stack ?? {}).find((card) => card.cardId === id);
+    return source && !source.faceDown && !source.hideInfo ? id : undefined;
+  };
+  const sourceObjectId = prompt.kind === 'chooseAbility' ? visibleSourceId(prompt.sourceObjectId)
+    : prompt.kind === 'ask' ? visibleSourceId(prompt.options.abilitySourceId) : undefined;
+  const targetSourceId = prompt.kind === 'target' ? visibleSourceId(prompt.options.targetSourceId) : undefined;
+  const paymentSourceId = prompt.kind === 'playMana' ? visibleSourceId(prompt.options.paymentSourceId) : undefined;
+  const targetZone = prompt.kind === 'target' && typeof prompt.options.targetZone === 'string' ? prompt.options.targetZone : undefined;
+  const targetRole = targetSourceId && typeof prompt.options.targetRole === 'number' ? prompt.options.targetRole : undefined;
 
   const buttons = [interaction.mainButton, ...interaction.secondaryButtons].filter((button) => button !== null);
   const choices = buttons.map((button, index) => {
@@ -152,9 +187,17 @@ export function projectedChoices(state: GameSessionState, promptId: string) {
       return projectChoice(button.command, 'pass', 'Pass', 'pass');
     }
     const choice = projectChoice(button.command, `button-${index}`, button.label, 'button');
+    if (interaction.mode === 'question' && button.command.type === 'boolean') choice.answer = button.command.value;
+    if (targetSourceId && targetRole !== undefined && prompt.kind === 'target' && prompt.chosen.length
+      && button === interaction.mainButton && button.command.type === 'uuid' && button.command.id === null) {
+      choice.intent = 'confirm_targets';
+    }
     if (interaction.mode === 'declareAttackers') {
       if (button.command.type === 'string' && button.command.value === 'special') choice.intent = 'attack_all';
       else if (button.command.type === 'boolean' && button.command.value) choice.intent = 'confirm_attack';
+    }
+    if (interaction.mode === 'declareBlockers' && button.command.type === 'boolean' && button.command.value) {
+      choice.intent = 'confirm_block';
     }
     return choice;
   });
@@ -162,8 +205,21 @@ export function projectedChoices(state: GameSessionState, promptId: string) {
   for (const [id, command] of interaction.clickable) {
     const card = visible[id] ? cardOnBoard(visible[id], id) : undefined;
     const legal = view.canPlayObjects?.objects?.[id];
-    const manaOnly = prompt.kind === 'priority' && !!legal?.basicManaAbilities?.length
-      && !legal?.basicCastAbilities?.length && !legal?.basicPlayAbilities?.length && !legal?.other?.length;
+    const other = legal?.other ?? [];
+    const manaAbilities = [...(legal?.basicManaAbilities ?? []), ...other.filter((ability) => ability.abilityType === 'ACTIVATED_MANA')];
+    const manaOnly = prompt.kind === 'priority' && !!manaAbilities.length && !legal?.basicCastAbilities?.length
+      && !legal?.basicPlayAbilities?.length && other.every((ability) => ability.abilityType === 'ACTIVATED_MANA');
+    const visibleMana = card && !card.faceDown ? manaAbilities.flatMap((ability) => {
+      if (!ability.id) return [];
+      const manaColors = colorSymbols(ability.manaColors);
+      return [{ abilityId: ability.id, ...(manaColors ? { manaColors } : {}) }];
+    }) : [];
+    const visibleSpells = card && !card.faceDown
+      ? [...(legal?.basicCastAbilities ?? []), ...other.filter((ability) => ability.abilityType === 'SPELL')]
+        .flatMap((ability) => ability.id ? [{ abilityId: ability.id, ...(ability.value ? { label: stripMarkup(ability.value) } : {}) }] : [])
+      : [];
+    const plainMana = manaOnly && manaAbilities.every((ability) => typeof ability.plainMana === 'boolean')
+      ? manaAbilities.every((ability) => ability.plainMana) : undefined;
     let label = pregame === 'startingPlayer' ? id === state.playerId ? 'Play first' : 'Draw first'
       : card?.name ?? playerNames.get(id) ?? 'Choose object';
     const trigger = triggerOrder ? prompt.cards?.[id] as StackAbilityView | undefined : undefined;
@@ -176,6 +232,9 @@ export function projectedChoices(state: GameSessionState, promptId: string) {
     const canPlayLand = prompt.kind === 'priority' && !card?.faceDown && !!legal?.basicPlayAbilities?.length;
     choices.push({ ...projectChoice(command, `object-${id}`, label, manaOnly ? 'manaAbility' : 'object', card), objectId: id,
       ...(canPlayLand ? { canPlayLand: true } : {}),
+      ...(visibleMana.length ? { manaAbilities: visibleMana } : {}),
+      ...(visibleSpells.length ? { spellAbilities: visibleSpells } : {}),
+      ...(plainMana !== undefined ? { plainMana } : {}),
       ...(triggerSourceId ? { triggerSourceId } : {}),
     });
   }
@@ -183,10 +242,13 @@ export function projectedChoices(state: GameSessionState, promptId: string) {
   const details: { amount?: Limits; amounts?: Amounts } = {};
   switch (prompt.kind) {
     case 'chooseAbility':
-      prompt.choices.forEach(({ id, text, abilityType, spellName }, index) => {
+      prompt.choices.forEach(({ id, text, abilityType, spellName, manaColors }, index) => {
         const label = stripMarkup(text).replace(/^\d+\.\s*/, '') || `Ability ${index + 1}`;
+        const symbols = colorSymbols(manaColors);
         choices.push({ ...projectChoice({ type: 'uuid', id }, `ability-${index}`, label, 'option'),
+          ...(sourceObjectId ? { abilityId: id } : {}),
           ...(sourceObjectId && abilityType ? { abilityType } : {}),
+          ...(sourceObjectId && symbols ? { manaColors: symbols } : {}),
           ...(sourceObjectId && abilityType === 'SPELL' && spellName ? { spellName } : {}),
         });
       });
@@ -232,6 +294,11 @@ export function projectedChoices(state: GameSessionState, promptId: string) {
   return { id: promptId, kind: pregame ?? interaction.mode, instruction: stripMarkup(interaction.headline), choices,
     ...(triggerOrder ? { triggerOrder: true } : {}),
     ...(sourceObjectId ? { sourceObjectId } : {}),
+    ...(sourceObjectId && prompt.kind === 'chooseAbility' && prompt.modePicker ? { modePicker: true } : {}),
+    ...(paymentSourceId ? { paymentSourceId } : {}),
+    ...(targetZone ? { targetZone } : {}),
+    ...(targetSourceId ? { targetSourceId } : {}),
+    ...(targetRole !== undefined && prompt.kind === 'target' ? { targetRole, chosenTargetIds: prompt.chosen } : {}),
     ...(informationBoundary ? { informationBoundary } : {}), ...details };
 }
 
@@ -241,10 +308,16 @@ type AgentDecision = NonNullable<ReturnType<typeof projectedChoices>>;
 export function describeAgentDecision(decision: AgentDecision | null) {
   return decision && {
     ...decision,
-    choices: decision.choices.map(({ id, label, type, card, cards, objectId, intent, canPlayLand, abilityType, spellName, triggerSourceId }) => ({
+    choices: decision.choices.map(({ id, label, type, card, cards, objectId, intent, canPlayLand, abilityType, spellName, triggerSourceId, abilityId, manaColors, manaAbilities, spellAbilities, plainMana, answer }) => ({
       id, label, type, ...(card ? { card } : {}), ...(cards ? { cards } : {}), ...(objectId ? { objectId } : {}), ...(intent ? { intent } : {}),
       ...(canPlayLand ? { canPlayLand } : {}),
       ...(abilityType ? { abilityType } : {}),
+      ...(abilityId ? { abilityId } : {}),
+      ...(manaColors ? { manaColors } : {}),
+      ...(manaAbilities ? { manaAbilities } : {}),
+      ...(spellAbilities ? { spellAbilities } : {}),
+      ...(plainMana !== undefined ? { plainMana } : {}),
+      ...(answer !== undefined ? { answer } : {}),
       ...(spellName ? { spellName } : {}),
       ...(triggerSourceId ? { triggerSourceId } : {}),
     })),

@@ -6,6 +6,7 @@ on:
     paths: &mcp-paths
       - "ops/playtesting/mcp/**"
       - "ops/playtesting/product/sequence.local.mjs"
+      - "ops/playtesting/product/mana-semantics.local.mjs"
       - "ops/playtesting/test/verify-sequence-image.sh"
       - "Mage.Web.Client/src/core/game/**"
       - "Mage.Web.Client/src/protocol/generated/**"
