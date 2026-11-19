@@ -65,9 +65,10 @@ Browser sync reads both shelves; the additive `decks.library` column has a perso
 accepts `?library=personal|agent`, and owner-only `POST /api/playtesting/decks/<id>/library` uses
 `{library, expectedRevision}`. Existing grants, authentication and account ownership are unchanged.
 
-Private games always start payments manually, including floating mana and browsers with older automatic-payment
-preferences. Tap sources or press **AUTO PAY** in the primary action position for the current payment only. Settings
-explain that policy; stored preferences and public server behavior are preserved.
+In private games, tapping a mana source during payment applies its usable mana to the pending cost through
+XMage's restricted pool payment. If you tap a land with several mana options, choose which mode or color it produces.
+You can also select floating mana from the pool or press **AUTO PAY** to choose
+sources for the current payment. Full Control lets you spend mana manually after tapping sources.
 
 ## Browser WebMCP
 

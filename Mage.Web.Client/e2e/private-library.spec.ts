@@ -106,6 +106,31 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
   });
 }
 
+test('AUTO PAY turns the lands without animating their position or dimming', async ({ page }) => {
+  await page.goto('/e2e/fixtures/mana-payment.html?motion');
+  const lands = page.locator('[data-object-id="forest"], [data-object-id="island"]');
+  await expect(lands).toHaveCount(2);
+  await lands.evaluateAll((cards) => {
+    for (const card of cards) {
+      const record = () => card.setAttribute('data-payment-motion', 'running');
+      card.addEventListener('transitionrun', (event) => {
+        if (event instanceof TransitionEvent && ['transform', 'filter'].includes(event.propertyName)) record();
+      });
+      const animate = card.animate.bind(card);
+      card.animate = (frames, options) => {
+        record();
+        return animate(frames, options);
+      };
+    }
+  });
+  await page.getByRole('button', { name: 'AUTO PAY', exact: true }).click();
+  await expect.poll(() => lands.evaluateAll((cards) => cards.every((card) => {
+    const transform = new DOMMatrixReadOnly(getComputedStyle(card).transform);
+    return Math.abs(transform.a) < 0.001 && Math.abs(transform.b - 1) < 0.001;
+  }))).toBe(true);
+  await expect(page.locator('[data-payment-motion]')).toHaveCount(0);
+});
+
 test('insufficient private mana leaves AUTO PAY disabled and cancel available', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/e2e/fixtures/mana-payment.html?legacyAutoPay&scenario=insufficient&lang=es');

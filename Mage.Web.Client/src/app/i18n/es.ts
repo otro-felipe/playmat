@@ -462,7 +462,7 @@ const es: Catalog = {
   'settings.rustEngine.detail': 'Los duelos contra la IA corren en el nuevo motor Rust de Playmat cuando todas las cartas de ambos mazos están soportadas; los demás siguen en Java. Una etiqueta en el tablero muestra cuándo está activo.',
   'settings.beta': 'Beta',
   'settings.hideStarterDecks': 'Ocultar mazos iniciales',
-  'settings.manualMana': 'Tú controlas el maná. Durante un pago, gira tus fuentes o pulsa AUTO PAY para pagar solo ese hechizo.',
+  'settings.manualMana': 'Durante un pago, gira una fuente para usar su maná en el coste o pulsa AUTO PAY para ese pago. Con Control total, eliges el maná manualmente.',
   'settings.hideStarterDecks.detail': 'Oculta los mazos iniciales en tu biblioteca y al elegir mazo. Las copias guardadas siguen visibles. Los oponentes de IA aleatorios aún pueden usarlos.',
   'settings.sortHand': "Ordenar mi mano",
   'settings.sortHand.detail': "Tierras primero, luego por valor de maná y color.",

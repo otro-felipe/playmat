@@ -12,7 +12,7 @@ import '../../src/app/styles/base.css';
 
 // Isolated local UI scenario: all game answers are recorded, no game server is contacted.
 const params = new URLSearchParams(location.search);
-useSettings.getState().update({ autoPayMana: params.has('legacyAutoPay'), autoPayRestricted: !params.has('legacyAutoPay'), autoPass: false, sound: false, animations: false, matArt: 'none', locale: params.get('lang') === 'es' ? 'es' : 'en' });
+useSettings.getState().update({ autoPayMana: params.has('legacyAutoPay'), autoPayRestricted: !params.has('legacyAutoPay'), autoPass: false, sound: false, animations: params.has('motion'), matArt: 'none', locale: params.get('lang') === 'es' ? 'es' : 'en' });
 queryClient.setQueryData(['serverInfo'], { accounts: false });
 const session = new GameSession(api, events, { gameId: 'payment-fixture', playerId: 'me', mode: 'play' });
 const calls: string[] = [];
@@ -32,6 +32,7 @@ const view: GameView = {
 };
 let remaining = '{1}{G}';
 let messageId = 0;
+let heldTap: (() => void) | undefined;
 function show(cost: string | null) {
   events.dispatch({ method: cost ? 'GAME_PLAY_MANA' : 'GAME_SELECT', objectId: 'payment-fixture', messageId: ++messageId, data: {
     message: cost ? `Pay ${cost}<div><font object_id='spell'>Elvish Visionary</font></div>` : 'Play spells and abilities', gameView: structuredClone(view),
@@ -40,13 +41,15 @@ function show(cost: string | null) {
 api.sendPlayerAction = async () => true;
 api.sendPlayerUUID = async (_gameId, id) => {
   calls.push(String(id));
-  setTimeout(() => {
+  const completeTap = () => {
     const me = view.players![0];
     if (id && me.battlefield?.[id]) me.battlefield = { ...me.battlefield, [id]: { ...me.battlefield[id], tapped: true } };
     remaining = remaining.includes('{G}') ? '{1}' : '';
     if (!remaining) view.stack = {};
     show(remaining || null);
-  }, 300);
+  };
+  if (params.has('holdTap')) heldTap = completeTap;
+  else setTimeout(completeTap, 300);
 };
 api.sendPlayerBoolean = async (_gameId, answer) => {
   calls.push(answer ? 'confirm' : params.get('scenario') === 'priority' ? 'pass' : 'cancel');
@@ -62,7 +65,10 @@ api.sendPlayerManaType = async (_gameId, _playerId, type) => {
   }, 300);
 };
 show(params.get('scenario') === 'priority' ? null : remaining);
-Object.assign(window, { paymentFixture: { calls, session, resetPayment() {
+Object.assign(window, { paymentFixture: { calls, session, releaseTap() {
+  heldTap?.();
+  heldTap = undefined;
+}, resetPayment() {
   view.players![0].battlefield = { forest, island };
   view.stack = { spell: { id: 'spell', name: 'Elvish Visionary', manaCostLeftStr: ['{1}', '{G}'], cardTypes: ['CREATURE'] } };
   remaining = '{1}{G}';

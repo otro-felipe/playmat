@@ -1871,6 +1871,9 @@ public class HumanPlayer extends PlayerImpl {
         if (zone != null) {
             Map<UUID, ActivatedManaAbilityImpl> useableAbilities = getUseableManaAbilities(object, zone, game);
             if (!useableAbilities.isEmpty()) {
+                // A land click leaves the mana mode to the player unless they opted into automatic selection.
+                // A mode that cannot pay the current symbol can still be useful, and modes can have different effects.
+                boolean chooseLandMana = object instanceof Permanent && object.isLand(game) && !userData.isUseFirstManaAbility();
                 // Added to ensure that mana is not being autopaid for spells that care about the color of mana being paid
                 // See https://github.com/magefree/mage/issues/9070
                 boolean caresAboutManaColor = false;
@@ -1879,13 +1882,16 @@ public class HumanPlayer extends PlayerImpl {
                     caresAboutManaColor = card.caresAboutManaColor(game);
                 }
 
-                // Don't auto-pay if the spell cares about the color
-                if (!caresAboutManaColor) {
+                if (!chooseLandMana && !caresAboutManaColor) {
                     useableAbilities = ManaUtil.tryToAutoPay(unpaid, useableAbilities); // eliminates other abilities if one fits perfectly
                 }
-                currentlyUnpaidMana = unpaid;
-                activateAbility(useableAbilities, object, game);
-                currentlyUnpaidMana = null;
+                ManaCost previousUnpaidMana = currentlyUnpaidMana;
+                currentlyUnpaidMana = chooseLandMana ? null : unpaid;
+                try {
+                    activateAbility(useableAbilities, object, game);
+                } finally {
+                    currentlyUnpaidMana = previousUnpaidMana;
+                }
             }
         }
     }

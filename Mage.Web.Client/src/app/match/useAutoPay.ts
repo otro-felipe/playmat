@@ -5,7 +5,6 @@ import { planPayment, type PaymentOptions } from '../../core/game/paymentPlan';
 import type { GameSession, GameSessionState } from '../../core/game/gameSession';
 import type { PlayerBoard } from './boardModel';
 
-const TAP_DELAY_MS = 220;
 export type AutoPayOptions = PaymentOptions;
 
 /** Pays one source at a time, waiting for the server after every answer. Explicit requests last one payment only. */
@@ -62,6 +61,8 @@ export function useAutoPay(session: GameSession, state: GameSessionState, me: Pl
 
   useEffect(() => {
     if (!active || stopped.current || awaitingServer) return;
+    const { interaction: currentInteraction, awaitingServer: responsePending } = session.getState();
+    if (responsePending || currentInteraction.prompt !== prompt) return;
     if (prompt?.kind === 'chooseAbility' && lastTap.current && !lastTap.current.answered) {
       const ability = abilityFor(prompt.choices, lastTap.current.color);
       lastTap.current = ability ? { ...lastTap.current, answered: true } : null;
@@ -77,12 +78,14 @@ export function useAutoPay(session: GameSession, state: GameSessionState, me: Pl
     if (interaction.mode !== 'payMana' || !plan?.next || stalled) return;
     lastTap.current = null;
     const tap = plan.next;
+    // Yield once so a queued cancel can win before sending the next tap.
     const timer = setTimeout(() => {
-      if (stopped.current || session.getState().awaitingServer || session.getState().interaction.prompt !== prompt) return;
+      const current = session.getState();
+      if (stopped.current || current.awaitingServer || current.interaction.prompt !== prompt) return;
       lastTap.current = tap;
       setAttempt(signature);
       session.click(tap.id);
-    }, TAP_DELAY_MS);
+    }, 0);
     return () => clearTimeout(timer);
   }, [active, awaitingServer, interaction.mode, prompt, session, plan, stalled, signature]);
 

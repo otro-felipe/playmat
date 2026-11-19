@@ -1,5 +1,4 @@
 .slot {
-  /* no width transition: cards that shift when a neighbor taps glide via FLIP */
   position: relative;
   flex: none;
 }
@@ -378,6 +377,11 @@
 .asleep > :last-child {
   filter: saturate(0.55) brightness(0.8);
   transition: filter var(--dur-quick) linear;
+}
+
+.card[data-land-turn],
+.card[data-land-turn] .body > :last-child {
+  transition: none;
 }
 
 .sleep {

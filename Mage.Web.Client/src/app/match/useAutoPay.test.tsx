@@ -30,26 +30,26 @@ function setup(enabled = false) {
     const me = state.view?.players?.[0];
     return useAutoPay(session, state, me ? buildPlayerBoard(me, true) : null, enabled, { hybrid: true });
   });
-  const tick = () => act(() => { vi.advanceTimersByTime(230); });
+  const flushReadyTap = () => act(() => { vi.advanceTimersByTime(0); });
   const dispose = () => { hook.unmount(); session.dispose(); connection.events.dispose(); };
-  return { ...hook, session, connection, ask, tick, dispose };
+  return { ...hook, session, connection, ask, flushReadyTap, dispose };
 }
 
-test('one explicit request pays the current cost only, one answer at a time, despite repeated clicks', () => {
+test('one explicit request pays each confirmed step without a timed pause, despite repeated clicks', () => {
   const game = setup();
-  game.tick();
+  game.flushReadyTap();
   expect(game.connection.api.sendPlayerUUID).not.toHaveBeenCalled();
   act(() => { game.result.current.start(); game.result.current.start(); });
-  game.tick();
+  game.flushReadyTap();
   expect(game.connection.api.sendPlayerUUID).toHaveBeenCalledExactlyOnceWith('g', 'forest');
-  game.tick();
+  game.flushReadyTap();
   expect(game.connection.api.sendPlayerUUID).toHaveBeenCalledTimes(1);
   game.ask('{1}', { ...player, battlefield: { forest: { ...forest, tapped: true }, island } });
-  game.tick();
+  game.flushReadyTap();
   expect(game.connection.api.sendPlayerUUID).toHaveBeenLastCalledWith('g', 'island');
   game.ask(null);
   game.ask('{G}');
-  game.tick();
+  game.flushReadyTap();
   expect(game.connection.api.sendPlayerUUID).toHaveBeenCalledTimes(2);
   game.dispose();
 });
@@ -57,11 +57,11 @@ test('one explicit request pays the current cost only, one answer at a time, des
 test('cancel stops a scheduled tap immediately and never restarts for the next unpaid prompt', () => {
   const game = setup(true);
   act(() => { game.result.current.stop(); game.session.cancelPayment(); });
-  game.tick();
+  game.flushReadyTap();
   expect(game.connection.api.sendPlayerUUID).not.toHaveBeenCalled();
   expect(game.connection.api.sendPlayerBoolean).toHaveBeenCalledExactlyOnceWith('g', false);
   game.ask('{G}');
-  game.tick();
+  game.flushReadyTap();
   expect(game.connection.api.sendPlayerUUID).not.toHaveBeenCalled();
   game.dispose();
 });
@@ -69,11 +69,23 @@ test('cancel stops a scheduled tap immediately and never restarts for the next u
 test('cancel during an in-flight tap leaves the next prompt to cancellation', () => {
   const game = setup();
   act(() => game.result.current.start());
-  game.tick();
+  game.flushReadyTap();
   act(() => { game.result.current.stop(); game.session.cancelPayment(); });
   game.ask('{1}', { ...player, battlefield: { forest: { ...forest, tapped: true }, island } });
-  game.tick();
+  game.flushReadyTap();
   expect(game.connection.api.sendPlayerUUID).toHaveBeenCalledTimes(1);
+  game.dispose();
+});
+
+test('cancel can stop the next scheduled tap after the server confirms the first', () => {
+  const game = setup();
+  act(() => game.result.current.start());
+  game.flushReadyTap();
+  game.ask('{1}', { ...player, battlefield: { forest: { ...forest, tapped: true }, island } });
+  act(() => { game.result.current.stop(); game.session.cancelPayment(); });
+  game.flushReadyTap();
+  expect(game.connection.api.sendPlayerUUID).toHaveBeenCalledExactlyOnceWith('g', 'forest');
+  expect(game.connection.api.sendPlayerBoolean).toHaveBeenCalledExactlyOnceWith('g', false);
   game.dispose();
 });
 
@@ -81,7 +93,7 @@ test('manual pool mode spends floating mana instead of tapping again or hanging'
   const game = setup();
   game.ask('{G}', { playerId: 'me', manaPool: { green: 1 }, battlefield: {} });
   act(() => game.result.current.start());
-  game.tick();
+  game.flushReadyTap();
   expect(game.connection.api.sendPlayerManaType).toHaveBeenCalledExactlyOnceWith('g', 'me', 'GREEN');
   expect(game.connection.api.sendPlayerUUID).not.toHaveBeenCalled();
   game.dispose();
@@ -90,9 +102,9 @@ test('manual pool mode spends floating mana instead of tapping again or hanging'
 test('no-progress and insufficient mana stop safely with a visible manual fallback', () => {
   const game = setup();
   act(() => game.result.current.start());
-  game.tick();
+  game.flushReadyTap();
   game.ask('{1}{G}');
-  game.tick();
+  game.flushReadyTap();
   expect(game.connection.api.sendPlayerUUID).toHaveBeenCalledTimes(1);
   expect(game.result.current).toMatchObject({ available: false, busy: false, reason: 'manual' });
   game.ask('{4}{G}');
@@ -108,12 +120,12 @@ test('a one-shot request follows a dual land ability choice and continues the re
   const me = { playerId: 'me', battlefield: { dual, second } };
   game.ask('{G}{U}', me);
   act(() => game.result.current.start());
-  game.tick();
+  game.flushReadyTap();
   expect(game.connection.api.sendPlayerUUID).toHaveBeenLastCalledWith('g', 'dual');
   game.ask(null, me, parsePrompt('GAME_CHOOSE_ABILITY', { choices: { green: '{T}: Add {G}.', blue: '{T}: Add {U}.' } })!);
   expect(game.connection.api.sendPlayerUUID).toHaveBeenLastCalledWith('g', 'blue');
   game.ask('{G}', { ...me, battlefield: { dual: { ...dual, tapped: true }, second } });
-  game.tick();
+  game.flushReadyTap();
   expect(game.connection.api.sendPlayerUUID).toHaveBeenLastCalledWith('g', 'second');
   game.dispose();
 });

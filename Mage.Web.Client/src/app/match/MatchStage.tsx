@@ -925,6 +925,12 @@ function Row({ groups, left, width, top, ideal, min, forward, label, flip, ...re
   flip: boolean;
 }) {
   const compact = useSettings((settings) => settings.settings.compactBoard);
+  const [placement, setPlacement] = useState({ groups, landTurned: false });
+  if (placement.groups !== groups) {
+    const previousLands = landTaps(placement.groups);
+    const landTurned = [...landTaps(groups)].some(([id, tapped]) => previousLands.has(id) && previousLands.get(id) !== tapped);
+    setPlacement({ groups, landTurned });
+  }
   const height = ideal * (88 / 63);
   const fit = useMemo(
     () => fitRow(groups, width - 24, height, compact ? Math.round(ideal * COMPACT_SCALE) : ideal, compact ? Math.round(min * COMPACT_SCALE) : min),
@@ -941,11 +947,21 @@ function Row({ groups, left, width, top, ideal, min, forward, label, flip, ...re
       {groups.map((group, index) => (
         <Fragment key={group.key}>
           {breaks.has(index) && <i className={styles.lineBreak} style={{ height: fit.lineGap }} aria-hidden="true" />}
-          <PermanentStack group={group} width={fit.cardWidth} forward={forward} {...rest} />
+          <PermanentStack group={group} width={fit.cardWidth} forward={forward} settleImmediately={placement.landTurned} {...rest} />
         </Fragment>
       ))}
     </div>
   );
+}
+
+function landTaps(groups: PermanentGroup[]) {
+  const taps = new Map<string, boolean>();
+  for (const { members } of groups) {
+    for (const card of members) {
+      if (card.id && card.cardTypes?.includes('LAND')) taps.set(card.id, !!card.tapped);
+    }
+  }
+  return taps;
 }
 
 /** An opponent's half: their rows mirrored above the seam, their seat, piles and hidden hand. */

@@ -236,6 +236,14 @@ interface SettingsState {
   syncToServer(): Promise<void>;
 }
 
+/** Private games apply fresh mana while players choose which sources to tap. */
+export function manaPaymentSettings(tapLands: boolean, restricted: boolean, fullControl: boolean) {
+  return {
+    manaPoolAutomatic: !fullControl && (PRIVATE_PLAYTESTING || tapLands || !restricted),
+    manaPoolAutomaticRestricted: PRIVATE_PLAYTESTING || restricted,
+  };
+}
+
 /** The complete preference object the server keeps per user (every field is required server side). */
 export function toUserData(settings: PlaySettings, fullControl = false, temporary: SettingsState['turnStops'] = null): UserData {
   const stops = temporary ? {
@@ -254,8 +262,7 @@ export function toUserData(settings: PlaySettings, fullControl = false, temporar
     userSkipPrioritySteps: serverStops(stops, fullControl),
     flagName: `${settings.flag || 'world'}.png`,
     askMoveToGraveOrder: false,
-    manaPoolAutomatic: !PRIVATE_PLAYTESTING && !fullControl && (settings.autoPayMana || !settings.autoPayRestricted),
-    manaPoolAutomaticRestricted: PRIVATE_PLAYTESTING || settings.autoPayRestricted,
+    ...manaPaymentSettings(settings.autoPayMana, settings.autoPayRestricted, fullControl),
     passPriorityCast: settings.passAfterCasting && !fullControl,
     passPriorityActivation: settings.passAfterCasting && !fullControl,
     autoOrderTrigger: settings.autoOrderTriggers,

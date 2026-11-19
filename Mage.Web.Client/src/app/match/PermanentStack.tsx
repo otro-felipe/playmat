@@ -34,6 +34,8 @@ export interface PermanentStackProps {
   onClick(id: string): void;
   /** the permanent just clicked, drawn pressed until the server answers */
   pending?: string | null;
+  /** Land taps can reflow the row. Existing cards settle immediately when that happens. */
+  settleImmediately?: boolean;
   /** while blockers are declared: a creature dropped on an attacker blocks it (false when nothing was sent) */
   onBlockDrop?(blockerId: string, attackerId: string): boolean;
   /** what a dragged creature can be dropped on (attackers by default; planeswalkers and battles while attacking) */
@@ -134,7 +136,7 @@ interface PlacedCardProps extends PermanentStackProps {
   count?: string | null;
 }
 
-function PlacedCard({ permanent, width, sleeve, clickable, selected, attacking, blocking, forward, targeting, onClick, onBlockDrop, dropTargets, pending, left, top, depth, count }: PlacedCardProps) {
+function PlacedCard({ permanent, width, sleeve, clickable, selected, attacking, blocking, forward, targeting, onClick, onBlockDrop, dropTargets, pending, settleImmediately, left, top, depth, count }: PlacedCardProps) {
   const ref = useRef<HTMLDivElement>(null);
   const id = permanent.id!;
   const t = useT();
@@ -150,7 +152,7 @@ function PlacedCard({ permanent, width, sleeve, clickable, selected, attacking, 
   const keywords = useMemo(() => keywordMarks(permanent), [permanent]);
   const effects = useMemo(() => keywordEffects(keywords), [keywords]);
   const motion = useSettings((state) => state.settings.animations);
-  useFlip(cardKey(permanent), ref, { rotation: tapped ? 90 : 0 });
+  useFlip(cardKey(permanent), ref, { rotation: tapped ? 90 : 0, settleImmediately });
   const stage = useStage();
   const setBlockDrag = useMatchUi((state) => state.setBlockDrag);
   // drag a creature onto an attacker to block it; a press without moving stays a click
@@ -224,6 +226,7 @@ function PlacedCard({ permanent, width, sleeve, clickable, selected, attacking, 
         isSource ? styles.source : '',
       ].join(' ')}
       style={style}
+      data-land-turn={settleImmediately || undefined}
       role={isClickable ? 'button' : undefined}
       tabIndex={isClickable ? 0 : undefined}
       onMouseDown={preventMatchObjectMouseFocus}

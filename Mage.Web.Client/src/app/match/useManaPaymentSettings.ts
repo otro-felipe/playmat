@@ -1,14 +1,14 @@
 import { useEffect } from 'react';
 import type { GameSession } from '../../core/game/gameSession';
-import { useSettings } from '../stores/settings';
-import { PRIVATE_PLAYTESTING } from '../playtesting';
+import { manaPaymentSettings, useSettings } from '../stores/settings';
 
 /** User preferences initialize new games; an existing game's mana pool needs player actions too. */
 export function useManaPaymentSettings(session: GameSession, active: boolean) {
   const tapLands = useSettings((state) => state.settings.autoPayMana);
-  const restricted = useSettings((state) => PRIVATE_PLAYTESTING || state.settings.autoPayRestricted);
+  const restrictedPreference = useSettings((state) => state.settings.autoPayRestricted);
   const fullControl = useSettings((state) => state.fullControl);
-  const automatic = !PRIVATE_PLAYTESTING && !fullControl && (tapLands || !restricted);
+  const { manaPoolAutomatic: automatic, manaPoolAutomaticRestricted: restricted } =
+    manaPaymentSettings(tapLands, restrictedPreference, fullControl);
 
   useEffect(() => {
     if (!active) return;

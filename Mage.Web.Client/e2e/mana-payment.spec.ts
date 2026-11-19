@@ -74,14 +74,24 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 360, height: 740 }
   });
 }
 
-test('manual taps update the remaining cost and cancel stays usable during the response', async ({ page }) => {
+test('manual taps update the remaining cost', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/e2e/fixtures/mana-payment.html');
   await page.locator('[data-object-id="forest"]').click();
   await expect(page.getByRole('region', { name: 'Your decision' }).getByRole('img', { name: 'G', exact: true })).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { paymentFixture: { calls: string[] } }).paymentFixture.calls)).toEqual(['forest']);
+});
+
+test('cancel stays usable while the first automatic tap is awaiting confirmation', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/e2e/fixtures/mana-payment.html?holdTap');
+  const calls = () => page.evaluate(() => (window as unknown as { paymentFixture: { calls: string[] } }).paymentFixture.calls);
   await page.getByRole('button', { name: 'Auto-pay', exact: true }).click();
+  await expect.poll(calls).toEqual(['forest']);
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await expect.poll(() => page.evaluate(() => (window as unknown as { paymentFixture: { calls: string[] } }).paymentFixture.calls)).toEqual(['forest', 'cancel']);
+  expect(await calls()).toEqual(['forest']);
+  await page.evaluate(() => (window as unknown as { paymentFixture: { releaseTap(): void } }).paymentFixture.releaseTap());
+  await expect.poll(calls).toEqual(['forest', 'cancel']);
 });
 
 test('insufficient sources explain the blocked auto-pay and allow cancellation', async ({ page }) => {

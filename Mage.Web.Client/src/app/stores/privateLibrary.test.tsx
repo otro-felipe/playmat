@@ -38,17 +38,31 @@ test('refresh with zero private decks never fetches or selects a shipped starter
   expect(fetcher.mock.calls.some(([path]) => String(path).includes('/starter-decks/'))).toBe(false);
 });
 
-test('private payment stays manual even with old auto-pay, pool and streamlined preferences', async () => {
-  const settings = { ...DEFAULT_SETTINGS, autoPayMana: true, autoPayRestricted: false };
+test.each([
+  { autoPayMana: true, autoPayRestricted: false },
+  { autoPayMana: false, autoPayRestricted: true },
+])('private payment spends freshly generated mana with legacy preferences %o', async (legacyPreferences) => {
+  const settings = { ...DEFAULT_SETTINGS, ...legacyPreferences };
   useSettings.setState({ settings, fullControl: false });
-  expect(toUserData(settings)).toMatchObject({ manaPoolAutomatic: false, manaPoolAutomaticRestricted: true });
+  expect(toUserData(settings)).toMatchObject({ manaPoolAutomatic: true, manaPoolAutomaticRestricted: true });
+  expect(toUserData(settings, true)).toMatchObject({ manaPoolAutomatic: false, manaPoolAutomaticRestricted: true });
+
   const respond = vi.fn(async () => {});
-  renderHook(() => useManaPaymentSettings({ respond } as unknown as GameSession, true));
+  const session = { respond } as unknown as GameSession;
+  renderHook(() => useManaPaymentSettings(session, true));
   await act(async () => {});
   expect(respond.mock.calls).toEqual([
     [{ type: 'action', action: 'MANA_AUTO_PAYMENT_RESTRICTED_ON' }],
-    [{ type: 'action', action: 'MANA_AUTO_PAYMENT_OFF' }],
+    [{ type: 'action', action: 'MANA_AUTO_PAYMENT_ON' }],
   ]);
+
+  act(() => useSettings.setState({ fullControl: true }));
+  await act(async () => {});
+  expect(respond).toHaveBeenLastCalledWith({ type: 'action', action: 'MANA_AUTO_PAYMENT_OFF' });
+
+  act(() => useSettings.setState({ fullControl: false }));
+  await act(async () => {});
+  expect(respond).toHaveBeenLastCalledWith({ type: 'action', action: 'MANA_AUTO_PAYMENT_ON' });
   expect(useSettings.getState().settings).toEqual(settings);
 });
 

@@ -73,8 +73,9 @@ export function useFlipOrigin(key: string, ref: RefObject<HTMLElement | null>) {
  * without a flight, since the card itself didn't go anywhere.
  * `posed` is a pose of the card's own (a hand card lifted under the pointer): while it holds, the card isn't measured,
  * so its place stays the resting one and the lift (a CSS transition) is never taken for a move and flown (#248).
+ * `settleImmediately` skips layout flights for cards already in this zone.
  */
-export function useFlip(cardId: string | undefined, ref: RefObject<HTMLElement | null>, options: { rotation?: number; fallbackOrigin?: string; shift?: number; posed?: boolean } = {}) {
+export function useFlip(cardId: string | undefined, ref: RefObject<HTMLElement | null>, options: { rotation?: number; fallbackOrigin?: string; shift?: number; posed?: boolean; settleImmediately?: boolean } = {}) {
   const stage = useStage();
   const rotation = options.rotation ?? 0;
   const shift = options.shift ?? 0;
@@ -82,12 +83,18 @@ export function useFlip(cardId: string | undefined, ref: RefObject<HTMLElement |
   // the element's first layout: it may have come from another zone at another angle (the fanned hand)
   const arrived = useRef(false);
   const shifted = useRef(shift);
+  const activeFlight = useRef<Animation | null>(null);
 
   useLayoutEffect(() => {
     const element = ref.current;
     if (!element || !cardId || !stage.element) return;
     const firstLayout = !arrived.current;
     arrived.current = true;
+    const settle = options.settleImmediately && !firstLayout;
+    if (settle && activeFlight.current) {
+      activeFlight.current.cancel();
+      activeFlight.current = null;
+    }
     // a posed card keeps its resting place (one never seen yet notes where it is, so it doesn't fly from its origin later)
     if (posed) {
       if (!placements.has(cardId)) {
@@ -110,7 +117,7 @@ export function useFlip(cardId: string | undefined, ref: RefObject<HTMLElement |
       return;
     }
 
-    if (!from || !motionEnabled || reducedMotion()) return;
+    if (settle || !from || !motionEnabled || reducedMotion()) return;
     const dx = from.x + from.width / 2 - (now.x + now.width / 2);
     const dy = from.y + from.height / 2 - (now.y + now.height / 2);
     const scale = from.width / Math.max(1, now.width);
@@ -126,7 +133,9 @@ export function useFlip(cardId: string | undefined, ref: RefObject<HTMLElement |
       ],
       { duration: Math.min(560, 260 + Math.hypot(dx, dy) * 0.25), easing: 'cubic-bezier(0.16, 1, 0.3, 1)' },
     );
+    activeFlight.current = flight;
     flight.onfinish = () => {
+      activeFlight.current = null;
       const landed = measure(element, stage.element, stage.scale, rotation);
       if (landed) placements.set(cardId, landed);
     };
