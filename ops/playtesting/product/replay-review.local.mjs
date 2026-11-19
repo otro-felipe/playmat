@@ -95,10 +95,15 @@ export async function verifyReplayReviewOverMcp({ capture, humanCaptures, Client
     const retry = await call('save_review_annotations', command)
     assert.equal(saved.annotations[0].revision, retry.annotations[0].revision)
     assert.equal(saved.annotations[0].frameCursor, recordedCast.frameCursor)
+    const coalesced = recordedCast.evidence.frameQuality === 'coalesced_snapshot'
+    const expectedCategory = coalesced ? 'insufficient' : 'acceptable'
+    assert.equal(saved.annotations[0].confidence, coalesced ? 'low' : 'medium')
+    assert.equal(saved.annotations[0].category, expectedCategory)
     const loaded = await call('list_review_annotations', { gameId, cursor: capture.castCursor, count: 1 })
     assert.deepEqual(loaded.annotations, saved.annotations)
     const encounter = await call('get_match_review', { matchId: capture.matchId })
-    assert.equal(encounter.analysis.counts.acceptable, 1)
+    assert.equal(encounter.analysis.reviewed, 1)
+    assert.equal(encounter.analysis.counts[expectedCategory], 1)
 
     for (const humanCapture of humanCaptures) {
       const manifest = await completed(humanCapture.gameId)
