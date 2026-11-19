@@ -33,6 +33,6 @@ test('[PM-REVIEW-UI-3] the history shows persisted analysis and separates seat a
   const game = screen.getByRole('group', { name: 'Juego 3' });
   expect(within(game).getByText('Alice')).toBeTruthy();
   expect(within(game).getByText('Bob')).toBeTruthy();
-  expect(within(game).getByText('Good')).toBeTruthy();
+  expect(within(game).getByText('Normal')).toBeTruthy();
   expect(within(game).getByText('Inaccuracy')).toBeTruthy();
 });

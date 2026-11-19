@@ -20,6 +20,7 @@ vi.mock('../match/MatchStage', () => ({ MatchStage: ({ state, replayHands }: {
   <div aria-label="Test table">
     <div data-testid="seat">{state.playerId}</div>
     <div data-testid="turn">{state.view?.turn}</div>
+    <div data-testid="stack">{Object.values(state.view?.stack ?? {}).map(({ name }) => name).join(', ')}</div>
     <div data-testid="hand">{Object.values(state.view?.myHand ?? {}).map(({ name }) => name).join(', ')}</div>
     <div data-testid="full-hands">{Object.values(replayHands ?? {}).flatMap((hand) => Object.values(hand).map(({ name }) => name)).join(', ')}</div>
   </div>
@@ -37,12 +38,18 @@ const game = {
   availablePerspectives: perspectives, fullAvailable: true, coverage: { hands: 'complete', draws: 'partial' },
   analysis: { status: 'partial', eligible: 2, reviewed: 1, counts: { good: 1 }, bySeat: [] },
 };
+const positioned = { ...view, stack: { bolt: { name: 'Burst Lightning', id: 'bolt' } } };
+const actual = {
+  kind: 'cast', text: 'mcp_e70ebd2d48 casts Burst Lightning [28c] targeting Sheoldred [711]',
+  cardRef: { id: 'bolt', name: 'Burst Lightning' }, targets: [{ id: 'sheoldred', name: 'Sheoldred', kind: 'card' }],
+  modes: ['Kicked'], paidMana: { R: 1, C: 4 },
+};
 const moments = [
   { cursor: 1, frameCursor: 0, type: 'action', turn: 6, text: 'Played Island' },
-  { cursor: 3, frameCursor: 2, type: 'action', turn: 7, text: 'Two Burst Lightning against Sheoldred' },
+  { cursor: 3, frameCursor: 2, actionFrameCursor: 4, type: 'action', turn: 7, actor: 'Alice', actual, text: actual.text },
 ];
 const annotation = {
-  gameId: 'game', cursor: 3, frameCursor: 2, seatId: 'alice-seat', category: 'good', actual: { kind: 'cast', text: 'Two Burst Lightning against Sheoldred' },
+  gameId: 'game', cursor: 3, frameCursor: 2, seatId: 'alice-seat', category: 'good', actual,
   alternatives: [{ line: 'Hold the second Burst', legality: 'legal', benefit: 'Preserve reach', risk: 'Sheoldred stays in play' }],
   confidence: 'high', rationale: 'Sheoldred was on the battlefield.', evidence: { basis: 'engine_log', frameCursor: 2, turn: 7 }, retrospective: 'Bob held Fatal Push.',
 };
@@ -55,9 +62,9 @@ beforeEach(() => {
   vi.mocked(api.replayPage).mockResolvedValue({
     info: { gameId: 'game' },
     start: 0,
-    total: 4,
+    total: 5,
     events: [{ view: { ...view, turn: 6 }, myHand: fromHand }, { log: { message: 'Played Island' } },
-      { view, myHand: fromHand }, { log: { message: 'Two Burst Lightning against Sheoldred' } }],
+      { view, myHand: fromHand }, { log: { message: actual.text } }, { view: positioned, myHand: fromHand }],
   });
   request.mockImplementation((raw) => {
     const url = new URL(raw, 'http://localhost');
@@ -65,7 +72,7 @@ beforeEach(() => {
     if (!url.pathname.endsWith('/evidence')) return json(game);
     if (url.searchParams.get('scope') === 'public') return json({ events: moments, next: null });
     return json({ events: [{ cursor: 0, view: { ...view, turn: 6 }, myHand: fromHand },
-      { cursor: 2, view, myHand: url.searchParams.get('seatId') === 'bob-seat' ? hiddenHand : fromHand,
+      { cursor: 4, view: positioned, myHand: url.searchParams.get('seatId') === 'bob-seat' ? hiddenHand : fromHand,
         ...(url.searchParams.get('scope') === 'full' ? { hands: { 'alice-player': fromHand, 'bob-player': hiddenHand } } : {}) }], next: null });
   });
 });
@@ -91,13 +98,14 @@ test('[PM-REVIEW-UI-1] jumping to a reviewed play preserves the cursor when chan
   openReplay();
   const analysis = await screen.findByRole('switch', { name: 'Show analysis' });
   fireEvent.click(analysis);
-  const moment = await screen.findByRole('button', { name: /Two Burst Lightning against Sheoldred/ });
+  const list = await screen.findByRole('navigation', { name: 'Key moments' });
+  const moment = await within(list).findByRole('button', { name: /Alice casts Burst Lightning targeting Sheoldred/ });
   fireEvent.click(moment);
   expect(await screen.findByText('Preserve reach')).toBeTruthy();
   expect(screen.getByTestId('turn').textContent).toBe('7');
-  expect(within(screen.getByRole('region', { name: 'Evidence before the play' })).queryByText(/Fatal Push/)).toBeNull();
+  expect(screen.queryByRole('region', { name: 'Evidence before the play' })).toBeNull();
   const hands = screen.getByRole('switch', { name: 'Show both hands' });
-  fireEvent.click(hands);
+  expect(hands.getAttribute('aria-checked')).toBe('true');
   await waitFor(() => expect(screen.getByTestId('full-hands').textContent).toContain('Fatal Push'));
   expect(screen.getByTestId('turn').textContent).toBe('7');
   fireEvent.click(hands);
@@ -174,30 +182,10 @@ test('[PM-REVIEW-UI-2] an unauthorized archive never requests another hand', asy
   expect(screen.getByTestId('hand').textContent).toBe('Burst Lightning');
 });
 
-test('[PM-REVIEW-UI-2] a historical grant is explicit and sends no shared hand request while pending', async () => {
-  request.mockImplementation((raw, options) => {
-    if (raw.endsWith('/privacy/matches/match')) {
-      expect(options?.method).toBe('PUT');
-      return json({ ownGranted: true, available: false });
-    }
-    if (raw.endsWith('/games/game')) return json({ ...game, fullAvailable: false, availablePerspectives: [perspectives[0]], privacy: {
-      canGrantLegacy: true, legacyGranted: request.mock.calls.some(([path]) => path.endsWith('/privacy/matches/match')),
-    } });
-    return json({ events: [], annotations: [], next: null });
-  });
-  openReplay('/replay/game?cursor=3');
-  const grant = await screen.findByRole('button', { name: 'Allow both hands for this match' });
-  expect(request.mock.calls.every(([path]) => !path.includes('/privacy/matches/'))).toBe(true);
-  fireEvent.click(grant);
-  expect(await screen.findByText('Waiting for the other participant to grant access.')).toBeTruthy();
-  expect(screen.queryByRole('switch', { name: 'Show both hands' })).toBeNull();
-  expect(screen.getByTestId('turn').textContent).toBe('7');
-});
-
 test('[PM-REVIEW-UI-2] a participant gets no opponent perspective before the entire match completes', async () => {
   request.mockImplementation((path) => path.endsWith('/games/game') ? json({
     ...game, status: 'active', availablePerspectives: [perspectives[0], { ...perspectives[1], allowed: false }],
-    privacy: { canGrantLegacy: false, fullAvailable: false, viewerSeatId: 'alice-seat' },
+    privacy: { fullAvailable: false, viewerSeatId: 'alice-seat' },
   }) : json({ events: [], annotations: [], next: null }));
   openReplay('/replay/game?cursor=3');
   const perspective = await screen.findByLabelText('Perspective');
@@ -217,11 +205,59 @@ test('[PM-REVIEW-UI-2] a late full hand response for a previous account cannot r
     return original(path, options);
   });
   openReplay('/replay/game?cursor=3');
-  fireEvent.click(await screen.findByRole('switch', { name: 'Show both hands' }));
+  expect((await screen.findByRole('switch', { name: 'Show both hands' })).getAttribute('aria-checked')).toBe('true');
   await waitFor(() => expect(oldResponse).toBeDefined());
   act(() => useSession.setState({ userName: 'Bob' }));
   await waitFor(() => expect(screen.getByLabelText('Perspective')).toBeTruthy());
   await act(async () => oldResponse!(await json({ events: [{ cursor: 2, view, hands: { 'bob-player': hiddenHand } }] })));
   expect(screen.getByTestId('full-hands').textContent).toBe('');
   expect(screen.queryByRole('switch', { name: 'Show both hands' })).toBeNull();
+});
+
+
+test('[PM-REVIEW-UI-4] a timeline marker opens the recorded stack and shows the decision and its rating', async () => {
+  openReplay();
+  const timeline = await screen.findByRole('group', { name: 'Reviewed decisions' });
+  const marker = await within(timeline).findByRole('button', { name: /Normal.*Burst Lightning/ });
+  fireEvent.click(marker);
+  await waitFor(() => expect(screen.getByTestId('stack').textContent).toBe('Burst Lightning'));
+  const decision = screen.getByRole('region', { name: 'Recorded decision' });
+  expect(within(decision).getByText('Kicked')).toBeTruthy();
+  expect(within(decision).getByText('Sheoldred')).toBeTruthy();
+  expect(within(decision).getByLabelText('Normal')).toBeTruthy();
+  expect(decision.textContent).not.toMatch(/mcp_|\[28c\]|\[711\]/);
+
+  fireEvent.click(screen.getByRole('switch', { name: 'Show analysis' }));
+  expect(await screen.findByRole('heading', { name: /Alice casts Burst Lightning targeting Sheoldred/ })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Burst Lightning, show card' })).toBeTruthy();
+});
+
+
+test('[PM-REVIEW-UI-5] later action pages include unreviewed decisions with pending copy', async () => {
+  const original = request.getMockImplementation()!;
+  request.mockImplementation((raw, options) => {
+    const url = new URL(raw, 'http://localhost');
+    if (url.searchParams.get('scope') !== 'public') return original(raw, options);
+    if (url.searchParams.get('cursor') === '0') return json({ events: [moments[0]], next: 3 });
+    return json({ events: [moments[1]], next: null });
+  });
+  openReplay();
+  fireEvent.click(await screen.findByRole('switch', { name: 'Show analysis' }));
+  const list = await screen.findByRole('navigation', { name: 'Key moments' });
+  expect(await within(list).findByRole('button', { name: /Alice casts Burst Lightning/ })).toBeTruthy();
+  fireEvent.click(within(list).getByRole('button', { name: /Played Island/ }));
+  expect(await screen.findByText('Awaiting analysis for this decision.')).toBeTruthy();
+});
+
+test('[PM-REVIEW-UI-2] a missing archived opponent hand never displays the acting viewer’s hand as that seat', async () => {
+  const original = request.getMockImplementation()!;
+  request.mockImplementation((raw, options) => raw.includes('scope=full') ? json({
+    events: [{ cursor: 4, view: positioned, myHand: fromHand, hands: { 'alice-player': fromHand } }], next: null,
+  }) : original(raw, options));
+  openReplay('/replay/game?cursor=3');
+  expect(await screen.findByText('This frame has no recorded hand for the selected view.')).toBeTruthy();
+  await waitFor(() => expect(screen.getByTestId('hand').textContent).toBe('Burst Lightning'));
+  fireEvent.change(screen.getByLabelText('Perspective'), { target: { value: 'bob-seat' } });
+  await waitFor(() => expect(screen.getByTestId('seat').textContent).toBe('bob-player'));
+  expect(screen.getByTestId('hand').textContent).toBe('');
 });

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { projectReplayEvent } from './archive.mjs'
 import { isUuid, normalize, ProductError } from './decks.mjs'
 import { categories, createReviewAnnotations } from './review-annotations.mjs'
+import { indexReplayPresentation } from './review-presentation.mjs'
 import { submittedSideboardDelta } from './sideboard-delta.mjs'
 
 const pageLimit = 40
@@ -26,7 +27,7 @@ function gameReady(game) {
 }
 
 function canReadTogether(game, access) {
-  return gameReady(game) && access.fullAvailable && (game.review_version === 2 || access.legacyGranted)
+  return gameReady(game) && access.fullAvailable
 }
 
 function boundedInteger(value, fallback, minimum, maximum) {
@@ -133,7 +134,7 @@ function actionDetails(row, perspectives, typed) {
       ...(Object.keys(paidMana).length ? { paidMana } : {}),
       ...(Array.isArray(event.modes) ? { modes: event.modes.filter(mode => typeof mode === 'string').slice(0, 10).map(mode => mode.slice(0, 400)) } : {}),
     }
-    return { seatId: seat.seatId, basis: 'recorded_action', actual: details }
+    return { seatId: seat.seatId, basis: 'recorded_action', actual: details, cardRef: card, castMode: plainText(event.castMode).slice(0, 240) }
   }
   if (event.log?.messageType !== 'GAME') return null
   const message = plainText(event.log.message)
@@ -141,12 +142,13 @@ function actionDetails(row, perspectives, typed) {
   const seat = perspectives.find(({ name }) => lower.startsWith(normalize(name) + ' '))
   if (!seat) return null
   const rest = message.slice(seat.name.length).trimStart()
-  const verb = rest.split(/\s+/, 1)[0].toLowerCase()
-  if (!cardActions.has(verb)) return null
-  return { seatId: seat.seatId, basis: 'engine_log', actual: { kind: cardActions.get(verb), text: message.slice(0, 1200) } }
+  const verb = rest.split(/[\s:]+/, 1)[0].toLowerCase()
+  const kind = cardActions.get(verb)
+  if (!kind) return null
+  return { seatId: seat.seatId, basis: 'engine_log', actual: { kind, text: message.slice(0, 1200) } }
 }
 
-function positionsFor(rows, perspectives, typed) {
+function positionsFor(rows, perspectives, typed, capture) {
   const positions = []
   const frames = new Set()
   let lastAction = null
@@ -163,10 +165,13 @@ function positionsFor(rows, perspectives, typed) {
       && lastAction.frameCursor === row.frameCursor) {
       if (details.basis === 'engine_log') {
         lastAction.actual.text = details.actual.text
+        capture.set(lastAction.cursor, { ...capture.get(lastAction.cursor), logMessage: row.event.log?.message })
         lastAction = null
         continue
       }
       details.actual.text = lastAction.actual.text
+      details.logMessage = capture.get(lastAction.cursor)?.logMessage
+      capture.delete(lastAction.cursor)
       positions.pop()
     }
     const explicitFrame = row.event.preActionCursor
@@ -177,6 +182,7 @@ function positionsFor(rows, perspectives, typed) {
       frameQuality: exact ? 'exact' : 'preceding_snapshot' }
     lastAction = { cursor: row.cursor, frameCursor, seatId: details.seatId, actual: details.actual, evidence,
       basis: details.basis }
+    capture.set(row.cursor, { cardRef: details.cardRef, castMode: details.castMode, logMessage: details.logMessage ?? row.event.log?.message })
     positions.push(lastAction)
   }
   const occupied = new Set()
@@ -193,7 +199,7 @@ function cardReference(card) {
     ...(typeof card.cardNumber === 'string' ? { cardNumber: card.cardNumber } : {}) }
 }
 
-function projectRow(row, seat, scope, perspectives, typed, analysis) {
+function projectRow(row, seat, scope, perspectives, typed, analysis, presentation) {
   const { event, cursor, frameCursor, turn } = row
   const base = { cursor, frameCursor, turn, timeMs: event.t }
   if (event.view) {
@@ -215,7 +221,7 @@ function projectRow(row, seat, scope, perspectives, typed, analysis) {
   }
   const publicLog = projectReplayEvent(event, null)?.log
   if (analysis) return { ...base, type: 'action', seatId: analysis.seatId, text: analysis.actual.text,
-    actual: analysis.actual, ...(publicLog ? { log: publicLog } : {}) }
+    ...presentation(analysis), ...(publicLog ? { log: publicLog } : {}) }
   if (publicLog) return { ...base, type: 'log', text: plainText(publicLog.message), log: publicLog }
   return null
 }
@@ -290,8 +296,9 @@ export function createPostMatchReview(pool, archive, permissions) {
     const typed = game.review_version === 2
     const fullAvailable = canReadTogether(game, access)
     const visible = perspectives.filter(({ owned }) => owned || fullAvailable).map(({ seatId }) => seatId)
-    const positions = positionsFor(rows, perspectives, typed)
-    return { ready, rows, perspectives, typed, fullAvailable, visible, positions }
+    const capture = new Map()
+    const positions = positionsFor(rows, perspectives, typed, capture)
+    return { ready, rows, perspectives, typed, fullAvailable, visible, positions, capture }
   }
 
   async function gameManifest(game, access, data, rows) {
@@ -299,7 +306,7 @@ export function createPostMatchReview(pool, archive, permissions) {
     const eligiblePositions = data.ready ? data.positions : null
     const archiveStatus = game.archive_state
     const reason = game.match_status === 'active' ? 'match_active' : !data.ready ? 'replay_not_ready'
-      : data.fullAvailable ? null : access.reason ?? 'legacy_unavailable'
+      : data.fullAvailable ? null : access.reason ?? 'replay_not_ready'
     let sideboardDelta = { status: 'unavailable' }
     if (data.ready && data.perspectives.some(seat => seat.owned && seat.seatId === access.viewerSeatId)) {
       sideboardDelta = game.game_number === 1 ? { status: 'initial_game' }
@@ -309,9 +316,9 @@ export function createPostMatchReview(pool, archive, permissions) {
       gameId: game.id, matchId: game.match_id, gameNumber: game.game_number, status: game.match_status, gameStatus: game.status,
       format: game.format ?? game.engine_format, viewerSeatId: access.viewerSeatId,
       perspectives: data.perspectives, availablePerspectives: data.perspectives.map(seat => ({ ...seat, allowed: seat.owned || data.fullAvailable })),
-      fullAvailable: data.fullAvailable, canGrantLegacy: access.canGrantLegacy, legacyGranted: access.legacyGranted,
+      fullAvailable: data.fullAvailable,
       reason,
-      privacy: { fullAvailable: data.fullAvailable, canGrantLegacy: access.canGrantLegacy, legacyGranted: access.legacyGranted,
+      privacy: { fullAvailable: data.fullAvailable,
         viewerSeatId: access.viewerSeatId, perspectives: data.perspectives, reason },
       archiveRevision,
       sideboardDelta,
@@ -369,9 +376,10 @@ export function createPostMatchReview(pool, archive, permissions) {
       const data = await loadGame(game, access)
       const seat = scopedSeat(game, access, data.perspectives, scope, query.seatId)
       const positions = new Map(data.positions.map(position => [position.cursor, position]))
+      const presentation = indexReplayPresentation(data.rows, data.positions, data.perspectives, data.capture)
       const events = purpose === 'analysis'
-        ? analysisEvidence(data, seat, { ...options, includeBefore })
-        : pageRows(data.rows, options, row => projectRow(row, seat, scope, data.perspectives, data.typed, positions.get(row.cursor)))
+        ? analysisEvidence(data, seat, { ...options, includeBefore }, presentation)
+        : pageRows(data.rows, options, row => projectRow(row, seat, scope, data.perspectives, data.typed, positions.get(row.cursor), presentation))
       return { gameId: id, matchId: game.match_id, archiveRevision, scope, purpose, ...events }
     },
     async listAnnotations(actor, id, query) {
@@ -437,13 +445,13 @@ export function createPostMatchReview(pool, archive, permissions) {
   }
 }
 
-function analysisEvidence(data, seat, options) {
+function analysisEvidence(data, seat, options, presentation) {
   const frames = new Map(data.rows.filter(row => row.event.view).map(row => [row.cursor, row.event]))
   return pageRows(data.positions.map(position => ({ ...position, turn: position.evidence.turn })), options, position => {
     if (seat && seat.seatId !== position.seatId) return null
     const frame = frames.get(position.frameCursor)
     if (!frame) return null
-    return { ...position, type: 'action', text: position.actual.text,
+    return { ...position, type: 'action', text: position.actual.text, ...presentation(position),
       ...(options.includeBefore ? { before: frameProjection(frame, seat, data.typed) } : {}) }
   })
 }

@@ -8,6 +8,8 @@ import mage.abilities.Ability;
 import mage.abilities.Mode;
 import mage.cards.Card;
 import mage.cards.Cards;
+import mage.constants.SpellAbilityCastMode;
+import mage.constants.Zone;
 import mage.game.Game;
 import mage.game.events.GameEvent;
 import mage.game.stack.Spell;
@@ -137,6 +139,10 @@ final class ReplayEvidence {
                     if (!spell.isFaceDown(game)) {
                         row.add("card", cardRef(spell, spell.getSourceId()));
                         row.addProperty("sourceId", spell.getSourceId().toString());
+                        SpellAbilityCastMode castMode = spell.getSpellAbility().getSpellAbilityCastMode();
+                        if (castMode != SpellAbilityCastMode.NORMAL) {
+                            row.addProperty("castMode", castMode.toString());
+                        }
                     }
                     describeAbilities(row, spell.getSpellAbilities(), !spell.isFaceDown(game));
                 }
@@ -152,7 +158,9 @@ final class ReplayEvidence {
                 row.addProperty("action", "activate");
                 StackObject activation = game.getStack().getStackObject(event.getTargetId());
                 if (activation != null) {
-                    describeAbilities(row, Collections.singletonList(activation.getStackAbility()), false);
+                    UUID sourceId = activation.getSourceId();
+                    boolean sourcePublic = addPublicSource(row, game, sourceId);
+                    describeAbilities(row, Collections.singletonList(activation.getStackAbility()), sourcePublic);
                 }
                 break;
             case ATTACKER_DECLARED:
@@ -162,6 +170,7 @@ final class ReplayEvidence {
                 }
                 row.addProperty("action", event.getType() == GameEvent.EventType.ATTACKER_DECLARED ? "attack" : "block");
                 objectId = event.getSourceId();
+                addPublicSource(row, game, objectId);
                 JsonArray target = new JsonArray();
                 target.add(event.getTargetId().toString());
                 row.add("targetIds", target);
@@ -174,6 +183,23 @@ final class ReplayEvidence {
             row.addProperty("fromZone", event.getZone().name());
         }
         return row;
+    }
+
+    private static boolean addPublicSource(JsonObject row, Game game, UUID id) {
+        if (id == null) {
+            return false;
+        }
+        Card card = game.getPermanent(id);
+        Zone zone = game.getState().getZone(id);
+        if (card == null && (zone == Zone.GRAVEYARD || zone == Zone.EXILED || zone == Zone.COMMAND)) {
+            card = game.getCard(id);
+        }
+        if (card == null || card.isFaceDown(game)) {
+            return false;
+        }
+        row.addProperty("sourceId", id.toString());
+        row.add("card", cardRef(card, id));
+        return true;
     }
 
     private static void describeAbilities(JsonObject row, Iterable<? extends Ability> abilities, boolean includeModes) {

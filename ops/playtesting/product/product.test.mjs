@@ -108,76 +108,75 @@ async function archivedReviewMatch(f, { id = randomUUID(), tableId = randomUUID(
   return { id, tableId, gameId };
 }
 
-test('[PM-REVIEW-PRIV-1] consent is table-scoped, browser-owned and sealed before the first game', { skip: !databaseUrl }, async t => {
-  const f = await fixture(t);
-  const host = await signIn(f, 'ReviewHost');
-  const guest = await signIn(f, 'ReviewGuest');
-  const outsider = await signIn(f, 'ReviewStranger');
-  const token = await f.product.provisionAgent('ReviewGuest', 'ReviewRival', ['play','history']);
-  const agent = { Authorization: 'Bearer ' + token };
+test('[PM-REVIEW-PRIV-1] protected recording starts automatically for the actual account seats', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const host = await signIn(f, 'ReviewHost')
+  const guest = await signIn(f, 'ReviewGuest')
+  const outsider = await signIn(f, 'ReviewStranger')
+  const token = await f.product.provisionAgent('ReviewGuest', 'ReviewRival', ['play','history'])
+  const agent = { Authorization: 'Bearer ' + token }
   const seats = [{ engineName: 'ReviewHost', playerId: randomUUID(), human: true },
-    { engineName: 'ReviewRival', playerId: randomUUID(), human: true }];
-  const tableId = randomUUID(), firstMatch = randomUUID();
-  const route = table => `${reviewPrivacy}/tables/${table}`;
-  const optIn = (table, actor) => f.path(route(table), json('PUT', actor, { version: 2 }));
-  const seal = (table, matchId, players = seats) => f.path('/internal/review-capture',
-    json('POST', {}, { tableId: table, matchId, seats: players }));
-  assert.deepEqual(await (await f.path(route(tableId), { headers: host })).json(), { version: 2, granted: false });
-  assert.equal((await optIn(tableId, agent)).status, 403);
-  assert.equal((await optIn(tableId, { ...host, Origin: 'https://foreign.example' })).status, 403);
-  assert.equal((await f.path(route(tableId), json('PUT', host, { version: 1 }))).status, 400);
-  assert.equal((await optIn(tableId, host)).status, 200);
-  assert.deepEqual(await (await seal(tableId, firstMatch)).json(), { reviewVersion: null });
-  assert.equal((await optIn(tableId, guest)).status, 409);
-  assert.deepEqual(await (await optIn(tableId, outsider)).json(), { version: 2, granted: true }, 'A third account learns only its own preference');
-  assert.deepEqual(await (await seal(tableId, firstMatch)).json(), { reviewVersion: null }, 'Late consent cannot change an existing match');
+    { engineName: 'ReviewRival', playerId: randomUUID(), human: true }]
+  const tableId = randomUUID(), matchId = randomUUID()
+  const seal = (table, id, players = seats) => f.path('/internal/review-capture',
+    json('POST', {}, { tableId: table, matchId: id, seats: players }))
 
-  const secondTable = randomUUID(), secondMatch = randomUUID();
-  assert.deepEqual(await (await f.path(route(secondTable), { headers: host })).json(), { version: 2, granted: false });
-  for (const actor of [host, guest]) assert.equal((await optIn(secondTable, actor)).status, 200);
-  assert.deepEqual(await (await seal(secondTable, secondMatch)).json(), { reviewVersion: 2 });
-  assert.deepEqual(await (await seal(secondTable, secondMatch, [...seats].reverse())).json(), { reviewVersion: 2 });
-  assert.deepEqual(await (await seal(secondTable, randomUUID())).json(), { reviewVersion: null });
-  assert.deepEqual(await (await seal(secondTable, secondMatch, seats.map((seat, i) =>
-    i ? { ...seat, engineName: 'AnotherPlayer' } : seat))).json(), { reviewVersion: null });
+  assert.deepEqual(await (await seal(tableId, matchId)).json(), { reviewVersion: 2 })
+  assert.deepEqual(await (await seal(tableId, matchId, [...seats].reverse())).json(), { reviewVersion: 2 })
+  assert.deepEqual(await (await seal(tableId, randomUUID())).json(), { reviewVersion: null })
+  assert.deepEqual(await (await seal(tableId, matchId, seats.map((seat, i) =>
+    i ? { ...seat, engineName: 'AnotherPlayer' } : seat))).json(), { reviewVersion: null })
+  assert.deepEqual(await (await seal(randomUUID(), randomUUID(), seats.map((seat, i) =>
+    i ? { ...seat, engineName: 'AnotherPlayer' } : seat))).json(), { reviewVersion: null })
 
-  const { id } = await archivedReviewMatch(f, { id: secondMatch, tableId: secondTable, players: seats });
-  const access = await (await f.path(`${reviewPrivacy}/matches/${id}`, { headers: agent })).json();
-  assert.equal(access.fullAvailable, true);
-  assert.equal(access.viewerSeatId, 'reviewrival');
-  assert.equal(access.canGrantLegacy, false);
-});
+  const { id } = await archivedReviewMatch(f, { id: matchId, tableId, players: seats })
+  const route = `${reviewPrivacy}/matches/${id}`
+  for (const headers of [host, agent]) {
+    const response = await f.path(route, { headers })
+    assert.equal(response.status, 200)
+    const access = await response.json()
+    assert.equal(access.fullAvailable, true)
+    assert.equal(access.viewerSeatId, headers === host ? 'reviewhost' : 'reviewrival')
+  }
+  const noHistory = { Authorization: 'Bearer ' + await f.product.provisionAgent('ReviewHost', 'ReviewPlayOnly', ['play']) }
+  assert.equal((await f.path(route, { headers: noHistory })).status, 403)
+  assert.equal((await f.path(route, { headers: guest })).status, 404, 'Browser replay follows the same engine-seat scope as History')
+  assert.equal((await f.path(route, { headers: outsider })).status, 404)
+  assert.equal((await f.path(route)).status, 401)
+  // A pre-existing capture without typed events keeps its sealed ownership and can show its archived hands.
+  await withTestDatabase(f, db => db.query('UPDATE replay_review_captures SET review_version=NULL WHERE match_id=$1', [matchId]))
+  assert.equal((await (await f.path(route, { headers: host })).json()).fullAvailable, true)
+  assert.equal((await f.path(route, json('PUT', host, { version: 2 }))).status, 405)
+  assert.equal((await f.path(`${reviewPrivacy}/tables/${tableId}`, json('PUT', host, { version: 2 }))).status, 404)
+})
 
-test('[PM-REVIEW-PRIV-2/3/4] sideboard stays closed and legacy sharing requires every recorded human account', { skip: !databaseUrl }, async t => {
-  const f = await fixture(t);
-  const host = await signIn(f, 'LegacyOwner');
-  const guest = await signIn(f, 'LegacyOpponent');
-  const outsider = await signIn(f, 'LegacyOutsider');
-  const token = await f.product.provisionAgent('LegacyOwner', 'LegacyAgent', ['history']);
-  const agent = { Authorization: 'Bearer ' + token };
+test('[PM-REVIEW-PRIV-2/3/4] completed legacy captures open automatically to identified participants', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const host = await signIn(f, 'LegacyOwner')
+  const guest = await signIn(f, 'LegacyOpponent')
+  const outsider = await signIn(f, 'LegacyOutsider')
+  const token = await f.product.provisionAgent('LegacyOwner', 'LegacyAgent', ['history'])
+  const agent = { Authorization: 'Bearer ' + token }
   const { id } = await archivedReviewMatch(f, { status: 'active',
-    players: [{ engineName: 'LegacyOwner', human: true }, { engineName: 'LegacyOpponent', human: true }] });
-  const route = `${reviewPrivacy}/matches/${id}`;
-  const put = who => f.path(route, json('PUT', who, { version: 2 }));
-  const settings = who => f.path(route, { headers: who });
-  assert.equal((await settings(outsider)).status, 404);
-  assert.equal((await put(outsider)).status, 404);
-  assert.equal((await (await settings(host)).json()).fullAvailable, false);
-  assert.equal((await put(host)).status, 409);
-  await withTestDatabase(f, db => db.query("UPDATE matches SET status='completed',ended_at=started_at+3000 WHERE id=$1", [id]));
-  assert.equal((await (await settings(host)).json()).canGrantLegacy, true);
-  assert.equal((await put(agent)).status, 403);
-  assert.equal((await put(host)).status, 200);
-  assert.equal((await (await settings(guest)).json()).fullAvailable, false);
-  assert.equal((await put(guest)).status, 200);
-  const view = await (await settings(agent)).json();
-  assert.equal(view.fullAvailable, true);
-  assert.equal(view.viewerSeatId, 'legacyowner');
+    players: [{ engineName: 'LegacyOwner', human: true }, { engineName: 'LegacyOpponent', human: true }] })
+  const route = `${reviewPrivacy}/matches/${id}`
+  const settings = headers => f.path(route, { headers })
+  assert.equal((await settings(outsider)).status, 404)
+  assert.equal((await (await settings(host)).json()).fullAvailable, false)
+  await withTestDatabase(f, db => db.query("UPDATE matches SET status='completed',ended_at=started_at+3000 WHERE id=$1", [id]))
+  for (const headers of [host, guest, agent]) assert.equal((await (await settings(headers)).json()).fullAvailable, true)
+  assert.equal((await settings(outsider)).status, 404)
+  const view = await (await settings(agent)).json()
+  assert.equal(view.viewerSeatId, 'legacyowner')
   assert.deepEqual(view.perspectives.map(({ seatId, owned }) => [seatId, owned]),
-    [['legacyopponent', false], ['legacyowner', true]]);
-  assert.equal((await f.path(route, { method: 'DELETE', headers: guest })).status, 200);
-  assert.equal((await (await settings(host)).json()).fullAvailable, false);
-});
+    [['legacyopponent', false], ['legacyowner', true]])
+  const unresolved = await archivedReviewMatch(f, {
+    players: [{ engineName: 'LegacyOwner', human: true }, { engineName: 'UnidentifiedSeat', human: true }],
+  })
+  const restricted = await (await f.path(`${reviewPrivacy}/matches/${unresolved.id}`, { headers: host })).json()
+  assert.equal(restricted.fullAvailable, false)
+  assert.equal(restricted.reason, 'participant_authority_missing')
+})
 
 test('recovery binds immutable account and grant IDs and rechecks grant revocation without trusting names', { skip: !databaseUrl }, async t => {
   const f = await fixture(t)
@@ -639,9 +638,6 @@ test('[PM-REVIEW-API-6] completed adjacent snapshots reveal only the viewing sea
   await writeFile(join(f.replayDirectory, matchId + '.match.json'), JSON.stringify({ matchId, endedAt: Date.now() }))
   await f.product.archiveGames()
   const root = '/api/playtesting/review'
-  for (const headers of [alice, bob]) {
-    assert.equal((await f.path(root + '/privacy/matches/' + matchId, json('PUT', headers, { version: 2 }))).status, 200)
-  }
   const own = async (id, headers) => (await f.path(root + '/games/' + id, { headers })).json()
   const firstGame = await own(first, alice)
   assert.deepEqual(firstGame.sideboardDelta, { status: 'initial_game' })
@@ -720,8 +716,6 @@ async function analysisFixture(t, { completed = true, fresh = false, rollback = 
       { t: 18, log: { messageType: 'GAME', message: 'Alice activates a retained ability' } }] : []),
   ])
   if (fresh) {
-    const tableConsent = '/api/playtesting/review/privacy/tables/' + matchId
-    for (const owner of [alice, bob]) assert.equal((await f.path(tableConsent, json('PUT', owner, { version: 2 }))).status, 200)
     const capture = await f.path('/internal/review-capture', json('POST', {}, { matchId, tableId: matchId, seats: [
       { engineName: 'Alice', playerId: aliceId, human: true }, { engineName: 'Bob', playerId: bobId, human: true },
     ] }))
@@ -749,23 +743,42 @@ test('[PM-REVIEW-API-1] completed replay manifests preserve legacy authorization
   const manifest = await response.json()
   assert.equal(manifest.matchId, f.matchId)
   assert.equal(manifest.viewerSeatId, 'alice')
-  assert.equal(manifest.fullAvailable, false)
-  assert.equal((await f.path(f.replay + '/evidence?scope=full', { headers: f.alice })).status, 403)
-  assert.equal((await f.path(f.replay + '/evidence?scope=seat&seatId=bob', { headers: f.alice })).status, 403)
+  assert.equal(manifest.fullAvailable, true)
+  const shared = await f.path(f.replay + '/evidence?scope=full', { headers: f.alice })
+  assert.equal(shared.status, 200)
+  assert.match(await shared.text(), /Rival hand sentinel/)
+  const alternate = await f.path(f.replay + '/evidence?scope=seat&seatId=bob', { headers: f.alice })
+  assert.equal(alternate.status, 200)
+  assert.match(await alternate.text(), /Rival hand sentinel/)
   const legacy = await f.path('/api/playtesting/replays/' + f.gameId, { headers: f.alice })
-  assert.match(await legacy.text(), /Forest/)
+  const legacyText = await legacy.text()
+  assert.match(legacyText, /Forest/)
+  assert.doesNotMatch(legacyText, /Rival hand sentinel/)
 })
 
 test('[PM-REVIEW-API-1] a game archived between Bo3 games cannot be analyzed or expose an alternate seat', { skip: !databaseUrl }, async t => {
-  const f = await analysisFixture(t, { completed: false })
+  const f = await analysisFixture(t, { completed: false, fresh: true })
   const response = await f.path(f.replay, { headers: f.alice })
   assert.equal(response.status, 200)
   const manifest = await response.json()
   assert.equal(manifest.fullAvailable, false)
   assert.equal(manifest.reason, 'match_active')
-  for (const route of ['/evidence?purpose=analysis', '/evidence?scope=full', '/annotations']) {
-    assert.equal((await f.path(f.replay + route, { headers: f.alice })).status, 409)
+  for (const headers of [f.alice, f.bob]) {
+    for (const route of ['/evidence?purpose=analysis', '/evidence?scope=full', '/evidence?scope=seat&seatId=bob', '/annotations']) {
+      assert.equal((await f.path(f.replay + route, { headers })).status, 409)
+    }
+    const legacy = await f.path('/api/playtesting/replays/' + f.gameId, { headers })
+    assert.equal(legacy.status, 200)
+    const page = await legacy.json()
+    assert.ok(page.events.every(event => !Object.hasOwn(event, 'hands')))
+    const expectedHand = headers === f.alice ? { forest: { name: 'Forest', cardTypes: ['LAND'] } }
+      : { obscured: { name: 'Rival hand sentinel' } }
+    assert.deepEqual(page.events[0].myHand, expectedHand)
+    assert.doesNotMatch(JSON.stringify(page), /known-only sentinel|Exact draw sentinel/)
+    if (headers === f.alice) assert.doesNotMatch(JSON.stringify(page), /Rival hand sentinel/)
+    else assert.doesNotMatch(JSON.stringify(page), /Later visibility sentinel/)
   }
+  assert.equal((await f.path(f.replay + '/evidence?scope=full', { headers: f.outsider })).status, 404)
   assert.equal((await f.path(f.replay + '/annotations', json('POST', f.alice, { entries: [] }))).status, 409)
 })
 
@@ -793,7 +806,7 @@ test('[PM-REVIEW-API-2] exact archive cursors survive views and pre-action evide
   assert.equal(actionOnly.events[0].cursor, 1)
   assert.equal(actionOnly.events[0].before, undefined)
   const review = await (await f.path(f.replay + '/evidence?cursor=2&count=10', { headers: f.alice })).json()
-  assert.equal(review.events.filter(row => row.type === 'draw').length, 0, 'an unarmed v1 archive does not disclose new draw rows')
+  assert.equal(review.events.filter(row => row.type === 'draw').length, 0, 'a legacy v1 archive does not disclose new draw rows')
 })
 
 test('[PM-REVIEW-API-2] protected archive gives exact draws to the recorded seat or authorized full view', { skip: !databaseUrl }, async t => {
@@ -840,7 +853,6 @@ test('[PM-REVIEW-API-4] persisted annotations are anchored, retriable and counte
     rationale: 'Preserves the next development step.', benefit: 'Gives a mana source.', risk: 'Commits a public land.', alternatives: [] }
   const put = (entries, headers = f.alice) => f.path(f.replay + '/annotations', json('POST', headers, { archiveRevision, entries }))
   assert.equal((await put([entry], f.outsider)).status, 404)
-  assert.equal((await put([entry], f.bob)).status, 403)
   assert.equal((await put([{ ...entry, cursor: 0 }])).status, 400)
   const first = await put([entry])
   assert.equal(first.status, 200)
@@ -851,6 +863,9 @@ test('[PM-REVIEW-API-4] persisted annotations are anchored, retriable and counte
   assert.equal(retry.status, 200)
   assert.equal((await retry.json()).annotations[0].revision, initial.revision)
   assert.equal((await put([{ ...entry, rationale: 'Different assessment.' }])).status, 409)
+  await withTestDatabase(f, db => db.query(
+    'UPDATE review_position_coverage SET eligible=0 WHERE game_id=$1 AND seat_key=$2', [f.gameId, 'bob'],
+  ))
   const changed = await put([{ ...entry, expectedRevision: initial.revision, rationale: 'Develops without spending mana.' }])
   assert.equal(changed.status, 200)
   const matches = await (await f.path(`${f.root}/matches/${f.matchId}`, { headers: f.alice })).json()
@@ -858,18 +873,15 @@ test('[PM-REVIEW-API-4] persisted annotations are anchored, retriable and counte
   assert.equal(matches.analysis.counts.good, 1)
   assert.equal(matches.games[0].analysis.counts.good, 1)
   const history = await (await f.path('/api/playtesting/matches', { headers: f.alice })).json()
-  assert.equal(history.matches[0].analysis.status, 'complete')
+  assert.equal(history.matches[0].analysis.status, 'partial', 'Bob’s recorded pass still has no annotation')
+  assert.equal(history.matches[0].analysis.eligible, manifest.analysis.eligible, 'saving refreshes existing candidate counts')
   assert.deepEqual(history.matches[0].analysis.counts, { good: 1 })
   const peer = await (await f.path(f.replay + '/annotations', { headers: f.bob })).json()
-  assert.deepEqual(peer.annotations, [])
+  assert.equal(peer.annotations.length, 1)
 })
 
-test('[PM-REVIEW-API-4] withdrawals hide retrospective notes and counts from every reduced perspective', { skip: !databaseUrl }, async t => {
+test('[PM-REVIEW-API-4] only participants can read retrospective notes and counts after the match', { skip: !databaseUrl }, async t => {
   const f = await analysisFixture(t)
-  const consent = f.root + '/privacy/matches/' + f.matchId
-  for (const headers of [f.alice, f.bob]) {
-    assert.equal((await f.path(consent, json('PUT', headers, { version: 2 }))).status, 200)
-  }
   const manifest = await (await f.path(f.replay, { headers: f.alice })).json()
   assert.equal(manifest.fullAvailable, true)
   const record = { cursor: 1, seatId: 'alice', confidence: 'medium', assessment: 'sound',
@@ -877,18 +889,13 @@ test('[PM-REVIEW-API-4] withdrawals hide retrospective notes and counts from eve
   const notes = f.replay + '/annotations'
   const saved = await f.path(notes, json('POST', f.alice, { archiveRevision: manifest.archiveRevision, entries: [record] }))
   assert.equal(saved.status, 200)
-  const other = await f.path(notes, { headers: f.bob })
-  assert.match(await other.text(), /Hidden hindsight sentinel/)
-  assert.equal((await f.path(consent, { method: 'DELETE', headers: f.bob })).status, 200)
   for (const headers of [f.alice, f.bob]) {
-    const reduced = await f.path(notes, { headers })
-    assert.deepEqual((await reduced.json()).annotations, [])
+    const view = await f.path(notes, { headers })
+    assert.match(await view.text(), /Hidden hindsight sentinel/)
     const history = await (await f.path('/api/playtesting/matches', { headers })).json()
-    assert.equal(history.matches[0].analysis.reviewed, 0)
+    assert.equal(history.matches[0].analysis.reviewed, 1)
   }
-  assert.equal((await f.path(consent, json('PUT', f.bob, { version: 2 }))).status, 200)
-  const regranted = await f.path(notes, { headers: f.alice })
-  assert.equal((await regranted.json()).annotations.length, 1)
+  assert.equal((await f.path(notes, { headers: f.outsider })).status, 404)
 })
 
 test('[PM-REVIEW-API-3] qualitative ratings require supported comparison and strictly public source references', { skip: !databaseUrl }, async t => {
@@ -902,7 +909,6 @@ test('[PM-REVIEW-API-3] qualitative ratings require supported comparison and str
   assert.equal((await put({ ...entry, alternatives: [{ ...comparator, legality: 'unverified' }] })).status, 400)
   const reference = { url: 'https://example.com/metagame', date: '2026-11-01', format: 'Pioneer', applicability: 'Explains public matchup probabilities.' }
   assert.equal((await put({ ...entry, alternatives: [comparator], sources: [{ ...reference, url: 'https://example.com/?private=value' }] })).status, 400)
-  assert.equal((await put({ ...entry, alternatives: [comparator], retrospective: 'Unseen action.' })).status, 403)
   const accepted = await put({ ...entry, alternatives: [comparator], sources: [reference], confidence: 'low' })
   assert.equal(accepted.status, 200)
   const [annotation] = (await accepted.json()).annotations

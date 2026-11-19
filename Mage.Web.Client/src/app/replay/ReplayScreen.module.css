@@ -19,26 +19,35 @@
   color: var(--ink-soft);
 }
 
-/* the replay's controls sit over the bottom edge of the table, outside the scaled stage */
 .transport {
-  position: fixed;
-  left: 50%;
-  bottom: 12px;
-  z-index: var(--z-overlay);
+  grid-row: 3;
+  display: grid;
+  grid-template-columns: auto minmax(100px, 1fr);
+  align-items: start;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 4px var(--space-3);
+  border-top: 1px solid var(--ink-faint);
+  background: var(--mat-800);
+}
+
+.playback {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  width: min(880px, calc(100vw - 32px));
-  padding: 6px 12px;
-  border-radius: var(--radius-chip);
-  background: rgb(var(--mat-rgb) / 0.92);
-  box-shadow: inset 0 0 0 1px var(--ink-faint), var(--shadow-lifted);
-  transform: translateX(-50%);
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.timeline {
+  display: grid;
+  min-width: 0;
 }
 
 .scrub {
-  flex: 1;
-  min-width: 80px;
+  width: 100%;
+  min-width: 0;
+  height: 24px;
+  margin: 0;
   accent-color: var(--decision);
 }
 
@@ -81,20 +90,16 @@
 
 .table {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 0;
 }
 
 .board {
   position: relative;
+  grid-row: 2;
   min-width: 0;
   min-height: 0;
-}
-
-.review .transport {
-  position: absolute;
-  width: min(880px, calc(100% - 24px));
 }
 
 .reviewToolbar {
@@ -106,26 +111,15 @@
   background: var(--mat-800);
 }
 
-.reviewControls,
-.legacyPermission {
+.reviewControls {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0 var(--space-2);
 }
 
-.legacyPermission {
-  padding-bottom: var(--space-1);
-  color: var(--ink-soft);
-  font-size: var(--text-sm);
-}
-
-.legacyPermission p,
 .coverage {
   margin: 0;
-}
-
-.coverage {
   padding-bottom: var(--space-1);
   color: var(--ink-soft);
   font-size: var(--text-xs);
@@ -185,23 +179,19 @@
   position: fixed;
 }
 
-@media (max-width: 640px) {
-  .where {
-    display: none;
+@media (max-width: 700px) {
+  .transport {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
   }
 }
 
-/* a phone on its side: the bar shrinks to the transport and the scrubber, so it no longer covers the seat plates and the
-   Leave button at the corners of the short table */
 @media (max-height: 480px) {
   .transport {
-    bottom: 4px;
-    width: min(360px, calc(100vw - 32px));
-    padding: 2px 8px;
+    padding-block: 0;
   }
 
-  .where,
-  .speed {
+  .where {
     display: none;
   }
 }

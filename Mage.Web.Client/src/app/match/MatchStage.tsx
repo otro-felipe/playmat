@@ -612,7 +612,7 @@ export function MatchStage({ session, state, replayLog, replayHands, reviewLayou
 
   return (
     // basic lands show their players' land styles anywhere on the stage (B301, ui/landStyles.ts)
-    <LandStyleContext.Provider value={landStyleOf}><TokenArtContext.Provider value={tokenArtOf}><CardStyleContext.Provider value={cardStylesOf}><Stage style={matStyle} contained={mode === 'replay' && reviewLayout}>
+    <LandStyleContext.Provider value={landStyleOf}><TokenArtContext.Provider value={tokenArtOf}><CardStyleContext.Provider value={cardStylesOf}><Stage style={matStyle} contained={mode === 'replay'}>
       {(stage) => {
         // the stage widens with the window and the field takes the extra width; a portrait window gets the tall layout
         // "Match size" grows the creatures and the hand for a laptop screen (#147)

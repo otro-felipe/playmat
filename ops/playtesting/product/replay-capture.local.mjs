@@ -42,9 +42,9 @@ function requireIsolatedFixture() {
   }
 }
 
-export async function verifyReplayCapture({ startFixture, call, ownPlayer, rivalPlayer, answer, waitNextOwn, acknowledgeReview, totalDeadline }) {
+export async function verifyReplayCapture({ startFixture, call, ownPlayer, rivalPlayer, answer, waitNextOwn, totalDeadline }) {
   requireIsolatedFixture()
-  let state = await startFixture('Isolated actual draws and seat visibility', deck, 77, acknowledgeReview)
+  let state = await startFixture('Isolated actual draws and seat visibility', deck, 77)
   const move = async choice => {
     assert.ok(choice, 'The fixture uses only a current legal engine choice')
     const previous = state.decision.id
@@ -79,7 +79,7 @@ export async function verifyReplayCapture({ startFixture, call, ownPlayer, rival
   await call('concede', { gameId: state.gameId, entireMatch: true })
   const { info, rows } = await archived(state.gameId, Math.min(totalDeadline, Date.now() + 10_000))
 
-  assert.equal(info.reviewVersion, 2, '[PM-REV-02] armed replay has real engine revision metadata')
+  assert.equal(info.reviewVersion, 2, '[PM-REV-02] Automatically captured replay has real engine revision metadata')
   assert.deepEqual(new Set(info.players.map(row => row.playerId)), new Set([playerId, rivalId]))
   const draws = rows.filter(row => row.kind === 'draw')
   assert.ok(draws.filter(row => row.actorPlayerId === playerId).length >= 7, 'Real opening draws were recorded')
@@ -110,55 +110,52 @@ export async function verifyReplayCapture({ startFixture, call, ownPlayer, rival
 
 export async function verifyHumanReplayCapture({ startHumanReviewFixture, totalDeadline }) {
   requireIsolatedFixture()
-  const captures = []
-  for (const armed of [true, false]) {
-    await startHumanReviewFixture(armed, async (seats) => {
-      let activeId
-      while (Date.now() < totalDeadline) {
-        const observations = seats.map(seat => seat.snapshot())
-        const [first, second] = observations
-        if (observations.every(state => state.status === 'active' && state.step && state.turn >= 1
-          && state.ownHand.length > 0) && first.gameId === second.gameId) {
-          activeId = first.gameId
-          break
-        }
-        for (const [index, state] of observations.entries()) {
-          if (state.status !== 'active' || !state.decision || state.decision.kind === 'waiting') continue
-          const choice = fallback(state)
-          assert.ok(choice, 'Human fixture replies to observed opening prompts only')
-          try {
-            await seats[index].respond(state.decision.id, choice.id)
-          } catch (error) {
-            if (!['stale_decision', 'engine_rejected'].includes(error.code)) throw error
-          }
-        }
-        await sleep(20)
+  return startHumanReviewFixture(async (seats) => {
+    let activeId
+    while (Date.now() < totalDeadline) {
+      const observations = seats.map(seat => seat.snapshot())
+      const [first, second] = observations
+      if (observations.every(state => state.status === 'active' && state.step && state.turn >= 1
+        && state.ownHand.length > 0) && first.gameId === second.gameId) {
+        activeId = first.gameId
+        break
       }
-      assert.ok(activeId, 'Both authenticated browser peers reach the same started game')
-      await seats[0].concede(activeId, true)
-      // The concession RPC acknowledges scheduling. Settle any still-visible
-      // ordinary prompt on the other fixture seat until the terminal frame arrives.
-      const { info, rows } = await archived(activeId, Math.min(totalDeadline, Date.now() + 30_000), async () => {
-        const state = seats[1].snapshot()
-        if (state.status !== 'active' || state.gameId !== activeId || !state.decision || state.decision.kind === 'waiting') return
+      for (const [index, state] of observations.entries()) {
+        if (state.status !== 'active' || !state.decision || state.decision.kind === 'waiting') continue
         const choice = fallback(state)
-        if (!choice) return
+        assert.ok(choice, 'Human fixture replies to observed opening prompts only')
         try {
-          await seats[1].respond(state.decision.id, choice.id)
+          await seats[index].respond(state.decision.id, choice.id)
         } catch (error) {
-          if (!['stale_decision', 'engine_rejected', 'game_not_active'].includes(error.code)) throw error
+          if (!['stale_decision', 'engine_rejected'].includes(error.code)) throw error
         }
-      })
-      assert.match(info.deckType, /Pioneer/)
-      assert.equal(info.players.length, 2)
-      assert.ok(info.players.every(seat => seat.human))
-      assert.equal(info.reviewVersion ?? null, armed ? 2 : null)
-      assert.equal(rows.some(row => row.kind === 'draw'), armed)
-      assert.equal(rows.some(row => Object.keys(row.review?.seatViews ?? {}).length === 2), armed)
-      assert.ok(rows.some(row => Object.keys(row.hands ?? {}).length === 2), 'Normal replay capture remains available')
-      captures.push({ gameId: activeId, matchId: info.matchId, armed })
-      console.log(JSON.stringify({ phase: '[PM-REV-02] real Java Pioneer human table', bothAccountsAcknowledged: armed, protectedCapture: armed }))
+      }
+      await sleep(20)
+    }
+    assert.ok(activeId, 'Both authenticated browser peers reach the same started game')
+    await seats[0].concede(activeId, true)
+    // The concession RPC acknowledges scheduling. Settle any still-visible
+    // ordinary prompt on the other fixture seat until the terminal frame arrives.
+    const { info, rows } = await archived(activeId, Math.min(totalDeadline, Date.now() + 30_000), async () => {
+      const state = seats[1].snapshot()
+      if (state.status !== 'active' || state.gameId !== activeId || !state.decision || state.decision.kind === 'waiting') return
+      const choice = fallback(state)
+      if (!choice) return
+      try {
+        await seats[1].respond(state.decision.id, choice.id)
+      } catch (error) {
+        if (!['stale_decision', 'engine_rejected', 'game_not_active'].includes(error.code)) throw error
+      }
     })
-  }
-  return captures
+    assert.match(info.deckType, /Pioneer/)
+    assert.equal(info.players.length, 2)
+    assert.ok(info.players.every(seat => seat.human))
+    assert.equal(info.reviewVersion, 2)
+    assert.ok(rows.some(row => row.kind === 'draw'))
+    assert.ok(rows.some(row => Object.keys(row.review?.seatViews ?? {}).length === 2))
+    const frameCursor = rows.findIndex(row => row.view && Object.keys(row.hands ?? {}).length === 2)
+    assert.ok(frameCursor >= 0, 'Normal replay capture remains available')
+    console.log(JSON.stringify({ phase: '[PM-REV-02] real Java Pioneer human table', automatic: true, protectedCapture: true }))
+    return { gameId: activeId, frameCursor }
+  })
 }

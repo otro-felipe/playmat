@@ -10,7 +10,7 @@ import { createIdentity, identityView } from './identity.mjs'
 import { createInvitations } from './invitations.mjs'
 import { createMcpEvents } from './mcp-events.mjs'
 import { createOAuth } from './oauth.mjs'
-import { createReviewPermissions, requireReviewPolicyVersion } from './review-permissions.mjs'
+import { createReviewPermissions } from './review-permissions.mjs'
 import { createPostMatchReview } from './review.mjs'
 import { ProductError, deleteDeck, getDeck, isUuid, listDecks, moveDeckLibrary, normalize, putDeck, transaction } from './decks.mjs'
 
@@ -273,17 +273,11 @@ export async function createProduct({
     }
     const endpoint = path.slice('/api/playtesting/'.length)
     if (endpoint === 'me' && req.method === 'GET') return send(res, 200, identityView(actor))
-    const privacy = /^review\/privacy\/(tables|matches)\/([^/]+)$/.exec(endpoint)
-    if (privacy) {
-      const [, scope, id] = privacy
-      requireScope(actor, scope === 'tables' ? 'play' : 'history')
-      const change = req.method === 'PUT' ? true : req.method === 'DELETE' ? false : undefined
-      if (change === true) requireReviewPolicyVersion((await body(req, 'json', 1024))?.version)
-      if (req.method !== 'GET' && change === undefined) throw new ProductError(405, 'Use GET, PUT or DELETE')
-      if (scope === 'tables') return send(res, 200, await permissions.tableConsent(actor, id, change))
-      return send(res, 200, change === undefined
-        ? await permissions.reviewAccess(actor, id)
-        : await permissions.changeLegacyConsent(actor, id, change))
+    const reviewAccess = /^review\/privacy\/matches\/([^/]+)$/.exec(endpoint)
+    if (reviewAccess) {
+      requireScope(actor, 'history')
+      if (req.method !== 'GET') throw new ProductError(405, 'Use GET')
+      return send(res, 200, await permissions.reviewAccess(actor, reviewAccess[1]))
     }
     if (endpoint === 'decks' || endpoint.startsWith('decks/')) {
       const expectedOwner = req.headers['x-playmat-deck-owner']

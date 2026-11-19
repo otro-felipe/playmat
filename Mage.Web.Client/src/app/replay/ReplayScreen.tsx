@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { ChevronFirst, ChevronLast, GitBranch, Pause, Play, StepBack, StepForward } from 'lucide-react';
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -18,8 +18,10 @@ import { useSession } from '../stores/session';
 import { notify } from '../stores/toasts';
 import { Button, IconButton } from '../ui/Button';
 import { Dialog } from '../ui/Dialog';
-import { ReplayReviewPanel, ReviewSwitch, type ReviewMoment } from './ReplayReviewPanel';
-import { changeLegacyPermission, frameProjection, loadReviewAnnotations, loadReviewEvents, loadReviewManifest, loadReviewPlays, perspectivesFor } from './reviewData';
+import { decisionFrame, replayName } from './decisionPresentation';
+import { ReplayDecisionMarkers, RecordedDecision } from './ReplayDecision';
+import { ReplayReviewPanel, ReviewSwitch } from './ReplayReviewPanel';
+import { frameProjection, loadReviewAnnotations, loadReviewEvents, loadReviewManifest, loadReviewPlays, perspectivesFor, type ReviewMoment } from './reviewData';
 import styles from './ReplayScreen.module.css';
 
 /** events asked for at a time: snapshots are large, so pages stay small and the replay starts early */
@@ -66,7 +68,7 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
   const [playing, setPlaying] = useState(action === undefined && !Number.isFinite(startFrame));
   const [speed, setSpeed] = useState(1);
   const [analysisOpen, setAnalysisOpen] = useState(() => search.get('analysis') === '1');
-  const [bothHands, setBothHands] = useState(false);
+  const [bothHands, setBothHands] = useState(true);
   const [requestedSeat, setRequestedSeat] = useState<string>();
   const mobilePanel = useSyncExternalStore(subscribePanelSize, () => window.matchMedia(MOBILE_PANEL).matches, () => false);
   const panelId = useId();
@@ -111,22 +113,23 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
   });
   const manifest = manifestQuery.data;
   const privacy = manifest?.privacy;
-  const canGrantLegacy = privacy?.canGrantLegacy ?? manifest?.canGrantLegacy;
-  const legacyGranted = privacy?.legacyGranted ?? manifest?.legacyGranted;
   const perspectives = perspectivesFor(manifest);
   const viewerSeat = privacy?.viewerSeatId ?? manifest?.viewerSeatId;
   const perspective = perspectives.find((seat) => seat.seatId === requestedSeat)
-    ?? perspectives.find((seat) => seat.seatId === viewerSeat || seat.owned);
-  const showBoth = bothHands && (privacy?.fullAvailable ?? manifest?.fullAvailable) === true;
-  const otherSeat = !!perspective && perspective.seatId !== viewerSeat && !perspective.owned;
-  const scope = showBoth ? 'full' : manifest ? 'seat' : null;
+    ?? perspectives.find((seat) => seat.seatId === viewerSeat)
+    ?? perspectives.find((seat) => seat.owned);
+  const archiveReady = manifest?.status === 'completed' && manifest.analysis?.status !== 'unavailable';
+  const canShowBoth = manifest?.status === 'completed' && (privacy?.fullAvailable ?? manifest?.fullAvailable) === true;
+  const showBoth = bothHands && canShowBoth;
+  const otherSeat = !!perspective && perspective.seatId !== viewerSeat && (viewerSeat !== undefined || !perspective.owned);
+  const scope = showBoth ? 'full' : archiveReady ? 'seat' : null;
 
   const eventQuery = useInfiniteQuery({
     queryKey: ['match-review', userName, gameId, 'plays', manifest?.archiveRevision],
     initialPageParam: 0,
     queryFn: ({ pageParam, signal }) => loadReviewPlays(gameId, pageParam, signal),
     getNextPageParam: (page) => page?.next ?? undefined,
-    enabled: !!manifest,
+    enabled: archiveReady,
     gcTime: 0,
   });
   const annotations = useInfiniteQuery({
@@ -134,7 +137,7 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
     initialPageParam: 0,
     queryFn: ({ pageParam, signal }) => loadReviewAnnotations(gameId, pageParam, signal),
     getNextPageParam: (page) => page?.next ?? undefined,
-    enabled: !!manifest,
+    enabled: archiveReady,
     gcTime: 0,
   });
   const allAnnotations = useMemo(() => (annotations.data?.pages ?? []).flatMap((page) => page?.annotations ?? []), [annotations.data]);
@@ -143,20 +146,45 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
     const content = event.text ?? event.actual?.text ?? event.log?.message;
     return event.type === 'action' && event.frameCursor != null && content ? [{ ...event, text: content }] : [];
   }), [events]);
-  const moments = useMemo(() => [...new Map(allAnnotations.map((annotation) => [annotation.cursor, {
-    cursor: annotation.cursor, frameCursor: annotation.frameCursor, text: annotation.actual.text, turn: annotation.evidence?.turn,
-  }])).values()].sort((a, b) => a.cursor - b.cursor), [allAnnotations]);
+  const playsByCursor = useMemo(() => new Map(plays.map((play) => [play.cursor, play])), [plays]);
+  const moments = useMemo(() => {
+    const byCursor = new Map<number, ReviewMoment>(playsByCursor);
+    for (const annotation of allAnnotations) {
+      byCursor.set(annotation.cursor, {
+        cursor: annotation.cursor, frameCursor: annotation.frameCursor, turn: annotation.evidence?.turn,
+        actual: annotation.actual, text: annotation.actual.text, ...byCursor.get(annotation.cursor), category: annotation.category,
+      });
+    }
+    return [...byCursor.values()].sort((a, b) => a.cursor - b.cursor);
+  }, [allAnnotations, playsByCursor]);
 
-  const selectedAnnotation = useQuery({
-    queryKey: ['match-review', userName, gameId, 'annotations-at', action, manifest?.archiveRevision, privacy?.fullAvailable ?? manifest?.fullAvailable],
-    queryFn: ({ signal }) => loadReviewAnnotations(gameId, action!, signal),
-    enabled: !!manifest && action !== undefined && !allAnnotations.some((item) => item.cursor === action),
+  // Notes are lightweight. Load the remaining archive evidence as the viewer opens the decision list.
+  const { fetchNextPage: fetchNextAnnotations, hasNextPage: hasMoreAnnotations, isFetching: fetchingAnnotations, isError: annotationsFailed } = annotations;
+  const { fetchNextPage: fetchNextPlays, hasNextPage: hasMorePlays, isFetching: fetchingPlays, isError: playsFailed } = eventQuery;
+  useEffect(() => {
+    if (hasMoreAnnotations && !fetchingAnnotations && !annotationsFailed) void fetchNextAnnotations();
+    if (analysisOpen && hasMorePlays && !fetchingPlays && !playsFailed) void fetchNextPlays();
+  }, [analysisOpen, fetchNextAnnotations, hasMoreAnnotations, fetchingAnnotations, annotationsFailed, fetchNextPlays, hasMorePlays, fetchingPlays, playsFailed]);
+
+  const selectedPlay = useQuery({
+    queryKey: ['match-review', userName, gameId, 'play-at', action, manifest?.archiveRevision],
+    queryFn: ({ signal }) => loadReviewPlays(gameId, action!, signal, 1),
+    enabled: archiveReady && action !== undefined && !playsByCursor.has(action),
     gcTime: 0,
   });
+  const selectedAnnotation = useQuery({
+    queryKey: ['match-review', userName, gameId, 'annotations-at', action, manifest?.archiveRevision, canShowBoth],
+    queryFn: ({ signal }) => loadReviewAnnotations(gameId, action!, signal),
+    enabled: archiveReady && action !== undefined && !allAnnotations.some((item) => item.cursor === action),
+    gcTime: 0,
+  });
+  const playAtCursor = action === undefined ? undefined : playsByCursor.get(action) ?? selectedPlay.data?.events.find((item) => item.cursor === action);
   const contextualAnnotations = allAnnotations.some((item) => item.cursor === action) ? allAnnotations : selectedAnnotation.data?.annotations;
-  const chosen = contextualAnnotations?.find((item) => item.cursor === action && item.seatId === perspective?.seatId)
+  const selectedNote = contextualAnnotations?.find((item) => item.cursor === action && item.seatId === perspective?.seatId)
     ?? contextualAnnotations?.find((item) => item.cursor === action);
-  const anchor = action === undefined ? undefined : chosen?.frameCursor ?? plays.find((item) => item.cursor === action)?.frameCursor ?? action;
+  const anchor = action === undefined ? undefined : decisionFrame({
+    cursor: action, frameCursor: playAtCursor?.frameCursor ?? selectedNote?.frameCursor, actionFrameCursor: playAtCursor?.actionFrameCursor,
+  });
 
   const frames = timeline.frames;
   const loaded = total !== null && timeline.read >= total;
@@ -175,7 +203,7 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
   const privateFrameQuery = useQuery({
     queryKey: ['match-review', userName, gameId, 'private-frame', scope, perspective?.seatId, batchCursor, manifest?.archiveRevision],
     queryFn: ({ signal }) => loadReviewEvents(gameId, batchCursor, scope!, FRAME_PAGE_SIZE + 1, signal,
-      scope === 'seat' && otherSeat ? perspective?.seatId : undefined),
+      otherSeat ? perspective?.seatId : undefined),
     enabled: !!scope && !!frame,
     gcTime: 0,
     retry: false,
@@ -195,18 +223,6 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
   useLayoutEffect(() => {
     if (manifest) useMatchUi.setState({ zoom: null, detail: null, viewer: null });
   }, [manifest, scope, perspective?.seatId, frameCursor]);
-
-  const legacyPermission = useMutation({
-    mutationFn: (granted: boolean) => changeLegacyPermission(manifest!.matchId, granted),
-    onMutate: () => {
-      setBothHands(false);
-      setRequestedSeat(undefined);
-    },
-    onSuccess: () => {
-      const account = useSession.getState();
-      if (account.phase === 'signedIn' && account.userName === userName) return manifestQuery.refetch();
-    },
-  });
 
   // playback: wait out the frame, then move on; at the end, wait for more pages or stop
   useEffect(() => {
@@ -236,9 +252,14 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
     }, { replace: true });
   }
 
-  const currentCursor = action ?? frameCursor;
-  const previousPlay = plays.filter((item) => item.cursor < currentCursor).at(-1);
-  const nextPlay = plays.find((item) => item.cursor > currentCursor);
+  const playbackMoment = action === undefined ? moments.find((moment) => moment.actionFrameCursor === frameCursor) : undefined;
+  const currentCursor = action ?? playbackMoment?.cursor ?? frameCursor;
+  const chosen = selectedNote ?? (playbackMoment && allAnnotations.find((item) => item.cursor === playbackMoment.cursor));
+  const decision = playAtCursor || chosen || playbackMoment ? {
+    cursor: currentCursor, text: chosen?.actual.text, actual: chosen?.actual, category: chosen?.category,
+    actor: perspectives.find((seat) => seat.seatId === chosen?.seatId)?.name,
+    ...playbackMoment, ...playAtCursor,
+  } : undefined;
   const previousMoment = moments.filter((item) => item.cursor < currentCursor).at(-1);
   const nextMoment = moments.find((item) => item.cursor > currentCursor);
 
@@ -303,36 +324,39 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
   }
 
   const turn = frame.view.turn ?? 0;
-  const canShowBoth = (privacy?.fullAvailable ?? manifest?.fullAvailable) === true;
   const partialArchive = info?.truncated || manifest?.coverage?.partial === true || Object.values(manifest?.coverage ?? {}).some((entry) =>
     entry === 'partial' || entry === 'missing' || typeof entry === 'object' && entry.status === 'partial');
-  const shownHand = showBoth ? recorded?.hands : recorded?.myHand ?? recorded?.view?.myHand;
+  const recordedHands = recorded?.hands;
+  const completeHands = showBoth && !!recordedHands && (frame.view.players ?? []).every((player) =>
+    player.playerId && Object.hasOwn(recordedHands, player.playerId));
+  const shownHand = showBoth ? completeHands : recorded?.myHand ?? recorded?.view?.myHand;
   const previousFrameCursor = frames[Math.min(index, last) - 1]?.cursor ?? -1;
   const draws = privateFrameQuery.data?.events.filter((event) =>
     event.type === 'draw' && event.card?.name && event.cursor > previousFrameCursor && event.cursor <= frameCursor) ?? [];
   const viewStatus = (showBoth || otherSeat) && (privateFrameQuery.isError ? t('replay.privateFrameError')
     : privateFrameQuery.isPending ? t('replay.privateFrameLoading') : !shownHand ? t('replay.privateFrameMissing') : null);
-  const reviewError = annotations.isError || eventQuery.isError;
-  const fetchMore = () => {
-    if (annotations.hasNextPage) void annotations.fetchNextPage();
-    if (eventQuery.hasNextPage) void eventQuery.fetchNextPage();
-  };
+  const reviewError = annotations.isError || eventQuery.isError || selectedPlay.isError || selectedAnnotation.isError;
   const setAnalysis = (open: boolean) => {
     setPlaying(false);
     setAnalysisOpen(open);
     if (!open && mobilePanel) requestAnimationFrame(() => toolbarRef.current?.querySelector<HTMLButtonElement>('[role="switch"]')?.focus());
   };
-  const panel = manifest && analysisOpen && <ReplayReviewPanel analysis={manifest.analysis} moments={moments} current={action}
+  const panel = manifest && analysisOpen && <ReplayReviewPanel analysis={manifest.analysis} moments={moments} current={decision?.cursor}
     sideboardDelta={manifest.status === 'completed' && manifest.gameNumber > 1 ? manifest.sideboardDelta : undefined}
-    annotation={chosen} actor={perspectives.find((seat) => seat.seatId === chosen?.seatId)?.name}
+    annotation={chosen} decision={decision}
     showRetrospective={showBoth && !!recorded} onMoment={jump} error={reviewError}
-    onRetry={() => { void eventQuery.refetch(); void annotations.refetch(); }}
+    onRetry={() => {
+      void eventQuery.refetch();
+      void annotations.refetch();
+      if (selectedPlay.isError) void selectedPlay.refetch();
+      if (selectedAnnotation.isError) void selectedAnnotation.refetch();
+    }}
     onPrevious={previousMoment ? () => jump(previousMoment) : undefined} onNext={nextMoment ? () => jump(nextMoment) : undefined}
-    more={annotations.hasNextPage || eventQuery.hasNextPage ? { pending: annotations.isFetchingNextPage || eventQuery.isFetchingNextPage, load: fetchMore } : undefined} />;
+    loading={fetchingPlays || fetchingAnnotations || selectedAnnotation.isFetching} />;
   return (
     <MatchErrorBoundary gameId={gameId} backLabel="Back to History" onBack={leave}>
-      <div className={manifest ? styles.review : undefined} data-panel={manifest && analysisOpen && !mobilePanel ? 'open' : undefined} data-replay-cursor={currentCursor}>
-        <div className={manifest ? styles.table : undefined}>
+      <div className={styles.review} data-panel={manifest && analysisOpen && !mobilePanel ? 'open' : undefined} data-replay-cursor={currentCursor}>
+        <div className={styles.table}>
           {manifest && (
             <div ref={toolbarRef} className={styles.reviewToolbar}>
               <div className={styles.reviewControls}>
@@ -344,7 +368,7 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
                   <label className={styles.perspective}>
                     {t('replay.perspective')}
                     <select value={perspective?.seatId ?? ''} onChange={(event) => { setPlaying(false); setRequestedSeat(event.target.value); }}>
-                      {perspectives.map((seat) => <option key={seat.seatId} value={seat.seatId}>{seat.name}</option>)}
+                      {perspectives.map((seat) => <option key={seat.seatId} value={seat.seatId}>{replayName(seat.name, t)}</option>)}
                     </select>
                   </label>
                 )}
@@ -352,36 +376,28 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
               {viewStatus && <p className={styles.coverage} role="status">{viewStatus}</p>}
               {partialArchive && <p className={styles.coverage}>{t('replay.partialArchive')}</p>}
               {manifest.status === 'active' && <p className={styles.coverage}>{t('replay.matchActive')}</p>}
-              {canGrantLegacy && (
-                <div className={styles.legacyPermission}>
-                  <p>{t('replay.legacyNotice')}</p>
-                  {legacyGranted && !canShowBoth && <p role="status">{t('replay.legacyPending')}</p>}
-                  {legacyPermission.isError && <p role="alert">{t('replay.legacyError')}</p>}
-                  <Button size="sm" variant="quiet" busy={legacyPermission.isPending}
-                    onClick={() => legacyPermission.mutate(!legacyGranted)}>
-                    {t(legacyGranted ? 'replay.legacyRevoke' : 'replay.legacyGrant')}
-                  </Button>
-                </div>
-              )}
+              {decision && <RecordedDecision moment={decision} />}
             </div>
           )}
-          <div className={manifest ? styles.board : undefined}>
+          <div className={styles.board}>
             <MatchStage session={session} state={state} replayHands={projection?.hands} reviewLayout={!!manifest} replayLog={replayLog} onLeave={leave} />
             {!!draws.length && (
               <ul className={styles.recordedDraws} aria-label={t('replay.draws')}>
                 {draws.flatMap(({ actorPlayerId, card, cursor }) => {
                   const name = frame.view.players?.find((player) => player.playerId === actorPlayerId)?.name;
-                  return name && card?.name ? [<li key={cursor}>{t('replay.drawn', { name, cards: card.name })}</li>] : [];
+                  return name && card?.name ? [<li key={cursor}>{t('replay.drawn', { name: replayName(name, t), cards: card.name })}</li>] : [];
                 })}
               </ul>
             )}
             {manifestQuery.isError && <div className={styles.reviewFailure} role="alert">
               {t('replay.reviewError')} <Button size="sm" variant="quiet" onClick={() => void manifestQuery.refetch()}>{t('replay.retry')}</Button>
             </div>}
-            <div className={styles.transport} role="toolbar" aria-label="Replay controls">
+          </div>
+          <div className={styles.transport} role="toolbar" aria-label="Replay controls">
+            <div className={styles.playback}>
               <IconButton label="Previous turn" icon={<ChevronFirst size={18} />} onClick={() => go(turnJump(timeline, index, -1))} />
               <IconButton label={manifest ? t('replay.previousPlay') : 'Step back'} icon={<StepBack size={18} />}
-                onClick={() => previousPlay ? jump(previousPlay) : go(index - 1)} disabled={!previousPlay && index === 0} />
+                onClick={() => previousMoment ? jump(previousMoment) : go(index - 1)} disabled={!previousMoment && index === 0} />
               <IconButton label={playing ? 'Pause' : 'Play'} icon={playing ? <Pause size={18} /> : <Play size={18} />} pressed={playing} onClick={() => {
                 if (!playing) {
                   setFrameIndex(index >= last && loaded ? 0 : index);
@@ -390,13 +406,10 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
                 setPlaying(!playing);
               }} />
               <IconButton label={manifest ? t('replay.nextPlay') : 'Step forward'} icon={<StepForward size={18} />}
-                onClick={() => nextPlay ? jump(nextPlay) : go(index + 1)} disabled={!nextPlay && index >= last} />
+                onClick={() => nextMoment ? jump(nextMoment) : go(index + 1)} disabled={!nextMoment && index >= last} />
               <IconButton label="Next turn" icon={<ChevronLast size={18} />} onClick={() => go(turnJump(timeline, index, 1))} />
-              <input className={styles.scrub} type="range" min={0} max={last} value={Math.min(index, last)}
-                onChange={(event) => go(Number(event.target.value))} aria-label="Position in the replay"
-                aria-valuetext={`Turn ${turn}, moment ${index + 1} of ${frames.length}`} />
               <span className={styles.where}>
-                Turn {turn}{frame.view.activePlayerName ? ` · ${frame.view.activePlayerName}` : ''}
+                Turn {turn}{frame.view.activePlayerName ? ` · ${replayName(frame.view.activePlayerName, t)}` : ''}
                 {!loaded && total ? <span className={styles.loading}> · loading {Math.round((timeline.read / total) * 100)}%</span> : null}
               </span>
               <label className={styles.speed}>
@@ -411,6 +424,12 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
                 </Button>
               )}
               {!manifest && info?.truncated && <span className={styles.loading} title="The recording stopped early">partial</span>}
+            </div>
+            <div className={styles.timeline}>
+              <input className={styles.scrub} type="range" min={0} max={last} value={Math.min(index, last)}
+                onChange={(event) => go(Number(event.target.value))} aria-label="Position in the replay"
+                aria-valuetext={`Turn ${turn}, moment ${index + 1} of ${frames.length}`} />
+              <ReplayDecisionMarkers moments={moments} timeline={timeline} current={decision?.cursor} onMoment={jump} />
             </div>
           </div>
         </div>
