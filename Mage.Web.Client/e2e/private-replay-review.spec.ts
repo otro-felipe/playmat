@@ -19,7 +19,14 @@ const review = {
   status: 'partial', reviewed: 1, eligible: 6, counts: { good: 1 }, bySeat: [{ seatId: 'seat-a', name: 'Alice', reviewed: 1, counts: { good: 1 } }],
 };
 const perspectives = [{ seatId: 'seat-a', playerId: playerA, name: 'Alice', owned: true }, { seatId: 'seat-b', playerId: playerB, name: 'Bob', owned: false }];
-const actual = { kind: 'cast', text: 'Dos Burst Lightning contra Sheoldred' };
+const actual = {
+  kind: 'cast', text: 'mcp_e70ebd2d48 casts Burst Lightning [28c] targeting Sheoldred [711]',
+  cardRef: { id: 'bolt', name: 'Burst Lightning', setCode: 'ZEN', cardNumber: '119' },
+  targets: [{ kind: 'card', id: 'sheoldred', name: 'Sheoldred, the Apocalypse', setCode: 'DMU', cardNumber: '107' }],
+  modes: ['Kicker'], paidMana: { R: 1, C: 4 },
+};
+const stackBoard = { ...board, stack: { bolt: { ...ownHand.bolt, targets: ['sheoldred'] } } };
+const title = 'Alice lanza Burst Lightning con Sheoldred, the Apocalypse como objetivo';
 const annotation = {
   gameId, cursor: 6, frameCursor: 5, seatId: 'seat-a', category: 'good', confidence: 'high', actual,
   rationale: 'Sheoldred estaba en mesa y su disparo seguía amenazando.',
@@ -27,6 +34,8 @@ const annotation = {
   evidence: { basis: 'engine_log', frameCursor: 5, turn: 9 },
   retrospective: 'Bob tenía Fatal Push en la mano.',
 };
+const otherAction = { kind: 'cast', text: 'Bob casts Consider [abc]', cardRef: { name: 'Consider' } };
+const otherNote = { ...annotation, actual: otherAction, cursor: 8, frameCursor: 7, category: 'inaccuracy', rationale: 'Fue mejor esperar.' };
 
 for (const [device, viewport] of Object.entries({ desktop: { width: 1440, height: 960 }, mobile: { width: 390, height: 844 } })) {
   test.describe(device, () => {
@@ -36,6 +45,7 @@ for (const [device, viewport] of Object.entries({ desktop: { width: 1440, height
       await page.addInitScript(() => {
         localStorage.setItem('playmat.settings', JSON.stringify({ locale: 'es', sound: false, animations: false, matArt: 'none' }));
       });
+      let archiveAvailable = true;
       await page.route('**/api/playtesting/**', async (route) => {
         const url = new URL(route.request().url());
         let data: unknown = {};
@@ -45,17 +55,23 @@ for (const [device, viewport] of Object.entries({ desktop: { width: 1440, height
           id: matchId, name: 'Pioneer', format: 'Pioneer', status: 'completed', analysis: review,
           games: [{ gameId, gameNumber: 3, replayAvailable: true, archiveState: 'ready', players: [{ name: 'Alice' }, { name: 'Bob' }], analysis: review }],
         }] };
+        if (url.pathname.endsWith(`/games/${gameId}`) && !archiveAvailable) {
+          return route.fulfill({ status: 404, json: {} });
+        }
         if (url.pathname.endsWith(`/games/${gameId}`)) data = {
           gameId, matchId, gameNumber: 3, status: 'completed', viewerSeatId: 'seat-a', fullAvailable: true, availablePerspectives: perspectives, analysis: review,
           coverage: { partial: false, draws: 1, hands: 'both_where_recorded' },
         };
-        if (url.pathname.endsWith('/annotations')) data = { annotations: [annotation], next: null };
+        if (url.pathname.endsWith('/annotations')) data = { annotations: [annotation, otherNote], next: null };
         if (url.pathname.endsWith('/evidence')) data = { next: null, events: url.searchParams.get('scope') === 'public'
-          ? [{ type: 'action', cursor: 6, frameCursor: 5, turn: 9, text: actual.text }]
+          ? [{ type: 'action', cursor: 6, frameCursor: 5, actionFrameCursor: 7, turn: 9, actor: 'Alice', actual, text: actual.text },
+            { type: 'action', cursor: 8, frameCursor: 7, turn: 9, actor: 'Bob', actual: otherAction, text: otherAction.text }]
           : [{ type: 'draw', cursor: 4, frameCursor: 0, actorPlayerId: playerA, card: { id: 'bolt', name: 'Burst Lightning' } },
-            { type: 'frame', cursor: 5, view: board,
+            ...[{ cursor: 5, view: board }, { cursor: 7, view: stackBoard }].map((frame) => ({
+              ...frame, type: 'frame',
               myHand: url.searchParams.get('seatId') === 'seat-b' ? privateHand : ownHand,
-              ...(url.searchParams.get('scope') === 'full' ? { hands: { [playerA]: ownHand, [playerB]: privateHand } } : {}) }] };
+              ...(url.searchParams.get('scope') === 'full' ? { hands: { [playerA]: ownHand, [playerB]: privateHand } } : {}),
+            }))] };
         await route.fulfill({ json: data });
       });
       await page.routeWebSocket(/\/ws$/, (socket) => socket.onMessage((raw) => {
@@ -66,9 +82,10 @@ for (const [device, viewport] of Object.entries({ desktop: { width: 1440, height
           serverGetMainRoomId: '00000000-0000-4000-8000-0000000000aa',
           serverInfo: { signOn: 'Alice', signOnOnly: true, deckSync: true, accounts: false, serverName: 'Synthetic private server' },
           getServerState: { serverVersion: 'fixture', maxGameRuns: 0, cardInfo: [] },
-          replayPage: { info: { gameId }, start: 0, total: 4, events: [
+          replayPage: { info: { gameId }, start: 0, total: 5, events: [
             { cursor: 0, view: { ...board, turn: 8 }, myHand: ownHand }, { cursor: 1, log: { message: 'Alice drew a card' } },
             { cursor: 5, view: board, myHand: ownHand }, { cursor: 6, log: { message: actual.text } },
+            { cursor: 7, view: stackBoard, myHand: ownHand },
           ] },
           soloTurns: [],
         };
@@ -79,19 +96,37 @@ for (const [device, viewport] of Object.entries({ desktop: { width: 1440, height
       const analysis = page.getByRole('switch', { name: 'Ver análisis' });
       const hands = page.getByRole('switch', { name: 'Ver ambas manos' });
       await expect(analysis).toHaveAttribute('aria-checked', 'false');
+      await expect(hands).toHaveAttribute('aria-checked', 'true');
+      const marker = page.getByRole('group', { name: 'Decisiones analizadas' }).getByRole('button', { name: '2 decisiones en este punto' });
+      await marker.click();
+      await page.getByRole('menuitem', { name: 'Imprecisión Bob lanza Consider' }).click();
+      await expect(page.locator('[data-replay-cursor]')).toHaveAttribute('data-replay-cursor', '8');
+      await marker.click();
+      await page.getByRole('menuitem', { name: `Normal ${title}` }).click();
+      await expect(page.getByRole('region', { name: 'Stack, 1 object' }).getByRole('listitem')).toHaveAttribute('aria-label', /Burst Lightning.*Sheoldred/);
+      const decision = page.getByRole('region', { name: 'Decisión registrada' });
+      await expect(decision.getByLabel('Normal')).toBeVisible();
+      await expect(decision).toContainText('Kicker');
+      await expect(decision).toContainText('Objetivos');
+      const transport = await page.getByRole('toolbar', { name: 'Replay controls' }).boundingBox();
+      const stage = await page.locator('[data-contained]').boundingBox();
+      expect(transport!.y).toBeGreaterThanOrEqual(stage!.y + stage!.height - 1);
       await analysis.focus();
       await analysis.press('Space');
-      await page.getByRole('button', { name: actual.text }).click();
+      await page.getByRole('navigation', { name: 'Momentos clave' }).getByRole('button', { name: new RegExp(title) }).click();
       await expect(page.getByText('Mantiene alcance')).toBeVisible();
       await expect(page.locator('[data-replay-cursor]')).toHaveAttribute('data-replay-cursor', '6');
-      await expect(page.getByRole('region', { name: 'Evidencia previa a la jugada' })).not.toContainText('Fatal Push');
+      await expect(page.getByRole('region', { name: 'Evidencia previa a la jugada' })).toHaveCount(0);
+      const preview = page.getByRole('button', { name: 'Burst Lightning, ver carta' });
+      await expect(preview).toHaveCSS('text-decoration-line', 'underline');
+      if (device === 'desktop') await preview.hover();
+      else await preview.tap();
+      await expect(page.getByRole('tooltip')).toBeVisible();
+      await page.keyboard.press('Escape');
       if (device === 'mobile') await page.keyboard.press('Escape');
       else await analysis.click();
-      await hands.focus();
-      await hands.press('Enter');
       await expect(hands).toHaveAttribute('aria-checked', 'true');
       await expect(page.getByRole('group', { name: 'Mano registrada de Bob' }).getByRole('button', { name: 'Fatal Push' })).toBeVisible();
-      await expect(page.getByLabel('Robos registrados')).toHaveText('Alice robó Burst Lightning');
       await expect(page.locator('[data-replay-cursor]')).toHaveAttribute('data-replay-cursor', '6');
       await page.screenshot({ animations: 'disabled', path: testInfo.outputPath(`replay-hands-${device}.png`) });
       await analysis.click();
@@ -108,7 +143,14 @@ for (const [device, viewport] of Object.entries({ desktop: { width: 1440, height
       await page.goto('/history');
       await expect(page.getByText('1 de 6 jugadas revisadas')).toBeVisible();
       await page.getByText('Calificaciones por jugador y juego').click();
-      await expect(page.getByRole('group', { name: 'Juego 3' }).getByText('Buena')).toBeVisible();
+      await expect(page.getByRole('group', { name: 'Juego 3' }).getByText('Normal')).toBeVisible();
+
+      archiveAvailable = false;
+      await page.goto(`/replay/${gameId}?frame=0`);
+      await expect(analysis).toHaveCount(0);
+      const legacyTransport = await page.getByRole('toolbar', { name: 'Replay controls' }).boundingBox();
+      const legacyStage = await page.locator('[data-contained]').boundingBox();
+      expect(legacyTransport!.y).toBeGreaterThanOrEqual(legacyStage!.y + legacyStage!.height - 1);
     });
   });
 }

@@ -11,7 +11,7 @@ async function listen(server) {
   return `http://127.0.0.1:${server.address().port}`
 }
 
-export async function verifyReplayReviewOverMcp({ capture, humanCaptures, Client, StreamableHTTPClientTransport, token }) {
+export async function verifyReplayReviewOverMcp({ capture, humanCapture, Client, StreamableHTTPClientTransport, token }) {
   if (process.env.PLAYMAT_SEQUENCE_LOCAL_TEST !== 'yes'
     || !process.env.DATABASE_URL?.includes('@playmat-sequence-pg:5432/sequence_fixture')) {
     throw Error('Review acceptance requires the isolated engine and database')
@@ -83,6 +83,8 @@ export async function verifyReplayReviewOverMcp({ capture, humanCaptures, Client
     assert.equal(recordedCast.cursor, capture.castCursor)
     assert.equal(recordedCast.actual.card, capture.cardName)
     assert.deepEqual(recordedCast.actual.targetIds, [capture.rivalId])
+    assert.equal(recordedCast.actual.cardRef.name, capture.cardName)
+    assert.deepEqual(recordedCast.actual.targets, [{ id: capture.rivalId, name: peer.name, kind: 'player' }])
     assert.deepEqual(recordedCast.actual.paidMana, { R: 1 })
     assert.ok(recordedCast.frameCursor < recordedCast.cursor)
     assert.ok(recordedCast.before.view)
@@ -105,15 +107,14 @@ export async function verifyReplayReviewOverMcp({ capture, humanCaptures, Client
     assert.equal(encounter.analysis.reviewed, 1)
     assert.equal(encounter.analysis.counts[expectedCategory], 1)
 
-    for (const humanCapture of humanCaptures) {
-      const manifest = await completed(humanCapture.gameId)
-      assert.equal(manifest.fullAvailable, humanCapture.armed)
-      if (!humanCapture.armed) {
-        await call('read_review_evidence', { gameId: humanCapture.gameId, purpose: 'replay', scope: 'full' }, 'forbidden')
-      }
-    }
+    const browserMatch = await completed(humanCapture.gameId)
+    assert.equal(browserMatch.fullAvailable, true)
+    const browserEvidence = await call('read_review_evidence', {
+      gameId: humanCapture.gameId, purpose: 'replay', scope: 'full', count: 40,
+    })
+    assert.ok(browserEvidence.events.some(row => Object.keys(row.hands ?? {}).length === 2))
     console.log(JSON.stringify({ phase: '[PM-REVIEW-API-1/2/3/4] real Java native archive review',
-      version: client.getServerVersion()?.version, exactCast: true, ownPeerAndFull: true, deniedCapture: true, retryCount: 1 }))
+      version: client.getServerVersion()?.version, exactCast: true, ownPeerAndFull: true, automaticBrowserCapture: true, retryCount: 1 }))
   } finally {
     await client?.close()
     mcp?.closeAllConnections()

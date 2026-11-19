@@ -192,7 +192,8 @@ export function createReviewAnnotations(pool) {
         for (const seatId of seatIds) {
           const eligible = positions.filter(position => position.seatId === seatId).length
           await db.query(`INSERT INTO review_position_coverage(game_id,archive_revision,seat_key,eligible)
-            VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, [game.id, archiveRevision, seatId, eligible])
+            VALUES($1,$2,$3,$4) ON CONFLICT (game_id,archive_revision,seat_key)
+            DO UPDATE SET eligible=EXCLUDED.eligible`, [game.id, archiveRevision, seatId, eligible])
         }
         const ids = []
         for (const entry of annotations) ids.push(await saveAnnotation(db, game.id, archiveRevision, actor.accountId, entry))

@@ -1,15 +1,5 @@
 export const PRIVATE_PLAYTESTING = import.meta.env.VITE_PRIVATE_PLAYTESTING === 'true';
 
-export async function setTableReplayConsent(tableId: string, granted: boolean, error: string, signal?: AbortSignal): Promise<void> {
-  const response = await fetch(`/api/playtesting/review/privacy/tables/${encodeURIComponent(tableId)}`, {
-    method: granted ? 'PUT' : 'DELETE',
-    ...(granted ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ version: 2 }) } : {}),
-    signal,
-  });
-  signal?.throwIfAborted();
-  if (!response.ok) throw new Error(error);
-}
-
 export interface PlaytestingInvite {
   tableId: string;
   roomId: string;

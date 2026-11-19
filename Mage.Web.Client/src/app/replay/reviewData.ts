@@ -42,15 +42,11 @@ export interface ReviewManifest {
   viewerSeatId?: string;
   availablePerspectives?: ReplayPerspective[];
   fullAvailable?: boolean;
-  canGrantLegacy?: boolean;
-  legacyGranted?: boolean;
   coverage?: ReviewCoverage;
   archiveRevision?: string;
   analysis?: ReviewSummary;
   sideboardDelta?: SideboardDelta;
   privacy?: {
-    canGrantLegacy?: boolean;
-    legacyGranted?: boolean;
     fullAvailable?: boolean;
     viewerSeatId?: string;
     perspectives?: ReplayPerspective[];
@@ -60,14 +56,40 @@ export interface ReviewManifest {
 
 export type ReplayHands = Record<string, Record<string, CardView>>;
 
-export interface ReviewEvent {
+export interface ReviewReference {
+  id?: string;
+  name: string;
+  kind?: 'card' | 'player';
+  setCode?: string;
+  cardNumber?: string;
+}
+
+export interface ReviewAction {
+  kind: string;
+  text: string;
+  card?: string;
+  cardRef?: ReviewReference;
+  sourceCardRef?: ReviewReference;
+  targets?: ReviewReference[];
+  targetIds?: string[];
+  modes?: string[];
+  castMode?: string;
+  paidMana?: Record<string, number>;
+}
+
+export interface ReviewMoment {
   cursor: number;
   frameCursor?: number | null;
+  actionFrameCursor?: number | null;
   turn?: number;
-  type?: string;
   text?: string;
-  actual?: { text: string };
   actor?: string;
+  actual?: ReviewAction;
+  category?: ReviewCategory;
+}
+
+export interface ReviewEvent extends ReviewMoment {
+  type?: string;
   actorPlayerId?: string;
   card?: { id?: string; name?: string };
   view?: GameView;
@@ -81,7 +103,7 @@ export interface ReviewAnnotation {
   frameCursor: number;
   seatId: string;
   category: ReviewCategory;
-  actual: { kind: string; text: string; card?: string };
+  actual: ReviewAction;
   rationale?: string;
   benefit?: string;
   risk?: string;
@@ -123,23 +145,14 @@ export function loadReviewEvents(gameId: string, cursor: number, scope: 'public'
   return request<EvidencePage>(reviewPath(gameId) + '/evidence?' + query, signal);
 }
 
-export function loadReviewPlays(gameId: string, cursor: number, signal: AbortSignal) {
-  const query = new URLSearchParams({ cursor: String(cursor), count: '40', scope: 'public', purpose: 'analysis', includeBefore: 'false' });
+export function loadReviewPlays(gameId: string, cursor: number, signal: AbortSignal, count = 40) {
+  const query = new URLSearchParams({ cursor: String(cursor), count: String(count), scope: 'public', purpose: 'analysis', includeBefore: 'false' });
   return request<EvidencePage>(reviewPath(gameId) + '/evidence?' + query, signal);
 }
 
 export function loadReviewAnnotations(gameId: string, cursor: number, signal: AbortSignal) {
   const query = new URLSearchParams({ cursor: String(cursor), count: '32' });
   return request<ReviewAnnotationPage>(reviewPath(gameId) + '/annotations?' + query, signal);
-}
-
-export async function changeLegacyPermission(matchId: string, granted: boolean) {
-  const response = await fetch('/api/playtesting/review/privacy/matches/' + encodeURIComponent(matchId), {
-    method: granted ? 'PUT' : 'DELETE',
-    ...(granted ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify({ version: 2 }) } : {}),
-    cache: 'no-store',
-  });
-  if (!response.ok) throw new Error('Replay permission update failed.');
 }
 
 export function perspectivesFor(manifest: ReviewManifest | null | undefined): ReplayPerspective[] {
@@ -158,7 +171,8 @@ export function frameProjection(
   delete publicView.myHand;
   delete publicView.watchedHands;
   const hands = bothHands ? privateFrame?.hands : undefined;
-  const hand = (playerId && hands?.[playerId]) || privateFrame?.myHand || privateFrame?.view?.myHand || ownReplayHand;
+  const archivedHand = bothHands ? (playerId ? hands?.[playerId] : null) : privateFrame?.myHand ?? privateFrame?.view?.myHand;
+  const hand = archivedHand ?? ownReplayHand;
   return { view: { ...publicView, myPlayerId: playerId ?? undefined, ...(hand ? { myHand: hand } : {}) }, hands };
 }
 

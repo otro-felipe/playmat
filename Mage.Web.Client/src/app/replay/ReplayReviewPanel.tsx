@@ -3,7 +3,9 @@ import { useId } from 'react';
 import { registerMessages, useT } from '../i18n';
 import messages from '../i18n/en/replay';
 import { Button, IconButton } from '../ui/Button';
-import { reviewCategories, safePublicSource, type ReviewAnnotation, type ReviewCounts, type ReviewEvent, type ReviewSummary, type SideboardDelta } from './reviewData';
+import { DecisionTitle, ReviewRating } from './ReplayDecision';
+import { decisionPresentation } from './decisionPresentation';
+import { reviewCategories, safePublicSource, type ReviewAnnotation, type ReviewCounts, type ReviewMoment, type ReviewSummary, type SideboardDelta } from './reviewData';
 import styles from './ReplayReviewPanel.module.css';
 
 registerMessages(messages);
@@ -25,30 +27,33 @@ export function ReviewSwitch({ checked, label, onCheckedChange, controls }: {
 
 export function RatingCounts({ counts }: { counts: ReviewCounts }) {
   const t = useT();
-  const visibleRatings = reviewCategories.filter((category) => (counts[category] ?? 0) > 0);
-  return visibleRatings.length ? (
+  const visibleRatings = new Map<string, number>();
+  for (const category of reviewCategories) {
+    const count = counts[category] ?? 0;
+    const label = t(`replay.rating.${category}`);
+    if (count) visibleRatings.set(label, (visibleRatings.get(label) ?? 0) + count);
+  }
+  return visibleRatings.size ? (
     <dl className={styles.counts}>
-      {visibleRatings.map((category) => (
-        <div key={category}><dt>{t(`replay.rating.${category}`)}</dt><dd>{counts[category]}</dd></div>
+      {[...visibleRatings].map(([label, count]) => (
+        <div key={label}><dt>{label}</dt><dd>{count}</dd></div>
       ))}
     </dl>
   ) : null;
 }
 
-export type ReviewMoment = Pick<ReviewEvent, 'cursor' | 'frameCursor' | 'turn' | 'text'>;
-
-export function ReplayReviewPanel({ analysis, sideboardDelta, moments, current, annotation, actor, showRetrospective, onMoment, onPrevious, onNext, more, error, onRetry }: {
+export function ReplayReviewPanel({ analysis, sideboardDelta, moments, current, annotation, decision, showRetrospective, onMoment, onPrevious, onNext, loading, error, onRetry }: {
   analysis?: ReviewSummary;
   sideboardDelta?: SideboardDelta;
   moments: readonly ReviewMoment[];
   current?: number;
   annotation?: ReviewAnnotation;
-  actor?: string;
+  decision?: ReviewMoment;
   showRetrospective: boolean;
   onMoment: (moment: ReviewMoment) => void;
   onPrevious?: () => void;
   onNext?: () => void;
-  more?: { pending: boolean; load: () => void };
+  loading: boolean;
   error: boolean;
   onRetry: () => void;
 }) {
@@ -65,7 +70,12 @@ export function ReplayReviewPanel({ analysis, sideboardDelta, moments, current, 
           <Button variant="quiet" size="sm" onClick={onRetry}>{t('replay.retry')}</Button>
         </div>
       )}
-      {annotation && <ReviewDetail annotation={annotation} actor={actor} showRetrospective={showRetrospective} />}
+      {decision && (annotation
+        ? <ReviewDetail annotation={annotation} decision={decision} showRetrospective={showRetrospective} />
+        : <article className={styles.detail}>
+          <h3><DecisionTitle moment={decision} /></h3>
+          <p className={styles.muted}>{t(loading ? 'replay.loadingAnalysis' : 'replay.pendingDecision')}</p>
+        </article>)}
       {sideboardDelta && <OwnSideboard delta={sideboardDelta} />}
       <nav className={styles.moments} aria-label={t('replay.moments')}>
         <div className={styles.momentHead}>
@@ -75,16 +85,17 @@ export function ReplayReviewPanel({ analysis, sideboardDelta, moments, current, 
         </div>
         {moments.length > 0 ? (
           <ol>
-            {moments.map((moment) => (
-              <li key={moment.cursor}>
+            {moments.map((moment) => {
+              const { fullTitle } = decisionPresentation(moment, t);
+              return <li key={moment.cursor}>
                 <button type="button" aria-current={moment.cursor === current ? 'step' : undefined} onClick={() => onMoment(moment)}>
-                  {moment.turn === undefined ? moment.text : t('replay.moment', { turn: moment.turn, play: moment.text ?? '' })}
+                  {moment.category && <ReviewRating category={moment.category} />}
+                  <span>{moment.turn === undefined ? fullTitle : t('replay.moment', { turn: moment.turn, play: fullTitle })}</span>
                 </button>
-              </li>
-            ))}
+              </li>;
+            })}
           </ol>
-        ) : !error && <p className={styles.muted}>{t('replay.emptyAnalysis')}</p>}
-        {more && <Button size="sm" variant="quiet" busy={more.pending} onClick={more.load}>{t('replay.loadMore')}</Button>}
+        ) : !error && <p className={styles.muted}>{t(loading ? 'replay.loadingAnalysis' : 'replay.emptyAnalysis')}</p>}
       </nav>
     </div>
   );
@@ -119,28 +130,21 @@ function OwnSideboard({ delta }: { delta: SideboardDelta }) {
 
 const studyIdPattern = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 
-function ReviewDetail({ annotation, actor, showRetrospective }: {
+function ReviewDetail({ annotation, decision, showRetrospective }: {
   annotation: ReviewAnnotation;
-  actor?: string;
+  decision: ReviewMoment;
   showRetrospective: boolean;
 }) {
   const t = useT();
-  const evidenceId = useId();
   const retrospective = typeof annotation.retrospective === 'string' ? annotation.retrospective
     : annotation.retrospective?.text ?? annotation.retrospective?.observation;
   const studies = annotation.theoryStudies?.filter(({ studyId, tool }) => tool === 'get_theory_study' && studyIdPattern.test(studyId)) ?? [];
   return (
     <article className={styles.detail}>
-      <p className={styles.rating} data-rating={annotation.category}>{t(`replay.rating.${annotation.category}`)}</p>
-      <h3>{annotation.actual.text}</h3>
-      <p className={styles.muted}>{[actor, t(`replay.confidence.${annotation.confidence}`)].filter(Boolean).join(' · ')}</p>
-      <section aria-labelledby={evidenceId} className={styles.evidence}>
-        <h4 id={evidenceId}>{t('replay.before')}</h4>
-        {annotation.rationale && <p>{annotation.rationale}</p>}
-        <p className={styles.muted}>{annotation.evidence?.turn === undefined ? t('replay.beforeWithoutTurn')
-          : t('replay.beforeAt', { turn: annotation.evidence.turn })}</p>
-        <ReviewTradeoff benefit={annotation.benefit} risk={annotation.risk} />
-      </section>
+      <h3><DecisionTitle moment={decision} /></h3>
+      <p><ReviewRating category={annotation.category} label /></p>
+      {annotation.rationale && <p>{annotation.rationale}</p>}
+      <ReviewTradeoff benefit={annotation.benefit} risk={annotation.risk} />
       {!!annotation.alternatives.length && (
         <section>
           <h4>{t('replay.alternatives')}</h4>

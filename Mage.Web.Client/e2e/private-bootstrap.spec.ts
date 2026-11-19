@@ -8,7 +8,7 @@ test.beforeEach(({ baseURL }) => {
 for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 }, { width: 844, height: 390 }]) {
   test.describe(`${viewport.width}x${viewport.height}`, () => {
     test.use({ viewport, isMobile: viewport.width < 1000, hasTouch: viewport.width < 1000 });
-    test('the actual private app boots without a second login, starter decks or automatic mana', async ({ page }) => {
+    test('the actual private app boots with one login, no starter decks and restricted mana payment', async ({ page }) => {
       const logins: { name: string; passwordProvided: boolean }[] = [];
       const preferences: { automatic: boolean; restricted: boolean }[] = [];
       const starters: string[] = [];
@@ -42,7 +42,7 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
       await expect(page.getByText(/Trae un mazo que ya tengas/)).toBeVisible();
       expect(logins).toEqual([{ name: 'Alice', passwordProvided: false }]);
       await expect.poll(() => preferences.length).toBeGreaterThan(0);
-      expect(preferences.every(({ automatic, restricted }) => !automatic && restricted)).toBe(true);
+      expect(preferences).toEqual(preferences.map(() => ({ automatic: true, restricted: true })));
       expect(starters).toEqual([]);
       expect(await page.evaluate(() => (window as unknown as { engineFormSeen: boolean }).engineFormSeen)).toBe(false);
       await page.getByRole('button', { name: 'Rival IA · MCP', exact: true }).click();

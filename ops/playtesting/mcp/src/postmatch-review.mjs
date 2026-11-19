@@ -43,15 +43,15 @@ export const saveReviewAnnotationsInput = { gameId: z.uuid(), archiveRevision, e
 export function registerPostMatchReviewPrompt(mcp) {
   mcp.registerPrompt('review_playmat_replay', {
     title: 'Review a completed Playmat replay',
-    description: 'Analyze recorded decisions by seat, save revisable annotations and report coverage.',
+    description: 'Analyze every recorded decision by seat, save revisable annotations and report coverage.',
     argsSchema: { gameId: z.uuid() },
   }, ({ gameId }) => ({
     messages: [{ role: 'user', content: { type: 'text', text: `Review completed Playmat game ${gameId}.
 
-1. Call get_match_review with the game ID. Report what the archive actually recorded. Use read_review_evidence with purpose:analysis and the acting seat. Follow next and retain the archive revision. Use list_review_annotations to resume from saved cursors.
-2. Judge the recorded action from its preceding position and public information available then. Treat an engine_log position as approximate. Compare credible legal alternatives across the same horizon. Consider mana, priority, source, targets, likely matchup responses and tradeoffs. Use get_card and the rules guide for rules. Use curated public format examples for plausible replies without implying a card was in hand.
+1. Call get_match_review with the game ID. Report what the archive actually recorded. For every available acting seat, use read_review_evidence with purpose:analysis and that seat. Follow next until the seat's evidence is exhausted and retain the archive revision. Page list_review_annotations to resume from saved cursors.
+2. Judge each recorded action from its preceding position and the information its acting seat had then. Treat an engine_log position as approximate. Compare credible legal alternatives across the same horizon. Consider mana, priority, source, targets, likely matchup responses and tradeoffs. Use get_card and the rules guide for rules. Use curated public format examples for plausible replies without implying a card was in hand. The post-action stack is for playback and cannot justify the grade.
 3. Use optional public references only when they matter. Record their public HTTPS URL, date, format and applicability. Search generic rules and public archetype questions. Keep hands, decklists, private annotations and game identifiers out of those queries.
-4. Use a qualitative assessment. Exceptional requires a verified surprising gain against credible replies. Optimal has a confirmed legal comparator and no material improvement. Sound and acceptable describe reasonable lines. Small or decisive losses require a confirmed better alternative. Equivalent choices have no material difference. Mark incomplete evidence insufficient and ordinary passes trivial.
-5. Save small batches with save_review_annotations using the archive revision and exact event cursor. Include the current annotation revision when editing. Use the retrospective field only when full permission is available and explain a later observation separately. Read the updated summary. Report counts, confidence and coverage without a percentage score.` } }],
+4. Write a concise rationale explaining why the play earned the assessment, then give concrete alternatives and tradeoffs. Exceptional requires a difficult-to-find legal line that delivers material advantage when the credible alternatives leave the player worse off. Optimal describes the best supported line and requires a confirmed legal comparator. Sound, acceptable and equivalent describe reasonable decisions. Small or decisive losses require a confirmed better alternative. Mark incomplete evidence insufficient and ordinary passes trivial.
+5. Save every unsaved decision in small batches with save_review_annotations using the archive revision and exact event cursor. Include the current annotation revision when editing. Use the retrospective field only when full permission is available and explain a later observation separately. Read the updated summary. Report counts, confidence and coverage without a percentage score.` } }],
   }))
 }

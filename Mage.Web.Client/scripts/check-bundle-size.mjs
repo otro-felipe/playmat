@@ -132,9 +132,9 @@ import { gzipSync } from 'node:zlib';
 const BUDGET_KB = {
   entry: 86,
   initial: 221,
-  // The lazy player replay and history add post-match review, privacy controls, and both language catalogs.
-  // The private release build measured 842.1 kB. The entry and initial-download limits stay fixed.
-  app: 844,
+  // Replay decision navigation, card previews and rating markers load with the replay or history.
+  // The standard and private release builds measured about 847 kB. Entry and initial limits stay fixed.
+  app: 851,
 };
 
 const dist = new URL('../dist/', import.meta.url).pathname;

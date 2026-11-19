@@ -127,30 +127,17 @@ async function waitNextOwn(oldId) {
   }
   throw Error('No next own fixture decision before the bounded deadline')
 }
-async function startFixture(name, deck, seed, beforeStart) {
+async function startFixture(name, deck, seed) {
   const created = await browser.createGame({ name, format: 'Modern', deck: rivalDeck, matchTimeLimit: 'MIN__15', seed }, async record => {
     const response = await fetch(base + '/api/playtesting/invites', { method: 'POST', headers: { 'content-type': 'application/json', Cookie: browserCookie }, body: JSON.stringify({ ...record, guestEngineName: engineName }) })
     assert.equal(response.status, 201)
     return response.json()
   })
   await call('join_game', { tableId: created.tableId, deck })
-  await beforeStart?.(created.tableId)
   await browser.startMatch(created.tableId)
   return waitNextOwn()
 }
 let browserCookie
-
-async function acknowledgeReview(tableId) {
-  await acknowledgeReviewFrom(tableId, [browserCookie, await browserLogin('SequenceBob')])
-}
-
-async function acknowledgeReviewFrom(tableId, cookies) {
-  for (const cookie of cookies) {
-    const receipt = await fetch(base + '/api/playtesting/review/privacy/tables/' + tableId, { method: 'PUT',
-      headers: { 'content-type': 'application/json', Cookie: cookie }, body: JSON.stringify({ version: 2 }) })
-    assert.ok(receipt.ok, 'Both synthetic accounts acknowledge the private archive policy before play')
-  }
-}
 
 async function browserLogin(username) {
   const response = await fetch(base + '/login', { method: 'POST', redirect: 'manual',
@@ -159,11 +146,11 @@ async function browserLogin(username) {
   return response.headers.get('set-cookie').split(';')[0]
 }
 
-async function startHumanReviewFixture(armed, run) {
+async function startHumanReviewFixture(run) {
   const login = await browserLogin('SequenceBob')
   const peer = new PlaymatEngineSeat({ engineUrl: 'ws://127.0.0.1:8080/ws', engineName: 'SequenceBob',
     trustedHeader: 'X-Playmat-User', authenticationHeaders: { Cookie: login } })
-  const name = armed ? 'Isolated human review available' : 'Isolated human review declined'
+  const name = 'Isolated automatic human replay review'
   try {
     const created = await browser.createGame({ name, format: 'Pioneer', deck: rivalDeck, matchTimeLimit: 'MIN__15', seed: 77 }, async record => {
       const response = await fetch(base + '/api/playtesting/invites', { method: 'POST',
@@ -178,9 +165,8 @@ async function startHumanReviewFixture(armed, run) {
       assert.ok(response.ok)
       return response.json()
     })
-    await acknowledgeReviewFrom(created.tableId, armed ? [browserCookie, login] : [browserCookie])
     await browser.startMatch(created.tableId)
-    await run([browser, peer])
+    return await run([browser, peer])
   } finally {
     peer.close()
   }
@@ -330,9 +316,9 @@ try {
   assert.ok(JSON.stringify(discovered.tools.find(tool => tool.name === 'play_sequence').inputSchema).includes('allowPlannedResolutions'))
   const scenarios = process.env.PLAYMAT_SEQUENCE_SCENARIOS
   if (scenarios === 'review' || scenarios === 'all') {
-    const capture = await verifyReplayCapture({ startFixture, call, ownPlayer, rivalPlayer, answer, waitNextOwn, acknowledgeReview, totalDeadline })
-    const humanCaptures = await verifyHumanReplayCapture({ startHumanReviewFixture, totalDeadline })
-    await verifyReplayReviewOverMcp({ capture, humanCaptures, Client, StreamableHTTPClientTransport, token })
+    const capture = await verifyReplayCapture({ startFixture, call, ownPlayer, rivalPlayer, answer, waitNextOwn, totalDeadline })
+    const humanCapture = await verifyHumanReplayCapture({ startHumanReviewFixture, totalDeadline })
+    await verifyReplayReviewOverMcp({ capture, humanCapture, Client, StreamableHTTPClientTransport, token })
   }
   if (scenarios !== 'review') {
     await verifyPreparedModeLine('Patrol Night')

@@ -25,13 +25,12 @@ import { joinTable } from './joinTable';
 import { TableAdvancedFields } from './TableAdvancedFields';
 import styles from './TablesScreen.module.css';
 import { PUBLIC_ORIGIN } from '../brand';
-import { createPlaytestingInvite, MCP_CHAT_MODES, PRIVATE_PLAYTESTING, setTableReplayConsent, type McpChatMode, type PlaytestingInvitationView } from '../playtesting';
+import { createPlaytestingInvite, MCP_CHAT_MODES, PRIVATE_PLAYTESTING, type McpChatMode, type PlaytestingInvitationView } from '../playtesting';
 import { usePlaytestingInvitation } from '../usePlaytestingInvitation';
 import { registerMessages, useT } from '../i18n';
 import messages from '../i18n/en/social';
 import { McpConnectionDialog } from '../mcp/McpConnection';
 import { mcpConnectionGuideHidden } from '../mcp/connectionGuide';
-import { ReplayConsentChoice } from './ReplayConsentChoice';
 
 registerMessages(messages);
 
@@ -314,7 +313,6 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
   const [chatMode, setChatMode] = useState<McpChatMode>('quiet');
   const [password, setPassword] = useState('');
   const [guest, setGuest] = useState('');
-  const [shareReplay, setShareReplay] = useState(false);
   const [advanced, setAdvanced] = useState<TableAdvanced>(DEFAULT_ADVANCED);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -346,7 +344,6 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
   function closeDialog() {
     setChatMode('quiet');
     setOpponent('friend');
-    setShareReplay(false);
     onOpenChange(false);
   }
 
@@ -380,9 +377,6 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
       }));
       if (!table?.tableId) throw new Error('The server did not create the table.');
       createdTableId = table.tableId;
-      if (PRIVATE_PLAYTESTING && shareReplay) {
-        await setTableReplayConsent(table.tableId, true, t('replayConsent.error'));
-      }
       const wire = toWire(deck);
       if (!await api.roomJoinTable(roomId, table.tableId, userName, 'HUMAN', 1, wire, tablePassword)) {
         throw new Error(`Your deck is not legal in ${formatRules(deckType).label}.`);
@@ -507,7 +501,6 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
           multiplayer={seatCount > 2}
           commander={commander}
         />
-        {PRIVATE_PLAYTESTING && <ReplayConsentChoice checked={shareReplay} onChange={setShareReplay} disabled={busy} />}
         {error && <p className={styles.error} role="alert">{error}</p>}
       </div>
     </Dialog>
