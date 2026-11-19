@@ -19,7 +19,7 @@ import mage.view.GameView;
 import org.junit.Test;
 
 import java.util.Arrays;
-import java.util.Set;
+import java.util.Collections;
 import java.util.UUID;
 
 import static org.junit.Assert.assertEquals;
@@ -32,7 +32,7 @@ public class AbilityPickerEvidenceTest {
         Game game = new PickerGame();
         UnholyAnnexRitualChamber room = new UnholyAnnexRitualChamber(player,
                 new CardSetInfo("Unholy Annex // Ritual Chamber", "DSK", "118", Rarity.RARE));
-        game.loadCards(Set.of(room), player);
+        game.loadCards(Collections.singleton(room), player);
         SpellAbility annex = room.getLeftHalfCard().getSpellAbility();
         SpellAbility chamber = room.getRightHalfCard().getSpellAbility();
         GameView gameView = new GameView(game.getState(), game, player, null);
