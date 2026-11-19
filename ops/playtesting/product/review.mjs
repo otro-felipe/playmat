@@ -143,7 +143,7 @@ function actionDetails(row, perspectives, typed) {
   if (!seat) return null
   const rest = message.slice(seat.name.length).trimStart()
   const verb = rest.split(/[\s:]+/, 1)[0].toLowerCase()
-  const kind = /^decides to take mulligan\b/i.test(rest) ? 'mulligan' : cardActions.get(verb)
+  const kind = cardActions.get(verb)
   if (!kind) return null
   return { seatId: seat.seatId, basis: 'engine_log', actual: { kind, text: message.slice(0, 1200) } }
 }

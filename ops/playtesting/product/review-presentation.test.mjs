@@ -79,6 +79,7 @@ test('[PM-REVIEW-CAPTURE-2] legacy play list recovers linkable spell and target 
       frame({ players: [alice, { ...bob, battlefield: { [creature]: asCard(creature, 'Sheoldred, the Apocalypse') } }] }),
       log(`Alice casts ${link(spell, 'Burst Lightning')} with Kicker targeting ${link(creature, 'Sheoldred, the Apocalypse')} from hand`),
       log('Bob decides to take mulligan'),
+      log('Bob mulligans down to 6 cards'),
       frame({ stack: { [spell]: asCard(spell, 'Burst Lightning') } }),
       log(`Bob activates: Deal 1 damage from ${link(creature, 'Sheoldred, the Apocalypse')}`),
     ],
@@ -86,12 +87,31 @@ test('[PM-REVIEW-CAPTURE-2] legacy play list recovers linkable spell and target 
 
   const { events } = await read(analysisList)
   assert.deepEqual(events.map(({ actual }) => actual.kind), ['cast', 'mulligan', 'activate'])
+  assert.equal(events[1].cursor, 3, 'the committed legacy mulligan keeps its existing cursor')
   assert.equal(events[0].actual.cardRef.name, 'Burst Lightning')
   assert.equal(events[0].actual.targets[0].name, 'Sheoldred, the Apocalypse')
   assert.equal(events[0].actionFrameCursor, undefined)
   assert.equal(events[0].actual.fromZone, 'HAND')
   assert.equal(events[0].actual.castMode, 'Kicker')
   assert.equal(events[2].actual.cardRef.name, 'Sheoldred, the Apocalypse')
+  assert.deepEqual(events[2].actual.modes, ['Deal 1 damage'])
+})
+
+test('[PM-REVIEW-CAPTURE-2] legacy nonmodal activations show the logged effect and linked source', async () => {
+  const talent = randomUUID()
+  const den = randomUUID()
+  const { read } = fixture(({ frame, log }) => ({
+    rows: [
+      frame(),
+      log(`Alice activates: level up to 2. from Stormchaser's Talent [${talent.slice(0, 3)}]`),
+      log(`Bob activates: Become a 3/2 Goblin creature until end of turn from ${link(den, 'Den of the Bugbear')}`),
+    ],
+  }), { typed: false })
+  const { events: [levelUp, animate] } = await read(analysisList)
+  assert.equal(levelUp.actual.cardRef.name, "Stormchaser's Talent")
+  assert.deepEqual(levelUp.actual.modes, ['level up to 2.'])
+  assert.equal(animate.actual.cardRef.name, 'Den of the Bugbear')
+  assert.deepEqual(animate.actual.modes, ['Become a 3/2 Goblin creature until end of turn'])
 })
 
 test('[PM-REVIEW-CAPTURE-2] legacy text-only engine logs recover card and target names from the visible board', async () => {

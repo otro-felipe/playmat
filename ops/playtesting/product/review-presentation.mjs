@@ -102,6 +102,16 @@ function loggedCastMode(headline) {
   return /^(?:with|using)\s+(.+?)(?=\s+\(mode \d+\)|\s+from\s|$)/i.exec(options)?.[1]?.slice(0, 240)
 }
 
+function loggedActivation(headline, cards) {
+  const activation = /^activates:\s+(.+)\s+from\s+(.+)$/i.exec(headline)
+  if (!activation) return {}
+  const [, effect, source] = activation
+  return {
+    card: legacySource('cast', `casts ${source}`, cards),
+    description: effect.replace(/<[^>]*>/g, '').replace(/\s+\[[0-9a-f]{3}\]/gi, '').replace(/&amp;/g, '&').trim().slice(0, 400),
+  }
+}
+
 function isWitnessed(before, after, actual, ref) {
   if (!after || before?.view?.turn !== after.view.turn) return false
   if (stackActions.has(actual.kind)) {
@@ -131,7 +141,8 @@ function decideAction(position, actor, before, after, row) {
   const headline = choiceIndex === -1 ? rest : rest.slice(0, choiceIndex)
   const choice = actual.kind === 'select' ? rest.replace(/^chooses?\s+/i, '')
     : choiceIndex === -1 ? '' : rest.slice(choiceIndex).replace(choicePattern, '')
-  const legacy = legacySource(actual.kind, headline, preceding)
+  const activation = actual.kind === 'activate' ? loggedActivation(headline, preceding) : null
+  const legacy = activation?.card ?? legacySource(actual.kind, headline, preceding)
   const typed = position.cardRef ?? preceding.get(actual.sourceId) ?? preceding.get(actual.objectId)
   const ref = typed ?? legacy
   const witnessed = isWitnessed(before, after?.event, actual, ref)
@@ -148,7 +159,8 @@ function decideAction(position, actor, before, after, row) {
   }) : namedTargets
   const zone = actual.kind === 'cast' ? rest.match(/\sfrom\s+(hand|graveyard|exile|command zone|library)\s*$/i)?.[1] : undefined
   const castMode = actual.kind === 'cast' ? position.castMode || loggedCastMode(headline) : undefined
-  const loggedMode = actual.kind === 'cast' ? headline.match(/\(mode (\d+)\)/i)?.[1] : undefined
+  const castOptionNumber = actual.kind === 'cast' ? headline.match(/\(mode (\d+)\)/i)?.[1] : undefined
+  const loggedMode = castOptionNumber ? `Mode ${castOptionNumber}` : activation?.description
   const discardSource = actual.kind === 'discard' ? rest.split(/\(source:\s*/i)[1] : undefined
   const sourceLink = discardSource && legacySource('cast', `casts ${discardSource}`, preceding)
   const { shortId: _shortId, ...cardReference } = card ?? {}
@@ -161,7 +173,7 @@ function decideAction(position, actor, before, after, row) {
       ...(sourceReference.name ? { sourceCardRef: sourceReference } : {}),
       ...(targets.length ? { targets } : {}),
       ...(castMode ? { castMode } : {}),
-      ...(!actual.modes?.length && loggedMode ? { modes: [`Mode ${loggedMode}`] } : {}),
+      ...(!actual.modes?.length && loggedMode ? { modes: [loggedMode] } : {}),
       ...(!actual.fromZone && zone ? { fromZone: zone.toUpperCase().replaceAll(' ', '_') } : {}),
     },
   }
