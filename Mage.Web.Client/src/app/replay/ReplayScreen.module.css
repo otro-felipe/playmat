@@ -20,6 +20,7 @@
 }
 
 .transport {
+  grid-row: 3;
   display: grid;
   grid-template-columns: auto minmax(100px, 1fr);
   align-items: start;
