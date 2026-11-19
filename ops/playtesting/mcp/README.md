@@ -91,3 +91,36 @@ Run `node --test test/native-ai.live.test.mjs` with `PLAYMAT_LIVE_ENGINE_URL` fo
 ### Isolated causal-sequence acceptance
 
 `PLAYMAT_SEQUENCE_IMAGE_TEST=yes bash ops/playtesting/test/verify-sequence-image.sh` builds the complete root image and creates its own unexposed network, PostgreSQL and engine volume. It provisions only synthetic fixture principals and a fixed-seed burn/land match, learns real target/payment callback order with a warm-up, then queues two own damage spells and the end step while the other synthetic seat retains open mana and only passes. Its assertions check actual life loss, both casts, completion and uninterrupted public witness counters. It has a five-minute fixture deadline and never accepts a remote target URL or existing credentials. It stops only its own named containers, retains its private synthetic volumes and exports no hands/tokens/checkpoints. A second real scenario has the rival actually activate a Mountain while an own burn is pending, verifies interruption before the queued next answer, then independently resolves that burn and verifies the public action counter increased. The fast HTTP/WebSocket fixtures test the same boundary with controlled synthetic callbacks; they do not substitute for this real Java acceptance. Neither is claimed executed until its runner result is observed.
+
+### Theorycraft
+
+The native theorycraft tools require the `history` scope. A standalone study models
+the declared deck, mana sources, mulligan policy, play lines, queries and response
+hypotheses. Submit several predicates or policy comparisons in one request to
+measure them on the same seeded samples.
+
+- `run_theory_study({study, requestId?, anchor?})` runs the study and saves its
+  aggregate results. Retry with the same UUID and study to recover the same result.
+- `get_theory_study({studyId})` retrieves the owner's saved results. An archived
+  link also requires continuing access to the exact replay revision and seat.
+- `search_theory_tactics({graph})` searches a bounded decision tree for lethal this
+  turn. The report gives probability bounds and response coverage. Alternatively,
+  pass only `{combat}` to search ordinary combat. Declare attacks, legal blocks,
+  defending life, public responses and their coverage. This mode assumes ordinary
+  combat damage without abilities such as trample, and gives damage and response
+  coverage within the submitted model.
+
+The equivalent product API paths under `/api/playtesting` are
+`POST /theory/studies`, `GET /theory/studies/{studyId}` and `POST /theory/tactics`.
+The study anchor is `{gameId, archiveRevision, cursor, seatId}` for an action in a
+completed match. The same account can find saved links in that action’s annotation
+through `theoryStudies`.
+
+A linked study with an explicit `position` checks the acting seat, turn, hand
+card names, battlefield lands and their tapped status in the recorded main-phase
+frame. Match a card using the printed name in `study.cards[].name`, or use its
+ID as the name. The result includes the recorded frame quality. Mana abilities,
+land-drop availability, library setup and opponent replies are model assumptions.
+A linked study without `position` is an illustrative hypothesis. The service
+stores aggregate results, with no replay snapshots, submitted study definition
+or individual samples.
