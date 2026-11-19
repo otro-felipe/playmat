@@ -27,6 +27,7 @@ import mage.filter.predicate.permanent.ControllerIdPredicate;
 import mage.game.Game;
 import mage.game.trace.DecisionLog;
 import mage.game.trace.ReplayDecision;
+import mage.game.trace.ReplayPrompt;
 import mage.game.GameImpl;
 import mage.game.combat.CombatGroup;
 import mage.game.draft.Draft;
@@ -54,6 +55,7 @@ import java.io.Serializable;
 import java.util.List;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import static mage.constants.PlayerAction.REQUEST_AUTO_ANSWER_RESET_ALL;
@@ -570,13 +572,25 @@ public class HumanPlayer extends PlayerImpl {
             }
 
             prepareForResponse(game);
+            Consumer<ReplayPrompt.Answer> replay = ReplayPrompt.NO_CAPTURE;
+            String yes = trueText == null ? "Yes" : trueText;
+            String no = falseText == null ? "No" : falseText;
             if (!isExecutingMacro()) {
+                // Null-source confirmations are engine controls unless the caller supplies a rules source.
+                if (source != null) {
+                    Map<String, String> answers = new LinkedHashMap<>();
+                    answers.put("yes", yes);
+                    answers.put("no", no);
+                    replay = ReplayPrompt.labels(game, this, source, ReplayPrompt.Kind.USE, message, answers);
+                }
                 game.fireAskPlayerEvent(playerId, messageToClient, source, options);
             }
             waitForResponse(game);
 
             if (response.getBoolean() != null) {
-                return response.getBoolean();
+                boolean accepted = response.getBoolean();
+                replay.accept(ReplayPrompt.Answer.option(accepted ? "yes" : "no", accepted ? yes : no));
+                return accepted;
             }
         }
 
@@ -671,8 +685,11 @@ public class HumanPlayer extends PlayerImpl {
 
         while (canRespond()) {
             prepareForResponse(game);
+            Consumer<ReplayPrompt.Answer> replay = ReplayPrompt.NO_CAPTURE;
             if (!isExecutingMacro()) {
                 replacementEffectChoice.onChooseStart(game, playerId);
+                replay = ReplayPrompt.labels(game, this, null, ReplayPrompt.Kind.REPLACEMENT,
+                        replacementEffectChoice.getMessage(), replacementEffectChoice.getKeyChoices());
                 game.fireChooseChoiceEvent(playerId, replacementEffectChoice);
             }
             waitForResponse(game);
@@ -697,6 +714,7 @@ public class HumanPlayer extends PlayerImpl {
                     int index = 0;
                     for (String key : effectsMap.keySet()) {
                         if (replacementEffectChoice.getChoiceKey().equals(key)) {
+                            replay.accept(ReplayPrompt.Answer.option(key, replacementEffectChoice.getChoiceValue()));
                             replacementEffectChoice.onChooseEnd(game, playerId, replacementEffectChoice.getChoiceKey());
                             return index;
                         }
@@ -750,8 +768,12 @@ public class HumanPlayer extends PlayerImpl {
 
         while (canRespond()) {
             prepareForResponse(game);
+            Consumer<ReplayPrompt.Answer> replay = ReplayPrompt.NO_CAPTURE;
             if (!isExecutingMacro()) {
                 choice.onChooseStart(game, playerId);
+                if (!choice.isManaColorChoice()) {
+                    replay = ReplayPrompt.choices(game, this, choice);
+                }
                 game.fireChooseChoiceEvent(playerId, choice);
             }
             waitForResponse(game);
@@ -763,10 +785,17 @@ public class HumanPlayer extends PlayerImpl {
                 } else {
                     choice.setChoice(val);
                 }
+                String selected = choice.isKeyChoice() ? choice.getChoiceValue() : choice.getChoice();
+                if (choice.isChosen() && selected != null && (choice.isKeyChoice() ? val.equals(choice.getChoiceKey()) : val.equals(selected))) {
+                    replay.accept(ReplayPrompt.Answer.option(val, selected));
+                }
                 choice.onChooseEnd(game, playerId, val);
                 return true;
             } else if (!choice.isRequired()) {
                 // cancel
+                if (response.hasAnswer()) {
+                    replay.accept(ReplayPrompt.Answer.decline());
+                }
                 choice.onChooseEnd(game, playerId, null);
                 return false;
             }
@@ -797,6 +826,8 @@ public class HumanPlayer extends PlayerImpl {
             return false;
         }
 
+        Consumer<ReplayPrompt.Answer> replay = null;
+        boolean submitted = false;
         while (canRespond()) {
 
             boolean required = target.isRequiredExplicitlySet() ? target.isRequired() : target.isRequired(source != null ? source.getSourceId() : null, game);
@@ -828,6 +859,9 @@ public class HumanPlayer extends PlayerImpl {
 
                 prepareForResponse(game);
                 if (!isExecutingMacro()) {
+                    if (replay == null) {
+                        replay = ReplayPrompt.targets(game, this, source, target, possibleTargets, null);
+                    }
                     game.fireSelectTargetEvent(getId(), new MessageToClient(target.getMessage(game), getRelatedObjectName(source, game)), possibleTargets, required, getOptions(target, options, source));
                 }
                 waitForResponse(game);
@@ -847,10 +881,12 @@ public class HumanPlayer extends PlayerImpl {
                 if (possibleTargets.contains(responseId)) {
                     target.add(responseId, game);
                     if (target.isChoiceCompleted(abilityControllerId, source, game, null)) {
+                        commitReplayTargets(replay, target);
                         return true;
                     }
                 }
             } else {
+                submitted = response.hasAnswer();
                 // done or cancel button pressed
                 if (target.isChosen(game)) {
                     break;
@@ -864,7 +900,11 @@ public class HumanPlayer extends PlayerImpl {
             // continue to next target
         }
 
-        return target.isChosen(game) && target.getTargets().size() > 0;
+        boolean chosen = target.isChosen(game) && target.getTargets().size() > 0;
+        if (submitted && (chosen || target.getTargets().isEmpty())) {
+            commitReplayTargets(replay, target);
+        }
+        return chosen;
     }
 
     @Override
@@ -882,6 +922,8 @@ public class HumanPlayer extends PlayerImpl {
             return false;
         }
 
+        Consumer<ReplayPrompt.Answer> replay = null;
+        boolean submitted = false;
         while (canRespond()) {
             Set<UUID> possibleTargets = target.possibleTargets(abilityControllerId, source, game);
 
@@ -905,6 +947,9 @@ public class HumanPlayer extends PlayerImpl {
 
                 prepareForResponse(game);
                 if (!isExecutingMacro()) {
+                    if (replay == null) {
+                        replay = ReplayPrompt.targets(game, this, source, target, possibleTargets, null);
+                    }
                     game.fireSelectTargetEvent(getId(), new MessageToClient(target.getMessage(game), getRelatedObjectName(source, game)),
                             possibleTargets, required, getOptions(target, options, source));
                 }
@@ -923,10 +968,12 @@ public class HumanPlayer extends PlayerImpl {
                 if (possibleTargets.contains(responseId)) {
                     target.addTarget(responseId, source, game);
                     if (target.isChoiceCompleted(abilityControllerId, source, game, null)) {
+                        commitReplayTargets(replay, target);
                         return true;
                     }
                 }
             } else {
+                submitted = response.hasAnswer();
                 // done or cancel button pressed
                 if (target.isChosen(game)) {
                     // try to finish
@@ -940,7 +987,17 @@ public class HumanPlayer extends PlayerImpl {
             }
         }
 
-        return target.isChosen(game) && target.getTargets().size() > 0;
+        boolean chosen = target.isChosen(game) && target.getTargets().size() > 0;
+        if (submitted && (chosen || target.getTargets().isEmpty())) {
+            commitReplayTargets(replay, target);
+        }
+        return chosen;
+    }
+
+    private void commitReplayTargets(Consumer<ReplayPrompt.Answer> replay, Target target) {
+        if (replay != null && replay != ReplayPrompt.NO_CAPTURE) {
+            replay.accept(ReplayPrompt.Answer.selection(target.getTargets()));
+        }
     }
 
     private Map<String, Serializable> getOptions(Target target, Map<String, Serializable> options, Ability source) {
@@ -980,6 +1037,8 @@ public class HumanPlayer extends PlayerImpl {
             return false;
         }
 
+        Consumer<ReplayPrompt.Answer> replay = null;
+        boolean submitted = false;
         while (canRespond()) {
             Set<UUID> possibleTargets = target.possibleTargets(abilityControllerId, source, game, cards);
 
@@ -1011,6 +1070,9 @@ public class HumanPlayer extends PlayerImpl {
 
                 prepareForResponse(game);
                 if (!isExecutingMacro()) {
+                    if (replay == null) {
+                        replay = ReplayPrompt.targets(game, this, source, target, possibleTargets, cards);
+                    }
                     game.fireSelectTargetEvent(playerId, new MessageToClient(target.getMessage(game)), cards, required, options);
                 }
                 waitForResponse(game);
@@ -1029,12 +1091,14 @@ public class HumanPlayer extends PlayerImpl {
                 if (possibleTargets.contains(responseId)) {
                     target.add(responseId, game);
                     if (target.isChoiceCompleted(abilityControllerId, source, game, cards)) {
+                        commitReplayTargets(replay, target);
                         return true;
                     }
                 }
 
                 // continue to next target (example: auto-choose must fill min/max = 2 from 2 possible cards)
             } else {
+                submitted = response.hasAnswer();
                 // done or cancel button pressed
                 if (target.isChosen(game)) {
                     // try to finish
@@ -1048,7 +1112,11 @@ public class HumanPlayer extends PlayerImpl {
             }
         }
 
-        return target.isChosen(game) && target.getTargets().size() > 0;
+        boolean chosen = target.isChosen(game) && target.getTargets().size() > 0;
+        if (submitted && (chosen || target.getTargets().isEmpty())) {
+            commitReplayTargets(replay, target);
+        }
+        return chosen;
     }
 
     // choose one or multiple target cards
@@ -1069,6 +1137,8 @@ public class HumanPlayer extends PlayerImpl {
             return false;
         }
 
+        Consumer<ReplayPrompt.Answer> replay = null;
+        boolean submitted = false;
         while (canRespond()) {
 
             boolean required = target.isRequiredExplicitlySet() ? target.isRequired() : target.isRequired(source != null ? source.getSourceId() : null, game);
@@ -1104,6 +1174,9 @@ public class HumanPlayer extends PlayerImpl {
 
                 prepareForResponse(game);
                 if (!isExecutingMacro()) {
+                    if (replay == null) {
+                        replay = ReplayPrompt.targets(game, this, source, target, possibleTargets, cards);
+                    }
                     game.fireSelectTargetEvent(playerId, new MessageToClient(target.getMessage(game), getRelatedObjectName(source, game)), cards, required, options);
                 }
                 waitForResponse(game);
@@ -1122,10 +1195,12 @@ public class HumanPlayer extends PlayerImpl {
                 if (possibleTargets.contains(responseId)) {
                     target.addTarget(responseId, source, game);
                     if (target.isChoiceCompleted(abilityControllerId, source, game, cards)) {
+                        commitReplayTargets(replay, target);
                         return true;
                     }
                 }
             } else {
+                submitted = response.hasAnswer();
                 // done or cancel button pressed
                 if (target.isChosen(game)) {
                     // try to finish
@@ -1141,7 +1216,11 @@ public class HumanPlayer extends PlayerImpl {
             // continue to next target
         }
 
-        return target.isChosen(game) && target.getTargets().size() > 0;
+        boolean chosen = target.isChosen(game) && target.getTargets().size() > 0;
+        if (submitted && (chosen || target.getTargets().isEmpty())) {
+            commitReplayTargets(replay, target);
+        }
+        return chosen;
     }
 
     @Override
@@ -1707,8 +1786,16 @@ public class HumanPlayer extends PlayerImpl {
 
             macroTriggeredSelectionFlag = true;
             prepareForResponse(game);
+            Consumer<ReplayPrompt.Answer> replay = ReplayPrompt.NO_CAPTURE;
+            Map<UUID, String> offered = new LinkedHashMap<>();
             if (!isExecutingMacro()) {
-                game.fireSelectTargetTriggeredAbilityEvent(playerId, "Pick triggered ability (goes to the stack first)", abilitiesWithNoOrderSet);
+                String prompt = "Pick triggered ability (goes to the stack first)";
+                for (TriggeredAbility ability : abilitiesWithNoOrderSet) {
+                    MageObject origin = game.getObject(ability.getSourceId());
+                    offered.put(ability.getId(), ability.getRule(origin == null ? null : origin.getName()));
+                }
+                replay = ReplayPrompt.labels(game, this, null, ReplayPrompt.Kind.ABILITY, prompt, offered);
+                game.fireSelectTargetTriggeredAbilityEvent(playerId, prompt, abilitiesWithNoOrderSet);
             }
             waitForResponse(game);
 
@@ -1725,6 +1812,7 @@ public class HumanPlayer extends PlayerImpl {
                             logger.debug("Adding Triggered Ability Source: " + tResponse);
                         }
                         macroTriggeredSelectionFlag = false;
+                        replay.accept(ReplayPrompt.Answer.option(ability.getId().toString(), offered.get(ability.getId())));
                         return ability;
                     }
                 }
@@ -2313,7 +2401,9 @@ public class HumanPlayer extends PlayerImpl {
         int xValue = min;
         while (canRespond()) {
             prepareForResponse(game);
+            Consumer<ReplayPrompt.Answer> replay = ReplayPrompt.NO_CAPTURE;
             if (!isExecutingMacro()) {
+                replay = ReplayPrompt.amount(game, this, source, message, min, max);
                 game.fireGetAmountEvent(playerId, message + CardUtil.getSourceLogName(game, source), min, max);
             }
             waitForResponse(game);
@@ -2327,6 +2417,7 @@ public class HumanPlayer extends PlayerImpl {
                 continue;
             }
 
+            replay.accept(ReplayPrompt.Answer.option("range", Integer.toString(xValue)));
             break;
         }
 
@@ -2722,7 +2813,11 @@ public class HumanPlayer extends PlayerImpl {
             }
 
             prepareForResponse(game);
+            Consumer<ReplayPrompt.Answer> replay = ReplayPrompt.NO_CAPTURE;
             if (!isExecutingMacro()) {
+                Map<UUID, String> rulesModes = new LinkedHashMap<>(modeMap);
+                rulesModes.remove(Modes.CHOOSE_OPTION_CANCEL_ID);
+                replay = ReplayPrompt.labels(game, this, source, ReplayPrompt.Kind.MODE, message, rulesModes);
                 game.fireGetModeEvent(playerId, message, source.getSourceId(), modeMap);
             }
             waitForResponse(game);
@@ -2737,12 +2832,14 @@ public class HumanPlayer extends PlayerImpl {
                     if (responseMode.getId().equals(responseId)) {
                         // TODO: add checks on 2x selects (cheaters can rewrite client side code and select same mode multiple times)
                         // reason: wrong setup eachModeMoreThanOnce and eachModeOnlyOnce in many cards
+                        replay.accept(ReplayPrompt.Answer.option(responseId.toString(), modeMap.get(responseId)));
                         return responseMode;
                     }
                 }
 
                 // end choice by done option in ability pickup dialog
                 if (canEndChoice && Modes.CHOOSE_OPTION_DONE_ID.equals(responseId)) {
+                    replay.accept(ReplayPrompt.Answer.option(responseId.toString(), modeMap.get(responseId)));
                     done = true;
                 }
 
@@ -2774,12 +2871,16 @@ public class HumanPlayer extends PlayerImpl {
 
         while (canRespond()) {
             prepareForResponse(game);
+            Consumer<ReplayPrompt.Answer> replay = ReplayPrompt.NO_CAPTURE;
             if (!isExecutingMacro()) {
+                replay = ReplayPrompt.piles(game, this, message, pile1, pile2);
                 game.fireChoosePileEvent(playerId, message, pile1, pile2);
             }
             waitForResponse(game);
 
             if (response.getBoolean() != null) {
+                boolean first = response.getBoolean();
+                replay.accept(ReplayPrompt.Answer.option(first ? "first" : "second", first ? "Pile 1" : "Pile 2"));
                 break;
             }
         }

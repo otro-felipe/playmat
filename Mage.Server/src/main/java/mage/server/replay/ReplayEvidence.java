@@ -17,6 +17,7 @@ import mage.game.events.GameEvent;
 import mage.game.stack.Spell;
 import mage.game.stack.StackObject;
 import mage.game.trace.ReplayDecision;
+import mage.game.trace.ReplayPrompt;
 import mage.players.Player;
 import mage.server.websocket.rpc.JsonCodec;
 import mage.target.Target;
@@ -24,6 +25,7 @@ import mage.util.RandomUtil;
 import mage.view.GameView;
 
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -116,6 +118,99 @@ final class ReplayEvidence {
             result.add(allowed);
         }
         return result;
+    }
+
+    static final class PreparedPrompt {
+        final JsonObject row;
+        final Map<String, String> optionIds;
+
+        PreparedPrompt(JsonObject row, Map<String, String> optionIds) {
+            this.row = row;
+            this.optionIds = optionIds;
+        }
+    }
+
+    static PreparedPrompt prompt(Game game, ReplayPrompt offered, int frameCursor, long elapsed) {
+        JsonObject row = new JsonObject();
+        row.addProperty("kind", "action");
+        row.addProperty("action", "select");
+        row.addProperty("t", elapsed);
+        row.addProperty("actorPlayerId", offered.actorId.toString());
+        row.addProperty("decisionPlayerId", offered.chooserId.toString());
+        row.addProperty("turn", game.getTurnNum());
+        if (game.getState().getTurnStepType() != null) {
+            row.addProperty("step", game.getState().getTurnStepType().name());
+        }
+        row.addProperty("preActionCursor", frameCursor);
+        if (offered.sourceId != null) {
+            row.addProperty("sourceId", offered.sourceId.toString());
+        }
+        if (offered.parentActionId != null) {
+            row.addProperty("parentActionId", offered.parentActionId.toString());
+        }
+        JsonObject context = new JsonObject();
+        context.addProperty("choiceKind", offered.kind.name().toLowerCase(Locale.ROOT));
+        context.addProperty("prompt", offered.prompt);
+        context.addProperty("optionCount", offered.optionCount);
+        JsonArray options = new JsonArray();
+        JsonArray labels = new JsonArray();
+        JsonArray cards = new JsonArray();
+        Map<String, String> ids = new LinkedHashMap<>();
+        for (ReplayPrompt.Option option : offered.options) {
+            JsonObject detail = new JsonObject();
+            String id = option.card != null ? option.card.getId().toString()
+                    : option.playerId != null ? option.playerId.toString() : "option-" + (ids.size() + 1);
+            ids.put(option.id, id);
+            detail.addProperty("id", id);
+            if (option.label != null) {
+                detail.addProperty("label", option.label);
+                labels.add(option.label);
+            }
+            if (option.card != null) {
+                JsonObject ref = cardRef(option.card, option.card.getId());
+                detail.add("card", ref);
+                cards.add(ref);
+            }
+            if (option.playerId != null) {
+                detail.addProperty("playerId", option.playerId.toString());
+            }
+            options.add(detail);
+        }
+        context.add("options", labels);
+        context.add("optionDetails", options);
+        context.add("cards", cards);
+        row.add("decision", context);
+        return new PreparedPrompt(row, ids);
+    }
+
+    static void applyPromptAnswer(Game game, PreparedPrompt prepared, ReplayPrompt.Answer answer) {
+        JsonObject context = prepared.row.getAsJsonObject("decision");
+        if (!answer.selectedIds.isEmpty()) {
+            UUID first = answer.selectedIds.get(0);
+            context.addProperty("selectedId", first.toString());
+            JsonArray ids = new JsonArray();
+            for (UUID id : answer.selectedIds) {
+                ids.add(id.toString());
+            }
+            context.add("selectedIds", ids);
+            if (answer.selectedIds.size() == 1 && game.getPlayer(first) != null) {
+                prepared.row.addProperty("affectedPlayerId", first.toString());
+            }
+        }
+        JsonArray selected = new JsonArray();
+        for (String key : answer.selections) {
+            String id = prepared.optionIds.get(key);
+            if (id != null) {
+                selected.add(id);
+            }
+        }
+        context.add("selectedOptionIds", selected);
+        if (answer.text != null) {
+            context.addProperty("selectedText", answer.text);
+        }
+        if (answer.declined) {
+            context.addProperty("declined", true);
+        }
     }
 
     static JsonObject decision(Game game, ReplayDecision committed, long elapsed) {

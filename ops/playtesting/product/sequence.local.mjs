@@ -8,7 +8,7 @@ import { createProduct } from './product.mjs'
 import { PlaymatEngineSeat } from '../mcp/src/engine-seat.mjs'
 import { mayDriveRival } from './sequence-driver.mjs'
 import { verifyTypedManaTalent } from './mana-semantics.local.mjs'
-import { verifyDiscardChoiceCapture, verifyHumanReplayCapture, verifyReplayCapture } from './replay-capture.local.mjs'
+import { verifyDiscardChoiceCapture, verifyHumanReplayCapture, verifyModeAndUseCapture, verifyReplayCapture } from './replay-capture.local.mjs'
 import { verifyReplayReviewOverMcp } from './replay-review.local.mjs'
 
 if (process.env.PLAYMAT_SEQUENCE_LOCAL_TEST !== 'yes'
@@ -212,7 +212,7 @@ async function playPreparedTurnDecisionByDecision(state, { hangoutId, actId, att
   return state
 }
 
-async function verifyPreparedModeLine(mode) {
+async function verifyPreparedModeLine(mode, verifyArchive = false) {
   let state = await startFixture('Isolated prepare and modal acceptance: ' + mode, prepareDeck, 77)
   const battlemage = state => ownPlayer(state).battlefield.find(card => card.name === 'Pompous Battlemage')
   const hangout = state => state.ownHand.find(card => card.name === "Heroes' Hangout")
@@ -289,6 +289,7 @@ async function verifyPreparedModeLine(mode) {
   console.log(JSON.stringify({ phase: 'PM-LINE-FLOW-1 PM-LINE-FLOW-2 real Java', mode,
     status: receipt.status, toolTrips: toolTrips - startTrips, appliedDecisions: receipt.appliedDecisions, elapsedMs: Math.round(performance.now() - started) }))
   await call('concede', { gameId: state.gameId, entireMatch: true })
+  if (verifyArchive) await verifyModeAndUseCapture(state.gameId, totalDeadline)
 }
 try {
   const product = await createProduct({ databaseUrl: process.env.DATABASE_URL })
@@ -322,9 +323,10 @@ try {
     const humanCapture = await verifyHumanReplayCapture({ startHumanReviewFixture, totalDeadline })
     await verifyReplayReviewOverMcp({ capture, humanCapture, Client, StreamableHTTPClientTransport, token })
     await verifyDiscardChoiceCapture({ startFixture, ownPlayer, rivalPlayer, call, answer, waitNextOwn, totalDeadline })
+    if (scenarios === 'review') await verifyPreparedModeLine('Patrol Night', true)
   }
   if (scenarios !== 'review') {
-    await verifyPreparedModeLine('Patrol Night')
+    await verifyPreparedModeLine('Patrol Night', scenarios === 'all')
     await verifyPreparedModeLine('Date Night')
     await verifyPreparedModeLine('Improvised Act Yes')
     await verifyPreparedModeLine('Low-level control')

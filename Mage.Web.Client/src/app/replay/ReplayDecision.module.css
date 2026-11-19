@@ -128,6 +128,15 @@
   background: var(--mat-600);
 }
 
+.contextCards [data-selected] {
+  box-shadow: inset 0 0 0 1px var(--decision);
+}
+
+.chosen {
+  color: var(--decision);
+  font-size: var(--text-xs);
+}
+
 .markers {
   position: relative;
   min-height: 24px;

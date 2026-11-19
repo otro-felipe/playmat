@@ -120,7 +120,7 @@ public class LondonMulligan extends Mulligan {
 
         while (player.canRespond() && player.getHand().size() > newHandSize) {
             Target target = new TargetCardInHand(new FilterCard("card (" + (player.getHand().size() - newHandSize) + " more) to put on the bottom of your library"));
-            player.chooseTarget(Outcome.Discard, target, null, game);
+            ReplayDecision.specificChoice(game, () -> player.chooseTarget(Outcome.Discard, target, null, game));
             ReplayDecision.mulliganBottom(game, player, target.getTargets());
             player.putCardsOnBottomOfLibrary(new CardsImpl(target.getTargets()), game, null, true);
         }

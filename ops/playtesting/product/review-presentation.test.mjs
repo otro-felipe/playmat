@@ -221,3 +221,82 @@ test('[PM-REVIEW-CAPTURE-4] a committed typed discard choice supersedes the sing
   const acting = await read({ purpose: 'analysis', seatId: 'alice' })
   assert.deepEqual(acting.events[0].decision.selectedIds, [card.id])
 })
+
+test('[PM-REVIEW-CAPTURE-5] generic choices retain opaque options and selections in authorized views only', async () => {
+  const source = randomUUID()
+  const target = randomUUID()
+  const option = { id: 'option-0', label: 'Private option description', card: { id: target, name: 'Private option card' } }
+  const { read, alice, bob } = fixture(({ alice, bob, frame }) => ({
+    rows: [frame(),
+      { kind: 'action', action: 'select', actorPlayerId: bob.playerId, decisionPlayerId: alice.playerId, affectedPlayerId: bob.playerId,
+        sourceId: source, decision: { choiceKind: 'search', prompt: 'Choose one', optionDetails: [option], selectedOptionIds: ['option-0'],
+          selectedText: 'Private chosen name', optionCount: 1, declined: false, arbitraryHiddenKey: 'unprojected sentinel' } }],
+  }))
+  const own = (await read({ purpose: 'analysis', seatId: 'alice' })).events[0]
+  const complete = (await read({ purpose: 'replay', scope: 'full' })).events.find(event => event.type === 'action')
+  const publicEvent = (await read(analysisList)).events[0]
+  const affected = (await read({ purpose: 'replay', scope: 'seat', seatId: 'bob' })).events.find(event => event.type === 'action')
+  assert.equal(own.decisionActorPlayerId, alice.playerId)
+  assert.equal(own.affectedPlayerId, bob.playerId)
+  assert.equal(own.decision.choiceKind, 'search')
+  assert.equal(own.decision.sourceId, source)
+  assert.equal(own.decision.id, complete.decision.id)
+  assert.deepEqual(own.decision.optionDetails, [option])
+  assert.deepEqual(own.decision.selectedOptionIds, ['option-0'])
+  assert.equal(own.decision.selectedText, 'Private chosen name')
+  assert.equal(own.decision.declined, false)
+  assert.equal(own.decision.optionCount, 1)
+  assert.equal(publicEvent.hasDecisionContext, true)
+  for (const event of [publicEvent, affected]) {
+    assert.equal(event.decision, undefined)
+    assert.equal(event.decisions, undefined)
+    assert.doesNotMatch(JSON.stringify(event), /Private|unprojected sentinel/)
+    assert.equal(JSON.stringify(event).includes(source), false)
+  }
+  assert.doesNotMatch(JSON.stringify(own), /unprojected sentinel/)
+})
+
+test('[PM-REVIEW-CAPTURE-5] an archived public stack source enriches a resolution choice before the answer', async () => {
+  const spell = randomUUID()
+  const source = randomUUID()
+  const { read } = fixture(({ alice, frame }) => ({
+    rows: [
+      frame({ stack: { [spell]: { ...asCard(spell, 'Source spell'), cardId: source } } }),
+      { kind: 'action', action: 'select', actorPlayerId: alice.playerId, sourceId: source, preActionCursor: 0,
+        decision: { choiceKind: 'use', options: ['Yes', 'No'], selectedText: 'No' } },
+    ],
+  }))
+  const { events } = await read({ purpose: 'analysis', seatId: 'alice' })
+  assert.deepEqual(events[0].decision.sourceCard, { id: source, name: 'Source spell', setCode: 'FDN', cardNumber: '192' })
+  assert.equal(events[0].actual.sourceId, undefined)
+})
+
+test('[PM-REVIEW-CAPTURE-5] announcement choices attach to the exact committed action and cancelled attempts stay out', async () => {
+  const cast = randomUUID()
+  const cancelled = randomUUID()
+  const { read } = fixture(({ alice, frame }) => {
+    const decision = (choiceKind, parentActionId, label) => ({ kind: 'action', action: 'select',
+      actorPlayerId: alice.playerId, decisionPlayerId: alice.playerId, ...(parentActionId ? { parentActionId } : {}),
+      decision: { choiceKind, optionDetails: [{ id: 'option-0', label }],
+        selectedOptionIds: choiceKind === 'mode' ? ['option-0', 'option-0', 'option-0'] : ['option-0'] } })
+    return { rows: [
+      frame(),
+      decision('mode', cast, 'Choose mode one'),
+      decision('target', cast, 'Target a permanent'),
+      decision('mode', cancelled, 'Cancelled attempt sentinel'),
+      { kind: 'action', action: 'cast', actorPlayerId: alice.playerId, objectId: cast, card: { id: randomUUID(), name: 'Modal spell' } },
+      frame(),
+      decision('use', undefined, 'Resolution decision'),
+    ] }
+  })
+  const { events } = await read({ purpose: 'analysis', seatId: 'alice' })
+  assert.deepEqual(events.map(({ cursor }) => cursor), [4, 6])
+  assert.deepEqual(events[0].decisions.map(({ choiceKind }) => choiceKind), ['mode', 'target'])
+  assert.deepEqual(events[0].decisions[0].selectedOptionIds, ['option-0', 'option-0', 'option-0'])
+  assert.equal(new Set(events[0].decisions.map(({ id }) => id)).size, 2)
+  assert.equal(events[1].decision.choiceKind, 'use')
+  assert.doesNotMatch(JSON.stringify(events), /Cancelled attempt sentinel/)
+  const publicPage = await read(analysisList)
+  assert.equal(publicPage.events[0].hasDecisionContext, true)
+  assert.equal(publicPage.events[0].decisions, undefined)
+})

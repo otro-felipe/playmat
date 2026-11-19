@@ -3,6 +3,9 @@ import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 
 const mimeType = 'text/markdown';
+const readGuide = (name) => readFileSync(new URL(`../guides/${name}.md`, import.meta.url), 'utf8').trimEnd();
+const matchupStrategy = readGuide('matchup-strategy');
+const usesMatchupStrategy = new Set(['card-catalog', 'replay-analysis']);
 const guides = [
   {
     name: 'getting-started', title: 'Start a Playmat match',
@@ -27,7 +30,7 @@ const guides = [
 ].map(({ name, ...metadata }) => ({
   name, ...metadata, mimeType,
   uri: `playmat://guides/${name}`,
-  text: readFileSync(new URL(`../guides/${name}.md`, import.meta.url), 'utf8'),
+  text: usesMatchupStrategy.has(name) ? `${readGuide(name)}\n\n${matchupStrategy}\n` : `${readGuide(name)}\n`,
 }));
 const GuideId = z.enum(guides.map(({ name }) => name));
 const guideList = guides.map(({ text, ...guide }) => guide);
@@ -42,7 +45,7 @@ export const guideBootstrap = 'Before creating, joining or playing a match, call
 
 export const sequenceInstructions = 'Prefer play_line for the longest justified line. Legacy play_sequence and submit_sequence accept guarded engine steps, return turn_changed across a turn boundary and never treat land drops as ignorable responses. The standalone pass_until actively declines optional responses through rival actions in the current turn. Use a guarded line when a rival action should return control. Inspect the legacy sequence receipt and current state after interruptions.';
 
-export const chatInstructions = 'Follow the host chatMode: quiet has no unsolicited commentary; chatty is friendly conversation without tactical coaching. When chatMode is coach, be warm, specific and lightly playful in the player’s language. During the human’s turn, flag at most one genuinely strong opportunity only when current public evidence supports its legal sequence and concrete benefit. After each completed human turn, give one short review: a concretely better alternative and why, judged from what was known before the decision, or a specific, qualified acknowledgement of a reasonable line. If observations are incomplete, say so instead of inventing superiority or praise. Coach mode grants no hand access: do not inspect hidden/debug/private-library data, use your own hidden cards to select advice, or repeat private lookedAt information in chat. Use only public facts or information the human knowingly shared for this coaching audience; unseen draws and later reveals cannot justify hindsight. Resolve your pending engine decision first; commentary never answers, pauses or extends a deadline. Keep it to one to three sentences, avoid repeated reviews after polling/reconnects, and skip unavailable chat without delaying play. Read the coaching procedure and examples in getting-started.';
+export const chatInstructions = 'Follow the host chatMode: quiet has no unsolicited commentary; chatty is friendly conversation without tactical coaching. When chatMode is coach, be warm, specific and lightly playful in the player’s language. During the human’s turn, flag at most one genuinely strong opportunity only when current public evidence supports its legal sequence and concrete benefit. After each completed human turn, give one short review: a concretely better alternative and why, judged from what was known before the decision, or a specific, qualified acknowledgement of a reasonable line. If observations are incomplete, say so instead of inventing superiority or praise. Coach mode grants no hand access: do not inspect hidden/debug/private-library data, use your own hidden cards to select advice, or repeat private lookedAt information in chat. Use only public facts or information the human knowingly shared for this coaching audience; unseen draws and later reveals cannot justify hindsight. Resolve your pending engine decision first; commentary never answers, pauses or extends a deadline. Keep it to one to three sentences, avoid repeated reviews after polling/reconnects, and skip unavailable chat without delaying play. Read the coaching procedure in getting-started and apply the same matchup strategy from card-catalog to play and coaching.';
 
 export const guideInstructions = [
   guideBootstrap,

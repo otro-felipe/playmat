@@ -42,14 +42,14 @@ export function RatingCounts({ counts }: { counts: ReviewCounts }) {
   ) : null;
 }
 
-export function ReplayReviewPanel({ analysis, sideboardDelta, moments, current, annotation, decision, decisionContext, missingDecisionHand, showRetrospective, onMoment, onPrevious, onNext, loading, error, onRetry }: {
+export function ReplayReviewPanel({ analysis, sideboardDelta, moments, current, annotation, decision, decisionContexts, missingDecisionHand, showRetrospective, onMoment, onPrevious, onNext, loading, error, onRetry }: {
   analysis?: ReviewSummary;
   sideboardDelta?: SideboardDelta;
   moments: readonly ReviewMoment[];
   current?: number;
   annotation?: ReviewAnnotation;
   decision?: ReviewMoment;
-  decisionContext?: ReviewDecisionContext;
+  decisionContexts: ReviewDecisionContext[];
   missingDecisionHand: boolean;
   showRetrospective: boolean;
   onMoment: (moment: ReviewMoment) => void;
@@ -62,7 +62,7 @@ export function ReplayReviewPanel({ analysis, sideboardDelta, moments, current, 
   const t = useT();
   const handDecision = decision?.actual?.kind === 'mulligan' || decision?.actual?.kind === 'keep';
   const context = <>
-    {decisionContext && <DecisionContext context={decisionContext} handDecision={handDecision} />}
+    {decisionContexts.map((step, index) => <DecisionContext key={step.id ?? index} context={step} handDecision={handDecision} />)}
     {missingDecisionHand && <p className={styles.muted}>{t('replay.context.missingHand')}</p>}
   </>;
   return (

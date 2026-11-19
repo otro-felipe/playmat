@@ -191,6 +191,12 @@ test('[PM-REVIEW-API-8] replay prompt includes matchup research, omissions and a
   assert.match(text, /inferred omission/i);
   assert.match(text, /Wrenn.s Resolve/);
   assert.match(text, /https:\/\/magic.wizards.com\/en\/news\/feature\/role-assignment-2015-01-05/);
+  const playerGuide = (await call(client, 'get_guide', { guideId: 'card-catalog' })).value.text;
+  const coachGuide = (await call(client, 'get_guide', { guideId: 'getting-started' })).value.text;
+  const marker = '# Shared matchup strategy';
+  assert.ok(playerGuide.includes(marker));
+  assert.equal(playerGuide.slice(playerGuide.indexOf(marker)).trim(), text.slice(text.indexOf(marker)).trim());
+  assert.match(coachGuide, /same matchup strategy in.*card-catalog/i);
 });
 
 test('[PM-LINE-04] one bootstrap returns all four complete guides without opening a seat', async (t) => {

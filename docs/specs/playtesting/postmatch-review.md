@@ -14,6 +14,8 @@ Private Playmat participants can revisit a completed encounter, inspect the evid
 - **PM-REVIEW-CAPTURE-3** At a protected opening decision, the completed replay records the deciding seat, keep or mulligan outcome, hand before it changes, and any committed card placement separately. A legacy keep may use the first post-keep hand when the log proves continuity before any subsequent change. Missing rejected hands remain unavailable.
 - **PM-REVIEW-CAPTURE-4** A protected choice records the actual chooser, the affected seat, source, legal choices, and selection when recorded. A priority pass preserves material opportunities and whether the pass was manual or automatic when the engine can determine that. Opening hands and private options are available only in permitted post-match perspectives.
 
+- **PM-REVIEW-CAPTURE-5** Supported shared engine prompts emit a normalized selection with their semantic kind and committed answer. A replay can explain choices for unrelated cards that use the same prompt, including modes, targets, card selections, and optional effects. When a committed move already owns the corresponding choice, review preserves the course of the move without counting a second independent decision. Protected options remain scoped to the choosing seat or authorized full view.
+
 ## Evidence and saved analysis
 
 - **PM-REVIEW-API-1** An authenticated participant can read review capabilities for an authorized match or game and query page-sized evidence by cursor or turn. Cursors remain stable across projections. Evidence explicitly identifies the archive version, coverage and whether an action was directly recorded or reconstructed from an archive observation.
@@ -25,7 +27,7 @@ Private Playmat participants can revisit a completed encounter, inspect the evid
 
 - **PM-REVIEW-API-7** The requested MCP review workflow visits the recorded decisions for both acting seats and resumes from saved annotations. It saves a rationale and comparators per supported decision and indicates when the archive cannot support a strategic grade.
 
-- **PM-REVIEW-API-8** The optional replay guide and native review prompt teach matchup research using prior games, own sideboard context, rules, and dated public sources. They distinguish observed cards, public archetype hypotheses, and later revelations. The four play guides remain a separate bootstrap bundle.
+- **PM-REVIEW-API-8** The optional replay guide and native review prompt teach matchup research using prior games, own sideboard context, rules, and dated public sources. They distinguish observed cards, public archetype hypotheses, and later revelations. The player and live coach receive the same canonical matchup strategy in the four-guide gameplay bundle. The replay prompt embeds that source with role-specific review instructions.
 - **PM-REVIEW-API-9** Review may save a material inferred omission on an observed window when the acting seat, legal comparison, and later closing evidence are supported. Review labels the inference separately from a recorded choice. Routine passes remain outside grading where no decision mattered.
 - **PM-REVIEW-API-10** A coarse snapshot can support a qualified grade when other archived observations and a credible comparator establish the material facts. Exceptional grades require an exact position. Existing annotations preserve their archive anchors and revisions when reviewed again.
 

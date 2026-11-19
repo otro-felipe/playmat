@@ -32,6 +32,14 @@ function visibleCards(view) {
   return cards
 }
 
+export function publicSourceCard(view, id) {
+  if (!isUuid(id)) return undefined
+  const exact = visibleCards(view).get(id)
+  if (exact) return exact
+  const stackEntry = Object.values(view?.stack ?? {}).find(item => item.cardId === id || item.sourceCard?.id === id)
+  return stackEntry ? cardRef(id, stackEntry) : undefined
+}
+
 function linkedCards(text) {
   return [...text.matchAll(objectTag)].flatMap(([, attributes, name]) => {
     const id = objectIdAttribute.exec(attributes)?.[1]

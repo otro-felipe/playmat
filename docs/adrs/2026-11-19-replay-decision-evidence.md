@@ -10,10 +10,10 @@ The replay records public moves and periodic board positions. Several decisions 
 
 ## Decision
 
-Record the committing seat, protected choices and a preceding frame when the engine observes a relevant opening, selection or pass. Capture context only for replays eligible for completed-match review. Preserve existing archive cursors and verify older hand context against the event order. A reviewed opportunity absent from the engine decisions can be anchored to an observed priority window with the acting seat, card reference and closing event. The saved annotation identifies it as inferred.
+Record the committing seat, protected choices and a preceding frame when the engine observes a relevant opening, selection or pass. Normalize shared engine prompts at their accepted-answer boundaries so the evidence describes the choice independently of a card name. Capture context only for replays eligible for completed-match review. Preserve existing archive cursors and verify older hand context against the event order. A reviewed opportunity absent from the engine decisions can be anchored to an observed priority window with the acting seat, card reference and closing event. The saved annotation identifies it as inferred.
 
 ## Consequences
 
 Protected opening hands and legal options use the existing authorized replay projections. Legacy recordings can support a grade when independent observations establish the relevant facts. A rejected opening hand absent from all frames remains unavailable. The engine records eligible pass opportunities, while the strategic review determines their significance in the matchup.
 
-Affected specification [Post-match replay and strategic review](../specs/playtesting/postmatch-review.md), PM-REVIEW-CAPTURE-3, PM-REVIEW-CAPTURE-4, PM-REVIEW-API-9 and PM-REVIEW-API-10. Related [Recorded hands in completed private tests](2026-11-19-post-match-hand-visibility.md).
+Affected specification [Post-match replay and strategic review](../specs/playtesting/postmatch-review.md), PM-REVIEW-CAPTURE-3, PM-REVIEW-CAPTURE-4, PM-REVIEW-CAPTURE-5, PM-REVIEW-API-9 and PM-REVIEW-API-10. Related [Recorded hands in completed private tests](2026-11-19-post-match-hand-visibility.md).

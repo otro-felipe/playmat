@@ -77,10 +77,25 @@ export interface ReviewAction {
   paidMana?: Record<string, number>;
 }
 
+interface ReviewDecisionOption {
+  id: string;
+  label?: string;
+  card?: ReviewReference;
+  playerId?: string;
+}
+
 export interface ReviewDecisionContext {
+  id?: string;
+  choiceKind?: string;
   cards?: ReviewReference[];
   selectedId?: string;
   selectedIds?: string[];
+  optionDetails?: ReviewDecisionOption[];
+  selectedOptionIds?: string[];
+  selectedText?: string;
+  declined?: boolean;
+  optionCount?: number;
+  sourceCard?: ReviewReference;
   passKind?: 'manual' | 'automatic';
   stackSize?: number;
   endsTurn?: boolean;
@@ -109,7 +124,9 @@ export interface ReviewMoment {
   actor?: string;
   seatId?: string;
   decisionActor?: string;
+  affectedActor?: string;
   decisionSeatId?: string;
+  hasDecisionContext?: boolean;
   actual?: ReviewAction;
   evidence?: ReviewEvidence;
   category?: ReviewCategory;
@@ -119,6 +136,7 @@ export interface ReviewEvent extends ReviewMoment {
   type?: string;
   actorPlayerId?: string;
   decision?: ReviewDecisionContext;
+  decisions?: ReviewDecisionContext[];
   card?: { id?: string; name?: string };
   view?: GameView;
   myHand?: Record<string, CardView> | null;

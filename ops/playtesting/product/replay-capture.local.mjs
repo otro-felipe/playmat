@@ -98,6 +98,13 @@ export async function verifyReplayCapture({ startFixture, call, ownPlayer, rival
   assert.equal(castEvent.fromZone, 'HAND')
   assert.deepEqual(castEvent.targetIds, [rivalId])
   assert.deepEqual(castEvent.paidMana, { R: 1 })
+  const announcedTarget = rows.find(row => row.action === 'select'
+    && row.parentActionId === spellId && row.decision?.choiceKind === 'target')
+  assert.equal(announcedTarget?.actorPlayerId, playerId)
+  assert.equal(announcedTarget?.decisionPlayerId, playerId)
+  assert.deepEqual(announcedTarget.decision.selectedIds, [rivalId])
+  assert.ok(announcedTarget.decision.optionDetails.some(option => option.playerId === rivalId))
+  assert.ok(rows[announcedTarget.preActionCursor]?.view, 'Target choices anchor the pre-response frame')
   for (const seatId of [playerId, rivalId]) {
     const keep = rows.find(row => row.action === 'keep' && row.actorPlayerId === seatId)
     assert.equal(keep?.decision.cards.length, 7)
@@ -243,9 +250,26 @@ export async function verifyDiscardChoiceCapture({ startFixture, ownPlayer, riva
   assert.equal(selection.actorPlayerId, chooserId)
   assert.equal(selection.affectedPlayerId, affectedId)
   assert.equal(selection.decision.selectedId, chosen.card.id)
+  assert.equal(rows.filter(row => row.action === 'select' && row.sourceId === selection.sourceId
+    && row.decision?.selectedIds?.includes(chosen.card.id)).length, 1, 'Specific forced-discard choices are recorded once')
   assert.ok(selection.decision.cards.length >= 2, 'A real selection has legal alternatives')
   assert.ok(selection.decision.cards.some(card => card.id === chosen.card.id))
   assert.ok(selection.decision.cards.every(card => card.name !== 'Mountain'))
   assert.ok(rows[selection.preActionCursor]?.view, 'The decision anchors the revealed pre-discard position')
   console.log(JSON.stringify({ phase: '[PM-REV-02] real Java discard choice', exactChooser: true, legalAlternatives: true }))
+}
+
+export async function verifyModeAndUseCapture(gameId, deadline) {
+  requireIsolatedFixture()
+  const { rows } = await archived(gameId, Math.min(deadline, Date.now() + 10_000))
+  const mode = rows.find(row => row.decision?.choiceKind === 'mode' && /Patrol Night/i.test(row.decision.selectedText ?? ''))
+  assert.ok(mode?.decision.optionDetails.some(option => /Date Night/i.test(option.label ?? '')), 'Other legal mode is preserved')
+  assert.ok(rows.some(row => row.action === 'cast' && row.objectId === mode.parentActionId), 'Modal choice is linked to its cast')
+  const use = rows.find(row => row.decision?.choiceKind === 'use'
+    && /Discard a card and draw a card/i.test(row.decision.prompt ?? ''))
+  assert.equal(use?.decision.selectedText, 'No')
+  assert.ok(use.decision.optionDetails.some(option => option.label === 'Yes'))
+  assert.equal(use.parentActionId, undefined, 'Resolution decision remains separate from the cast')
+  assert.ok(rows[use.preActionCursor]?.view, 'A resolution prompt has a real before frame')
+  console.log(JSON.stringify({ phase: '[PM-REV-02] generic choice archive', modeLinked: true, optionalChoiceSeparate: true }))
 }

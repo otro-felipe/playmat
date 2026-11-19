@@ -134,7 +134,7 @@ public class DiscardCardYouChooseTargetEffect extends OneShotEffect {
             return true;
         }
         TargetCard target = new TargetCard(optional ? 0 : numberToDiscard, numberToDiscard, Zone.HAND, filter);
-        if (!controller.choose(Outcome.Benefit, revealedCards, target, source, game)) {
+        if (!ReplayDecision.specificChoice(game, () -> controller.choose(Outcome.Benefit, revealedCards, target, source, game))) {
             return true;
         }
         ReplayDecision.discardChoice(game, controller, player, source,

@@ -13,6 +13,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -62,22 +63,71 @@ public final class ReplayDecision {
     private static final class Observer {
         final Game game;
         final Consumer<ReplayDecision> consumer;
+        final Function<ReplayPrompt, Consumer<ReplayPrompt.Answer>> prompts;
+        int specificChoice;
 
-        Observer(Game game, Consumer<ReplayDecision> consumer) {
+        Observer(Game game, Consumer<ReplayDecision> consumer, Function<ReplayPrompt, Consumer<ReplayPrompt.Answer>> prompts) {
             this.game = game;
             this.consumer = consumer;
+            this.prompts = prompts;
         }
     }
 
     public static Subscription observe(Game game, Consumer<ReplayDecision> consumer) {
-        Observer observer = new Observer(game, consumer);
+        return observe(game, consumer, ignored -> ReplayPrompt.NO_CAPTURE);
+    }
+
+    public static Subscription observe(Game game, Consumer<ReplayDecision> consumer,
+                                       Function<ReplayPrompt, Consumer<ReplayPrompt.Answer>> prompts) {
+        Observer observer = new Observer(game, consumer, prompts);
         OBSERVERS.put(game.getId(), observer);
         return () -> OBSERVERS.remove(game.getId(), observer);
     }
 
-    private static void emit(Game game, Supplier<ReplayDecision> decision) {
+    /** A rules hook with stronger semantics owns this prompt's single replay decision. */
+    public static <T> T specificChoice(Game game, Supplier<T> invoke) {
+        Observer observer = observer(game);
+        if (observer == null) {
+            return invoke.get();
+        }
+        observer.specificChoice++;
+        try {
+            return invoke.get();
+        } finally {
+            observer.specificChoice--;
+        }
+    }
+
+    private static Observer observer(Game game) {
         Observer observer = OBSERVERS.get(game.getId());
-        if (observer == null || observer.game != game || game.isSimulation() || game.hasEnded()) {
+        return observer != null && observer.game == game && !game.isSimulation() && !game.hasEnded() ? observer : null;
+    }
+
+    static Consumer<ReplayPrompt.Answer> offer(Game game, Supplier<ReplayPrompt> prompt) {
+        Observer observer = observer(game);
+        if (observer == null || observer.specificChoice > 0) {
+            return ReplayPrompt.NO_CAPTURE;
+        }
+        try {
+            Consumer<ReplayPrompt.Answer> prepared = observer.prompts.apply(prompt.get());
+            return answer -> {
+                if (observer(game) == observer && !game.executingRollback()) {
+                    try {
+                        prepared.accept(answer);
+                    } catch (RuntimeException error) {
+                        LOGGER.log(Level.WARNING, "Protected replay prompt commit failed for game {0}", game.getId());
+                    }
+                }
+            };
+        } catch (RuntimeException error) {
+            LOGGER.log(Level.WARNING, "Protected replay prompt capture failed for game {0}", game.getId());
+            return ReplayPrompt.NO_CAPTURE;
+        }
+    }
+
+    private static void emit(Game game, Supplier<ReplayDecision> decision) {
+        Observer observer = observer(game);
+        if (observer == null) {
             return;
         }
         try {

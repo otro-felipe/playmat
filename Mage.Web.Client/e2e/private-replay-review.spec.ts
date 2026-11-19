@@ -26,6 +26,13 @@ const actual = {
   modes: ['Kicker'], paidMana: { R: 1, C: 4 },
 };
 const stackBoard = { ...board, stack: { bolt: { ...ownHand.bolt, targets: ['sheoldred'] } } };
+const castAction = { type: 'action', cursor: 6, frameCursor: 5, actionFrameCursor: 7, turn: 9, actor: 'Alice',
+  seatId: 'seat-a', hasDecisionContext: true, actual, text: actual.text };
+const castMode = {
+  id: 'cast-mode', choiceKind: 'mode', optionDetails: [
+    { id: 'regular', label: 'Sin kicker' }, { id: 'kick', label: 'Pagar kicker' },
+  ], selectedOptionIds: ['kick'],
+};
 const title = 'Alice lanza Burst Lightning con Sheoldred, the Apocalypse como objetivo';
 const annotation = {
   gameId, cursor: 6, frameCursor: 5, seatId: 'seat-a', category: 'good', confidence: 'high', actual,
@@ -66,8 +73,12 @@ for (const [device, viewport] of Object.entries({ desktop: { width: 1440, height
           coverage: { partial: false, draws: 1, hands: 'both_where_recorded' },
         };
         if (url.pathname.endsWith('/annotations')) data = { annotations: [annotation, otherNote], next: null };
+        if (url.pathname.endsWith('/evidence') && url.searchParams.get('scope') === 'full'
+          && url.searchParams.get('cursor') === '6' && url.searchParams.get('count') === '1') {
+          return route.fulfill({ json: { events: [{ ...castAction, decisions: [castMode] }], next: null } });
+        }
         if (url.pathname.endsWith('/evidence')) data = { next: null, events: url.searchParams.get('scope') === 'public'
-          ? [{ type: 'action', cursor: 6, frameCursor: 5, actionFrameCursor: 7, turn: 9, actor: 'Alice', actual, text: actual.text },
+          ? [castAction,
             { type: 'action', cursor: 8, frameCursor: 7, turn: 9, actor: 'Bob', actual: otherAction, text: otherAction.text }]
           : [{ type: 'draw', cursor: 4, frameCursor: 0, actorPlayerId: playerA, card: { id: 'bolt', name: 'Burst Lightning' } },
             ...[{ cursor: 5, view: board }, { cursor: 7, view: stackBoard }].map((frame) => ({
@@ -125,6 +136,9 @@ for (const [device, viewport] of Object.entries({ desktop: { width: 1440, height
       await page.getByRole('navigation', { name: 'Momentos clave' }).getByRole('button', { name: new RegExp(title) }).click();
       await expect(page.getByText('Mantiene alcance')).toBeVisible();
       await expect(page.getByText('Confianza alta')).toBeVisible();
+      const modes = page.getByRole('region', { name: 'Modos' });
+      await expect(modes.getByText('Sin kicker')).toBeVisible();
+      await expect(modes.getByRole('listitem').filter({ hasText: 'Pagar kicker' })).toContainText('Elegida');
       if (device === 'mobile') await page.keyboard.press('ArrowRight');
       await expect(page.locator('[data-replay-cursor]')).toHaveAttribute('data-replay-cursor', '6');
       await expect(page.getByRole('region', { name: 'Evidencia previa a la jugada' })).toHaveCount(0);

@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto'
 import { projectReplayEvent } from './archive.mjs'
 import { isUuid, normalize, ProductError } from './decks.mjs'
 import { categories, createReviewAnnotations } from './review-annotations.mjs'
-import { indexReplayPresentation, publicDiscardLinks } from './review-presentation.mjs'
+import { indexReplayPresentation, publicDiscardLinks, publicSourceCard } from './review-presentation.mjs'
+import { genericChoiceKinds, indexCommittedDecisions, structuredChoice } from './review-decisions.mjs'
 import { submittedSideboardDelta } from './sideboard-delta.mjs'
 
 const pageLimit = 40
@@ -115,7 +116,8 @@ function gameHand(event, seat, typed) {
   return frameProjection(event, seat, typed)?.myHand ?? null
 }
 
-function privateDecision(event, actor, seat, scope) {
+function privateDecision(row, actor, seat, scope, sourceView) {
+  const event = row?.event
   if (!event?.decision || (scope !== 'full' && (!seat || seat.playerId !== actor))) return {}
   const { cards, selectedId, selectedIds, prompt, options, choiceKind, sourceCard, passKind, stackSize, endsTurn,
     manaPool, availableManaSources, playableCount } = event.decision
@@ -123,7 +125,7 @@ function privateDecision(event, actor, seat, scope) {
     .filter(([, value]) => Number.isSafeInteger(value) && value >= 0))
   const pool = Object.fromEntries(manaSymbols.filter(symbol => Number.isSafeInteger(manaPool?.[symbol])
     && manaPool[symbol] >= 0 && manaPool[symbol] < 1000).map(symbol => [symbol, manaPool[symbol]]))
-  const source = cardReference(sourceCard)
+  const source = cardReference(sourceCard) ?? publicSourceCard(sourceView, event.sourceId)
   const decision = {
     ...(Array.isArray(cards) ? { cards: cards.slice(0, 64).map(cardReference).filter(Boolean) } : {}),
     ...(['mulligan', 'keep'].includes(event.action) && Array.isArray(cards) ? { handKind: 'opening_choice' } : {}),
@@ -137,6 +139,7 @@ function privateDecision(event, actor, seat, scope) {
     ...(typeof endsTurn === 'boolean' ? { endsTurn } : {}),
     ...(Object.keys(pool).length ? { manaPool: pool } : {}),
     ...numericContext,
+    ...structuredChoice(row, plainText, cardReference),
   }
   return Object.keys(decision).length ? { decision } : {}
 }
@@ -150,6 +153,9 @@ function actionDetails(row, perspectives, typed) {
       const context = event.decision
       const unspentMana = context?.availableManaSources > 0 || manaSymbols.some(symbol => context?.manaPool?.[symbol] > 0)
       if (!(context?.playableCount > 0) && !(context?.endsTurn === true && unspentMana)) return null
+    }
+    if (event.action === 'select' && genericChoiceKinds.has(event.decision?.choiceKind)) {
+      return { seatId: seat.seatId, basis: 'recorded_action', actual: { kind: 'select', text: `${seat.name} · select` } }
     }
     const card = cardReference(event.card)
     const paidMana = Object.fromEntries(manaSymbols.filter(symbol => Number.isSafeInteger(event.paidMana?.[symbol])
@@ -179,13 +185,14 @@ function actionDetails(row, perspectives, typed) {
   return { seatId: seat.seatId, basis: 'engine_log', actual: { kind, text: message.slice(0, 1200) } }
 }
 
-function positionsFor(rows, perspectives, typed, capture) {
+function positionsFor(rows, perspectives, typed, capture, nestedDecisions) {
   const positions = []
   const frames = new Set()
   const committedChoices = new Map()
   let lastAction = null
   for (const row of rows) {
     if (row.event.view) frames.add(row.cursor)
+    if (nestedDecisions.has(row.cursor)) continue
     if (row.frameCursor === null || row.cursor === row.frameCursor) continue
     const details = actionDetails(row, perspectives, typed)
     if (!details) continue
@@ -336,6 +343,10 @@ function pageRows(rows, { cursor, count, turn }, project) {
 
 function decisionContextFor(data) {
   const indexes = new Map(data.rows.map((row, index) => [row.cursor, index]))
+  function sourceView(row) {
+    const frame = row?.event.preActionCursor ?? row?.frameCursor
+    return data.rows[indexes.get(frame)]?.event.view
+  }
   function legacyKeep(position, actor) {
     if (position.actual.kind !== 'keep' || position.evidence.basis !== 'engine_log' || !actor) return undefined
     const index = indexes.get(position.cursor)
@@ -358,12 +369,23 @@ function decisionContextFor(data) {
   }
   function decisionContext(position, displayed, seat, scope) {
     const actor = data.perspectives.find(player => player.seatId === (displayed.decisionSeatId ?? position.seatId))
-    if (!actor || (scope !== 'full' && seat?.seatId !== actor.seatId)) return {}
-    const event = data.rows[indexes.get(position.cursor)]?.event
-    const context = data.typed ? privateDecision(event, actor.playerId, seat, scope) : {}
-    if (context.decision) return context
+    const row = data.rows[indexes.get(position.cursor)]
+    const linked = data.linkedDecisions.byParent.get(position.cursor) ?? []
+    const hasDecisionContext = data.typed && (!!row?.event.decision || linked.length > 0)
+    const hint = hasDecisionContext ? { hasDecisionContext } : {}
+    if (linked.length) {
+      const decisions = linked.flatMap(child => {
+        const chooserId = child.event.decisionPlayerId ?? child.event.actorPlayerId
+        const { decision } = privateDecision(child, chooserId, seat, scope, sourceView(child))
+        return decision ? [decision] : []
+      })
+      if (decisions.length) return { ...hint, decision: decisions[0], decisions }
+    }
+    if (!actor || (scope !== 'full' && seat?.seatId !== actor.seatId)) return hint
+    const context = data.typed ? privateDecision(row, actor.playerId, seat, scope, sourceView(row)) : {}
+    if (context.decision) return { ...hint, ...context }
     const kept = legacyKeep(position, actor)
-    return kept ? { decision: kept } : {}
+    return kept ? { decision: kept } : hint
   }
   return { decisionContext, legacyKeep }
 }
@@ -493,7 +515,8 @@ export function createPostMatchReview(pool, archive, permissions) {
     const fullAvailable = canReadTogether(game, access)
     const visible = perspectives.filter(({ owned }) => owned || fullAvailable).map(({ seatId }) => seatId)
     const capture = new Map()
-    const positions = positionsFor(rows, perspectives, typed, capture)
+    const linkedDecisions = indexCommittedDecisions(rows, typed)
+    const positions = positionsFor(rows, perspectives, typed, capture, linkedDecisions.nested)
     if (ready && readRows) {
       const byCursor = new Map(rows.map(row => [row.cursor, row]))
       for (const item of await annotations.omissions(game.id, immutableRevision(game), visible, fullAvailable)) {
@@ -504,7 +527,7 @@ export function createPostMatchReview(pool, archive, permissions) {
       }
       positions.sort((a, b) => a.cursor - b.cursor)
     }
-    return { ready, rows, perspectives, typed, fullAvailable, visible, positions, capture }
+    return { ready, rows, perspectives, typed, fullAvailable, visible, positions, capture, linkedDecisions }
   }
 
   async function gameManifest(game, access, data, rows) {

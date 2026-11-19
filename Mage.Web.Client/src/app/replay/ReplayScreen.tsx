@@ -285,19 +285,24 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
   const decisionKind = decision?.actual?.kind;
   const handDecision = decisionKind === 'mulligan' || decisionKind === 'keep';
   const decisionSeat = decision?.decisionSeatId ?? decision?.seatId;
-  const contextAllowed = !!scope && (scope === 'full' || !!decisionSeat && decisionSeat === perspective?.seatId);
+  const contextAllowed = !!scope && (scope === 'full' || decision?.hasDecisionContext
+    || !!decisionSeat && decisionSeat === perspective?.seatId);
   const contextCursor = decision?.cursor;
-  const batchContext = privateFrameQuery.data?.events.find((item) => item.cursor === contextCursor)?.decision;
+  const batchContext = privateFrameQuery.data?.events.find((item) => item.cursor === contextCursor
+    && (item.decision || item.decisions?.length));
   const contextQuery = useQuery({
     queryKey: ['match-review', userName, gameId, 'decision-context', scope, perspective?.seatId, contextCursor, manifest?.archiveRevision],
     queryFn: ({ signal }) => loadReviewEvents(gameId, contextCursor!, scope!, 1, signal, otherSeat ? perspective?.seatId : undefined),
     enabled: analysisOpen && !playing && contextAllowed && contextCursor !== undefined
-      && (handDecision || decisionKind === 'select' || decisionKind === 'discard' || decisionKind === 'pass') && !batchContext,
+      && (decision?.hasDecisionContext || handDecision || decisionKind === 'select' || decisionKind === 'discard' || decisionKind === 'pass')
+      && !batchContext,
     gcTime: 0,
     retry: false,
   });
-  const decisionContext = contextAllowed ? batchContext ?? contextQuery.data?.events.find((item) => item.cursor === contextCursor)?.decision : undefined;
-  const missingDecisionHand = handDecision && contextAllowed && (contextQuery.isSuccess || !!batchContext) && !decisionContext?.cards?.length;
+  const contextEvent = contextAllowed ? batchContext ?? contextQuery.data?.events.find((item) => item.cursor === contextCursor) : undefined;
+  const decisionContexts = contextEvent?.decisions?.length ? contextEvent.decisions : contextEvent?.decision ? [contextEvent.decision] : [];
+  const missingDecisionHand = handDecision && contextAllowed && (contextQuery.isSuccess || !!batchContext)
+    && !decisionContexts.some(({ cards }) => cards?.length);
   const previousMoment = moments.filter((item) => item.cursor < currentCursor).at(-1);
   const nextMoment = moments.find((item) => item.cursor > currentCursor);
   const canStepBack = !!previousMoment || index > 0;
@@ -381,7 +386,7 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
   };
   const panel = manifest && analysisOpen && <ReplayReviewPanel analysis={manifest.analysis} moments={moments} current={decision?.cursor}
     sideboardDelta={manifest.status === 'completed' && manifest.gameNumber > 1 ? manifest.sideboardDelta : undefined}
-    annotation={chosen} decision={decision} decisionContext={decisionContext} missingDecisionHand={missingDecisionHand}
+    annotation={chosen} decision={decision} decisionContexts={decisionContexts} missingDecisionHand={missingDecisionHand}
     showRetrospective={showBoth && !!recorded} onMoment={jump} error={reviewError}
     onRetry={() => {
       void eventQuery.refetch();

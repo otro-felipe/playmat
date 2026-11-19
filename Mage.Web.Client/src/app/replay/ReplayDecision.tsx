@@ -1,11 +1,11 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { Check, Star } from 'lucide-react';
-import { Fragment, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
+import { Fragment, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { frameIndexAt, type ReplayTimeline } from '../../core/replay/timeline';
-import { useT } from '../i18n';
+import { useT, type MessageKey } from '../i18n';
 import { CardFace } from '../ui/CardFace';
-import { cleanDecisionText, decisionFrame, decisionPresentation } from './decisionPresentation';
+import { cleanDecisionText, decisionFrame, decisionPresentation, replayName } from './decisionPresentation';
 import type { ReviewCategory, ReviewDecisionContext, ReviewMoment, ReviewReference } from './reviewData';
 import styles from './ReplayDecision.module.css';
 
@@ -94,46 +94,99 @@ export function RecordedDecision({ moment }: { moment: ReviewMoment }) {
 }
 
 
+const choiceHeadings: Partial<Record<string, MessageKey>> = {
+  target: 'replay.targets',
+  mode: 'replay.context.modes',
+  use: 'replay.context.confirmation',
+  amount: 'replay.context.amount',
+  pile: 'replay.context.piles',
+  ability: 'replay.context.abilities',
+  replacement: 'replay.context.replacements',
+  discard: 'replay.context.discard',
+  bottom: 'replay.context.bottom',
+};
+
 export function DecisionContext({ context, handDecision }: {
   context: ReviewDecisionContext;
   handDecision: boolean;
 }) {
   const t = useT();
-  const cards = context.cards ?? [];
-  const options = context.options ?? [];
-  const prompt = context.prompt && cleanDecisionText(context.prompt, t);
-  const title = t(context.handKind === 'kept_hand' ? 'replay.context.keptHand'
-    : handDecision ? 'replay.context.openingHand' : 'replay.context.options');
+  const choiceLabel = (value: string) => {
+    const label = cleanDecisionText(value, t);
+    if (context.choiceKind !== 'use') return label;
+    if (/^yes$/i.test(label)) return t('replay.context.answerYes');
+    if (/^no$/i.test(label)) return t('replay.context.answerNo');
+    return label;
+  };
   const selected = new Set(context.selectedIds ?? (context.selectedId ? [context.selectedId] : []));
+  const selectedOptions = new Set(context.selectedOptionIds ?? []);
+  const options = (context.optionDetails ?? []).flatMap((option) => {
+    const label = choiceLabel(option.label ?? '');
+    const card = option.playerId ? undefined : option.card;
+    const chosen = selectedOptions.has(option.id) || selected.has(option.id) || (!!card?.id && selected.has(card.id));
+    return card || label ? [{ id: option.id, label, card, chosen }] : [];
+  });
+  const optionCardIds = new Set(options.flatMap((option) => [option.id, option.card?.id]));
+  const cards = (context.cards ?? []).filter((card) => !card.id || !optionCardIds.has(card.id));
+  const labels = options.length === 0 ? (context.options ?? []).map(choiceLabel).filter(Boolean) : [];
+  const prompt = context.prompt && cleanDecisionText(context.prompt, t);
+  const selectedText = context.selectedText && choiceLabel(context.selectedText);
   const pass = context.passKind ? [
     t(`replay.context.pass.${context.passKind}`),
     ...(context.endsTurn ? [t('replay.context.endStep')] : []),
     ...(context.stackSize === undefined ? [] : [t('replay.context.stackSize', { count: context.stackSize })]),
     ...(context.playableCount === undefined ? [] : [t('replay.context.playableCount', { count: context.playableCount })]),
   ].join(' · ') : null;
-  if (!cards.length && !options.length && !prompt && !pass) return null;
+  const chosenInList = options.some(({ chosen }) => chosen) || cards.some((card) => card.id && selected.has(card.id));
+  const outcome = chosenInList ? null : context.declined ? t('replay.context.declined')
+    : selectedText ? t('replay.context.selection', { choice: selectedText }) : null;
+  const shownOptions = options.length + cards.length + labels.length;
+  const partialOptions = context.optionCount !== undefined && context.optionCount > shownOptions
+    ? t('replay.context.optionCoverage', { shown: shownOptions, count: context.optionCount }) : null;
+  if (!shownOptions && !prompt && !pass && !outcome && !context.sourceCard && !partialOptions) return null;
+  const heading = context.handKind === 'kept_hand' ? 'replay.context.keptHand'
+    : choiceHeadings[context.choiceKind ?? ''] ?? (handDecision ? 'replay.context.openingHand' : 'replay.context.options');
+  const title = t(heading);
+
   return (
     <section aria-label={title}>
       <h4>{title}</h4>
       {prompt && <p>{prompt}</p>}
       {pass && <p>{pass}</p>}
-      {cards.length > 0 && (
-        <Tooltip.Provider delayDuration={160} disableHoverableContent>
+      {outcome && <p>{outcome}</p>}
+      <Tooltip.Provider delayDuration={160} disableHoverableContent>
+        {context.sourceCard && <p>
+          {t('replay.context.source')} <PreviewName card={context.sourceCard} />
+        </p>}
+        {shownOptions > 0 && (
           <ul className={styles.contextCards}>
-            {cards.map((card, index) => <li key={card.id ?? index}>
-              <PreviewName card={card} />
-              {card.id && selected.has(card.id) && <span> · {t('replay.context.selected')}</span>}
-            </li>)}
+            {options.map(({ id, card, label, chosen }) => (
+              <ChoiceItem key={id} chosen={chosen}>
+                {card && <PreviewName card={card} />}
+                {card && label && label !== card.name && ' · '}
+                {label && label !== card?.name && label}
+              </ChoiceItem>
+            ))}
+            {cards.map((card, index) => (
+              <ChoiceItem key={card.id ?? index} chosen={!!card.id && selected.has(card.id)}>
+                {card.kind === 'player' ? replayName(card.name, t) : <PreviewName card={card} />}
+              </ChoiceItem>
+            ))}
+            {labels.map((label, index) => <li key={`label-${index}`}>{label}</li>)}
           </ul>
-        </Tooltip.Provider>
-      )}
-      {options.length > 0 && (
-        <ul className={styles.contextCards}>
-          {options.map((option, index) => <li key={index}>{cleanDecisionText(option, t)}</li>)}
-        </ul>
-      )}
+        )}
+      </Tooltip.Provider>
+      {partialOptions && <p>{partialOptions}</p>}
     </section>
   );
+}
+
+function ChoiceItem({ children, chosen }: { children: ReactNode; chosen: boolean }) {
+  const t = useT();
+  return <li data-selected={chosen || undefined}>
+    {children}
+    {chosen && <span className={styles.chosen}> · {t('replay.context.selected')}</span>}
+  </li>;
 }
 
 type RatedMoment = ReviewMoment & { category: ReviewCategory };
