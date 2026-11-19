@@ -153,8 +153,9 @@ export async function verifyHumanReplayCapture({ startHumanReviewFixture, totalD
     assert.equal(info.reviewVersion, 2)
     assert.ok(rows.some(row => row.kind === 'draw'))
     assert.ok(rows.some(row => Object.keys(row.review?.seatViews ?? {}).length === 2))
-    assert.ok(rows.some(row => Object.keys(row.hands ?? {}).length === 2), 'Normal replay capture remains available')
+    const frameCursor = rows.findIndex(row => row.view && Object.keys(row.hands ?? {}).length === 2)
+    assert.ok(frameCursor >= 0, 'Normal replay capture remains available')
     console.log(JSON.stringify({ phase: '[PM-REV-02] real Java Pioneer human table', automatic: true, protectedCapture: true }))
-    return { gameId: activeId, matchId: info.matchId }
+    return { gameId: activeId, frameCursor }
   })
 }

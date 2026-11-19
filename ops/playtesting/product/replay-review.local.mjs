@@ -110,7 +110,7 @@ export async function verifyReplayReviewOverMcp({ capture, humanCapture, Client,
     const browserMatch = await completed(humanCapture.gameId)
     assert.equal(browserMatch.fullAvailable, true)
     const browserEvidence = await call('read_review_evidence', {
-      gameId: humanCapture.gameId, purpose: 'replay', scope: 'full', count: 40,
+      gameId: humanCapture.gameId, purpose: 'replay', scope: 'full', cursor: humanCapture.frameCursor, count: 1,
     })
     assert.ok(browserEvidence.events.some(row => Object.keys(row.hands ?? {}).length === 2))
     console.log(JSON.stringify({ phase: '[PM-REVIEW-API-1/2/3/4] real Java native archive review',
