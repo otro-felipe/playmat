@@ -38,6 +38,11 @@
   gap: var(--space-1);
 }
 
+.playback [aria-disabled='true'] {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .timeline {
   display: grid;
   min-width: 0;

@@ -8,7 +8,7 @@ import { createProduct } from './product.mjs'
 import { PlaymatEngineSeat } from '../mcp/src/engine-seat.mjs'
 import { mayDriveRival } from './sequence-driver.mjs'
 import { verifyTypedManaTalent } from './mana-semantics.local.mjs'
-import { verifyHumanReplayCapture, verifyReplayCapture } from './replay-capture.local.mjs'
+import { verifyDiscardChoiceCapture, verifyHumanReplayCapture, verifyReplayCapture } from './replay-capture.local.mjs'
 import { verifyReplayReviewOverMcp } from './replay-review.local.mjs'
 
 if (process.env.PLAYMAT_SEQUENCE_LOCAL_TEST !== 'yes'
@@ -98,8 +98,10 @@ async function rivalPass(boundary) {
     choice = mana || !ownPlayer(state).battlefield.length && decision.choices.find(item => item.card?.name === 'Mountain'
       && state.ownHand.some(card => card.id === item.card.id))
     choice ||= decision.choices.find(item => item.type === 'pass')
-  } else choice = cleanupMountain(state) || decision.choices.find(item => /^Keep\b|^Play first\b/.test(item.label)) || decision.choices.find(item => item.type === 'button')
-  if (!choice) throw Error('Unexpected rival fixture decision: ' + decision.kind)
+  } else choice = cleanupMountain(state)
+    || decision.choices.find(item => state.step === 'CLEANUP' && state.ownHand.some(card => card.id === (item.objectId ?? item.card?.id)))
+    || decision.choices.find(item => /^Keep\b|^Play first\b/.test(item.label)) || decision.choices.find(item => item.type === 'button')
+  if (!choice) throw Error('Unexpected rival fixture decision: ' + decision.kind + ' ' + decision.instruction)
   try { await browser.respond(decision.id, choice.id); if (choice === mana) rivalManaAccepted = true; return true }
   catch (error) { if (['stale_decision', 'engine_rejected', 'illegal_choice'].includes(error.code)) return false; throw error }
 }
@@ -127,8 +129,8 @@ async function waitNextOwn(oldId) {
   }
   throw Error('No next own fixture decision before the bounded deadline')
 }
-async function startFixture(name, deck, seed) {
-  const created = await browser.createGame({ name, format: 'Modern', deck: rivalDeck, matchTimeLimit: 'MIN__15', seed }, async record => {
+async function startFixture(name, deck, seed, opponentDeck = rivalDeck) {
+  const created = await browser.createGame({ name, format: 'Modern', deck: opponentDeck, matchTimeLimit: 'MIN__15', seed }, async record => {
     const response = await fetch(base + '/api/playtesting/invites', { method: 'POST', headers: { 'content-type': 'application/json', Cookie: browserCookie }, body: JSON.stringify({ ...record, guestEngineName: engineName }) })
     assert.equal(response.status, 201)
     return response.json()
@@ -319,6 +321,7 @@ try {
     const capture = await verifyReplayCapture({ startFixture, call, ownPlayer, rivalPlayer, answer, waitNextOwn, totalDeadline })
     const humanCapture = await verifyHumanReplayCapture({ startHumanReviewFixture, totalDeadline })
     await verifyReplayReviewOverMcp({ capture, humanCapture, Client, StreamableHTTPClientTransport, token })
+    await verifyDiscardChoiceCapture({ startFixture, ownPlayer, rivalPlayer, call, answer, waitNextOwn, totalDeadline })
   }
   if (scenarios !== 'review') {
     await verifyPreparedModeLine('Patrol Night')

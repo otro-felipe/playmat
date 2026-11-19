@@ -6,7 +6,7 @@ import { frameIndexAt, type ReplayTimeline } from '../../core/replay/timeline';
 import { useT } from '../i18n';
 import { CardFace } from '../ui/CardFace';
 import { cleanDecisionText, decisionFrame, decisionPresentation } from './decisionPresentation';
-import type { ReviewCategory, ReviewMoment, ReviewReference } from './reviewData';
+import type { ReviewCategory, ReviewDecisionContext, ReviewMoment, ReviewReference } from './reviewData';
 import styles from './ReplayDecision.module.css';
 
 export function ReviewRating({ category, label = false }: { category: ReviewCategory; label?: boolean }) {
@@ -94,6 +94,48 @@ export function RecordedDecision({ moment }: { moment: ReviewMoment }) {
 }
 
 
+export function DecisionContext({ context, handDecision }: {
+  context: ReviewDecisionContext;
+  handDecision: boolean;
+}) {
+  const t = useT();
+  const cards = context.cards ?? [];
+  const options = context.options ?? [];
+  const prompt = context.prompt && cleanDecisionText(context.prompt, t);
+  const title = t(context.handKind === 'kept_hand' ? 'replay.context.keptHand'
+    : handDecision ? 'replay.context.openingHand' : 'replay.context.options');
+  const selected = new Set(context.selectedIds ?? (context.selectedId ? [context.selectedId] : []));
+  const pass = context.passKind ? [
+    t(`replay.context.pass.${context.passKind}`),
+    ...(context.endsTurn ? [t('replay.context.endStep')] : []),
+    ...(context.stackSize === undefined ? [] : [t('replay.context.stackSize', { count: context.stackSize })]),
+    ...(context.playableCount === undefined ? [] : [t('replay.context.playableCount', { count: context.playableCount })]),
+  ].join(' · ') : null;
+  if (!cards.length && !options.length && !prompt && !pass) return null;
+  return (
+    <section aria-label={title}>
+      <h4>{title}</h4>
+      {prompt && <p>{prompt}</p>}
+      {pass && <p>{pass}</p>}
+      {cards.length > 0 && (
+        <Tooltip.Provider delayDuration={160} disableHoverableContent>
+          <ul className={styles.contextCards}>
+            {cards.map((card, index) => <li key={card.id ?? index}>
+              <PreviewName card={card} />
+              {card.id && selected.has(card.id) && <span> · {t('replay.context.selected')}</span>}
+            </li>)}
+          </ul>
+        </Tooltip.Provider>
+      )}
+      {options.length > 0 && (
+        <ul className={styles.contextCards}>
+          {options.map((option, index) => <li key={index}>{cleanDecisionText(option, t)}</li>)}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 type RatedMoment = ReviewMoment & { category: ReviewCategory };
 
 export function ReplayDecisionMarkers({ moments, timeline, current, onMoment }: {
@@ -154,14 +196,14 @@ function DecisionMarker({ items, fraction, current, onMoment }: {
   const style = { '--decision-position': `${fraction * 100}%` } as CSSProperties;
   if (items.length === 1) {
     const name = markerName(first);
-    return <button type="button" className={styles.marker} style={style}
+    return <button type="button" data-replay-step-focus className={styles.marker} style={style}
       title={name} aria-label={name} aria-current={first.cursor === current ? 'step' : undefined} onClick={() => onMoment(first)}>
       <ReviewRating category={first.category} />
     </button>;
   }
   const label = t('replay.decisionCluster', { count: items.length });
   return <DropdownMenu.Root>
-    <DropdownMenu.Trigger type="button" className={styles.marker} style={style} title={label}
+    <DropdownMenu.Trigger type="button" data-replay-step-focus className={styles.marker} style={style} title={label}
       aria-label={label} aria-current={items.some((item) => item.cursor === current) ? 'step' : undefined}>
       <span className={styles.cluster} aria-hidden="true">
         {items.slice(0, 3).map((item) => <ReviewRating key={item.cursor} category={item.category} />)}

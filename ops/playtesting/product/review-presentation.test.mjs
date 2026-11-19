@@ -19,7 +19,7 @@ function fixture(makeRows, { typed = true, fullAvailable = true } = {}) {
   const permissions = {
     reviewAccess: async () => ({ viewerSeatId: alice.seatId, perspectives: [{ seatId: alice.seatId, owned: true }], fullAvailable }),
   }
-  const review = createPostMatchReview(null, archive, permissions)
+  const review = createPostMatchReview({ query: async () => ({ rows: [] }) }, archive, permissions)
   const read = query => review.evidence({}, gameId, query)
   return { ...expected, alice, bob, read }
 }
@@ -143,10 +143,81 @@ test('[PM-REVIEW-CAPTURE-2] legacy notes name a logged target even if its stack 
 test('[PM-REVIEW-CAPTURE-2] a forced discard links the discarded card and its cause separately', async () => {
   const spell = randomUUID()
   const discarded = randomUUID()
-  const [event] = (await fixture(({ frame, log }) => ({
-    rows: [frame({ stack: { [spell]: asCard(spell, 'Thoughtseize') } }),
+  const { alice, read } = fixture(({ alice, frame, log }) => ({
+    rows: [frame({ stack: { [spell]: { ...asCard(spell, 'Thoughtseize'), controllerId: alice.playerId } } }),
       log(`Bob discards ${link(discarded, 'Go for the Throat')} (source: ${link(spell, 'Thoughtseize')})`)],
-  }), { typed: false }).read(analysisList)).events
+  }), { typed: false })
+  const [event] = (await read({ purpose: 'analysis', seatId: alice.seatId })).events
+  assert.equal(event.seatId, 'bob', 'keep the archived annotation key')
+  assert.equal(event.decisionSeatId, 'alice')
+  assert.equal(event.decisionActor, 'Alice')
   assert.equal(event.actual.cardRef.name, 'Go for the Throat')
   assert.deepEqual(event.actual.sourceCardRef, { id: spell, name: 'Thoughtseize', setCode: 'FDN', cardNumber: '192' })
+})
+
+test('[PM-REVIEW-CAPTURE-3] mulligan opening hand only appears in the acting seat or finished full replay', async () => {
+  const card = { id: randomUUID(), name: 'Private mulligan hand', setCode: 'FDN', cardNumber: '192' }
+  const { read } = fixture(({ alice, frame, log }) => ({
+    rows: [frame(),
+      { kind: 'action', action: 'mulligan', actorPlayerId: alice.playerId, preActionCursor: 0, decision: { cards: [card] } },
+      log('Alice mulligans down to 6 cards'),
+      frame(),
+    ],
+  }))
+  assert.doesNotMatch(JSON.stringify(await read(analysisList)), /Private mulligan hand/)
+  assert.doesNotMatch(JSON.stringify(await read({ purpose: 'replay', seatId: 'bob' })), /Private mulligan hand/)
+  for (const query of [{ purpose: 'replay', scope: 'full' }, { purpose: 'analysis', seatId: 'alice' }]) {
+    const { events } = await read(query)
+    assert.deepEqual(events.filter(event => event.type === 'action').map(event => event.decision), [{ cards: [card], handKind: 'opening_choice' }])
+  }
+})
+
+test('[PM-REVIEW-CAPTURE-3] legacy kept-hand evidence uses the first upkeep only before recorded hand changes', async () => {
+  const id = randomUUID()
+  for (const laterDraw of [false, true]) {
+    const { read } = fixture(({ frame, log }) => ({
+      rows: [frame({ turn: 0 }), log('Alice keeps hand'), log('Bob mulligans down to 6 cards'),
+        ...(laterDraw ? [log('Alice draws a card')] : []),
+        { ...frame({ turn: 1, step: 'UPKEEP' }), hands: { Alice: { [id]: asCard(id, 'Private kept card') } } }],
+    }), { typed: false })
+    const { events } = await read({ purpose: 'analysis', seatId: 'alice' })
+    assert.equal(events[0].decision?.handKind, laterDraw ? undefined : 'kept_hand')
+    assert.equal(events[0].decision?.cards[0].id, laterDraw ? undefined : id)
+    assert.doesNotMatch(JSON.stringify(await read(analysisList)), /Private kept card/)
+  }
+})
+
+test('[PM-REVIEW-CAPTURE-4] only recorded material passes are review candidates and their options are private', async () => {
+  const card = { id: randomUUID(), name: 'Private priority option' }
+  const { read } = fixture(({ alice, frame }) => ({
+    rows: [frame(),
+      { kind: 'action', action: 'pass', actorPlayerId: alice.playerId, decision: { playableCount: 0, passKind: 'automatic' } },
+      { kind: 'action', action: 'pass', actorPlayerId: alice.playerId, decision: { playableCount: 1, passKind: 'manual', cards: [card] } },
+      { kind: 'action', action: 'pass', actorPlayerId: alice.playerId, decision: { playableCount: 0, endsTurn: true, availableManaSources: 1 } }],
+  }))
+  const publicPage = await read(analysisList)
+  assert.deepEqual(publicPage.events.map(event => event.cursor), [2, 3])
+  assert.doesNotMatch(JSON.stringify(publicPage), /Private priority option/)
+  const acting = await read({ purpose: 'analysis', seatId: 'alice' })
+  assert.deepEqual(acting.events[0].decision, { cards: [card], playableCount: 1, passKind: 'manual' })
+})
+
+test('[PM-REVIEW-CAPTURE-4] a committed typed discard choice supersedes the single matching victim log', async () => {
+  const card = { id: randomUUID(), name: 'Selected secret' }
+  const source = randomUUID()
+  const { read } = fixture(({ alice, bob, frame, log }) => ({
+    rows: [frame(),
+      { kind: 'action', action: 'select', actorPlayerId: alice.playerId, decisionPlayerId: alice.playerId,
+        affectedPlayerId: bob.playerId, sourceId: source, objectId: card.id,
+        decision: { choiceKind: 'discard', selectedIds: [card.id], cards: [card] } },
+      frame(), log(`Bob discards ${link(card.id, card.name)} (source: ${link(source, 'Thoughtseize')})`)],
+  }))
+  const publicPage = await read(analysisList)
+  assert.deepEqual(publicPage.events.map(event => event.cursor), [1])
+  assert.equal(publicPage.events[0].decisionActor, 'Alice')
+  assert.equal(publicPage.events[0].affectedActor, 'Bob')
+  assert.equal(publicPage.events[0].actual.objectId, undefined)
+  assert.doesNotMatch(JSON.stringify(publicPage), /Selected secret/)
+  const acting = await read({ purpose: 'analysis', seatId: 'alice' })
+  assert.deepEqual(acting.events[0].decision.selectedIds, [card.id])
 })

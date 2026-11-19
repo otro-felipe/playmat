@@ -113,6 +113,7 @@ test('an invited agent can discover and read the Playmat guides before joining a
     [gettingStarted, /join_game[\s\S]*wait_for_decision[\s\S]*send_chat/],
     [cardCatalog, /search_cards[\s\S]*find_possible_responses/],
     [turnPlanning, /play_sequence[\s\S]*expectCast/],
+    ['playmat://guides/replay-analysis', /earlier games[\s\S]*Wrenn.s Resolve[\s\S]*Thoughtseize/],
     [rules, /magic\.wizards\.com\/en\/rules[\s\S]*media\.wizards\.com\/\d{4}\/downloads\/MagicCompRules.*\.txt[\s\S]*117/],
   ]);
   const { resources } = await rival.listResources();
@@ -161,8 +162,8 @@ test('[PM-AC-08] a tools-only connector can discover and read the same guides as
   }
   const { error, value: { guides } } = await call(client, 'get_guide');
   assert.equal(error, false);
-  assert.deepEqual(new Set(guides.map(({ name }) => name)), new Set(ids));
-  assert.equal(guides.length, ids.length);
+  assert.deepEqual(new Set(guides.map(({ name }) => name)), new Set([...ids, 'replay-analysis']));
+  assert.equal(guides.length, ids.length + 1);
 
   const { resources } = await client.listResources();
   for (const guide of guides) {
@@ -179,6 +180,17 @@ test('[PM-AC-08] a tools-only connector can discover and read the same guides as
 
   tokens.delete('fixture-history');
   await assert.rejects(() => client.callTool({ name: 'get_guide', arguments: { guideId: 'rules' } }), /401|Unauthorized/i);
+});
+
+test('[PM-REVIEW-API-8] replay prompt includes matchup research, omissions and acting-seat knowledge', async (t) => {
+  const { url } = await start(t);
+  const client = await connect(t, url, 'fixture-player');
+  const prompt = await client.getPrompt({ name: 'review_playmat_replay', arguments: { gameId: TEST_GAME } });
+  const text = prompt.messages.map(({ content }) => content.text).join('\n');
+  assert.match(text, /earlier games/);
+  assert.match(text, /inferred omission/i);
+  assert.match(text, /Wrenn.s Resolve/);
+  assert.match(text, /https:\/\/magic.wizards.com\/en\/news\/feature\/role-assignment-2015-01-05/);
 });
 
 test('[PM-LINE-04] one bootstrap returns all four complete guides without opening a seat', async (t) => {

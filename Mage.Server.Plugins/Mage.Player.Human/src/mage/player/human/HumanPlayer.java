@@ -26,6 +26,7 @@ import mage.filter.common.FilterCreatureForCombatBlock;
 import mage.filter.predicate.permanent.ControllerIdPredicate;
 import mage.game.Game;
 import mage.game.trace.DecisionLog;
+import mage.game.trace.ReplayDecision;
 import mage.game.GameImpl;
 import mage.game.combat.CombatGroup;
 import mage.game.draft.Draft;
@@ -3058,7 +3059,7 @@ public class HumanPlayer extends PlayerImpl {
     /** a pass without asking (skip settings, pass-until actions) */
     private boolean autoPassWithManaPoolCheck(Game game) {
         logAutoPass(game);
-        return passWithManaPoolCheck(game);
+        return passWithManaPoolCheck(game, ReplayDecision.PassKind.AUTOMATIC);
     }
 
     private void logAutoPass(Game game) {
@@ -3069,6 +3070,11 @@ public class HumanPlayer extends PlayerImpl {
     }
 
     protected boolean passWithManaPoolCheck(Game game) {
+        return passWithManaPoolCheck(game, isExecutingMacro()
+                ? ReplayDecision.PassKind.AUTOMATIC : ReplayDecision.PassKind.MANUAL);
+    }
+
+    private boolean passWithManaPoolCheck(Game game, ReplayDecision.PassKind passKind) {
         if (userData.confirmEmptyManaPool()
                 && game.getStack().isEmpty() && getManaPool().count() > 0 && getManaPool().canLostManaOnEmpty()) {
             String message = GameLog.getPlayerConfirmColoredText("You still have mana in your mana pool and it will be lost. Pass anyway?");
@@ -3077,6 +3083,7 @@ public class HumanPlayer extends PlayerImpl {
                 return false;
             }
         }
+        ReplayDecision.priorityPass(game, this, passKind);
         pass(game);
         return true;
     }

@@ -33,6 +33,11 @@ CREATE TABLE IF NOT EXISTS review_annotations (
 );
 CREATE INDEX IF NOT EXISTS review_annotations_page
   ON review_annotations(game_id, archive_revision, event_cursor, seat_key);
+ALTER TABLE review_annotations ADD COLUMN IF NOT EXISTS decision_evidence_cursor integer;
+ALTER TABLE review_annotations ADD COLUMN IF NOT EXISTS decision_evidence_summary text;
+ALTER TABLE review_annotations ADD COLUMN IF NOT EXISTS observed_through_cursor integer;
+ALTER TABLE review_annotations ADD COLUMN IF NOT EXISTS opportunity_window text;
+ALTER TABLE review_annotations ADD COLUMN IF NOT EXISTS opportunity_opening_cursor integer;
 
 CREATE TABLE IF NOT EXISTS review_alternatives (
   annotation_id bigint NOT NULL REFERENCES review_annotations(id) ON DELETE CASCADE,

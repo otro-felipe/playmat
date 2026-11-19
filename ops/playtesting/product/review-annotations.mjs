@@ -69,15 +69,22 @@ function normalizeReview(entry, position, canSeeRetrospective) {
     url: sourceUrl(source.url), date: sourceDate(source.date), format: text(source.format, 120), applicability: text(source.applicability, 500),
   }))
   const comparison = alternatives.some(option => option.legality === 'confirmed')
+  const omission = position.evidence.basis === 'inferred_omission'
+  const decisionEvidence = entry.decisionEvidence === undefined ? undefined : {
+    observationCursor: entry.decisionEvidence.observationCursor,
+    summary: text(entry.decisionEvidence.summary, 600),
+  }
   if (assessment === 'trivial' && position.actual.kind !== 'pass') invalid()
   if (assessment === 'exceptional' && (confidence !== 'high' || !comparison || !opponentResponses.length
     || position.evidence.frameQuality !== 'exact')) invalid()
   if (['optimal', 'equivalent', 'small_loss', 'decisive_loss'].includes(assessment) && !comparison) invalid()
-  const assessedConfidence = position.evidence.frameQuality === 'coalesced_snapshot' ? 'low'
+  if ((omission || decisionEvidence) && !comparison) invalid()
+  const assessedConfidence = position.evidence.frameQuality === 'coalesced_snapshot' && !decisionEvidence ? 'low'
     : position.evidence.frameQuality !== 'exact' && confidence === 'high' ? 'medium' : confidence
   const category = assessedConfidence === 'low' && assessment !== 'trivial' ? 'insufficient' : assessmentCategories.get(assessment)
   const review = {
-    ...position, category, confidence: assessedConfidence, rubricVersion, alternatives, opponentResponses, sources,
+    ...position, category, confidence: assessedConfidence, rubricVersion: omission || decisionEvidence ? 2 : rubricVersion,
+    alternatives, opponentResponses, sources, ...(decisionEvidence ? { decisionEvidence } : {}),
     rationale: text(entry.rationale), benefit: text(entry.benefit), risk: text(entry.risk),
     retrospective: entry.retrospective === undefined ? null : text(entry.retrospective),
   }
@@ -89,10 +96,15 @@ function display(row, fullAvailable) {
   const { game_id: gameId, event_cursor: cursor, frame_cursor: frameCursor, seat_key: seatId,
     revision, rubric_version: rubricVersion, category, confidence, evidence_basis: basis, frame_quality: frameQuality, turn,
     action_kind: kind, action_text: actionText, action_card: card,
-    rationale, benefit, risk, alternatives, opponentResponses, sources, retrospective } = row
+    rationale, benefit, risk, alternatives, opponentResponses, sources, retrospective,
+    observed_through_cursor: observedThroughCursor, decision_evidence_cursor: observationCursor, decision_evidence_summary: observation,
+    opportunity_window: window, opportunity_opening_cursor: openingCursor } = row
   return {
     gameId, cursor, frameCursor, seatId, revision, rubricVersion, category, confidence,
-    actual: { kind, text: actionText, ...(card ? { card } : {}) }, evidence: { basis, frameCursor, frameQuality, turn },
+    actual: { kind, text: actionText, ...(card ? { card } : {}) }, evidence: { basis, frameCursor, frameQuality, turn,
+      ...(Number.isSafeInteger(observedThroughCursor) ? { observedThroughCursor } : {}),
+      ...(window ? { window, openingCursor } : {}),
+      ...(Number.isSafeInteger(observationCursor) ? { observationCursor, observation } : {}) },
     rationale, benefit, risk, alternatives, opponentResponses, sources, ...(fullAvailable && retrospective ? { retrospective } : {}),
   }
 }
@@ -137,17 +149,22 @@ async function saveAnnotation(db, gameId, archiveRevision, accountId, entry) {
     entry.frameCursor, accountId, entry.rubricVersion, entry.contentHash, entry.category, entry.confidence,
     entry.actual.kind, entry.actual.text, entry.actual.card ?? null, entry.evidence.turn, entry.evidence.basis,
     entry.rationale, entry.benefit, entry.risk, entry.retrospective, entry.requiresFull, entry.evidence.frameQuality,
+    entry.decisionEvidence?.observationCursor ?? null, entry.decisionEvidence?.summary ?? null,
+    entry.evidence.observedThroughCursor ?? null, entry.evidence.window ?? null, entry.evidence.openingCursor ?? null,
   ]
   const statement = stored ? [
     `UPDATE review_annotations SET frame_cursor=$1,reviewer_account_id=$2,rubric_version=$3,content_hash=$4,category=$5,
        confidence=$6,action_kind=$7,action_text=$8,action_card=$9,turn=$10,evidence_basis=$11,rationale=$12,benefit=$13,
        risk=$14,retrospective=$15,requires_full=(requires_full OR $16),frame_quality=$17,
-       revision=revision+1,updated_at=now() WHERE id=$18 RETURNING id`,
+       decision_evidence_cursor=$18,decision_evidence_summary=$19,observed_through_cursor=$20,
+       opportunity_window=$21,opportunity_opening_cursor=$22,
+       revision=revision+1,updated_at=now() WHERE id=$23 RETURNING id`,
     [...values, stored.id],
   ] : [
     `INSERT INTO review_annotations (frame_cursor,reviewer_account_id,rubric_version,content_hash,category,confidence,
        action_kind,action_text,action_card,turn,evidence_basis,rationale,benefit,risk,retrospective,requires_full,frame_quality,
-       game_id,archive_revision,seat_key,event_cursor) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+       decision_evidence_cursor,decision_evidence_summary,observed_through_cursor,opportunity_window,opportunity_opening_cursor,
+       game_id,archive_revision,seat_key,event_cursor) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
        RETURNING id`,
     [...values, gameId, archiveRevision, entry.seatId, entry.cursor],
   ]
@@ -158,6 +175,13 @@ async function saveAnnotation(db, gameId, archiveRevision, accountId, entry) {
 
 export function createReviewAnnotations(pool) {
   return {
+    async omissions(gameId, archiveRevision, seatIds, fullAvailable) {
+      const { rows } = await pool.query(`SELECT event_cursor,seat_key,observed_through_cursor,opportunity_window,opportunity_opening_cursor FROM review_annotations
+        WHERE game_id=$1 AND archive_revision=$2 AND seat_key=ANY($3::text[])
+          AND evidence_basis='inferred_omission' AND ($4 OR NOT requires_full)`,
+      [gameId, archiveRevision, seatIds, fullAvailable])
+      return rows
+    },
     async read(gameId, archiveRevision, seatIds, { cursor, count, turn, fullAvailable }) {
       const { rows } = await pool.query(
         selectAnnotations + ` WHERE a.game_id=$1 AND a.archive_revision=$2 AND a.seat_key=ANY($3::text[])
@@ -189,24 +213,25 @@ export function createReviewAnnotations(pool) {
           throw new ProductError(409, 'Replay is not ready for review')
         }
         await authorize(db)
+        const ids = []
+        for (const entry of annotations) ids.push(await saveAnnotation(db, game.id, archiveRevision, actor.accountId, entry))
         for (const seatId of seatIds) {
-          const eligible = positions.filter(position => position.seatId === seatId).length
+          const eligible = positions.filter(position => position.seatId === seatId && position.evidence.basis !== 'inferred_omission').length
           await db.query(`INSERT INTO review_position_coverage(game_id,archive_revision,seat_key,eligible)
             VALUES($1,$2,$3,$4) ON CONFLICT (game_id,archive_revision,seat_key)
             DO UPDATE SET eligible=EXCLUDED.eligible`, [game.id, archiveRevision, seatId, eligible])
         }
-        const ids = []
-        for (const entry of annotations) ids.push(await saveAnnotation(db, game.id, archiveRevision, actor.accountId, entry))
         const { rows } = await db.query(selectAnnotations + ' WHERE a.id=ANY($1::bigint[]) ORDER BY a.event_cursor', [ids])
         return { annotations: rows.map(row => display(row, fullAvailable)), next: null }
       })
     },
-    async counts(gameIds) {
+    async counts(gameIds, withCursor = false) {
       if (!gameIds.length) return []
+      const cursor = withCursor ? ',event_cursor' : ''
       const { rows } = await pool.query(`
-        SELECT game_id,archive_revision,seat_key,category,requires_full,count(*)::int AS total
+        SELECT game_id,archive_revision,seat_key,category,requires_full,evidence_basis${cursor},count(*)::int AS total
         FROM review_annotations WHERE game_id=ANY($1::uuid[])
-        GROUP BY game_id,archive_revision,seat_key,category,requires_full`, [gameIds])
+        GROUP BY game_id,archive_revision,seat_key,category,requires_full,evidence_basis${cursor}`, [gameIds])
       return rows
     },
     async coverage(gameIds) {

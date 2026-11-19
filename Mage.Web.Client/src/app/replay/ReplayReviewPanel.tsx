@@ -1,11 +1,11 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { useId } from 'react';
+import { useId, type ReactNode } from 'react';
 import { registerMessages, useT } from '../i18n';
 import messages from '../i18n/en/replay';
 import { Button, IconButton } from '../ui/Button';
-import { DecisionTitle, ReviewRating } from './ReplayDecision';
+import { DecisionContext, DecisionTitle, ReviewRating } from './ReplayDecision';
 import { decisionPresentation } from './decisionPresentation';
-import { reviewCategories, safePublicSource, type ReviewAnnotation, type ReviewCounts, type ReviewMoment, type ReviewSummary, type SideboardDelta } from './reviewData';
+import { reviewCategories, safePublicSource, type ReviewAnnotation, type ReviewCounts, type ReviewDecisionContext, type ReviewMoment, type ReviewSummary, type SideboardDelta } from './reviewData';
 import styles from './ReplayReviewPanel.module.css';
 
 registerMessages(messages);
@@ -42,13 +42,15 @@ export function RatingCounts({ counts }: { counts: ReviewCounts }) {
   ) : null;
 }
 
-export function ReplayReviewPanel({ analysis, sideboardDelta, moments, current, annotation, decision, showRetrospective, onMoment, onPrevious, onNext, loading, error, onRetry }: {
+export function ReplayReviewPanel({ analysis, sideboardDelta, moments, current, annotation, decision, decisionContext, missingDecisionHand, showRetrospective, onMoment, onPrevious, onNext, loading, error, onRetry }: {
   analysis?: ReviewSummary;
   sideboardDelta?: SideboardDelta;
   moments: readonly ReviewMoment[];
   current?: number;
   annotation?: ReviewAnnotation;
   decision?: ReviewMoment;
+  decisionContext?: ReviewDecisionContext;
+  missingDecisionHand: boolean;
   showRetrospective: boolean;
   onMoment: (moment: ReviewMoment) => void;
   onPrevious?: () => void;
@@ -58,6 +60,11 @@ export function ReplayReviewPanel({ analysis, sideboardDelta, moments, current, 
   onRetry: () => void;
 }) {
   const t = useT();
+  const handDecision = decision?.actual?.kind === 'mulligan' || decision?.actual?.kind === 'keep';
+  const context = <>
+    {decisionContext && <DecisionContext context={decisionContext} handDecision={handDecision} />}
+    {missingDecisionHand && <p className={styles.muted}>{t('replay.context.missingHand')}</p>}
+  </>;
   return (
     <div className={styles.panel}>
       {analysis && <p className={styles.muted}>
@@ -71,24 +78,25 @@ export function ReplayReviewPanel({ analysis, sideboardDelta, moments, current, 
         </div>
       )}
       {decision && (annotation
-        ? <ReviewDetail annotation={annotation} decision={decision} showRetrospective={showRetrospective} />
+        ? <ReviewDetail annotation={annotation} decision={decision} context={context} showRetrospective={showRetrospective} />
         : <article className={styles.detail}>
           <h3><DecisionTitle moment={decision} /></h3>
           <p className={styles.muted}>{t(loading ? 'replay.loadingAnalysis' : 'replay.pendingDecision')}</p>
+          {context}
         </article>)}
       {sideboardDelta && <OwnSideboard delta={sideboardDelta} />}
       <nav className={styles.moments} aria-label={t('replay.moments')}>
         <div className={styles.momentHead}>
           <h3>{t('replay.moments')}</h3>
-          <IconButton label={t('replay.previousMoment')} icon={<ChevronLeft size={18} />} onClick={onPrevious} disabled={!onPrevious} />
-          <IconButton label={t('replay.nextMoment')} icon={<ChevronRight size={18} />} onClick={onNext} disabled={!onNext} />
+          <IconButton data-replay-step-focus label={t('replay.previousMoment')} icon={<ChevronLeft size={18} />} onClick={onPrevious} disabled={!onPrevious} />
+          <IconButton data-replay-step-focus label={t('replay.nextMoment')} icon={<ChevronRight size={18} />} onClick={onNext} disabled={!onNext} />
         </div>
         {moments.length > 0 ? (
           <ol>
             {moments.map((moment) => {
               const { fullTitle } = decisionPresentation(moment, t);
               return <li key={moment.cursor}>
-                <button type="button" aria-current={moment.cursor === current ? 'step' : undefined} onClick={() => onMoment(moment)}>
+                <button type="button" data-replay-step-focus aria-current={moment.cursor === current ? 'step' : undefined} onClick={() => onMoment(moment)}>
                   {moment.category && <ReviewRating category={moment.category} />}
                   <span>{moment.turn === undefined ? fullTitle : t('replay.moment', { turn: moment.turn, play: fullTitle })}</span>
                 </button>
@@ -130,9 +138,10 @@ function OwnSideboard({ delta }: { delta: SideboardDelta }) {
 
 const studyIdPattern = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 
-function ReviewDetail({ annotation, decision, showRetrospective }: {
+function ReviewDetail({ annotation, decision, context, showRetrospective }: {
   annotation: ReviewAnnotation;
   decision: ReviewMoment;
+  context: ReactNode;
   showRetrospective: boolean;
 }) {
   const t = useT();
@@ -142,7 +151,10 @@ function ReviewDetail({ annotation, decision, showRetrospective }: {
   return (
     <article className={styles.detail}>
       <h3><DecisionTitle moment={decision} /></h3>
-      <p><ReviewRating category={annotation.category} label /></p>
+      <p className={styles.ratingLine}>
+        <ReviewRating category={annotation.category} label />
+        <span className={styles.muted}>{t(`replay.confidence.${annotation.confidence}`)}</span>
+      </p>
       {annotation.rationale && <p>{annotation.rationale}</p>}
       <ReviewTradeoff benefit={annotation.benefit} risk={annotation.risk} />
       {!!annotation.alternatives.length && (
@@ -157,6 +169,9 @@ function ReviewDetail({ annotation, decision, showRetrospective }: {
           </ul>
         </section>
       )}
+      {annotation.evidence?.basis === 'inferred_omission' && <p className={styles.muted}>{t('replay.context.inferred')}</p>}
+      {annotation.evidence?.observation && <p className={styles.muted}>{annotation.evidence.observation}</p>}
+      {context}
       {!!annotation.opponentResponses?.length && (
         <section>
           <h4>{t('replay.responses')}</h4>

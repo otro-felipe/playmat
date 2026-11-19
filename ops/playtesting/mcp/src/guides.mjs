@@ -20,6 +20,10 @@ const guides = [
     name: 'rules', title: 'Magic rules',
     description: 'Find the official downloadable Comprehensive Rules and sections for common timing questions.',
   },
+  {
+    name: 'replay-analysis', title: 'Review Magic decisions after the match',
+    description: 'Research matchups, reconstruct decisions and grade supported plays and omissions.',
+  },
 ].map(({ name, ...metadata }) => ({
   name, ...metadata, mimeType,
   uri: `playmat://guides/${name}`,
@@ -27,10 +31,12 @@ const guides = [
 }));
 const GuideId = z.enum(guides.map(({ name }) => name));
 const guideList = guides.map(({ text, ...guide }) => guide);
+const bootstrapGuides = guides.filter(({ name }) => name !== 'replay-analysis');
 const guideBundle = {
-  version: createHash('sha256').update(JSON.stringify(guides)).digest('hex'),
-  guides,
+  version: createHash('sha256').update(JSON.stringify(bootstrapGuides)).digest('hex'),
+  guides: bootstrapGuides,
 };
+export const replayAnalysisGuide = guides.find(({ name }) => name === 'replay-analysis').text;
 
 export const guideBootstrap = 'Before creating, joining or playing a match, call get_guide({"bundle":true}) to load all four full guides: getting-started, turn-planning, card-catalog and rules. Repeat after losing conversation context. Listing guides alone does not load their contents.';
 

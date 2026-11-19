@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { replayAnalysisGuide } from './guides.mjs'
 
 const cursor = z.number().int().min(0).max(2_147_483_647)
 const seatId = z.string().trim().min(1).max(80)
@@ -24,6 +25,13 @@ const entry = z.object({
   cursor, seatId, expectedRevision: z.number().int().min(1).optional(),
   confidence: z.enum(['low', 'medium', 'high']),
   assessment: z.enum(['exceptional', 'optimal', 'sound', 'acceptable', 'small_loss', 'decisive_loss', 'equivalent', 'insufficient', 'trivial']),
+  decisionEvidence: z.object({
+    observationCursor: cursor, summary: z.string().trim().min(1).max(600),
+  }).strict().optional().describe('Concrete observed fact from the pre-action window that supports the comparison.'),
+  omission: z.object({
+    observedThroughCursor: cursor, opportunityObjectId: z.uuid(),
+    window: z.enum(['before_combat', 'before_end_turn']).optional(), openingCursor: cursor.optional(),
+  }).strict().optional().describe('Anchor a clearly inferred omission to a priority frame and the recorded end of that window.'),
   rationale: line, benefit: line, risk: line,
   alternatives: z.array(alternative).max(3).optional(),
   opponentResponses: z.array(opponentResponse).max(3).optional(),
@@ -48,10 +56,12 @@ export function registerPostMatchReviewPrompt(mcp) {
   }, ({ gameId }) => ({
     messages: [{ role: 'user', content: { type: 'text', text: `Review completed Playmat game ${gameId}.
 
-1. Call get_match_review with the game ID. Report what the archive actually recorded. For every available acting seat, use read_review_evidence with purpose:analysis and that seat. Follow next until the seat's evidence is exhausted and retain the archive revision. Page list_review_annotations to resume from saved cursors.
-2. Judge each recorded action from its preceding position and the information its acting seat had then. Treat an engine_log position as approximate. Compare credible legal alternatives across the same horizon. Consider mana, priority, source, targets, likely matchup responses and tradeoffs. Use get_card and the rules guide for rules. Use curated public format examples for plausible replies without implying a card was in hand. The post-action stack is for playback and cannot justify the grade.
-3. Use optional public references only when they matter. Record their public HTTPS URL, date, format and applicability. Search generic rules and public archetype questions. Keep hands, decklists, private annotations and game identifiers out of those queries.
-4. Write a concise rationale explaining why the play earned the assessment, then give concrete alternatives and tradeoffs. Exceptional requires a difficult-to-find legal line that delivers material advantage when the credible alternatives leave the player worse off. Optimal describes the best supported line and requires a confirmed legal comparator. Sound, acceptable and equivalent describe reasonable decisions. Small or decisive losses require a confirmed better alternative. Mark incomplete evidence insufficient and ordinary passes trivial.
-5. Save every unsaved decision in small batches with save_review_annotations using the archive revision and exact event cursor. Include the current annotation revision when editing. Use the retrospective field only when full permission is available and explain a later observation separately. Read the updated summary. Report counts, confidence and coverage without a percentage score.` } }],
+1. Call get_match_review with the game ID. Page the evidence for both acting seats and retain the archive revision. Use the match ID to inspect authorized public plays from earlier games and the acting seat's own sideboard changes. Page list_review_annotations to read prior grades and their revisions.
+2. Apply the guide below to each material decision. Compare credible legal alternatives from the acting seat's knowledge. Use recorded opening choices, revealed-hand decisions and priority receipts. Review a meaningful inferred omission with a bounded observed window when the save schema supports it. Describe what the archive actually shows.
+3. Research public matchup patterns when they change the analysis. Include dated public sources, relevant observed cards, the timing of plausible responses, and how the tradeoffs affect the comparison. Keep private match data out of external queries.
+4. Give a concise grade, rationale, alternatives and confidence. Reconstruct missing frames from anchored observations when the material choices can be established. Assessments with two reasonable lines can be normal. Exceptional requires an exact, difficult-to-find line with a material advantage over credible alternatives.
+5. Save notes in small batches with the archive revision and exact event cursor. Include the current annotation revision when revising. Keep later revelations in the retrospective. Verify coverage in the updated manifest and say which decisions were still ungradable.
+
+${replayAnalysisGuide}` } }],
   }))
 }

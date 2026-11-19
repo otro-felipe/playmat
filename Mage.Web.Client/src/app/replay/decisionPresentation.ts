@@ -15,6 +15,10 @@ const actionTitles: Partial<Record<string, MessageKey>> = {
 const cardlessTitles: Partial<Record<string, MessageKey>> = {
   keep: 'replay.action.keep',
   mulligan: 'replay.action.mulligan',
+  attack: 'replay.action.declareAttackers',
+  block: 'replay.action.declareBlockers',
+  pass: 'replay.action.pass',
+  omission: 'replay.action.omission',
 };
 
 const directedTitles: Partial<Record<string, MessageKey>> = {
@@ -39,8 +43,12 @@ export function decisionPresentation(moment: ReviewMoment, t: Translate) {
   const card = actual?.cardRef ?? (actual?.card ? { name: actual.card } : null);
   const targets = (actual?.targets ?? []).map((target) => target.kind === 'player'
     ? { ...target, name: replayName(target.name, t) } : target);
-  const actor = moment.actor ? replayName(moment.actor, t) : t('replay.player');
-  const titleKey = actual && (card ? actionTitles[actual.kind] : cardlessTitles[actual.kind]);
+  const actingName = moment.decisionActor ?? moment.actor;
+  const actor = actingName ? replayName(actingName, t) : t('replay.player');
+  const window = actual?.kind === 'omission' ? moment.evidence?.window : undefined;
+  const titleKey = window === 'before_combat' ? 'replay.action.omissionCombat'
+    : window === 'before_end_turn' ? 'replay.action.omissionEndTurn'
+      : actual && (card ? actionTitles[actual.kind] : cardlessTitles[actual.kind]);
   const directedKey = actual && card && targets.length ? directedTitles[actual.kind] : undefined;
   const targetNames = targets.map(({ name }) => name).join(', ');
   const title = titleKey

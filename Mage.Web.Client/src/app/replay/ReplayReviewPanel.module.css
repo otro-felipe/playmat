@@ -83,6 +83,13 @@
   margin: 0;
 }
 
+.ratingLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+}
+
 .muted {
   color: var(--ink-soft);
   font-size: var(--text-sm);
