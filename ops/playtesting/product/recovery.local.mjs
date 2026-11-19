@@ -79,8 +79,14 @@ async function choose(index, state, cast = true) {
   const attack = choices.find(c => /Bomat Courier/.test(c.card?.name ?? '') && /attack/i.test(state.decision.kind)
     && !attempted.has('attack:' + state.turn + ':' + c.card.id))
   const mana = /mana/i.test(state.decision.kind) && choices.find(c => c.card?.name === 'Forest' || c.type === 'mana')
+  // Paying with an enchanted Forest can open an ability picker and then a color picker.
+  // Resolve the legal mana option before falling back to a panel's Cancel button.
+  const manaAbilities = choices.filter(c => c.type === 'option' && c.abilityType === 'ACTIVATED_MANA')
+  const manaMode = state.decision.kind === 'panel' && (manaAbilities.find(c => /Add\s*\{G\}/i.test(c.label))
+    || manaAbilities[0] || (/^Choose(?: a)? color\b/i.test(state.decision.instruction)
+      && choices.find(c => c.type === 'option' && c.label === 'Green')))
   const target = /target/i.test(state.decision.kind) && choices.find(c => c.type === 'object')
-  const picked = land || spell || attack || mana || target || choices.find(c => /^Keep\b|^Play first\b/.test(c.label))
+  const picked = land || spell || attack || mana || manaMode || target || choices.find(c => /^Keep\b|^Play first\b/.test(c.label))
     || choices.find(c => c.type === 'pass') || choices.find(c => c.type === 'button') || choices[0]
   if (!picked) return false
   if (spell === picked) attempted.add(state.turn + ':' + picked.card.id)
@@ -97,16 +103,18 @@ async function choose(index, state, cast = true) {
 }
 async function playTo(turn) {
   const end = Date.now() + 120_000
+  let last
   while (Date.now() < end) {
     const state = await states()
     const records = await browser.recoveryList()
     const row = records.find(r => r.status === 'live' && r.phase === 'turn')
+    last = { durableTurn: row?.turn ?? null, seats: state.map(s => ({ turn: s.turn, step: s.step, decision: s.decision?.kind })) }
     if (row?.turn >= turn && state[1].decision?.kind === 'priority') return { state, row }
     let acted = false
     for (let i = 0; i < 2; i++) acted = await choose(i, state[i]) || acted
     if (!acted) await sleep(60)
   }
-  throw Error('No durable turn reached')
+  throw Error('No durable turn reached: ' + JSON.stringify(last))
 }
 async function concedeAndWaitFor(status, description) {
   await browser.concede(browser.snapshot().gameId, false)
