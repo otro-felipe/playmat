@@ -18,6 +18,11 @@ const digest = body => createHash('sha256').update(body).digest('hex')
 const maxEntries = 10
 const standardLogTypes = new Set(['GAME', 'STATUS'])
 
+function engineFormat(value) {
+  return typeof value === 'string' && value.trim().length <= 120 && !/\p{Cc}/u.test(value)
+    ? value.trim() || null : null
+}
+
 export function s3Store({ bucket, endpoint, region, forcePathStyle = false }) {
   if (!bucket || !region) throw new Error('Replay archive bucket and region are required')
   const s3 = new S3Client({ region, endpoint, forcePathStyle })
@@ -51,13 +56,15 @@ function replayMetadata(raw, gameId) {
   return {
     gameId, matchId: isUuid(raw.matchId) ? raw.matchId : isUuid(raw.tableId) ? raw.tableId : gameId,
     tableId: isUuid(raw.tableId) ? raw.tableId : gameId, tableName: raw.tableName ?? '',
-    format: normalizeFormat(raw.deckType), winsNeeded: raw.winsNeeded ?? null,
+    format: normalizeFormat(raw.deckType), engineFormat: engineFormat(raw.deckType),
+    reviewVersion: raw.reviewVersion === 2 ? 2 : null, reviewIncomplete: raw.reviewIncomplete === true, winsNeeded: raw.winsNeeded ?? null,
     gameNumber: Number.isSafeInteger(raw.gameNumber) ? raw.gameNumber : 1,
     startedAt: raw.startedAt, endedAt: raw.endedAt || null,
     result: raw.result ?? null, winner: raw.winner ?? null, startPlayer: raw.startPlayer ?? null,
     turns: raw.turns ?? null, events: raw.events ?? 0, truncated: Boolean(raw.truncated),
     players: raw.players.filter(p => typeof p.name === 'string').map(p => ({
-      name: p.name, human: p.human === true, deck: p.deck ?? null, mulligans: p.mulligans ?? null,
+      name: p.name, playerId: isUuid(p.playerId) ? p.playerId : null,
+      human: p.human === true, deck: p.deck ?? null, mulligans: p.mulligans ?? null,
     })),
   }
 }
@@ -78,31 +85,43 @@ async function recordMetadata(pool, info, status, recovering = false) {
   const interrupted = recovering || status === 'interrupted' || status === 'abandoned'
   await transaction(pool, async db => {
     await db.query(
-      `INSERT INTO matches(id,table_id,name,format,wins_needed,started_at,status) VALUES ($1,$2,$3,$4,$5,$6,$7)
+      `INSERT INTO matches(id,table_id,name,format,wins_needed,started_at,status,engine_format) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
        ON CONFLICT(id) DO UPDATE SET started_at=LEAST(matches.started_at,EXCLUDED.started_at),
-         status=CASE WHEN matches.status='active' THEN EXCLUDED.status ELSE matches.status END`,
-      [info.matchId, info.tableId, info.tableName, info.format, info.winsNeeded, info.startedAt, interrupted ? 'interrupted' : 'active'],
+         status=CASE WHEN matches.status='active' THEN EXCLUDED.status ELSE matches.status END,
+         engine_format=COALESCE(matches.engine_format,EXCLUDED.engine_format)`,
+      [info.matchId, info.tableId, info.tableName, info.format, info.winsNeeded, info.startedAt,
+        interrupted ? 'interrupted' : 'active', info.engineFormat],
     )
     await db.query(
-      'INSERT INTO games(id,match_id,game_number,started_at,ended_at,result,winner,start_player,turns,events,status,archive_state,truncated) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT(id) DO UPDATE SET ended_at=EXCLUDED.ended_at,result=EXCLUDED.result,winner=EXCLUDED.winner,start_player=EXCLUDED.start_player,turns=EXCLUDED.turns,events=EXCLUDED.events,status=EXCLUDED.status,truncated=EXCLUDED.truncated WHERE games.status IN (\'active\',\'interrupted\') OR EXCLUDED.status=\'completed\'',
+      `INSERT INTO games(id,match_id,game_number,started_at,ended_at,result,winner,start_player,turns,events,status,archive_state,truncated,review_version,review_incomplete)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+       ON CONFLICT(id) DO UPDATE SET ended_at=EXCLUDED.ended_at,result=EXCLUDED.result,winner=EXCLUDED.winner,
+         start_player=EXCLUDED.start_player,turns=EXCLUDED.turns,events=EXCLUDED.events,
+         status=EXCLUDED.status,truncated=EXCLUDED.truncated,review_version=COALESCE(games.review_version,EXCLUDED.review_version),
+         review_incomplete=games.review_incomplete OR EXCLUDED.review_incomplete
+       WHERE games.status IN ('active','interrupted') OR EXCLUDED.status='completed'`,
       [info.gameId, info.matchId, info.gameNumber, info.startedAt, info.endedAt, info.result, info.winner, info.startPlayer,
-        info.turns, info.events, status, status === 'interrupted' || status === 'abandoned' || info.truncated ? 'partial' : 'pending', info.truncated],
+        info.turns, info.events, status, status === 'interrupted' || status === 'abandoned' || info.truncated ? 'partial' : 'pending',
+        info.truncated, info.reviewVersion, info.reviewIncomplete],
     )
     for (const player of info.players) {
       await db.query(
-        `INSERT INTO game_players(game_id,engine_key,engine_name,human,deck_snapshot,mulligans,deck_signature)
-         VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(game_id,engine_key)
+        `INSERT INTO game_players(game_id,engine_key,engine_name,human,deck_snapshot,mulligans,deck_signature,player_id)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(game_id,engine_key)
          DO UPDATE SET mulligans=COALESCE(EXCLUDED.mulligans,game_players.mulligans),
                        deck_snapshot=COALESCE(game_players.deck_snapshot,EXCLUDED.deck_snapshot),
-                       deck_signature=COALESCE(game_players.deck_signature,EXCLUDED.deck_signature)`,
-        [info.gameId, normalize(player.name), player.name, player.human, player.deck, player.mulligans, deckSignature(player.deck)],
+                       deck_signature=COALESCE(game_players.deck_signature,EXCLUDED.deck_signature),
+                       player_id=COALESCE(game_players.player_id,EXCLUDED.player_id)`,
+        [info.gameId, normalize(player.name), player.name, player.human, player.deck, player.mulligans, deckSignature(player.deck), player.playerId],
       )
     }
   })
 }
 
-function projectReplayEvent(event, viewer) {
-  if (event.log && standardLogTypes.has(event.log.messageType)) return { t: event.t, log: event.log }
+export function projectReplayEvent(event, viewer) {
+  if (event.log && standardLogTypes.has(event.log.messageType)) return { t: event.t, log: pick(event.log, [
+    'color', 'message', 'messageType', 'soundToPlay', 'time', 'turnInfo', 'username',
+  ]) }
   if (event.kind === 'rollback' && Number.isInteger(event.turn)) return { t: event.t, kind: 'rollback', turn: event.turn }
   if (!event.view || typeof event.view !== 'object') return null
   const view = pick(event.view, [
@@ -123,12 +142,19 @@ function pick(fields, keys) {
   return Object.fromEntries(keys.filter(key => Object.hasOwn(fields, key)).map(key => [key, fields[key]]))
 }
 
-async function projectedEvents(store, game, viewer) {
+async function rawEvents(store, game) {
   if (!game.object_key) throw new ProductError(409, 'Replay is still being archived')
   const body = await store.get(game.object_key)
   if (!body || body.length > compressedLimit || digest(body) !== game.checksum) throw new ProductError(503, 'Replay cannot be verified')
   const plain = await unzip(body, { maxOutputLength: decompressedLimit })
-  return plain.toString('utf8').split('\n').filter(Boolean).map(line => projectReplayEvent(JSON.parse(line), viewer)).filter(Boolean)
+  return plain.toString('utf8').split('\n').filter(Boolean).map(line => JSON.parse(line))
+}
+
+async function projectedEvents(store, game, viewer, includeCursor = false) {
+  return (await rawEvents(store, game)).map((event, cursor) => {
+    const projection = projectReplayEvent(event, viewer)
+    return projection && includeCursor ? { ...projection, cursor } : projection
+  }).filter(Boolean)
 }
 
 function gameView(row) {
@@ -144,7 +170,7 @@ function gameView(row) {
 }
 
 const selectGame = `
-  SELECT g.*, m.table_id, m.name, m.format,
+  SELECT g.*, m.table_id, m.name, m.format, m.status AS match_status,
     (SELECT json_agg(json_build_object('name',p.engine_name,'human',p.human) ORDER BY p.engine_name)
        FROM game_players p WHERE p.game_id=g.id) AS players,
     (SELECT p.engine_key FROM game_players p WHERE p.game_id=g.id AND p.engine_key=ANY($1::text[])
@@ -294,6 +320,27 @@ export function createArchive(pool, stage, backend) {
     return game
   }
 
+  const reviewMetadata = `
+    SELECT g.id,g.match_id,g.game_number,g.status,g.archive_state,g.object_key,g.checksum,g.review_version,g.review_incomplete,g.truncated,
+      m.status AS match_status,m.format,m.engine_format,
+      (SELECT json_agg(json_build_object('name',p.engine_name,'seatId',p.engine_key,'playerId',p.player_id,'human',p.human)
+                       ORDER BY p.engine_key)
+       FROM game_players p WHERE p.game_id=g.id) AS players
+    FROM games g JOIN matches m ON m.id=g.match_id`
+
+  // Internal lookup only. The review service checks exact match ownership before reading the archive.
+  async function reviewGame(id) {
+    if (!isUuid(id)) throw new ProductError(404, 'Replay not found')
+    const { rows: [game] } = await pool.query(reviewMetadata + ' WHERE g.id=$1', [id])
+    if (!game) throw new ProductError(404, 'Replay not found')
+    return game
+  }
+
+  async function reviewGames(matchId) {
+    const { rows } = await pool.query(reviewMetadata + ' WHERE g.match_id=$1 ORDER BY g.game_number,g.id', [matchId])
+    return rows
+  }
+
   async function matchList(actor, opts = {}) {
     const [older, earlierMatch] = parseCursor(opts.cursor)
     const format = opts.format ? normalizeFormat(opts.format) : null
@@ -327,7 +374,7 @@ export function createArchive(pool, stage, backend) {
 
   async function replayPage(actor, id, start, count) {
     const game = await authorizedGame(actor, id)
-    const events = await projectedEvents(store, game, game.viewer)
+    const events = await projectedEvents(store, game, game.viewer, game.status === 'completed' && game.match_status === 'completed')
     const from = Math.min(events.length, Math.max(0, Number.parseInt(start ?? '0', 10) || 0))
     const take = Math.max(1, Math.min(200, Number.parseInt(count ?? '100', 10) || 100))
     return { info: gameView(game), total: events.length, start: from, events: events.slice(from, from + take) }
@@ -410,5 +457,6 @@ export function createArchive(pool, stage, backend) {
     return zipSync(all, { level: 4 })
   }
 
-  return { archiveGames, matchList, replayPage, evaluation, exportReplays, authorizeExport, statistics }
+  return { archiveGames, matchList, replayPage, evaluation, exportReplays, authorizeExport, statistics,
+    reviewGame, reviewGames, readReviewArchive: game => rawEvents(store, game) }
 }

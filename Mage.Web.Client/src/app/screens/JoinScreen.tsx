@@ -9,7 +9,7 @@ import messages from '../i18n/en/social';
 import { McpConnectionEndpoint } from '../mcp/McpConnection';
 import { mcpEndpoint } from '../mcp/connectionGuide';
 import { useTables } from '../queries';
-import { claimPlaytestingInvite, PRIVATE_PLAYTESTING, type McpChatMode } from '../playtesting';
+import { claimPlaytestingInvite, PRIVATE_PLAYTESTING, setTableReplayConsent, type McpChatMode } from '../playtesting';
 import { useDecks } from '../stores/decks';
 import { useDeckRoster } from '../stores/useDeckRoster';
 import { useSession } from '../stores/session';
@@ -19,6 +19,7 @@ import { Field } from '../ui/Field';
 import { Zone } from '../ui/Zone';
 import { isSiteToolOrigin, NO_INPUT, useSiteTool } from '../webmcp';
 import { joinTable } from './joinTable';
+import { ReplayConsentChoice } from './ReplayConsentChoice';
 import styles from './JoinScreen.module.css';
 
 registerMessages(messages);
@@ -96,6 +97,7 @@ function McpInviteGuide({ tableId, name, chatMode = 'quiet' }: { tableId: string
 
 /** Where an invite link leads: the table, and a seat at it with one of your decks. */
 export function JoinScreen() {
+  const t = useT();
   const { tableId = '' } = useParams();
   const navigate = useNavigate();
   const { data: tables = [], dataUpdatedAt, refetch } = useTables();
@@ -116,6 +118,7 @@ export function JoinScreen() {
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [consentedSeat, setConsentedSeat] = useState<string | null>(null);
   const joining = useRef(false);
 
   useEffect(() => {
@@ -125,6 +128,8 @@ export function JoinScreen() {
   const table = tables.find((candidate) => candidate.tableId === tableId) ?? null;
   const chosen = roster.find((deck) => deck.id === (deckId ?? decks.selectedId)) ?? roster[0] ?? null;
   const seated = !!table?.seats?.some((seat) => seat.playerName === userName);
+  const seatKey = `${userName}:${tableId}`;
+  const shareReplay = consentedSeat === seatKey;
   const open = table?.tableState === 'WAITING' && !!table.seats?.some((seat) => !seat.playerName);
   const allowedInvite = PRIVATE_PLAYTESTING
     ? !invitationPending && !invitationFetching && !invitationError && invitation?.mode === 'friend'
@@ -147,6 +152,9 @@ export function JoinScreen() {
     try {
       signal?.throwIfAborted();
       const tablePassword = PRIVATE_PLAYTESTING ? (await claimPlaytestingInvite(tableId, signal)).password : password;
+      if (PRIVATE_PLAYTESTING) {
+        await setTableReplayConsent(tableId, shareReplay, t('replayConsent.error'), signal);
+      }
       await joinTable(table, chosen.id, tablePassword, signal);
       if (!signal?.aborted) {
         decks.select(chosen.id);
@@ -233,6 +241,9 @@ export function JoinScreen() {
             </label>
             {!PRIVATE_PLAYTESTING && table.passworded && (
               <Field label="Password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} hint="Ask the host for it." />
+            )}
+            {PRIVATE_PLAYTESTING && allowedInvite && (
+              <ReplayConsentChoice checked={shareReplay} onChange={value => setConsentedSeat(value ? seatKey : null)} disabled={busy} />
             )}
             {error && <p className={styles.error} role="alert">{error}</p>}
             <div className={styles.actions}>

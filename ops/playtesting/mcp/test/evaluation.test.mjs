@@ -43,6 +43,9 @@ async function start(t) {
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
     requests.push({ actor, method: req.method, path: req.url, body: chunks.length ? JSON.parse(Buffer.concat(chunks)) : null });
+    if (actor === 'owner' && req.url.startsWith('/api/playtesting/review/')) {
+      return respond(res, 200, { gameId: GAME, matchId: MATCH, archiveRevision: 'fixture-revision', entries: [] });
+    }
     if (actor !== 'owner' || req.url.split('?')[0] !== PATH) return respond(res, 404, {});
     return respond(res, 200, req.method === 'POST' ? report : replay);
   }));
@@ -97,6 +100,31 @@ test('[PM-AC-15] MCP forwards only authorized evidence pages and bounded scoring
   }
   assert.equal((await owner.callTool({ name: 'evaluate_match', arguments: { gameId: GAME, count: 5 } })).isError, true);
   assert.equal(requests.length, requestCount);
+});
+
+test('[PM-REVIEW-API-5] native MCP discovers and forwards scoped review and annotation tools', async (t) => {
+  const { mcp, requests } = await start(t);
+  const [owner, rival] = await Promise.all(['owner', 'rival'].map(actor => connect(t, mcp, actor)));
+  const { tools } = await owner.listTools();
+  for (const name of ['get_match_review', 'read_review_evidence', 'list_review_annotations', 'save_review_annotations']) {
+    assert.ok(tools.some(tool => tool.name === name), 'Native schema should advertise ' + name);
+  }
+  assert.equal(tools.find(tool => tool.name === 'save_review_annotations').annotations?.readOnlyHint, false);
+  assert.equal((await call(rival, 'read_review_evidence', { gameId: GAME })).data.code, 'forbidden');
+  assert.equal(requests.length, 0);
+  await call(owner, 'get_match_review', { matchId: MATCH });
+  await call(owner, 'read_review_evidence', { gameId: GAME, purpose: 'analysis', scope: 'seat', turn: 2, cursor: 4, count: 3 });
+  await call(owner, 'list_review_annotations', { gameId: GAME, cursor: 4, count: 3 });
+  const entry = { cursor: 4, seatId: 'owner', confidence: 'medium', assessment: 'sound',
+    rationale: 'Supports development.', benefit: 'Makes mana.', risk: 'Uses the land drop.' };
+  await call(owner, 'save_review_annotations', { gameId: GAME, archiveRevision: 'fixture-revision', entries: [entry] });
+  const paths = requests.map(({ path }) => new URL(path, 'http://product.local'));
+  assert.equal(paths[0].pathname, `/api/playtesting/review/matches/${MATCH}`);
+  assert.equal(paths[1].pathname, `/api/playtesting/review/games/${GAME}/evidence`);
+  assert.equal(paths[1].searchParams.get('purpose'), 'analysis');
+  assert.equal(paths[1].searchParams.get('cursor'), '4');
+  assert.equal(paths[2].pathname, `/api/playtesting/review/games/${GAME}/annotations`);
+  assert.deepEqual(requests[3].body, { archiveRevision: 'fixture-revision', entries: [entry] });
 });
 
 test('[PM-AC-15] the review prompt teaches the connected model to compare plausible counterfactuals', async (t) => {

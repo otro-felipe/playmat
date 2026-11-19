@@ -74,6 +74,8 @@ The causal continuation witness requires matching newly assembled `mage-common`/
 
 Use a grant with `history`. Start the `review_playmat_match` prompt with a completed game's `gameId`. The connected model reads `evaluate_match` pages, compares the observed choice with plausible legal alternatives from the pre-action position, and submits up to 40 scored positions to `score_match_evaluation`. The tool calculates a score from the ratings supplied by your client. The report includes the number of scored, reviewed and available positions so you can judge the coverage. Low-confidence reviews are excluded from the score.
 
+For persisted post-match notes, start `review_playmat_replay` and read `get_match_review` first. `read_review_evidence` defaults to an acting-seat pre-action analysis page. Read and refresh annotations with `list_review_annotations` and `save_review_annotations`. The manifest reports what the archive contains and which perspectives the account may open after the match. See the qualitative criteria and exact cursor workflow. [Review rubric](../../../docs/specs/playtesting/review-rubric.md)
+
 ## Verification
 
 Use the Node 22 image and the same engine container network for the local integration test. Set `PLAYMAT_LIVE_ENGINE_URL` to that container's trusted loopback WebSocket endpoint. The synthetic fixture seats run a Pioneer Bo3 through real MCP HTTP transports and the engine's match and sideboard flow. In the absence of a live test URL, `npm test` still exercises the HTTP contract for PM-AC-08, PM-AC-09 and PM-AC-10. `PLAYMAT_LIVE_LEGACY_ENGINE=1` permits the live fixture to check a pre-change engine without the optional atomic prompt gate. Release acceptance requires the guard enabled on the candidate.

@@ -9,6 +9,8 @@ import { createIdentity, identityView } from './identity.mjs'
 import { createInvitations } from './invitations.mjs'
 import { createMcpEvents } from './mcp-events.mjs'
 import { createOAuth } from './oauth.mjs'
+import { createReviewPermissions, requireReviewPolicyVersion } from './review-permissions.mjs'
+import { createPostMatchReview } from './review.mjs'
 import { ProductError, deleteDeck, getDeck, isUuid, listDecks, moveDeckLibrary, normalize, putDeck, transaction } from './decks.mjs'
 
 const maxBody = 300 * 1024
@@ -107,13 +109,17 @@ export async function createProduct({
     await pool.query('CREATE SCHEMA IF NOT EXISTS ' + schema)
     await pool.query(await readFile(resolve(directory, 'schema.sql'), 'utf8'))
     await pool.query(await readFile(resolve(directory, 'oauth-schema.sql'), 'utf8'))
+    await pool.query(await readFile(resolve(directory, 'review-schema.sql'), 'utf8'))
+    await pool.query(await readFile(resolve(directory, 'review-permissions.sql'), 'utf8'))
   } catch (error) {
     await pool.end()
     throw error
   }
   const oauth = createOAuth(pool, publicUrl, { body, clients: oauthClients, clientOptions: oauthClientOptions })
+  const permissions = createReviewPermissions(pool)
   const id = createIdentity(pool, insecureCookie, oauth.resolve)
   const archive = createArchive(pool, replayDirectory, store)
+  const review = createPostMatchReview(pool, archive, permissions)
   const events = createMcpEvents(pool, eventOptions)
   const invitations = createInvitations(pool, id, events)
   const attempts = new Map()
@@ -195,6 +201,9 @@ export async function createProduct({
       return res.writeHead(303, { 'Set-Cookie': await id.signOut(req), Location: '/login' }).end()
     }
     if (enableInternal && path === '/internal/legacy' && req.method === 'POST') return legacy(req, res)
+    if (enableInternal && path === '/internal/review-capture' && req.method === 'POST') {
+      return send(res, 200, await permissions.sealCapture(await body(req, 'json', 8192)))
+    }
     // Presentation metadata for the colocated Java social lists, never an authentication decision.
     if (enableInternal && path === '/internal/social/agents' && req.method === 'GET') {
       const { rows } = await pool.query(`SELECT DISTINCT g.engine_key FROM agent_grants g
@@ -261,6 +270,18 @@ export async function createProduct({
     }
     const endpoint = path.slice('/api/playtesting/'.length)
     if (endpoint === 'me' && req.method === 'GET') return send(res, 200, identityView(actor))
+    const privacy = /^review\/privacy\/(tables|matches)\/([^/]+)$/.exec(endpoint)
+    if (privacy) {
+      const [, scope, id] = privacy
+      requireScope(actor, scope === 'tables' ? 'play' : 'history')
+      const change = req.method === 'PUT' ? true : req.method === 'DELETE' ? false : undefined
+      if (change === true) requireReviewPolicyVersion((await body(req, 'json', 1024))?.version)
+      if (req.method !== 'GET' && change === undefined) throw new ProductError(405, 'Use GET, PUT or DELETE')
+      if (scope === 'tables') return send(res, 200, await permissions.tableConsent(actor, id, change))
+      return send(res, 200, change === undefined
+        ? await permissions.reviewAccess(actor, id)
+        : await permissions.changeLegacyConsent(actor, id, change))
+    }
     if (endpoint === 'decks' || endpoint.startsWith('decks/')) {
       const expectedOwner = req.headers['x-playmat-deck-owner']
       if (expectedOwner && normalize(expectedOwner) !== normalize(actor.username)) throw new ProductError(403, 'The browser session has changed')
@@ -314,7 +335,8 @@ export async function createProduct({
     }
     if (endpoint === 'matches' && req.method === 'GET') {
       requireScope(actor, 'history')
-      return send(res, 200, await archive.matchList(actor, Object.fromEntries(url.searchParams)))
+      const history = await archive.matchList(actor, Object.fromEntries(url.searchParams))
+      return send(res, 200, await review.withHistory(actor, history))
     }
     if (endpoint === 'stats' && req.method === 'GET') {
       requireScope(actor, 'history')
@@ -324,8 +346,25 @@ export async function createProduct({
       requireScope(actor, 'history')
       const id = endpoint.slice('matches/'.length)
       if (!isUuid(id)) throw new ProductError(404, 'Match not found')
-      const { matches: [match] } = await archive.matchList(actor, { id, limit: 1 })
+      const history = await archive.matchList(actor, { id, limit: 1 })
+      const { matches: [match] } = await review.withHistory(actor, history)
       return send(res, 200, rejectMissing(match, 'Match not found'))
+    }
+    const matchReview = /^review\/matches\/([^/]+)$/.exec(endpoint)
+    if (matchReview && req.method === 'GET') {
+      requireScope(actor, 'history')
+      return send(res, 200, await review.match(actor, matchReview[1]))
+    }
+    const gameReview = /^review\/games\/([^/]+)(?:\/(evidence|annotations))?$/.exec(endpoint)
+    if (gameReview) {
+      requireScope(actor, 'history')
+      const [, gameId, resource] = gameReview
+      const query = Object.fromEntries(url.searchParams)
+      if (req.method === 'GET' && !resource) return send(res, 200, await review.manifest(actor, gameId))
+      if (req.method === 'GET' && resource === 'evidence') return send(res, 200, await review.evidence(actor, gameId, query))
+      if (req.method === 'GET' && resource === 'annotations') return send(res, 200, await review.listAnnotations(actor, gameId, query))
+      if (req.method === 'POST' && resource === 'annotations') return send(res, 200, await review.saveAnnotations(actor, gameId, await body(req)))
+      throw new ProductError(405, 'Use GET for review evidence or POST to save annotations')
     }
     if (endpoint.startsWith('replays/') && req.method === 'GET') {
       requireScope(actor, 'history')

@@ -209,6 +209,32 @@
   height: 120px;
 }
 
+.recordedHand {
+  position: absolute;
+  z-index: var(--z-rail);
+  top: 4px;
+  display: flex;
+  translate: -50% 0;
+  max-width: 65%;
+}
+
+.recordedHand > button {
+  flex: 1 1 72px;
+  width: 72px;
+  min-width: calc(var(--touch-target, 36px) * 0.8);
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  cursor: zoom-in;
+}
+
+.recordedHand > button:focus-visible {
+  z-index: 1;
+  outline: 3px solid var(--decision);
+  outline-offset: 3px;
+}
+
 .hiddenCard {
   position: absolute;
   left: 0;

@@ -3,6 +3,7 @@ package mage.server.replay;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
 import mage.server.playtesting.ProductGateway;
 import mage.server.websocket.rpc.JsonCodec;
@@ -144,7 +145,7 @@ public final class ReplayStore {
             for (Path file : files) {
                 ReplayInfo info = readInfo(file);
                 if (info != null && info.batchOwner == null && Files.exists(eventsFile(info.gameId))) {
-                    infos.add(info);
+                    infos.add(nativeInfo(info));
                 }
             }
         } catch (IOException e) {
@@ -174,19 +175,61 @@ public final class ReplayStore {
         int to = Math.min(lines.size(), from + Math.max(1, Math.min(count, MAX_PAGE)));
         JsonArray events = new JsonArray();
         for (String line : lines.subList(from, to)) {
-            JsonObject event = JsonParser.parseString(line).getAsJsonObject();
-            JsonElement hands = event.remove("hands");
-            if (hands != null && hands.isJsonObject() && viewerName != null && hands.getAsJsonObject().has(viewerName)) {
-                event.add("myHand", hands.getAsJsonObject().get(viewerName));
-            }
-            events.add(event);
+            events.add(nativeEvent(JsonParser.parseString(line).getAsJsonObject(), viewerName));
         }
         JsonObject page = new JsonObject();
-        page.add("info", JsonCodec.GSON.toJsonTree(info));
+        info.events = lines.size();
+        page.add("info", JsonCodec.GSON.toJsonTree(nativeInfo(info)));
         page.addProperty("total", lines.size());
         page.addProperty("start", from);
         page.add("events", events);
         return page;
+    }
+
+    private static ReplayInfo nativeInfo(ReplayInfo info) {
+        info.reviewVersion = null;
+        info.reviewIncomplete = null;
+        for (ReplayInfo.ReplayPlayer player : info.players) {
+            player.deck = null;
+            player.playerId = null;
+        }
+        return info;
+    }
+
+    private static JsonObject nativeEvent(JsonObject archived, String viewerName) {
+        JsonObject event = new JsonObject();
+        event.add("t", archived.get("t"));
+        if (archived.has("log")) {
+            event.add("log", archived.get("log"));
+        } else if (archived.has("view")) {
+            event.add("view", archived.get("view"));
+            JsonElement hands = archived.get("hands");
+            if (hands != null && hands.isJsonObject() && viewerName != null && hands.getAsJsonObject().has(viewerName)) {
+                event.add("myHand", hands.getAsJsonObject().get(viewerName));
+            }
+        } else {
+            event.addProperty("kind", "rollback");
+            event.add("turn", archived.get("turn"));
+        }
+        return event;
+    }
+
+    private static boolean isNativeEvent(String line) {
+        try {
+            JsonElement parsed = JsonParser.parseString(line);
+            if (!parsed.isJsonObject()) {
+                return false;
+            }
+            JsonObject archived = parsed.getAsJsonObject();
+            if (archived.has("kind")) {
+                return archived.get("kind").isJsonPrimitive()
+                        && "rollback".equals(archived.get("kind").getAsString()) && archived.has("turn");
+            }
+            return (archived.has("view") && archived.get("view").isJsonObject())
+                    || (archived.has("log") && archived.get("log").isJsonObject());
+        } catch (JsonParseException exception) {
+            return false;
+        }
     }
 
     private List<String> lines(String gameId) throws IOException {
@@ -199,7 +242,7 @@ public final class ReplayStore {
              BufferedReader buffered = new BufferedReader(reader)) {
             String line;
             while ((line = buffered.readLine()) != null) {
-                if (!line.isEmpty()) {
+                if (!line.isEmpty() && isNativeEvent(line)) {
                     lines.add(line);
                 }
             }

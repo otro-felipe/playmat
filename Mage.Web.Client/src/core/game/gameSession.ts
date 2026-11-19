@@ -240,9 +240,9 @@ export class GameSession {
   }
 
   /** Replays: show one recorded moment of the game. */
-  showFrame(view: GameView): void {
+  showFrame(view: GameView, perspective?: string | null): void {
     if (this.store.getState().mode !== 'replay') return;
-    this.applyView(view);
+    this.applyView(view, false, perspective);
   }
 
   /** Watching and replays: whose seat is at the bottom of the table (null: the first player's). */
@@ -357,7 +357,7 @@ export class GameSession {
     return true;
   }
 
-  private applyView(incoming: GameView | null | undefined, fromPrompt = false): void {
+  private applyView(incoming: GameView | null | undefined, fromPrompt = false, replayPerspective?: string | null): void {
     if (!incoming || typeof incoming !== 'object') return;
     const { view: previous, prompt, awaitingServer } = this.store.getState();
     // The server only lists playable objects in views built while this player holds priority. An update sent
@@ -382,10 +382,11 @@ export class GameSession {
       }
       if (next === previous) this.refreshInteraction();
     }
-    if (next === previous) return;
+    if (next === previous && (replayPerspective === undefined || replayPerspective === this.store.getState().playerId)) return;
     // the server's view is the truth: whatever the click was expected to do, this shows what it did
     if (this.store.getState().prediction) this.store.setState({ prediction: null });
-    const playerId = this.store.getState().playerId ?? (this.store.getState().mode === 'play' ? view.myPlayerId ?? null : null);
+    const playerId = replayPerspective !== undefined ? replayPerspective
+      : this.store.getState().playerId ?? (this.store.getState().mode === 'play' ? view.myPlayerId ?? null : null);
     this.store.setState({ view: next, playerId });
     this.refreshInteraction();
   }

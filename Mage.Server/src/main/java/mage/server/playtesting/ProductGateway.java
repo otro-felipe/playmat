@@ -1,10 +1,12 @@
 package mage.server.playtesting;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
 import mage.server.websocket.rpc.RpcException;
+import mage.players.Player;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -120,6 +122,36 @@ public final class ProductGateway {
             return request(path, 2000, null, null, false).status == 200;
         } catch (IOException exception) {
             return false;
+        }
+    }
+
+    /** Arms a protected capture only when the product service confirms the actual match seats. */
+    public static Integer reviewCaptureVersion(String matchId, String tableId, Iterable<Player> seats) {
+        if (!enabled() || matchId == null || tableId == null) {
+            return null;
+        }
+        JsonObject payload = new JsonObject();
+        payload.addProperty("matchId", matchId);
+        payload.addProperty("tableId", tableId);
+        JsonArray participants = new JsonArray();
+        for (Player seat : seats) {
+            JsonObject participant = new JsonObject();
+            participant.addProperty("engineName", seat.getName());
+            participant.addProperty("playerId", seat.getId().toString());
+            participant.addProperty("human", seat.isHuman());
+            participants.add(participant);
+        }
+        payload.add("seats", participants);
+        try {
+            Response response = request("/internal/review-capture", 2000, "", payload, true);
+            if (response.status != 200) {
+                return null;
+            }
+            JsonElement version = JsonParser.parseString(response.body).getAsJsonObject().get("reviewVersion");
+            return version != null && version.isJsonPrimitive() && version.getAsJsonPrimitive().isNumber()
+                    && version.getAsDouble() == 2 ? 2 : null;
+        } catch (IOException | RuntimeException exception) {
+            return null;
         }
     }
 

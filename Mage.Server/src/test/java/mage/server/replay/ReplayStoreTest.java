@@ -125,6 +125,32 @@ public class ReplayStoreTest {
     }
 
     @Test
+    public void participantReviewFieldsNeverEnterTheNativeReplayProjection() throws IOException {
+        ReplayStore store = store(30, 100);
+        ReplayInfo info = new ReplayInfo();
+        UUID gameId = UUID.randomUUID();
+        info.gameId = gameId.toString();
+        info.startedAt = System.currentTimeMillis();
+        info.endedAt = info.startedAt + 1000;
+        info.events = 4;
+        info.players.add(new ReplayInfo.ReplayPlayer("Ana", true));
+        info.players.add(new ReplayInfo.ReplayPlayer("Bo", true));
+        String recorded = "{\"t\":0,\"view\":{\"turn\":1},\"hands\":{\"Ana\":{\"visible\":true}},\"review\":{\"secret\":\"private-look\"}}\n"
+                + "{\"t\":100,\"kind\":\"draw\",\"card\":{\"name\":\"private-draw\"}}\n"
+                + "{\"t\":200,\"kind\":\"action\",\"action\":\"cast\",\"card\":{\"name\":\"private-cast\"}}\n"
+                + "{\"t\":300,\"kind\":\"rollback\",\"turn\":1,\"review\":{\"secret\":\"private-rewind\"}}\n";
+        try (Writer out = new OutputStreamWriter(new GZIPOutputStream(Files.newOutputStream(store.partFile(info.gameId))), StandardCharsets.UTF_8)) {
+            out.write(recorded);
+        }
+        store.complete(info);
+
+        JsonObject page = store.page(gameId, 0, 20, "Ana");
+        assertThat(page.get("total").getAsInt()).as("[PM-REV-02] native replay event count").isEqualTo(2);
+        assertThat(page.toString()).contains("myHand", "rollback").doesNotContain("private-", "\"review\"", "\"draw\"");
+        assertThat(store.page(gameId, 1, 1, "Bo").getAsJsonArray("events")).hasSize(1);
+    }
+
+    @Test
     public void pagesAreCapped() throws IOException {
         ReplayStore store = store(30, 100);
         UUID gameId = record(store, System.currentTimeMillis(), ReplayStore.MAX_PAGE);

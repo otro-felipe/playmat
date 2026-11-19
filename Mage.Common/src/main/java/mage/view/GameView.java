@@ -90,6 +90,15 @@ public class GameView implements Serializable {
     public void setResponseIdle(ResponseIdleView responseIdle) { this.responseIdle = responseIdle; }
 
     public GameView(GameState state, Game game, UUID createdForPlayerId, UUID watcherUserId) {
+        this(state, game, createdForPlayerId, watcherUserId, true);
+    }
+
+    /** Capturing a replay must not refresh names or identities of the live objects it observes. */
+    public static GameView forReplay(Game game, UUID playerId, UUID watcherId) {
+        return new GameView(game.getState(), game, playerId, watcherId, false);
+    }
+
+    private GameView(GameState state, Game game, UUID createdForPlayerId, UUID watcherUserId, boolean updateStackObjects) {
         // debug only
         // LOGGER.info("GameView create: game cycle " + game.getState().getApplyEffectsCounter() 
         //     + ", player " + createdForPlayerId 
@@ -153,20 +162,26 @@ public class GameView implements Serializable {
                     } else if (object instanceof Emblem) {
                         CardView cardView = new CardView(new EmblemView((Emblem) object, game));
                         // Card sourceCard = (Card) ((Emblem) object).getSourceObject();
-                        stackObject.setName(object.getName());
+                        if (updateStackObjects) {
+                            stackObject.setName(object.getName());
+                        }
                         // ((StackAbility) stackObject).setExpansionSetCode(sourceCard.getExpansionSetCode());
                         stack.put(stackObject.getId(),
                                 new StackAbilityView(game, (StackAbility) stackObject, object.getName(), object, cardView));
                         checkPaid(stackObject.getId(), ((StackAbility) stackObject));
                     } else if (object instanceof Dungeon) {
                         CardView cardView = new CardView(new DungeonView((Dungeon) object));
-                        stackObject.setName(object.getName());
+                        if (updateStackObjects) {
+                            stackObject.setName(object.getName());
+                        }
                         stack.put(stackObject.getId(),
                                 new StackAbilityView(game, (StackAbility) stackObject, object.getName(), object, cardView));
                         checkPaid(stackObject.getId(), ((StackAbility) stackObject));
                     } else if (object instanceof Plane) {
                         CardView cardView = new CardView(new PlaneView((Plane) object, game));
-                        stackObject.setName(object.getName());
+                        if (updateStackObjects) {
+                            stackObject.setName(object.getName());
+                        }
                         stack.put(stackObject.getId(),
                                 new StackAbilityView(game, (StackAbility) stackObject, object.getName(), object, cardView));
                         checkPaid(stackObject.getId(), ((StackAbility) stackObject));
@@ -178,8 +193,9 @@ public class GameView implements Serializable {
                             throw new IllegalArgumentException("Designation object not found: " + object + " - " + object.getClass().toString());
                         }
                     } else if (object instanceof StackAbility) {
-                        StackAbility stackAbility = ((StackAbility) object);
-                        stackAbility.newId();
+                        if (updateStackObjects) {
+                            ((StackAbility) object).newId();
+                        }
                         stack.put(stackObject.getId(), new CardView(stackObject, game));
                         checkPaid(stackObject.getId(), ((StackAbility) stackObject));
                     } else {
