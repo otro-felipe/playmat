@@ -232,7 +232,7 @@ export async function verifyDiscardChoiceCapture({ startFixture, ownPlayer, riva
   await move(state.decision.choices.find(choice => byObject(choice, affectedId)))
   await move(state.decision.choices.find(choice => byObject(choice, manaSource.id)))
   if (state.decision.kind === 'priority') await move(state.decision.choices.find(choice => choice.type === 'pass'))
-  assert.equal(state.decision.kind, 'target')
+  assert.equal(state.decision.kind, 'pickCards')
   const chosen = state.decision.choices.find(choice => choice.card && choice.card.name !== 'Mountain')
   assert.ok(chosen?.card)
   await move(chosen)
