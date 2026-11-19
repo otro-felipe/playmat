@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { projectReplayEvent } from './archive.mjs'
 import { isUuid, normalize, ProductError } from './decks.mjs'
 import { categories, createReviewAnnotations } from './review-annotations.mjs'
+import { submittedSideboardDelta } from './sideboard-delta.mjs'
 
 const pageLimit = 40
 const capturedActions = new Set(['cast', 'land', 'activate', 'attack', 'block', 'mulligan', 'keep', 'sideboard', 'pass', 'pay', 'select'])
@@ -293,12 +294,17 @@ export function createPostMatchReview(pool, archive, permissions) {
     return { ready, rows, perspectives, typed, fullAvailable, visible, positions }
   }
 
-  function gameManifest(game, access, data, rows) {
+  async function gameManifest(game, access, data, rows) {
     const archiveRevision = immutableRevision(game)
     const eligiblePositions = data.ready ? data.positions : null
     const archiveStatus = game.archive_state
     const reason = game.match_status === 'active' ? 'match_active' : !data.ready ? 'replay_not_ready'
       : data.fullAvailable ? null : access.reason ?? 'legacy_unavailable'
+    let sideboardDelta = { status: 'unavailable' }
+    if (data.ready && data.perspectives.some(seat => seat.owned && seat.seatId === access.viewerSeatId)) {
+      sideboardDelta = game.game_number === 1 ? { status: 'initial_game' }
+        : submittedSideboardDelta(await archive.reviewOwnDeckPair(game.id, access.viewerSeatId))
+    }
     return {
       gameId: game.id, matchId: game.match_id, gameNumber: game.game_number, status: game.match_status, gameStatus: game.status,
       format: game.format ?? game.engine_format, viewerSeatId: access.viewerSeatId,
@@ -308,6 +314,7 @@ export function createPostMatchReview(pool, archive, permissions) {
       privacy: { fullAvailable: data.fullAvailable, canGrantLegacy: access.canGrantLegacy, legacyGranted: access.legacyGranted,
         viewerSeatId: access.viewerSeatId, perspectives: data.perspectives, reason },
       archiveRevision,
+      sideboardDelta,
       coverage: {
         archive: archiveStatus, version: data.typed ? 2 : 1, partial: archiveStatus !== 'ready' || !data.typed || game.review_incomplete,
         frames: data.rows.filter(({ event }) => !!event.view).length, actions: data.positions.filter(position => data.visible.includes(position.seatId)).length,
@@ -338,7 +345,7 @@ export function createPostMatchReview(pool, archive, permissions) {
         if (!(game.players ?? []).some(({ seatId }) => access.perspectives.some(perspective => perspective.seatId === seatId && perspective.owned)
           || access.viewerSeatId === seatId)) continue
         const data = await loadGame(game, access)
-        manifests.push(gameManifest(game, access, data, counts.filter(row => row.game_id === game.id)))
+        manifests.push(await gameManifest(game, access, data, counts.filter(row => row.game_id === game.id)))
       }
       return { matchId, status: access.status, games: manifests, analysis: aggregateMatches(manifests) }
     },

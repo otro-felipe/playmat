@@ -5,6 +5,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import pg from 'pg'
 import { createArchive } from './archive.mjs'
+import { createTheoryStore, evaluateTheoryTactics } from './theory-store.mjs'
 import { createIdentity, identityView } from './identity.mjs'
 import { createInvitations } from './invitations.mjs'
 import { createMcpEvents } from './mcp-events.mjs'
@@ -111,6 +112,7 @@ export async function createProduct({
     await pool.query(await readFile(resolve(directory, 'oauth-schema.sql'), 'utf8'))
     await pool.query(await readFile(resolve(directory, 'review-schema.sql'), 'utf8'))
     await pool.query(await readFile(resolve(directory, 'review-permissions.sql'), 'utf8'))
+    await pool.query(await readFile(resolve(directory, 'theory-schema.sql'), 'utf8'))
   } catch (error) {
     await pool.end()
     throw error
@@ -120,6 +122,7 @@ export async function createProduct({
   const id = createIdentity(pool, insecureCookie, oauth.resolve)
   const archive = createArchive(pool, replayDirectory, store)
   const review = createPostMatchReview(pool, archive, permissions)
+  const theory = createTheoryStore(pool, review)
   const events = createMcpEvents(pool, eventOptions)
   const invitations = createInvitations(pool, id, events)
   const attempts = new Map()
@@ -338,6 +341,15 @@ export async function createProduct({
       const history = await archive.matchList(actor, Object.fromEntries(url.searchParams))
       return send(res, 200, await review.withHistory(actor, history))
     }
+    if (req.method === 'POST' && (endpoint === 'theory/studies' || endpoint === 'theory/tactics')) {
+      requireScope(actor, 'history')
+      const input = await body(req)
+      return send(res, 200, endpoint === 'theory/studies' ? await theory.save(actor, input) : evaluateTheoryTactics(input))
+    }
+    if (req.method === 'GET' && endpoint.startsWith('theory/studies/')) {
+      requireScope(actor, 'history')
+      return send(res, 200, await theory.read(actor, endpoint.slice('theory/studies/'.length)))
+    }
     if (endpoint === 'stats' && req.method === 'GET') {
       requireScope(actor, 'history')
       return send(res, 200, await archive.statistics(actor, url.searchParams.get('format')))
@@ -362,7 +374,7 @@ export async function createProduct({
       const query = Object.fromEntries(url.searchParams)
       if (req.method === 'GET' && !resource) return send(res, 200, await review.manifest(actor, gameId))
       if (req.method === 'GET' && resource === 'evidence') return send(res, 200, await review.evidence(actor, gameId, query))
-      if (req.method === 'GET' && resource === 'annotations') return send(res, 200, await review.listAnnotations(actor, gameId, query))
+      if (req.method === 'GET' && resource === 'annotations') return send(res, 200, await theory.attachAnnotationLinks(actor, await review.listAnnotations(actor, gameId, query)))
       if (req.method === 'POST' && resource === 'annotations') return send(res, 200, await review.saveAnnotations(actor, gameId, await body(req)))
       throw new ProductError(405, 'Use GET for review evidence or POST to save annotations')
     }

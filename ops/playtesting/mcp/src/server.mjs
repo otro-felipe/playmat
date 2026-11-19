@@ -9,6 +9,7 @@ import { guideBootstrap, guideInstructions, registerGuides, sequenceInstructions
 import { registerMatchReviewPrompt, scoredPositions } from './match-review.mjs';
 import { registerPostMatchReviewPrompt, reviewManifestInput, reviewEvidenceInput, reviewAnnotationsInput, saveReviewAnnotationsInput } from './postmatch-review.mjs';
 import { playLine, waitForLine } from './line-runtime.mjs';
+import { registerTheorycraftTools } from './theorycraft.mjs';
 import { compactGameState, formatGameReceipt } from './state-view.mjs';
 
 const Uuid = z.uuid();
@@ -384,6 +385,7 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
     reviewAnnotationsInput, 'history', (args) => fromProduct('list_review_annotations', args), true);
   tool('save_review_annotations', 'Persist bounded qualitative annotations on exact recorded events. Send the archive revision and the annotation revision when editing.',
     saveReviewAnnotationsInput, 'history', (args) => fromProduct('save_review_annotations', args));
+  registerTheorycraftTools(tool, fromProduct);
   tool('export_matches', 'Request an authorized download handle for selected games.', {
     gameIds: z.array(Uuid).min(1).max(10),
   }, 'history', (args) => fromProduct('export_matches', args));
@@ -427,7 +429,7 @@ export function createMcpServer({
       }
       return seat;
     }
-    const mcp = new McpServer({ name: 'playmat-private', version: '0.3.0' }, { instructions: guideInstructions });
+    const mcp = new McpServer({ name: 'playmat-private', version: '0.4.0' }, { instructions: guideInstructions });
     const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true, sessionIdGenerator: undefined });
     registerGuides(mcp);
     if (eventRequest) registerEvents(mcp.server, actor, (method, args) => eventRequest(token, method, args));

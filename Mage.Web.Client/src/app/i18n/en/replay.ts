@@ -1,5 +1,13 @@
 const replay = {
   'replay.analysis': 'Analysis',
+  'replay.sideboard.heading': 'Your sideboard changes',
+  'replay.sideboard.games': 'Game {from} to game {to}',
+  'replay.sideboard.in': 'Brought in',
+  'replay.sideboard.out': 'Took out',
+  'replay.sideboard.empty': 'You made no sideboard changes.',
+  'replay.sideboard.unavailable': 'Sideboard changes could not be verified from the recorded deck lists.',
+  'replay.theoryStudies': 'Your saved studies',
+  'replay.downloadStudy': 'Download study {number} (JSON)',
   'replay.showAnalysis': 'Show analysis',
   'replay.showBothHands': 'Show both hands',
   'replay.perspective': 'Perspective',

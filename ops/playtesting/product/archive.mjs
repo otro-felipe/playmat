@@ -341,6 +341,22 @@ export function createArchive(pool, stage, backend) {
     return rows
   }
 
+  // The caller supplies the authenticated seat. No other seat's deck is loaded.
+  async function reviewOwnDeckPair(gameId, seatId) {
+    const { rows } = await pool.query(`
+      SELECT earlier.game_number AS "fromGameNumber", current_game.game_number AS "toGameNumber",
+        previous_seat.deck_snapshot AS "previousDeck", current_seat.deck_snapshot AS "currentDeck",
+        earlier.status='completed' AND earlier.checksum IS NOT NULL AS "previousCompleted"
+      FROM games current_game
+      JOIN matches encounter ON encounter.id=current_game.match_id AND encounter.status='completed'
+      JOIN games earlier ON earlier.match_id=current_game.match_id AND earlier.game_number=current_game.game_number-1
+      LEFT JOIN game_players previous_seat ON previous_seat.game_id=earlier.id AND previous_seat.engine_key=$2
+      JOIN game_players current_seat ON current_seat.game_id=current_game.id AND current_seat.engine_key=$2
+      WHERE current_game.id=$1 AND current_game.status='completed' AND current_game.checksum IS NOT NULL
+      LIMIT 2`, [gameId, seatId])
+    return rows.length === 1 && rows[0].previousCompleted ? rows[0] : null
+  }
+
   async function matchList(actor, opts = {}) {
     const [older, earlierMatch] = parseCursor(opts.cursor)
     const format = opts.format ? normalizeFormat(opts.format) : null
@@ -458,5 +474,5 @@ export function createArchive(pool, stage, backend) {
   }
 
   return { archiveGames, matchList, replayPage, evaluation, exportReplays, authorizeExport, statistics,
-    reviewGame, reviewGames, readReviewArchive: game => rawEvents(store, game) }
+    reviewGame, reviewGames, reviewOwnDeckPair, readReviewArchive: game => rawEvents(store, game) }
 }

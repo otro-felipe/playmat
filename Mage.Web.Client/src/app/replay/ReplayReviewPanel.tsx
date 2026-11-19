@@ -3,7 +3,7 @@ import { useId } from 'react';
 import { registerMessages, useT } from '../i18n';
 import messages from '../i18n/en/replay';
 import { Button, IconButton } from '../ui/Button';
-import { reviewCategories, safePublicSource, type ReviewAnnotation, type ReviewCounts, type ReviewEvent, type ReviewSummary } from './reviewData';
+import { reviewCategories, safePublicSource, type ReviewAnnotation, type ReviewCounts, type ReviewEvent, type ReviewSummary, type SideboardDelta } from './reviewData';
 import styles from './ReplayReviewPanel.module.css';
 
 registerMessages(messages);
@@ -37,8 +37,9 @@ export function RatingCounts({ counts }: { counts: ReviewCounts }) {
 
 export type ReviewMoment = Pick<ReviewEvent, 'cursor' | 'frameCursor' | 'turn' | 'text'>;
 
-export function ReplayReviewPanel({ analysis, moments, current, annotation, actor, showRetrospective, onMoment, onPrevious, onNext, more, error, onRetry }: {
+export function ReplayReviewPanel({ analysis, sideboardDelta, moments, current, annotation, actor, showRetrospective, onMoment, onPrevious, onNext, more, error, onRetry }: {
   analysis?: ReviewSummary;
+  sideboardDelta?: SideboardDelta;
   moments: readonly ReviewMoment[];
   current?: number;
   annotation?: ReviewAnnotation;
@@ -65,6 +66,7 @@ export function ReplayReviewPanel({ analysis, moments, current, annotation, acto
         </div>
       )}
       {annotation && <ReviewDetail annotation={annotation} actor={actor} showRetrospective={showRetrospective} />}
+      {sideboardDelta && <OwnSideboard delta={sideboardDelta} />}
       <nav className={styles.moments} aria-label={t('replay.moments')}>
         <div className={styles.momentHead}>
           <h3>{t('replay.moments')}</h3>
@@ -88,6 +90,35 @@ export function ReplayReviewPanel({ analysis, moments, current, annotation, acto
   );
 }
 
+function OwnSideboard({ delta }: { delta: SideboardDelta }) {
+  const t = useT();
+  const heading = useId();
+  if (delta.status === 'initial_game') return null;
+  return (
+    <section className={styles.detail} aria-labelledby={heading}>
+      <h3 id={heading}>{t('replay.sideboard.heading')}</h3>
+      {delta.status === 'available' ? (
+        <>
+          <p className={styles.muted}>{t('replay.sideboard.games', { from: delta.fromGameNumber, to: delta.toGameNumber })}</p>
+          {delta.broughtIn.length || delta.tookOut.length ? ([
+            { label: 'replay.sideboard.in', cards: delta.broughtIn },
+            { label: 'replay.sideboard.out', cards: delta.tookOut },
+          ] as const).map(({ label, cards }) => cards.length > 0 && (
+            <div key={label}>
+              <h4>{t(label)}</h4>
+              <ul className={styles.evidenceList}>
+                {cards.map(({ name, amount }) => <li key={name}>{amount} × {name}</li>)}
+              </ul>
+            </div>
+          )) : <p>{t('replay.sideboard.empty')}</p>}
+        </>
+      ) : <p className={styles.muted}>{t('replay.sideboard.unavailable')}</p>}
+    </section>
+  );
+}
+
+const studyIdPattern = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
+
 function ReviewDetail({ annotation, actor, showRetrospective }: {
   annotation: ReviewAnnotation;
   actor?: string;
@@ -97,6 +128,7 @@ function ReviewDetail({ annotation, actor, showRetrospective }: {
   const evidenceId = useId();
   const retrospective = typeof annotation.retrospective === 'string' ? annotation.retrospective
     : annotation.retrospective?.text ?? annotation.retrospective?.observation;
+  const studies = annotation.theoryStudies?.filter(({ studyId, tool }) => tool === 'get_theory_study' && studyIdPattern.test(studyId)) ?? [];
   return (
     <article className={styles.detail}>
       <p className={styles.rating} data-rating={annotation.category}>{t(`replay.rating.${annotation.category}`)}</p>
@@ -135,6 +167,20 @@ function ReviewDetail({ annotation, actor, showRetrospective }: {
       {showRetrospective && retrospective && (
         <section className={styles.retrospective}>
           <h4>{t('replay.retrospective')}</h4><p>{retrospective}</p>
+        </section>
+      )}
+      {studies.length > 0 && (
+        <section>
+          <h4>{t('replay.theoryStudies')}</h4>
+          <ul className={styles.evidenceList}>
+            {studies.map(({ studyId }, index) => (
+              <li key={studyId}>
+                <a href={`/api/playtesting/theory/studies/${studyId}`} download={`theory-study-${studyId}.json`}>
+                  {t('replay.downloadStudy', { number: index + 1 })}
+                </a>
+              </li>
+            ))}
+          </ul>
         </section>
       )}
       {!!annotation.sources?.length && (

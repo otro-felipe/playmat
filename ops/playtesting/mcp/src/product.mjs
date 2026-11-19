@@ -101,6 +101,17 @@ export function createProductClient(baseUrl, publicUrl) {
         path = `${root}/review/games/${encode(args.gameId)}/annotations`;
         config = { method: 'POST', body: { archiveRevision: args.archiveRevision, entries: args.entries } };
         break;
+      case 'run_theory_study':
+        path = `${root}/theory/studies`;
+        config = { method: 'POST', body: args };
+        break;
+      case 'get_theory_study':
+        path = `${root}/theory/studies/${encode(args.studyId)}`;
+        break;
+      case 'search_theory_tactics':
+        path = `${root}/theory/tactics`;
+        config = { method: 'POST', body: args };
+        break;
       case 'export_matches':
         path = `${root}/exports`;
         config = { method: 'POST', body: { gameIds: args.gameIds, mode: 'handle' } };

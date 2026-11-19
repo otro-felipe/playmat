@@ -7,6 +7,14 @@ import type { Catalog } from './locales';
  */
 const es: Catalog = {
   'replay.analysis': 'Análisis',
+  'replay.sideboard.heading': 'Tus cambios de sideboard',
+  'replay.sideboard.games': 'Del juego {from} al juego {to}',
+  'replay.sideboard.in': 'Entraron',
+  'replay.sideboard.out': 'Salieron',
+  'replay.sideboard.empty': 'No hiciste cambios de sideboard.',
+  'replay.sideboard.unavailable': 'No se pudieron comprobar los cambios de sideboard con las listas registradas.',
+  'replay.theoryStudies': 'Tus estudios guardados',
+  'replay.downloadStudy': 'Descargar estudio {number} (JSON)',
   'replay.showAnalysis': 'Ver análisis',
   'replay.showBothHands': 'Ver ambas manos',
   'replay.perspective': 'Perspectiva',

@@ -21,6 +21,19 @@ export interface ReplayPerspective {
   owned?: boolean;
 }
 
+interface DeckChange {
+  name: string;
+  amount: number;
+}
+
+export type SideboardDelta = {
+  status: 'available';
+  fromGameNumber: number;
+  toGameNumber: number;
+  broughtIn: DeckChange[];
+  tookOut: DeckChange[];
+} | { status: 'initial_game' | 'unavailable' };
+
 export interface ReviewManifest {
   gameId: string;
   matchId: string;
@@ -34,6 +47,7 @@ export interface ReviewManifest {
   coverage?: ReviewCoverage;
   archiveRevision?: string;
   analysis?: ReviewSummary;
+  sideboardDelta?: SideboardDelta;
   privacy?: {
     canGrantLegacy?: boolean;
     legacyGranted?: boolean;
@@ -76,6 +90,7 @@ export interface ReviewAnnotation {
   alternatives: { line: string; legality: string; condition?: string; benefit?: string; risk?: string }[];
   opponentResponses?: { line: string; basis: string; impact?: string }[];
   sources?: { url: string; date?: string; format?: string; applicability?: string }[];
+  theoryStudies?: { studyId: string; tool: 'get_theory_study' }[];
   retrospective?: string | { text?: string; observation?: string };
 }
 
