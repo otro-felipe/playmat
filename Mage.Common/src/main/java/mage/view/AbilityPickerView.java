@@ -3,6 +3,8 @@ package mage.view;
 import mage.abilities.Ability;
 import mage.abilities.SpellAbility;
 import mage.constants.AbilityType;
+import mage.constants.ManaType;
+import mage.players.PlayableObjectStats;
 
 import java.io.Serializable;
 import java.util.LinkedHashMap;
@@ -20,6 +22,8 @@ public class AbilityPickerView implements Serializable {
     private Map<UUID, String> choices = new LinkedHashMap<>();
     private Map<UUID, AbilityType> abilityTypes;
     private Map<UUID, String> spellNames;
+    private Map<UUID, List<ManaType>> manaColors;
+    private Boolean modePicker;
     private UUID sourceObjectId;
     private String message;
     private GameView gameView;
@@ -35,6 +39,7 @@ public class AbilityPickerView implements Serializable {
         if (this.sourceObjectId != null) {
             abilityTypes = new LinkedHashMap<>();
             spellNames = new LinkedHashMap<>();
+            manaColors = new LinkedHashMap<>();
         }
 
         int num = 0;
@@ -58,6 +63,10 @@ public class AbilityPickerView implements Serializable {
             choices.put(ability.getId(), num + ". " + rule);
             if (this.sourceObjectId != null) {
                 abilityTypes.put(ability.getId(), ability.getAbilityType());
+                List<ManaType> colors = PlayableObjectStats.fixedManaColors(ability);
+                if (colors != null && !colors.isEmpty()) {
+                    manaColors.put(ability.getId(), colors);
+                }
                 if (ability instanceof SpellAbility) {
                     spellNames.put(ability.getId(), ((SpellAbility) ability).getCardName());
                 }
@@ -66,9 +75,15 @@ public class AbilityPickerView implements Serializable {
     }
 
     public AbilityPickerView(GameView gameView, Map<UUID, String> modes, String message) {
+        this(gameView, null, modes, message);
+    }
+
+    public AbilityPickerView(GameView gameView, UUID sourceObjectId, Map<UUID, String> modes, String message) {
         this.gameView = gameView;
         this.choices = modes;
         this.message = message;
+        this.sourceObjectId = visibleSource(gameView, sourceObjectId) ? sourceObjectId : null;
+        this.modePicker = true;
     }
 
     private static boolean visibleSource(GameView gameView, UUID sourceId) {
@@ -76,6 +91,10 @@ public class AbilityPickerView implements Serializable {
             return false;
         }
         if (visibleCard(gameView.getMyHand().get(sourceId))) {
+            return true;
+        }
+        if (gameView.getStack().values().stream().anyMatch(card -> visibleCard(card)
+                && (sourceId.equals(card.getId()) || sourceId.equals(card.getCardId())))) {
             return true;
         }
         return gameView.getPlayers().stream().anyMatch(player -> visibleCard(player.getBattlefield().get(sourceId))

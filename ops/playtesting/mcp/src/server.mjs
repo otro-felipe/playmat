@@ -25,12 +25,18 @@ const hasDestination = (value) => value.phase !== undefined || value.step !== un
 const Hold = z.object({ kind: z.literal('hold'), delayMs: z.number().int().min(1).max(10_000) }).strict();
 const Pace = z.object({ kind: z.literal('pace'), delayMs: z.number().int().min(1).max(1000).describe('Brief ordinary-priority pacing only; actual delay is capped at 250ms when inactivity timing is unknown.') }).strict();
 const AdvanceToOwnTurn = z.object({ kind: z.literal('advance_to_own_turn') }).strict();
+const ManaColor = z.enum(['W', 'U', 'B', 'R', 'G', 'C']);
+const TargetZone = z.enum(['BATTLEFIELD', 'GRAVEYARD', 'EXILED', 'STACK', 'COMMAND', 'ALL']);
 const ChoiceSelector = z.object({
   cardName: z.string().trim().min(1).max(250).optional(),
   cardId: StringId.optional(), label: z.string().trim().min(1).max(500).optional(),
   objectId: StringId.optional(),
-  zone: z.enum(['hand', 'battlefield']).optional(),
-}).strict().refine(({ cardName, cardId, objectId, label }) => cardName || cardId || objectId || label, 'Name the exact public object, card or choice label.');
+  abilityId: StringId.optional().describe('Exact engine ID of a visible ability or spell mode.'),
+  answer: z.boolean().optional().describe('Boolean engine answer in a question, independent of its button label.'),
+  zone: z.enum(['hand', 'battlefield', 'exile', 'graveyard', 'stack']).optional(),
+  manaColor: ManaColor.optional(),
+}).strict().refine(({ cardName, cardId, objectId, label, abilityId, answer, manaColor }) => cardName || cardId || objectId || label
+  || abilityId || answer !== undefined || manaColor, 'Name the exact visible object, card, ability, answer or choice label.');
 const OwnTrigger = z.object({ sourceId: StringId, abilityText: z.string().min(1).max(2000), count: z.number().int().min(1).max(4).default(1) }).strict();
 const OwnActivation = z.object({ sourceId: StringId, abilityText: z.string().min(1).max(2000) }).strict();
 const TargetTrigger = z.object({ sourceId: StringId, targetingCardId: StringId, abilityText: z.string().min(1).max(2000), count: z.number().int().min(1).max(2).default(1) }).strict();
@@ -57,39 +63,75 @@ const PassUntil = z.object({
   skipOptionalResponses: z.boolean().default(false).describe('Keep false unless intentionally declining every optional play, including land drops. Never use this to wait for your next turn.'),
 }).strict().refine((value) => hasDestination(value) || value.stackEmpty === true, 'A pass needs a phase, step, priority or empty-stack destination.');
 const Sequence = { gameId: Uuid, cursor: Cursor, expectedStackIds: z.array(StringId).max(16).optional(), allowPlannedCombatDamage: z.boolean().default(false), steps: z.array(z.union([Hold, Pace, Answer, PassUntil, YieldPriority, AdvanceToOwnTurn])).min(1).max(32) };
-const TurnPlay = z.object({ kind: z.literal('play'), select: ChoiceSelector, when: z.enum(['stack_empty', 'priority']).default('stack_empty'),
+const Payment = z.union([StringId, z.object({
+  sourceId: StringId,
+  abilityId: StringId.optional(),
+  color: ManaColor.optional(),
+}).strict()]).describe('Source object ID, or select an exact legal mana ability or color at that source.');
+const DecisionGuard = z.object({
+  kind: StringId, instruction: z.string().min(1).max(2000).optional(), ...GameCondition,
+  sourceObjectId: StringId.optional(),
+  targetSourceId: StringId.optional(),
+  targetZone: TargetZone.optional(),
+  targetRole: z.number().int().nonnegative().max(32).optional(),
+  modePicker: z.literal(true).optional(),
+}).strict();
+const TurnPlayShape = z.object({ kind: z.literal('play'), select: ChoiceSelector, when: z.enum(['stack_empty', 'priority']).default('stack_empty'),
   playAs: z.literal('land').optional().describe('Require an engine-confirmed land play. If the object opens a picker, use the unique land option for that exact source. Omit for other plays.'),
   reevaluateAfter: z.boolean().optional().describe('Make this the last strategic intention and return control after settlement. Only guarded costs for its tracked cast/activation may follow before resolution; an untracked no-stack choice must be last. Use for uncertain effects not recognized automatically.'),
   expectCast: z.boolean().optional().describe('False for an intentional no-stack special action such as plot; lands are detected automatically. Unexpected stack additions still stop.'),
-  targets: z.array(z.object({ select: ChoiceSelector, instruction: z.string().min(1).max(2000).optional() }).strict()).max(8).optional(), payWith: z.array(StringId).max(16).optional(),
+  spellAbilityId: StringId.optional().describe('Choose this exact spell or alternative-cost ability from the selected source picker.'),
+  modeId: StringId.optional().describe('Choose this exact engine mode ID from the selected spell’s mode picker.'),
+  mode: z.string().trim().min(1).max(2000).optional().describe('Exact visible mode option text when the mode ID has not been observed.'),
+  targets: z.array(z.object({ select: ChoiceSelector, instruction: z.string().min(1).max(2000).optional(),
+    targetZone: TargetZone.optional(), role: z.number().int().nonnegative().max(32).optional(),
+  }).strict()).max(8).optional(),
+  payWith: z.array(Payment).max(16).optional(),
   expectTriggers: z.array(OwnTrigger).max(4).optional(), expectTargetTriggers: z.array(TargetTrigger).max(2).optional(),
-}).strict().refine(({ playAs, expectCast, targets, payWith }) => playAs !== 'land' || (expectCast !== true && !targets?.length && !payWith?.length),
-  'A land action cannot include spell targets, casting mana or a spell forecast.');
-const TurnChoose = z.object({ kind: z.literal('choose'),
+}).strict();
+const TurnPlay = TurnPlayShape.refine(({ playAs, expectCast, targets, payWith, spellAbilityId, modeId, mode }) => playAs !== 'land'
+  || (expectCast !== true && !targets?.length && !payWith?.length && !spellAbilityId && !modeId && !mode),
+'A land action cannot include spell targets, casting mana or a spell forecast.')
+  .refine(({ modeId, mode }) => !(modeId && mode), 'Use either a mode ID or exact mode text.');
+const TurnChooseShape = z.object({ kind: z.literal('choose'),
   choiceId: StringId.optional().describe('Copy the id of a legal option from decision.choices. Pair it with the observed decisionId.'),
   select: ChoiceSelector.optional().describe('For a planned prompt, uniquely identify the legal option by object ID or exact option label.'),
   decisionId: StringId.optional().describe('Copy decision.id from the same observed state as the choice.'),
-  guard: z.object({ kind: StringId, instruction: z.string().min(1).max(2000).optional(), ...GameCondition }).strict().optional(),
+  guard: DecisionGuard.optional(),
   value: Value.optional(), reevaluateAfter: z.boolean().optional(), expectCast: z.boolean().optional(), expectAbility: OwnActivation.optional(), skipIfTargetedBy: StringId.optional(), expectTriggers: z.array(OwnTrigger).max(4).optional(), expectTargetTriggers: z.array(TargetTrigger).max(2).optional(),
-}).strict().refine(({ choiceId, select }) => !!choiceId !== !!select, 'Use one exact choiceId or one semantic select, as with submit_decision.')
-  .refine(({ decisionId, guard }) => decisionId || guard && (['priority', 'payMana'].includes(guard.kind) || guard.instruction !== undefined), 'Use the observed decisionId, or guard the future mandatory choice with its exact instruction.');
-const TurnAttack = z.object({ kind: z.literal('attack'), attackers: z.union([z.literal('all'), z.array(StringId).max(16)]).default('all'),
-  expectTriggers: z.array(OwnTrigger).max(4).optional() }).strict()
-  .refine(({ attackers }) => attackers === 'all' || new Set(attackers).size === attackers.length, 'Name each attacker once.');
-const Turn = { gameId: Uuid, cursor: Cursor, actions: z.array(z.union([TurnPlay, TurnChoose, TurnAttack, Pace])).max(32),
+}).strict();
+const TurnChoose = TurnChooseShape.refine(({ choiceId, select }) => !!choiceId !== !!select, 'Use one exact choiceId or one semantic select, as with submit_decision.')
+  .refine(({ decisionId, guard, select }) => decisionId || guard && (
+    ['priority', 'payMana'].includes(guard.kind) || guard.instruction !== undefined
+    || guard.kind === 'panel' && (guard.sourceObjectId || guard.modePicker) && (select?.abilityId || select?.manaColor)
+    || guard.kind === 'question' && guard.sourceObjectId && select?.answer !== undefined
+    || guard.kind === 'target' && guard.targetSourceId && guard.targetRole !== undefined && select?.objectId
+  ), 'Use the observed decisionId, or guard a future mandatory choice with exact instruction or typed source and option.');
+const TurnAttackShape = z.object({ kind: z.literal('attack'), attackers: z.union([z.literal('all'), z.array(StringId).max(16)]).default('all'),
+  expectTriggers: z.array(OwnTrigger).max(4).optional() }).strict();
+const TurnAttack = TurnAttackShape.refine(({ attackers }) => attackers === 'all' || new Set(attackers).size === attackers.length, 'Name each attacker once.');
+const TurnBlockShape = z.object({ kind: z.literal('block'),
+  assignments: z.array(z.object({ blockerId: StringId, attackerId: StringId }).strict()).max(16)
+    .describe('Exact visible blocker–attacker pairs to confirm. An empty list declares no blockers.'),
+}).strict();
+const TurnBlock = TurnBlockShape.refine(({ assignments }) => new Set(assignments.map(({ blockerId }) => blockerId)).size === assignments.length,
+  'Name each blocker once. Use the live engine decision for a creature that can block multiple attackers.');
+const Turn = { gameId: Uuid, cursor: Cursor, actions: z.array(z.union([TurnPlay, TurnChoose, TurnAttack, TurnBlock, Pace])).max(32),
   expectedStackIds: z.array(StringId).max(16).optional(), finish: z.enum(['next_turn', 'end_step', 'none']).default('next_turn') };
-const LinePassUntil = z.object({
+const LinePassUntilShape = z.object({
   kind: z.literal('pass_until'),
   destination: z.enum(['my_upkeep', 'my_draw', 'end_step', 'current_turn']).describe('Next own upkeep, forthcoming own draw (including this turn from upkeep), this turn’s end step, or an explicit current-turn condition. A skipped window or missing draw returns the observed state.'),
   policy: z.enum(['if_no_play', 'decline_optional']).default('if_no_play').describe('Decline optional plays only when explicitly intended, for example to bluff a response. Both policies stop on an opponent action, new information or an unplanned required choice.'),
   ...GameCondition,
-}).strict().refine((value) => (value.destination === 'current_turn') === hasDestination(value),
+}).strict();
+const LinePassUntil = LinePassUntilShape.refine((value) => (value.destination === 'current_turn') === hasDestination(value),
   'Use phase, step or priority only with current_turn. At least one condition is required for current_turn.');
 const LinePassPriority = z.object({ kind: z.literal('pass_priority') }).strict()
   .describe('Deliberately pass once and return at the next actionable boundary.');
+const LineActions = z.array(z.discriminatedUnion('kind', [TurnPlay, TurnChoose, TurnAttack, TurnBlock, Pace, LinePassUntil, LinePassPriority])).min(1).max(32);
 const Line = {
   gameId: Uuid, cursor: Cursor, commandId: StringId.describe('Choose a unique ID for this line. For an uncertain result, reuse this ID with the same game, cursor and actions.'),
-  actions: z.array(z.union([TurnPlay, TurnChoose, TurnAttack, Pace, LinePassUntil, LinePassPriority])).min(1).max(32)
+  actions: z.array(z.union([TurnPlayShape, TurnChooseShape, TurnAttackShape, TurnBlockShape, Pace, LinePassUntilShape, LinePassPriority])).min(1).max(32)
     .describe('Plan as far as current information justifies. Use exact choices for visible engine prompts. Put pass_until or pass_priority last.'),
   expectedStackIds: z.array(StringId).max(16).optional(),
   waitMs: z.number().int().min(0).max(25_000).default(5_000).describe('Bound how long this call waits for the result. If the plan still owns execution, wait_for_decision with this gameId and commandId.'),
@@ -118,6 +160,22 @@ function textResult(value, isError = false) {
   return { content: [{ type: 'text', text: JSON.stringify(value) }], isError };
 }
 
+function rejectedLine({ gameId, cursor, commandId, view }, rejection) {
+  return formatGameReceipt({
+    status: 'rejected', gameId, cursor, commandId,
+    actionIndex: null, appliedDecisions: 0, planOwnsExecution: false, ...rejection,
+  }, view);
+}
+
+function lineArgumentRejection(args, error) {
+  const issues = error.issues.map(({ path, code, message }) => ({ path: ['actions', ...path], code, message }));
+  const issue = issues[0];
+  return rejectedLine(args, {
+    stage: 'schema', code: 'invalid_line_arguments', message: issue.message, issues,
+    actionIndex: Number.isInteger(issue.path[1]) ? issue.path[1] : null, recovery: 'correct_arguments',
+  });
+}
+
 function reply(res, status, code, message) {
   res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
   res.end(JSON.stringify({ jsonrpc: '2.0', error: { code, message }, id: null }));
@@ -139,7 +197,14 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
     }, async (args, extra) => {
       try {
         if (!actor.scopes.includes(scope)) throw new ToolError('forbidden', 'This credential lacks the required scope.');
-        return textResult(await run(args, extra.signal));
+        const result = await run(args, extra.signal);
+        const response = textResult(result);
+        // Rejected gameplay commands are application receipts. They carry a code,
+        // stage and recovery instructions even through clients that normalize MCP errors.
+        if (result?.status === 'rejected' && ['play_line', 'wait_for_decision'].includes(name)) {
+          response.structuredContent = result;
+        }
+        return response;
       } catch (error) {
         if (error instanceof ToolError) {
           const receipt = { code: error.code, message: error.message, ...(error.state ? { state: error.state } : {}) };
@@ -174,8 +239,14 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
     timeoutMs: z.number().int().min(100).max(25_000).optional(), view: StateView,
   }, 'play', async (args, signal) => {
     if (args.commandId === undefined) return formatGameReceipt(await getSeat().wait(args, signal), args.view);
-    if (!args.gameId || args.afterCursor !== undefined || args.afterDecisionId !== undefined) {
-      throw new ToolError('invalid_line_wait', 'Use the gameId and commandId from play_line together. Omit afterCursor and afterDecisionId when waiting for that line.');
+    const invalidField = !args.gameId ? 'gameId' : args.afterCursor !== undefined ? 'afterCursor'
+      : args.afterDecisionId !== undefined ? 'afterDecisionId' : null;
+    if (invalidField) {
+      const message = 'Use the gameId and commandId from play_line together. Omit afterCursor and afterDecisionId when waiting for that line.';
+      return {
+        status: 'rejected', stage: 'schema', code: 'invalid_line_wait', message,
+        commandId: args.commandId, recovery: 'correct_arguments', issues: [{ path: [invalidField], code: 'custom', message }],
+      };
     }
     return formatGameReceipt(await waitForLine(getSeat(), args, signal), args.view);
   }, true);
@@ -201,8 +272,19 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
   tool('advance_to_own_turn', 'Pass only when the current engine offers no non-mana optional play, stopping before your next turn or any useful legal play, mandatory decision, public opponent action or missing causal evidence. Zero mana is never evidence that no action exists.', { gameId: Uuid, cursor: Cursor },
     'play', ({ gameId, cursor }) => getSeat().startSequence({ gameId, cursor, steps: [{ kind: 'advance_to_own_turn' }] }, reauthorize));
   const playSequence = (args) => getSeat().startSequence(args, reauthorize);
-  tool('play_line', 'Submit the longest justified line of plays, choices, attacks and passes from the current cursor, on either turn. Ordinary handoffs are automatic. The line stops on new information, rival actions or a required choice it cannot answer. Returns the applied progress and visible game state together. For an exact choice use its current decisionId and choiceId. Prefer this tool for gameplay.', Line, 'play',
-    async (args, signal) => formatGameReceipt(await playLine(getSeat(), args, reauthorize, signal), args.view));
+  tool('play_line', 'Submit the longest justified line of plays, choices, attacks and passes from the current cursor, on either turn. Ordinary handoffs are automatic. The line stops on new information, rival actions or a required choice it cannot answer. Returns applied progress and seat-visible game state. Check status, code and recovery when a line is rejected. For an exact choice use its current decisionId and choiceId. Prefer this tool for gameplay.', Line, 'play', async (args, signal) => {
+    const actions = LineActions.safeParse(args.actions);
+    if (!actions.success) return lineArgumentRejection(args, actions.error);
+    try {
+      return formatGameReceipt(await playLine(getSeat(), { ...args, actions: actions.data }, reauthorize, signal), args.view);
+    } catch (error) {
+      if (!(error instanceof ToolError) || !error.lineRejection) throw error;
+      return rejectedLine(args, {
+        stage: 'preflight', code: error.code, message: error.message, recovery: error.lineRejection,
+        actionIndex: error.actionIndex ?? null, ...(error.state ? { state: error.state } : {}),
+      });
+    }
+  });
   tool('play_turn', 'Plan a complete turn with significant plays, public targets, chosen mana sources, guarded costs/choices and attacks. The executor makes legal ordinary passes between intentions; do not enumerate passes or predict priority windows. Own declared spells/triggers and the initial own stack may resolve; real rival actions, new information, unknown mandatory choices and chosen stops interrupt. finish next_turn advances only while no useful legal action remains, never because mana is zero.', Turn, 'play', (args) => getSeat().startTurn(args, reauthorize));
   tool('play_sequence', 'Queue guarded choices by exact ID, card or label. Mark a planned cast with expectCast to let later steps pay for that same spell.', Sequence, 'play', playSequence);
   tool('submit_sequence', 'Start a conditional, bounded sequence of choices, brief waits and ordinary passes.', Sequence, 'play', playSequence);
@@ -333,7 +415,7 @@ export function createMcpServer({
       }
       return seat;
     }
-    const mcp = new McpServer({ name: 'playmat-private', version: '0.1.0' }, { instructions: guideInstructions });
+    const mcp = new McpServer({ name: 'playmat-private', version: '0.2.0' }, { instructions: guideInstructions });
     const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true, sessionIdGenerator: undefined });
     registerGuides(mcp);
     if (eventRequest) registerEvents(mcp.server, actor, (method, args) => eventRequest(token, method, args));

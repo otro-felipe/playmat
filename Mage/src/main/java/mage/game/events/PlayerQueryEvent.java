@@ -25,6 +25,8 @@ import mage.util.MultiAmountMessage;
  */
 public class PlayerQueryEvent extends EventObject implements ExternalEvent, Serializable {
 
+    private static final long serialVersionUID = 9192186761497419014L;
+
     public enum QueryType {
 
         ASK,
@@ -116,12 +118,13 @@ public class PlayerQueryEvent extends EventObject implements ExternalEvent, Seri
         this.required = required;
     }
 
-    private PlayerQueryEvent(UUID playerId, String message, Map<UUID, String> modes) {
+    private PlayerQueryEvent(UUID playerId, String message, UUID sourceId, Map<UUID, String> modes) {
         super(playerId);
         this.queryType = QueryType.CHOOSE_MODE;
         this.message = message;
         this.playerId = playerId;
         this.modes = modes;
+        this.choiceSourceId = sourceId;
     }
 
     private PlayerQueryEvent(UUID playerId, String message, List<? extends Card> pile1, List<? extends Card> pile2) {
@@ -172,8 +175,8 @@ public class PlayerQueryEvent extends EventObject implements ExternalEvent, Seri
         return new PlayerQueryEvent(playerId, message, pile1, pile2);
     }
 
-    public static PlayerQueryEvent chooseModeEvent(UUID playerId, String message, Map<UUID, String> modes) {
-        return new PlayerQueryEvent(playerId, message, modes);
+    public static PlayerQueryEvent chooseModeEvent(UUID playerId, String message, UUID sourceId, Map<UUID, String> modes) {
+        return new PlayerQueryEvent(playerId, message, sourceId, modes);
     }
 
     public static PlayerQueryEvent chooseChoiceEvent(UUID playerId, Choice choice) {

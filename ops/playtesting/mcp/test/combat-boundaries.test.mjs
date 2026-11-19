@@ -121,6 +121,74 @@ test('[PM-LINE-01] permanent combat witnesses retain only public evidence fields
   assert.deepEqual(projected.sequenceEvidence.combatDamage, [hit]);
 });
 
+for (const rivalActs of [false, true]) test(`[PM-LINE-COMBAT-1] a confirmed blocker survives while the opposing attacker dies, opponent action: ${rivalActs}`, async (t) => {
+  const cub = { id: 'cub', cardId: 'cub-card', name: 'Badgermole Cub', controllerId: 'rival', types: ['CREATURE'], power: '2', toughness: '2', damage: 0 };
+  const blocker = { id: 'blocker', cardId: 'blocker-card', name: 'Monastery Swiftspear', controllerId: 'me', types: ['CREATURE'], power: '5', toughness: '3', damage: 0 };
+  const pilot = { id: 'me', yourSeat: true, life: 20, battlefield: [blocker] };
+  const rival = { id: 'rival', life: 20, counters: [], battlefield: [cub] };
+  let state = { gameId: 'boundary', status: 'active', epoch: 1, cursor: 1, turn: 10, activePlayer: 'Rival', activePlayerId: 'rival',
+    step: 'DECLARE_BLOCKERS', priority: 'self', ownHand: [], stack: [], sequenceEvidence: evidence(), decision: priority('blocks'),
+    combat: [{ attackers: [cub], blockers: [blocker] }], players: [pilot, rival] };
+  const listeners = new Set(), applied = [];
+  const seat = new GameSeat({ snapshot: () => state, subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener); }, respond: async (id) => {
+    applied.push(id);
+    if (id === 'postcombat') return { submitted: true };
+    assert.equal(id, 'blocks');
+    const hits = [
+      { revision: 1, sourceId: cub.id, controllerId: rival.id, targetId: blocker.id, amount: 2, targetPermanent: true },
+      { revision: 2, sourceId: blocker.id, controllerId: pilot.id, targetId: cub.id, amount: 5, targetPermanent: true },
+    ];
+    state = { ...state, cursor: 2, step: 'POSTCOMBAT_MAIN', decision: priority('postcombat'), combat: [],
+      players: [{ ...pilot, battlefield: [{ ...blocker, damage: 2 }] },
+        { ...rival, battlefield: [], graveyard: [{ id: 'cub-card', cardId: 'cub-card', name: cub.name, types: ['CREATURE'] }] }],
+      sequenceEvidence: { ...evidence(), combatRevision: 2, combatDamage: hits, publicActions: { me: 0, rival: Number(rivalActs) } } };
+    for (const listener of [...listeners]) listener();
+    return { submitted: true };
+  } });
+  t.after(() => seat.invalidate());
+  const result = await settled(seat, seat.startSequence({ gameId: 'boundary', cursor: 1, allowPlannedCombatDamage: true,
+    steps: [{ kind: 'pass_until', step: 'POSTCOMBAT_MAIN' }, { kind: 'answer', choiceId: 'pass', guard: { kind: 'priority', step: 'POSTCOMBAT_MAIN' } }] }, async () => true));
+  assert.equal(result.status, rivalActs ? 'interrupted' : 'completed', JSON.stringify(result));
+  if (rivalActs) assert.equal(result.reason, 'opponent_action');
+  assert.deepEqual(applied, rivalActs ? ['blocks'] : ['blocks', 'postcombat']);
+});
+
+for (const targetPrompt of [false, true]) test(`[PM-LINE-COMBAT-1] chooses and confirms the exact blocker pair, extra attacker prompt: ${targetPrompt}`, async (t) => {
+  const cub = { id: 'cub', controllerId: 'rival' };
+  const other = { id: 'other', controllerId: 'rival' };
+  const blocker = { id: 'blocker', controllerId: 'me' };
+  const confirm = { id: 'confirm', type: 'button', intent: 'confirm_block' };
+  const block = { id: 'candidate', objectId: blocker.id, card: blocker };
+  const attackers = targetPrompt ? [cub, other] : [cub];
+  let state = { gameId: 'boundary', status: 'active', epoch: 1, cursor: 1, turn: 10, activePlayer: 'Rival', activePlayerId: 'rival',
+    step: 'DECLARE_BLOCKERS', priority: 'self', ownHand: [], stack: [], sequenceEvidence: evidence(),
+    decision: { id: 'pick-blocker', kind: 'declareBlockers', choices: [block, confirm] },
+    combat: attackers.map(attacker => ({ attackers: [attacker], blockers: [] })),
+    players: [{ id: 'me', yourSeat: true, life: 20, battlefield: [blocker] }, { id: 'rival', life: 20, battlefield: attackers }] };
+  const listeners = new Set(), applied = [];
+  const seat = new GameSeat({ snapshot: () => state, subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
+    respond: async (_, choiceId) => {
+      applied.push(choiceId);
+      if (choiceId === 'confirm') {
+        state = { ...state, cursor: state.cursor + 1, decision: priority('declared') };
+      } else if (choiceId === block.id && targetPrompt) {
+        state = { ...state, cursor: state.cursor + 1, decision: { id: 'pick-attacker', kind: 'target', instruction: 'Select attacker to block',
+          choices: [{ id: 'wrong', objectId: other.id }, { id: 'right', objectId: cub.id }] } };
+      } else {
+        assert.equal(choiceId, targetPrompt ? 'right' : block.id);
+        state = { ...state, cursor: state.cursor + 1, decision: { id: 'confirm-blockers', kind: 'declareBlockers', choices: [block, confirm] },
+          combat: state.combat.map(group => group.attackers[0] === cub ? { ...group, blockers: [blocker] } : group) };
+      }
+      for (const listener of [...listeners]) listener();
+      return { submitted: true };
+    } });
+  t.after(() => seat.invalidate());
+  const result = await settled(seat, seat.startTurn({ gameId: 'boundary', cursor: 1, finish: 'none',
+    actions: [{ kind: 'block', assignments: [{ blockerId: blocker.id, attackerId: cub.id }] }] }, async () => true));
+  assert.equal(result.status, 'completed', JSON.stringify(result));
+  assert.deepEqual(applied, targetPrompt ? ['candidate', 'right', 'confirm'] : ['candidate', 'confirm']);
+});
+
 for (const [step, activePlayerId] of [['POSTCOMBAT_MAIN', 'me'], ['END_TURN', 'me'], ['PRECOMBAT_MAIN', 'rival']]) {
   test(`an impossible attack cannot pass another window: ${step}/${activePlayerId}`, async (t) => {
     const state = { gameId: 'boundary', status: 'active', epoch: 1, cursor: 1, turn: 3, activePlayerId, step, priority: 'self', ownHand: [], stack: [], players: [{ id: 'me', yourSeat: true, battlefield: [] }, { id: 'rival', battlefield: [] }], sequenceEvidence: evidence(), decision: priority('keep-this-choice') };
@@ -154,3 +222,61 @@ for (const missedStep of ['POSTCOMBAT_MAIN', 'END_TURN']) {
     assert.equal(result.status, 'interrupted'); assert.equal(result.reason, 'illegal_choice'); assert.deepEqual(applied, ['pre']);
   });
 }
+
+for (const variant of ['matched', 'delayed', 'first-strike', 'poison', 'late-poison', 'wrong-life', 'wrong-source',
+  'opponent-action', 'blocked', 'planeswalker', 'missing-defender', 'unrelated-tap']) {
+  test(`[PM-LINE-COMBAT-1] defensive damage needs an exact unblocked attacker and own defender: ${variant}`, async (t) => {
+    const attacker = { id: 'attacking-cottage', controllerId: 'rival', types: ['LAND', 'CREATURE'], power: '3', damage: 0, tapped: true };
+    const pilot = { id: 'me', yourSeat: true, life: 17, counters: [], battlefield: [] };
+    const rival = { id: 'rival', life: 20, counters: [], battlefield: [attacker] };
+    const group = { attackers: [attacker], blockers: [], isBlocked: variant === 'blocked',
+      defenderId: variant === 'missing-defender' ? undefined : variant === 'planeswalker' ? 'defended-walker' : 'me' };
+    let state = { gameId: 'boundary', status: 'active', epoch: 1, cursor: 1, turn: 10, activePlayer: 'Rival', activePlayerId: 'rival',
+      step: 'DECLARE_BLOCKERS', priority: 'self', ownHand: [], stack: [], sequenceEvidence: evidence(), decision: priority('blocks'),
+      combat: [group], players: [pilot, rival] };
+    const listeners = new Set();
+    const applied = [];
+    const update = (change) => {
+      state = { ...state, ...change, cursor: state.cursor + 1 };
+      for (const listener of [...listeners]) listener();
+    };
+    const seat = new GameSeat({ snapshot: () => state, subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
+      respond: async (id) => {
+        applied.push(id);
+        if (id === 'postcombat') {
+          update({ step: 'END_TURN', decision: priority('done') });
+          return { submitted: true };
+        }
+        assert.equal(id, 'blocks');
+        const hit = { revision: 1, sourceId: variant === 'wrong-source' ? 'other-attacker' : attacker.id,
+          controllerId: rival.id, targetId: pilot.id, amount: 3 };
+        const witnessed = { ...evidence(), combatRevision: 1, combatDamage: [hit], publicActions: { me: 0, rival: Number(variant === 'opponent-action') } };
+        if (variant === 'first-strike') {
+          update({ step: 'FIRST_COMBAT_DAMAGE', decision: null, players: [{ ...pilot, life: 14 }, rival], sequenceEvidence: witnessed });
+        } else if (variant === 'delayed') {
+          update({ step: 'COMBAT_DAMAGE', decision: null, sequenceEvidence: witnessed });
+        }
+        const counters = variant === 'poison' ? [{ name: 'poison', count: 1 }] : [];
+        update({ step: 'POSTCOMBAT_MAIN', decision: priority('postcombat'), combat: [],
+          players: [{ ...pilot, life: variant === 'wrong-life' ? 13 : variant === 'first-strike' ? 11 : 14, counters },
+            variant === 'unrelated-tap' ? { ...rival, battlefield: [{ ...attacker, tapped: false }] } : rival],
+          sequenceEvidence: variant === 'first-strike' ? { ...witnessed, combatRevision: 2, combatDamage: [hit, { ...hit, revision: 2 }] } : witnessed });
+        if (variant === 'late-poison') {
+          update({ players: [{ ...state.players[0], counters: [{ name: 'poison', count: 1 }] }, rival] });
+        }
+        return { submitted: true };
+      } });
+    t.after(() => seat.invalidate());
+    const result = await settled(seat, seat.startTurn({ gameId: 'boundary', cursor: 1, settle: false, finish: 'none',
+      actions: [{ kind: 'pass_until', destination: 'end_step', policy: 'decline_optional' }] }, async () => true));
+    const matched = ['matched', 'delayed', 'first-strike'].includes(variant);
+    assert.equal(result.status, matched ? 'completed' : 'interrupted', JSON.stringify(result));
+    if (!matched) assert.equal(result.reason, variant === 'opponent-action' ? 'opponent_action' : 'opponent_state_changed');
+    assert.deepEqual(applied, matched ? ['blocks', 'postcombat'] : ['blocks']);
+  });
+}
+
+test('[PM-LINE-COMBAT-1] the combat projection preserves public defender and blocked state', () => {
+  const projected = visibleAgentGame({ view: { combat: [{ defenderId: 'me', isBlocked: false, unrelated: 'omit' }] } });
+  assert.deepEqual(projected.combat, [{ defenderId: 'me', isBlocked: false, attackers: [], blockers: [] }]);
+});

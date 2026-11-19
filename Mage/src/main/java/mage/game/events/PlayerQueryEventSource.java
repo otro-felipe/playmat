@@ -20,6 +20,8 @@ import mage.util.MultiAmountMessage;
  */
 public class PlayerQueryEventSource implements EventSource<PlayerQueryEvent>, Serializable {
 
+    private static final long serialVersionUID = -5346502261075100039L;
+
     protected final EventDispatcher<PlayerQueryEvent> dispatcher = new EventDispatcher<PlayerQueryEvent>() {
     };
 
@@ -58,8 +60,8 @@ public class PlayerQueryEventSource implements EventSource<PlayerQueryEvent>, Se
         dispatcher.fireEvent(PlayerQueryEvent.choosePileEvent(playerId, message, pile1, pile2));
     }
 
-    public void chooseMode(UUID playerId, String message, Map<UUID, String> modes) {
-        dispatcher.fireEvent(PlayerQueryEvent.chooseModeEvent(playerId, message, modes));
+    public void chooseMode(UUID playerId, String message, UUID sourceId, Map<UUID, String> modes) {
+        dispatcher.fireEvent(PlayerQueryEvent.chooseModeEvent(playerId, message, sourceId, modes));
     }
 
     public void target(UUID playerId, String message, Set<UUID> targets, boolean required) {

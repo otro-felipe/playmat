@@ -1,14 +1,20 @@
 package mage.players;
 
+import mage.abilities.Ability;
 import mage.abilities.ActivatedAbility;
 import mage.abilities.PlayLandAbility;
 import mage.abilities.SpellAbility;
 import mage.abilities.mana.BasicManaAbility;
+import mage.abilities.costs.common.TapSourceCost;
+import mage.abilities.effects.mana.BasicManaEffect;
+import mage.constants.AbilityType;
+import mage.constants.ManaType;
 import mage.constants.SpellAbilityType;
 import mage.util.Copyable;
 
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -60,8 +66,20 @@ public class PlayableObjectStats implements Serializable, Copyable<PlayableObjec
             if (shortInfo.length() > 50) {
                 shortInfo = shortInfo.substring(0, 50 - 1) + "...";
             }
-            dest.add(new PlayableObjectRecord(ability.getId(), shortInfo));
+            dest.add(new PlayableObjectRecord(ability, shortInfo));
         }
+    }
+
+    public static List<ManaType> fixedManaColors(Ability ability) {
+        if (ability.getAbilityType() != AbilityType.ACTIVATED_MANA) {
+            return null;
+        }
+        return ability.getEffects().stream()
+                .filter(effect -> effect.getClass() == BasicManaEffect.class)
+                .map(effect -> ((BasicManaEffect) effect).getManaTemplate())
+                .flatMap(mana -> Arrays.stream(ManaType.values())
+                        .filter(color -> color != ManaType.GENERIC && mana.get(color) > 0))
+                .distinct().collect(Collectors.toList());
     }
 
     protected PlayableObjectStats(final PlayableObjectStats source) {
@@ -117,17 +135,31 @@ public class PlayableObjectStats implements Serializable, Copyable<PlayableObjec
 
 class PlayableObjectRecord implements Serializable, Copyable<PlayableObjectRecord> {
 
-    UUID id;
-    String value;
+    // Preserve the serialization identity of reliable game recovery backups.
+    private static final long serialVersionUID = 3742240574740107254L;
+    final UUID id;
+    final String value;
+    final AbilityType abilityType;
+    final List<ManaType> manaColors;
+    final Boolean plainMana;
 
-    public PlayableObjectRecord(UUID id, String value) {
-        this.id = id;
+    public PlayableObjectRecord(ActivatedAbility ability, String value) {
+        this.id = ability.getId();
         this.value = value;
+        this.abilityType = ability.getAbilityType();
+        this.manaColors = PlayableObjectStats.fixedManaColors(ability);
+        this.plainMana = manaColors != null && !manaColors.isEmpty() && ability.getEffects().size() == 1
+                && ability.getCosts().size() == 1 && ability.getCosts().get(0) instanceof TapSourceCost
+                && ability.getManaCosts().isEmpty() && ability.getTargets().isEmpty();
     }
+
 
     private PlayableObjectRecord(final PlayableObjectRecord record) {
         this.id = record.id;
         this.value = record.value;
+        this.abilityType = record.abilityType;
+        this.manaColors = record.manaColors;
+        this.plainMana = record.plainMana;
     }
 
     public UUID getId() {

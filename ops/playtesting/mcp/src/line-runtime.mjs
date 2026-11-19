@@ -39,6 +39,7 @@ async function lineResult(seat, { gameId, commandId, sequenceId }, timeoutMs, si
   return {
     ...receipt,
     commandId,
+    stage: 'execution',
     actionIndex: receipt.error?.actionIndex ?? receipt.actionIndex ?? null,
     planOwnsExecution,
     needsAgent: rollback || !planOwnsExecution && requiresDecision(state),
@@ -53,7 +54,11 @@ export function playLine(seat, { gameId, cursor, commandId, actions, expectedSta
   const fingerprint = createHash('sha256').update(JSON.stringify([gameId, cursor, actions, expectedStackIds])).digest('hex');
   const known = commands.get(commandId);
   if (known) {
-    if (known.fingerprint !== fingerprint) throw new ToolError('key_conflict', 'That commandId belongs to a different line.');
+    if (known.fingerprint !== fingerprint) {
+      const error = new ToolError('key_conflict', 'That commandId belongs to a different line. Recover it with the original request before making a new plan.');
+      error.lineRejection = 'recover_original_command';
+      throw error;
+    }
     return lineResult(seat, known, waitMs, signal);
   }
   let started;
@@ -63,8 +68,10 @@ export function playLine(seat, { gameId, cursor, commandId, actions, expectedSta
     const settle = actions.some(({ kind }) => kind === 'play' || kind === 'attack');
     started = seat.startTurn({ gameId, cursor, actions, expectedStackIds, finish: 'none', settle }, reauthorize);
   } catch (error) {
-    if (error instanceof ToolError && ['stale_decision', 'sequence_running'].includes(error.code)) {
+    if (error instanceof ToolError && error.code !== 'forbidden_game') {
       error.state = currentGameState(seat, gameId);
+      error.lineRejection = error.code === 'sequence_running' ? 'recover_running_command'
+        : error.state ? 'replan_from_state' : 'read_current_state';
     }
     throw error;
   }
@@ -78,7 +85,7 @@ export function playLine(seat, { gameId, cursor, commandId, actions, expectedSta
 export function waitForLine(seat, { gameId, commandId, timeoutMs = 18_000 }, signal) {
   const command = commandIndex(seat).get(commandId);
   if (!command || command.gameId !== gameId) {
-    throw new ToolError('unknown_command', 'This seat has no retained line receipt for that game and commandId.');
+    throw new ToolError('unknown_command', 'This seat has no retained line receipt for that game and commandId. Read the current game state before submitting a new action.');
   }
   return lineResult(seat, command, timeoutMs, signal);
 }

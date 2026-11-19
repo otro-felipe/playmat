@@ -1,11 +1,13 @@
 // Opt-in real-Java fixture. Never run against a real account, database, game or public endpoint.
 import assert from 'node:assert/strict'
-import { randomBytes, randomUUID } from 'node:crypto'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
+import { performance } from 'node:perf_hooks'
 import { createRequire } from 'node:module'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { createProduct } from './product.mjs'
 import { PlaymatEngineSeat } from '../mcp/src/engine-seat.mjs'
 import { mayDriveRival } from './sequence-driver.mjs'
+import { verifyTypedManaTalent } from './mana-semantics.local.mjs'
 
 if (process.env.PLAYMAT_SEQUENCE_LOCAL_TEST !== 'yes'
   || !process.env.DATABASE_URL?.includes('@playmat-sequence-pg:5432/sequence_fixture')) throw Error('Explicit isolated sequence fixture required')
@@ -20,15 +22,21 @@ const burnDeck = { name: 'Isolated causal burn fixture', cards: [
   { cardName: 'Mountain', amount: 52 }, { cardName: 'Lightning Bolt', amount: 4 }, { cardName: 'Shock', amount: 4 },
 ], sideboard: [] }
 const rivalDeck = { name: 'Isolated pass-only fixture', cards: [{ cardName: 'Mountain', amount: 60 }], sideboard: [] }
+const prepareDeck = { name: 'Isolated mode and prepare fixture', cards: [
+  { cardName: 'Mountain', amount: 52 }, { cardName: 'Pompous Battlemage', amount: 4 }, { cardName: "Heroes' Hangout", amount: 4 },
+], sideboard: [] }
 let browser, client
-const totalDeadline = Date.now() + 300_000
+const totalDeadline = Date.now() + 480_000
 let acceptedSetup = 0
+let toolTrips = 0
 let injectRivalMana = false, rivalManaAccepted = false
 async function call(name, args = {}, measure) {
+  toolTrips++
   const result = await client.callTool({ name, arguments: args })
-  const data = JSON.parse(result.content[0].text)
+  const responseText = result.content[0].text
+  const data = responseText.startsWith('{') ? JSON.parse(responseText) : { code: 'mcp_protocol_error', message: responseText }
   if (result.isError) throw Object.assign(Error('Isolated MCP action failed: ' + name), { code: data.code })
-  measure?.(Buffer.byteLength(result.content[0].text, 'utf8'))
+  measure?.(Buffer.byteLength(responseText, 'utf8'))
   return data
 }
 async function ownState() { return call('get_game_state') }
@@ -117,6 +125,134 @@ async function waitNextOwn(oldId) {
   }
   throw Error('No next own fixture decision before the bounded deadline')
 }
+async function startFixture(name, deck, seed) {
+  const created = await browser.createGame({ name, format: 'Modern', deck: rivalDeck, matchTimeLimit: 'MIN__15', seed }, async record => {
+    const response = await fetch(base + '/api/playtesting/invites', { method: 'POST', headers: { 'content-type': 'application/json', Cookie: browserCookie }, body: JSON.stringify({ ...record, guestEngineName: engineName }) })
+    assert.equal(response.status, 201)
+    return response.json()
+  })
+  await call('join_game', { tableId: created.tableId, deck })
+  await browser.startMatch(created.tableId)
+  return waitNextOwn()
+}
+let browserCookie
+
+async function playPreparedTurnDecisionByDecision(state, { hangoutId, actId, attackerId, lands }) {
+  let castCount = 0, payments = 0
+  while (Date.now() < totalDeadline && state.step !== 'END_TURN') {
+    const decision = state.decision
+    const selectObject = (choice, id) => choice.objectId === id || choice.card?.id === id
+    let choice
+    if (decision.kind === 'priority') {
+      if (state.step === 'PRECOMBAT_MAIN' && !state.stack.length && castCount < 2) {
+        choice = decision.choices.find(item => selectObject(item, [hangoutId, actId][castCount]))
+        assert.ok(choice, 'The same spell is legal during the control line')
+        castCount++
+      } else choice = decision.choices.find(item => item.type === 'pass')
+    } else if (decision.kind === 'panel') {
+      choice = decision.choices.find(item => /^Patrol Night\b/.test(item.label))
+    } else if (decision.kind === 'target') {
+      choice = decision.choices.find(item => selectObject(item, attackerId))
+        ?? decision.choices.find(item => item.intent === 'confirm_target' || /^(Done|Confirm|Skip)$/.test(item.label))
+    } else if (decision.kind === 'payMana') {
+      choice = decision.choices.find(item => selectObject(item, lands[payments]))
+      payments++
+    } else if (decision.kind === 'question') {
+      choice = decision.choices.find(item => item.answer === false)
+    } else if (decision.kind === 'declareAttackers') {
+      choice = decision.choices.find(item => selectObject(item, attackerId)) ?? decision.choices.find(item => item.intent === 'confirm_attack')
+      if (state.combat?.some(group => group.attackers?.some(({ id }) => id === attackerId))) {
+        choice = decision.choices.find(item => item.intent === 'confirm_attack')
+      }
+    }
+    assert.ok(choice, 'No equivalent control answer for ' + decision.kind + ' ' + (decision.instruction ?? ''))
+    await answer(state, choice)
+    state = await waitNextOwn(decision.id)
+  }
+  assert.equal(castCount, 2)
+  assert.equal(payments, 2)
+  assert.equal(state.step, 'END_TURN')
+  return state
+}
+
+async function verifyPreparedModeLine(mode) {
+  let state = await startFixture('Isolated prepare and modal acceptance: ' + mode, prepareDeck, 77)
+  const battlemage = state => ownPlayer(state).battlefield.find(card => card.name === 'Pompous Battlemage')
+  const hangout = state => state.ownHand.find(card => card.name === "Heroes' Hangout")
+  const prepared = state => ownPlayer(state).exile.find(card => card.name === 'Improvised Act')
+  let battlemageCastTurn
+  while (Date.now() < totalDeadline) {
+    const decision = state.decision
+    const ownMain = state.step === 'PRECOMBAT_MAIN' && state.activePlayerId === ownPlayer(state).id && decision.kind === 'priority'
+    if (ownMain && battlemage(state) && state.turn > battlemageCastTurn && hangout(state)
+      && prepared(state) && freeLands(state).length >= 2 && !state.stack.length) break
+    const land = ownMain && decision.choices.find(choice => choice.card?.name === 'Mountain'
+      && state.ownHand.some(card => card.id === choice.card.id))
+    const creature = ownMain && battlemageCastTurn === undefined && freeLands(state).length
+      && decision.choices.find(choice => choice.card?.name === 'Pompous Battlemage')
+    const mana = decision.kind === 'payMana' && decision.choices.find(choice => freeLands(state).some(card => card.id === choice.card?.id))
+    const choice = land || creature || mana || cleanupMountain(state)
+      || decision.choices.find(item => /^Keep\b|^Play first\b/.test(item.label))
+      || decision.choices.find(item => item.type === 'pass') || decision.choices.find(item => item.type === 'button')
+    assert.ok(choice, 'Unexpected prepare setup prompt ' + decision.kind)
+    if (!land && creature) battlemageCastTurn = state.turn
+    await answer(state, choice)
+    state = await waitNextOwn(decision.id)
+  }
+  assert.ok(state.turn > battlemageCastTurn && battlemage(state) && hangout(state) && prepared(state)
+    && freeLands(state).length >= 2, 'Prepared fixture setup with an attack-ready creature')
+  const attacker = battlemage(state)
+  const act = prepared(state)
+  const lands = freeLands(state)
+  const beforeLife = rivalPlayer(state).life
+  const prowess = [{ sourceId: attacker.id, abilityText: 'Prowess (Whenever you cast a noncreature spell, this creature gets +1/+1 until end of turn.)' }]
+  const patrol = mode !== 'Date Night'
+  const hangoutAction = { kind: 'play', select: { cardId: hangout(state).id }, mode: patrol ? 'Patrol Night' : mode,
+    ...(patrol ? { targets: [{ select: { objectId: attacker.id }, targetZone: 'BATTLEFIELD', role: 0 }] } : {}),
+    payWith: [{ sourceId: lands[0].id, color: 'R' }], expectTriggers: prowess }
+  const acceptsDiscard = mode === 'Improvised Act Yes'
+  const discard = state.ownHand.find(card => card.name === 'Mountain')
+  assert.ok(discard, 'The fixture keeps an expendable known card to make the Yes/No question available')
+  const actActions = patrol ? [
+    { kind: 'play', select: { cardId: act.id }, payWith: [{ sourceId: lands[1].id, color: 'R' }], expectTriggers: prowess },
+    { kind: 'choose', guard: { kind: 'question', instruction: 'Discard a card and draw a card?' }, select: { answer: acceptsDiscard } },
+    ...(acceptsDiscard ? [{ kind: 'choose', guard: { kind: 'target', instruction: 'Select a card (discard cost)' },
+      select: { objectId: discard.id } }] : []),
+  ] : []
+  const started = performance.now()
+  const startTrips = toolTrips
+  if (mode === 'Low-level control') {
+    const end = await playPreparedTurnDecisionByDecision(state, { hangoutId: hangout(state).id, actId: act.id, attackerId: attacker.id,
+      lands: lands.map(({ id }) => id) })
+    assert.equal(rivalPlayer(end).life, beforeLife - 4)
+    console.log(JSON.stringify({ phase: 'PM-LINE-FLOW-1 PM-LINE-FLOW-2 real Java low-level control', mode,
+      toolTrips: toolTrips - startTrips, elapsedMs: Math.round(performance.now() - started) }))
+    await call('concede', { gameId: state.gameId, entireMatch: true })
+    return
+  }
+  const receipt = await playLineWithPeer({ gameId: state.gameId, cursor: state.cursor, commandId: randomUUID(),
+    view: 'compact', waitMs: 15_000, actions: [
+      hangoutAction, ...actActions,
+      { kind: 'attack', attackers: [attacker.id] },
+      { kind: 'pass_until', destination: 'end_step', policy: 'decline_optional' },
+    ] }, { gameId: state.gameId, turn: state.turn, activePlayerId: state.activePlayerId })
+  const context = JSON.stringify({ reason: receipt.reason, error: receipt.error, step: receipt.state?.step,
+    prompt: receipt.state?.decision?.instruction, choices: receipt.state?.decision?.choices.map(({ label }) => label), completedSteps: receipt.completedSteps })
+  if (patrol && !acceptsDiscard) {
+    assert.equal(receipt.status, 'completed', context)
+    assert.equal(rivalPlayer(receipt.state).life, beforeLife - 4, 'Patrol Night and two Prowess triggers give four damage')
+    assert.equal(receipt.lastDestination.step, 'END_TURN')
+  } else {
+    assert.equal(receipt.status, 'interrupted', context)
+    assert.equal(receipt.reason, 'new_information', context)
+    assert.ok(receipt.appliedDecisions >= 3, 'The engine cast the selected mode before stopping at its information boundary')
+    assert.equal(rivalPlayer(receipt.state).life, beforeLife, 'An information-changing branch cannot execute the queued attack')
+    assert.equal(receipt.state.step, 'PRECOMBAT_MAIN')
+  }
+  console.log(JSON.stringify({ phase: 'PM-LINE-FLOW-1 PM-LINE-FLOW-2 real Java', mode,
+    status: receipt.status, toolTrips: toolTrips - startTrips, appliedDecisions: receipt.appliedDecisions, elapsedMs: Math.round(performance.now() - started) }))
+  await call('concede', { gameId: state.gameId, entireMatch: true })
+}
 try {
   const product = await createProduct({ databaseUrl: process.env.DATABASE_URL })
   try {
@@ -127,26 +263,36 @@ try {
   const login = await fetch(base + '/login', { method: 'POST', redirect: 'manual',
     headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ username: 'SequenceAlice', password }) })
   assert.equal(login.status, 303)
-  const cookie = login.headers.get('set-cookie').split(';')[0]
-  browser = new PlaymatEngineSeat({ engineUrl: 'ws://127.0.0.1:8080/ws', engineName: 'SequenceAlice', trustedHeader: 'X-Playmat-User', authenticationHeaders: { Cookie: cookie } })
+  browserCookie = login.headers.get('set-cookie').split(';')[0]
+  browser = new PlaymatEngineSeat({ engineUrl: 'ws://127.0.0.1:8080/ws', engineName: 'SequenceAlice', trustedHeader: 'X-Playmat-User', authenticationHeaders: { Cookie: browserCookie } })
   await browser.open()
   client = new Client({ name: 'isolated-real-sequence-fixture', version: '1.0.0' })
   await client.connect(new StreamableHTTPClientTransport(new URL(base + '/mcp'), { requestInit: { headers: { Authorization: 'Bearer ' + token } } }))
   const discovered = await client.listTools()
   assert.ok(discovered.tools.some(tool => tool.name === 'advance_to_own_turn'))
   assert.ok(discovered.tools.some(tool => tool.name === 'play_line'))
+  const viewTools = ['get_game_state', 'play_line', 'wait_for_decision'].map(name => discovered.tools.find(tool => tool.name === name))
+  assert.ok(viewTools.every(tool => tool?.inputSchema.properties.view), 'Native catalog exposes compact state through every line entry point')
+  const lineTools = JSON.stringify(viewTools.map(({ name, inputSchema }) => ({ name, inputSchema })))
+  assert.ok(['modeId', 'payWith', 'assignments', 'targetRole'].every(field => lineTools.includes('"' + field + '"')))
+  console.log(JSON.stringify({ phase: 'PM-LINE-MCP-2 real native discovery', version: client.getServerVersion()?.version,
+    lineSchemaSha256: createHash('sha256').update(lineTools).digest('hex') }))
   const guideBundle = await call('get_guide', { bundle: true })
   assert.equal(guideBundle.guides.length, 4)
   assert.ok(guideBundle.guides.every(guide => guide.text?.length > 0))
   assert.ok(JSON.stringify(discovered.tools.find(tool => tool.name === 'play_sequence').inputSchema).includes('allowPlannedResolutions'))
-  const created = await browser.createGame({ name: 'Isolated causal sequence acceptance', format: 'Modern', deck: rivalDeck, matchTimeLimit: 'MIN__15', seed: 77 }, async record => {
-    const response = await fetch(base + '/api/playtesting/invites', { method: 'POST', headers: { 'content-type': 'application/json', Cookie: cookie }, body: JSON.stringify({ ...record, guestEngineName: engineName }) })
-    assert.equal(response.status, 201)
-    return response.json()
-  })
-  await call('join_game', { tableId: created.tableId, deck: burnDeck })
-  await browser.startMatch(created.tableId)
-  let state
+  await verifyPreparedModeLine('Patrol Night')
+  await verifyPreparedModeLine('Date Night')
+  await verifyPreparedModeLine('Improvised Act Yes')
+  await verifyPreparedModeLine('Low-level control')
+  if (process.env.PLAYMAT_SEQUENCE_SCENARIOS !== 'modal') {
+    await verifyTypedManaTalent({ startFixture, ownPlayer, answer, waitNextOwn, playLineWithPeer, call, totalDeadline })
+    await verifyCausalBurn()
+  }
+} finally { browser?.close(); await client?.close() }
+
+async function verifyCausalBurn() {
+  let state = await startFixture('Isolated causal sequence acceptance', burnDeck, 77)
   let testedOwnStops = false
   let testedLandIntent = false
   while (Date.now() < totalDeadline) {
@@ -324,4 +470,4 @@ try {
   console.log(JSON.stringify({ phase: 'real-java-own-damage-line-completed', completedSteps: result.completedSteps,
     appliedDecisions: result.appliedDecisions, ownResolutions: 3, initialStackAdopted: true, semanticActions: 2,
     rivalOnlyPassed: true, observedEndStep: result.lastDestination.step === 'END_TURN', setupActions: acceptedSetup }))
-} finally { browser?.close(); await client?.close() }
+}

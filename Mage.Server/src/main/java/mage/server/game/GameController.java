@@ -254,7 +254,7 @@ public class GameController implements GameCallback {
                                 choosePile(event.getPlayerId(), event.getMessage(), event.getPile1(), event.getPile2());
                                 break;
                             case CHOOSE_MODE:
-                                chooseMode(event.getPlayerId(), event.getModes(), event.getMessage());
+                                chooseMode(event.getPlayerId(), event.getChoiceSourceId(), event.getModes(), event.getMessage());
                                 break;
                             case CHOOSE_CHOICE:
                                 chooseChoice(event.getPlayerId(), event.getChoice());
@@ -1168,8 +1168,8 @@ public class GameController implements GameCallback {
         perform(playerId, playerId1 -> getGameSession(playerId1).choosePile(message, new CardsView(game, pile1, playerId), new CardsView(game, pile2, playerId)));
     }
 
-    private synchronized void chooseMode(UUID playerId, final Map<UUID, String> modes, final String message) throws MageException {
-        perform(playerId, playerId1 -> getGameSession(playerId1).chooseAbility(new AbilityPickerView(getGameView(playerId), modes, message)));
+    private synchronized void chooseMode(UUID playerId, UUID sourceId, final Map<UUID, String> modes, final String message) throws MageException {
+        perform(playerId, playerId1 -> getGameSession(playerId1).chooseAbility(new AbilityPickerView(getGameView(playerId), sourceId, modes, message)));
     }
 
     private synchronized void chooseChoice(UUID playerId, final Choice choice) throws MageException {

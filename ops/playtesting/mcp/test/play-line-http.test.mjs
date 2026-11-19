@@ -55,15 +55,62 @@ async function fixture(t, { first = choice('first'), onResponse = () => {}, evid
   t.after(async () => { await client.close(); server.closeAllConnections(); server.close(); });
   const call = async (name, args, options) => {
     const r = await client.callTool({ name, arguments: args }, undefined, options);
-    return { isError: r.isError === true, result: JSON.parse(r.content[0].text) };
+    return { isError: r.isError === true, result: JSON.parse(r.content[0].text), structured: r.structuredContent };
   };
   const request = {
     gameId, cursor: state.cursor, commandId: 'round-1', actions: [
       { kind: 'choose', decisionId: first.id, choiceId: first.choices[0].id, value: 2 },
     ],
   };
-  return { call, request, applied, update };
+  return { call, request, applied, update, listTools: () => client.listTools() };
 }
+
+test('[PM-LINE-MCP-1] a cross-field schema rejection returns the failing action without starting the line', async (t) => {
+  const f = await fixture(t);
+  const { isError, result, structured } = await f.call('play_line', { ...f.request, view: 'compact', actions: [
+    ...f.request.actions, { kind: 'pass_until', destination: 'current_turn' },
+  ] });
+  assert.equal(isError, false);
+  assert.deepEqual(structured, result);
+  assert.equal(result.code, 'invalid_line_arguments');
+  assert.equal(result.status, 'rejected');
+  assert.equal(result.stage, 'schema');
+  assert.equal(result.actionIndex, 1);
+  assert.deepEqual(result.issues[0].path, ['actions', 1]);
+  assert.match(result.issues[0].message, /current_turn/);
+  assert.equal(result.cursor, f.request.cursor);
+  assert.equal(result.appliedDecisions, 0);
+  assert.equal(result.planOwnsExecution, false);
+  assert.equal(result.commandId, f.request.commandId);
+  assert.deepEqual(f.applied, []);
+});
+
+test('[PM-LINE-MCP-1] native stale line transport preserves the preflight rejection and safe retry details', async (t) => {
+  const f = await fixture(t);
+  f.update({ decision: choice('new') });
+  const { isError, result, structured } = await f.call('play_line', { ...f.request, view: 'compact' });
+  assert.equal(isError, false);
+  assert.deepEqual(structured, result);
+  assert.equal(result.code, 'stale_decision');
+  assert.equal(result.status, 'rejected');
+  assert.equal(result.stage, 'preflight');
+  assert.equal(result.cursor, f.request.cursor);
+  assert.equal(result.appliedDecisions, 0);
+  assert.equal(result.gameId, f.request.gameId);
+  assert.equal(result.state.cursor, f.request.cursor + 1);
+  assert.equal(result.recovery, 'replan_from_state');
+  assert.deepEqual(f.applied, []);
+});
+
+test('[PM-LINE-MCP-2] native tool discovery advertises both compact and full player views', async (t) => {
+  const f = await fixture(t);
+  const { tools } = await f.listTools();
+  for (const name of ['get_game_state', 'play_line', 'wait_for_decision']) {
+    const { inputSchema } = tools.find((tool) => tool.name === name);
+    assert.deepEqual(inputSchema.properties.view.enum, ['full', 'compact']);
+    assert.ok(!inputSchema.required?.includes('view'));
+  }
+});
 
 test('[PM-LINE-01/03] one call applies the complete declared line and returns the next decision', async (t) => {
   const f = await fixture(t, {
@@ -108,8 +155,9 @@ test('[PM-LINE-03] same-key retry recovers a pending line and one wait returns i
   const { result: retry } = await f.call('play_line', { ...f.request, waitMs: 1 });
   assert.equal(retry.sequenceId, running.sequenceId);
   const conflict = await f.call('play_line', { ...f.request, actions: [{ ...f.request.actions[0], value: 3 }] });
-  assert.equal(conflict.isError, true);
+  assert.equal(conflict.isError, false);
   assert.equal(conflict.result.code, 'key_conflict');
+  assert.equal(conflict.result.recovery, 'recover_original_command');
   assert.equal((await f.call('wait_for_decision', { gameId: otherGame, commandId: f.request.commandId })).isError, true);
   assert.equal((await f.call('wait_for_decision', { gameId, commandId: 'unknown' })).result.code, 'unknown_command');
   const next = f.call('wait_for_decision', { gameId, commandId: f.request.commandId, timeoutMs: 1000 });
@@ -283,7 +331,7 @@ test('[PM-LINE-03] a stale request returns the current same-game state without s
   const f = await fixture(t);
   f.update({ decision: choice('new') });
   const stale = await f.call('play_line', f.request);
-  assert.equal(stale.isError, true);
+  assert.equal(stale.isError, false);
   assert.equal(stale.result.code, 'stale_decision');
   assert.equal(stale.result.state.decision.id, 'new');
   const foreign = await f.call('play_line', { ...f.request, gameId: otherGame });

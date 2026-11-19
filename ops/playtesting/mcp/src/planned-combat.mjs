@@ -1,13 +1,22 @@
 const damageSteps = new Set(['DECLARE_BLOCKERS', 'FIRST_COMBAT_DAMAGE', 'COMBAT_DAMAGE', 'END_COMBAT']);
 const afterCombatSteps = new Set(['POSTCOMBAT_MAIN', 'END_TURN', 'CLEANUP']);
 
-function combatPartners(groups, hit, ownId, declaredAttackers) {
-  return groups?.some(({ attackers, blockers }) => attackers?.some((attacker) =>
-    attacker.controllerId === ownId && declaredAttackers.has(attacker.id) && blockers?.some((blocker) =>
-      blocker.controllerId && blocker.controllerId !== ownId && (
-        hit.controllerId === ownId && hit.sourceId === attacker.id && hit.targetId === blocker.id
+export function observedBlocks(state, ownId) {
+  const ownIds = new Set(state.players?.find((player) => player.id === ownId)?.battlefield?.map(({ id }) => id));
+  return (state.combat ?? []).flatMap(({ attackers = [], blockers = [] }) => attackers.flatMap(({ id: attackerId }) =>
+    blockers.filter(({ id, controllerId }) => controllerId === ownId || ownIds.has(id))
+      .map(({ id: blockerId }) => ({ blockerId, attackerId }))));
+}
+
+function combatPartners({ combat, activePlayerId }, hit, ownId, declaredAttackers) {
+  return combat?.some(({ attackers, blockers }) => attackers?.some((attacker) =>
+    attacker.controllerId === activePlayerId && blockers?.some((blocker) => {
+      const ownParticipant = activePlayerId === ownId ? declaredAttackers.has(attacker.id) : blocker.controllerId === ownId;
+      return ownParticipant && blocker.controllerId && blocker.controllerId !== activePlayerId && (
+        hit.controllerId === attacker.controllerId && hit.sourceId === attacker.id && hit.targetId === blocker.id
         || hit.controllerId === blocker.controllerId && hit.sourceId === blocker.id && hit.targetId === attacker.id
-      ))));
+      );
+    })));
 }
 
 function graveyardEntry(players, cardId) {
@@ -26,8 +35,8 @@ export class PlannedPermanentCombat {
   get pending() { return [...this.#hits.values()].some((hit) => !hit.settled); }
 
   record(previous, state, hit, ownId, declaredAttackers) {
-    if (previous.turn !== state.turn || state.activePlayerId !== ownId
-      || !damageSteps.has(previous.step) || !combatPartners(previous.combat, hit, ownId, declaredAttackers)) return false;
+    if (previous.turn !== state.turn || !ownId || state.activePlayerId !== previous.activePlayerId
+      || !damageSteps.has(previous.step) || !combatPartners(previous, hit, ownId, declaredAttackers)) return false;
     const target = previous.players?.flatMap((player) => player.battlefield ?? []).find((card) => card.id === hit.targetId);
     if (target?.faceDown || !target?.types?.includes('CREATURE') || !Number.isSafeInteger(target.damage) || target.damage < 0) return false;
     const prior = this.#hits.get(target.id);
@@ -93,5 +102,68 @@ export class PlannedPermanentCombat {
 
   finish(state) {
     if (afterCombatSteps.has(state.step) && state.combat?.length === 0 && !this.pending) this.#hits.clear();
+  }
+}
+
+function defenderCounters(player) {
+  return JSON.stringify((player.counters ?? []).map(({ name, count }) => [name, count])
+    .sort(([a], [b]) => String(a).localeCompare(String(b))));
+}
+
+/** Account only for witnessed player damage from an observed, unblocked rival attacker. */
+export class PlannedDefenderCombat {
+  #turn;
+  #life;
+  #counters;
+  #lifeAfterHits = [];
+  #combatFinished = false;
+
+  get active() { return this.#turn !== undefined && !this.#combatFinished; }
+  get pending() { return this.#lifeAfterHits.length > 0; }
+
+  record(previous, state, hit, ownId) {
+    const defender = previous.players?.find(({ id }) => id === ownId);
+    if (!defender || !Number.isSafeInteger(defender.life) || previous.turn !== state.turn
+      || !damageSteps.has(previous.step) || previous.activePlayerId !== hit.controllerId
+      || previous.activePlayerId !== state.activePlayerId || hit.controllerId === ownId || hit.targetId !== ownId
+      || !previous.combat?.some(({ defenderId, isBlocked, attackers = [], blockers = [] }) =>
+        defenderId === ownId && isBlocked === false && blockers.length === 0
+        && attackers.some(({ id, controllerId }) => id === hit.sourceId && controllerId === hit.controllerId))) return false;
+
+    if (this.#turn !== state.turn) {
+      if (this.pending) return false;
+      this.#turn = state.turn;
+      this.#life = defender.life;
+      this.#counters = defenderCounters(defender);
+      this.#combatFinished = false;
+    } else if (!this.active) return false;
+
+    const afterDamage = (this.#lifeAfterHits.at(-1) ?? this.#life) - hit.amount;
+    if (!Number.isSafeInteger(afterDamage)) return false;
+    this.#lifeAfterHits.push(afterDamage);
+    return true;
+  }
+
+  reconcile(state, ownId) {
+    if (this.#turn === undefined || state.turn !== this.#turn) return !this.active;
+    const defender = state.players?.find(({ id }) => id === ownId);
+    if (!defender || defenderCounters(defender) !== this.#counters) return false;
+    // Once combat has settled, continue watching counters for delayed poison.
+    if (this.#combatFinished) return true;
+    if (!damageSteps.has(state.step) && !afterCombatSteps.has(state.step)) return false;
+    if (defender.life === this.#life) return true;
+    const count = this.#lifeAfterHits.indexOf(defender.life) + 1;
+    if (!count) return false;
+    this.#lifeAfterHits.splice(0, count);
+    this.#life = defender.life;
+    return true;
+  }
+
+  canClearGroups(state) {
+    return this.active && this.#turn === state.turn && afterCombatSteps.has(state.step) && state.combat?.length === 0;
+  }
+
+  finish(state) {
+    if (!this.pending && this.canClearGroups(state)) this.#combatFinished = true;
   }
 }
