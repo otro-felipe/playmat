@@ -323,6 +323,7 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
     if (!open && mobilePanel) requestAnimationFrame(() => toolbarRef.current?.querySelector<HTMLButtonElement>('[role="switch"]')?.focus());
   };
   const panel = manifest && analysisOpen && <ReplayReviewPanel analysis={manifest.analysis} moments={moments} current={action}
+    sideboardDelta={manifest.status === 'completed' && manifest.gameNumber > 1 ? manifest.sideboardDelta : undefined}
     annotation={chosen} actor={perspectives.find((seat) => seat.seatId === chosen?.seatId)?.name}
     showRetrospective={showBoth && !!recorded} onMoment={jump} error={reviewError}
     onRetry={() => { void eventQuery.refetch(); void annotations.refetch(); }}

@@ -111,6 +111,60 @@ test('[PM-REVIEW-UI-1] jumping to a reviewed play preserves the cursor when chan
   expect(screen.getByTestId('turn').textContent).toBe('7');
 });
 
+test('[PM-REVIEW-API-6] own sideboard evidence stays with the viewer when changing the board perspective', async () => {
+  const original = request.getMockImplementation()!;
+  request.mockImplementation((path, options) => path.endsWith('/games/game')
+    ? json({ ...game, sideboardDelta: { status: 'available', fromGameNumber: 2, toGameNumber: 3,
+      broughtIn: [{ name: 'Abrade', amount: 2 }], tookOut: [{ name: 'Island', amount: 1 }] } })
+    : original(path, options));
+  openReplay('/replay/game?cursor=3');
+  fireEvent.click(await screen.findByRole('switch', { name: 'Show analysis' }));
+  const delta = await screen.findByRole('region', { name: 'Your sideboard changes' });
+  expect(delta.textContent).toContain('Game 2 to game 3');
+  expect(delta.textContent).toContain('2 × Abrade');
+  expect(delta.textContent).toContain('1 × Island');
+  fireEvent.change(screen.getByLabelText('Perspective'), { target: { value: 'bob-seat' } });
+  await waitFor(() => expect(screen.getByTestId('hand').textContent).toBe('Fatal Push'));
+  expect(screen.getByRole('region', { name: 'Your sideboard changes' }).textContent).toContain('2 × Abrade');
+  expect(screen.getByTestId('turn').textContent).toBe('7');
+});
+
+test.each([
+  ['available', 'You made no sideboard changes.'],
+  ['unavailable', 'Sideboard changes could not be verified from the recorded deck lists.'],
+  ['initial_game', null],
+] as const)('[PM-REVIEW-API-6] sideboard delta distinguishes %s evidence', async (status, message) => {
+  const original = request.getMockImplementation()!;
+  request.mockImplementation((path, options) => path.endsWith('/games/game')
+    ? json({
+      ...game, gameNumber: status === 'initial_game' ? 1 : 3,
+      sideboardDelta: status === 'available' ? {
+        status, fromGameNumber: 2, toGameNumber: 3, broughtIn: [], tookOut: [],
+      } : { status },
+    })
+    : original(path, options));
+  openReplay();
+  fireEvent.click(await screen.findByRole('switch', { name: 'Show analysis' }));
+  if (message) expect(within(await screen.findByRole('region', { name: 'Your sideboard changes' })).getByText(message)).toBeTruthy();
+  else expect(screen.queryByRole('region', { name: 'Your sideboard changes' })).toBeNull();
+});
+
+test('[PM-THEORY-6] an authorized annotation links only its valid saved study downloads', async () => {
+  const studyId = '00000000-0000-4000-8000-000000000123';
+  const original = request.getMockImplementation()!;
+  request.mockImplementation((path, options) => new URL(path, 'http://localhost').pathname.endsWith('/annotations')
+    ? json({ annotations: [{ ...annotation, theoryStudies: [
+      { studyId, tool: 'get_theory_study' }, { studyId: 'https://elsewhere.invalid', tool: 'get_theory_study' },
+    ] }], next: null })
+    : original(path, options));
+  openReplay('/replay/game?cursor=3');
+  fireEvent.click(await screen.findByRole('switch', { name: 'Show analysis' }));
+  const download = await screen.findByRole('link', { name: /Download study 1 \(JSON\)/ });
+  expect(download.getAttribute('href')).toBe('/api/playtesting/theory/studies/' + studyId);
+  expect(download.getAttribute('download')).toBe('theory-study-' + studyId + '.json');
+  expect(screen.queryByRole('link', { name: /Download study 2/ })).toBeNull();
+});
+
 test('[PM-REVIEW-UI-2] an unauthorized archive never requests another hand', async () => {
   request.mockImplementation(() => json({}, 404));
   openReplay('/replay/game?cursor=3');

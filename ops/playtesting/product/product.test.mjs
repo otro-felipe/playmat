@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -609,6 +609,88 @@ async function addReplay(f, matchId, gameId, names, events) {
   ]
   await writeFile(join(f.replayDirectory, gameId + '.ndjson.gz'), gzipSync(data.map(row => JSON.stringify(row)).join('\n')))
 }
+
+async function addSideboardReplay(f, matchId, gameId, number, decks) {
+  const names = ['Alice', 'Bob']
+  await addReplay(f, matchId, gameId, names)
+  const filename = join(f.replayDirectory, gameId + '.json')
+  const info = JSON.parse(await readFile(filename, 'utf8'))
+  info.gameNumber = number
+  info.players.forEach((player, index) => { player.deck = decks[index] })
+  await writeFile(filename, JSON.stringify(info))
+}
+
+test('[PM-REVIEW-API-6] completed adjacent snapshots reveal only the viewing seat changes despite full hand permission', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const alice = await signIn(f, 'Alice')
+  const bob = await signIn(f, 'Bob')
+  const outsider = await signIn(f, 'Carol')
+  const matchId = randomUUID()
+  const first = randomUUID(), second = randomUUID()
+  const card = (cardName, setCode = 'M21') => ({ cardName, setCode, cardNumber: '001' })
+  await addSideboardReplay(f, matchId, first, 1, [
+    { name: 'Private Alice list before', cards: [card('Island'), card('Opt'), card('Opt')], sideboard: [card('Negate'), card('Negate')] },
+    { name: 'Private Bob list before', cards: [card('Mountain'), card('Lightning Strike')], sideboard: [card('Shock')] },
+  ])
+  await addSideboardReplay(f, matchId, second, 2, [
+    { name: 'Private Alice list after', cards: [card('Island', 'DOM'), card('Negate'), card('Negate')], sideboard: [card('Opt'), card('Opt')] },
+    { name: 'Private Bob list after', cards: [card('Mountain'), card('Shock')], sideboard: [card('Lightning Strike')] },
+  ])
+  await writeFile(join(f.replayDirectory, matchId + '.match.json'), JSON.stringify({ matchId, endedAt: Date.now() }))
+  await f.product.archiveGames()
+  const root = '/api/playtesting/review'
+  for (const headers of [alice, bob]) {
+    assert.equal((await f.path(root + '/privacy/matches/' + matchId, json('PUT', headers, { version: 2 }))).status, 200)
+  }
+  const own = async (id, headers) => (await f.path(root + '/games/' + id, { headers })).json()
+  const firstGame = await own(first, alice)
+  assert.deepEqual(firstGame.sideboardDelta, { status: 'initial_game' })
+  const current = await own(second, alice)
+  assert.equal(current.fullAvailable, true)
+  assert.deepEqual(current.sideboardDelta, {
+    status: 'available', fromGameNumber: 1, toGameNumber: 2,
+    broughtIn: [{ name: 'Negate', amount: 2 }], tookOut: [{ name: 'Opt', amount: 2 }],
+  })
+  assert.doesNotMatch(JSON.stringify(current), /Private .* list|Lightning Strike|Shock|Mountain|Island/)
+  const peer = await own(second, bob)
+  assert.deepEqual(peer.sideboardDelta.broughtIn, [{ name: 'Shock', amount: 1 }])
+  assert.deepEqual(peer.sideboardDelta.tookOut, [{ name: 'Lightning Strike', amount: 1 }])
+  const encounter = await (await f.path(root + '/matches/' + matchId, { headers: alice })).json()
+  assert.deepEqual(encounter.games[1].sideboardDelta, current.sideboardDelta)
+  assert.equal((await f.path(root + '/games/' + second, { headers: outsider })).status, 404)
+})
+
+test('[PM-REVIEW-API-6] active or incomplete adjacent lists do not become inferred sideboard moves', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const alice = await signIn(f, 'Alice')
+  await signIn(f, 'Bob')
+  const matchId = randomUUID()
+  const first = randomUUID(), second = randomUUID(), third = randomUUID(), gap = randomUUID()
+  const changedPool = randomUUID(), unchanged = randomUUID()
+  const before = { cards: [{ cardName: 'Forest' }], sideboard: [{ cardName: 'Mountain' }] }
+  const after = { cards: [{ cardName: 'Mountain' }], sideboard: [{ cardName: 'Forest' }] }
+  await addSideboardReplay(f, matchId, first, 1, [before, before])
+  await addSideboardReplay(f, matchId, second, 2, [after, after])
+  await addSideboardReplay(f, matchId, third, 3, [{ cards: after.cards }, after])
+  await addSideboardReplay(f, matchId, gap, 5, [before, before])
+  const different = { cards: [{ cardName: 'Island' }], sideboard: [] }
+  await addSideboardReplay(f, matchId, changedPool, 6, [different, different])
+  await addSideboardReplay(f, matchId, unchanged, 7, [different, different])
+  await f.product.archiveGames()
+  const own = async id => (await (await f.path('/api/playtesting/review/games/' + id, { headers: alice })).json()).sideboardDelta
+  assert.deepEqual(await own(second), { status: 'unavailable' })
+  await writeFile(join(f.replayDirectory, matchId + '.match.json'), JSON.stringify({ matchId, endedAt: Date.now() }))
+  await f.product.archiveGames()
+  assert.equal((await own(second)).status, 'available')
+  assert.deepEqual(await own(third), { status: 'unavailable' })
+  assert.deepEqual(await own(gap), { status: 'unavailable' })
+  assert.deepEqual(await own(changedPool), { status: 'unavailable' })
+  assert.deepEqual(await own(unchanged), {
+    status: 'available', fromGameNumber: 6, toGameNumber: 7, broughtIn: [], tookOut: [],
+  })
+  await withTestDatabase(f, db => db.query("UPDATE games SET status='interrupted' WHERE id=$1", [first]))
+  assert.deepEqual(await own(second), { status: 'unavailable' })
+})
 
 async function analysisFixture(t, { completed = true, fresh = false, rollback = false } = {}) {
   const f = await fixture(t)

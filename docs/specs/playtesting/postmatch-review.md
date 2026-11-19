@@ -18,6 +18,7 @@ Private Playmat participants can revisit a completed encounter, inspect the evid
 - **PM-REVIEW-API-3** A history client can save and read partial annotations for exact eligible events, including the actual play, alternatives, evidence, benefit, risk, plausible responses, perspective and confidence. The same submission can be retried without changing counts. A stale edit or mismatched evidence version does not overwrite a saved annotation.
 - **PM-REVIEW-API-4** Coverage and category totals derive from persisted annotations and can be grouped by game and acting seat. One event has at most one current annotation per allowed perspective. Trivial passes may be left unclassified. Partial and insufficient evidence remain distinct from an unreviewed game and from a confident strategic grade.
 - **PM-REVIEW-API-5** Evidence and advice apply to the archived mode and format as recorded. External references may use public format, archetype, matchup and rules context with URL, date and relevance. Private cards, deck lists, game IDs and personal histories stay out of external queries.
+- **PM-REVIEW-API-6** Once an encounter ends, its review can show the viewing seat which cards entered and left its main deck between two adjacent completed games with complete submitted lists from the same card pool. The comparison groups copies by card name and omits unchanged cards. It gives no information about another seat's lists, even when full-hand review is authorized. Missing or ambiguous snapshots leave the comparison unavailable. The resulting difference describes the lists used when each game started. It establishes no order or timing for the underlying sideboard changes.
 
 ## Strategic rubric
 
@@ -45,6 +46,7 @@ Verify API and MCP permissions with both participants and an unrelated account, 
 ## Executable evidence
 
 - `ops/playtesting/product/product.test.mjs` covers the pre-start consent and historical permission scenarios in PM-REVIEW-PRIV-1 through PM-REVIEW-PRIV-4 and the persisted review API boundaries.
+- The PM-REVIEW-API-6 tests in `ops/playtesting/product/product.test.mjs` verify adjacent submitted-list differences for both seats, alternate-hand consent, incomplete lists and the inter-game boundary.
 - `ops/playtesting/product/replay-capture.local.mjs` and `replay-review.local.mjs` exercise native Java capture and authenticated native MCP for owned, alternate and full views. The script archives the actual recorded game into an isolated store and checks a committed draw, cast, target, payment, and annotation retry.
 - `Mage.Server/src/test/java/mage/server/replay/ReplayStoreTest.java` verifies protected replay fields stay out of legacy projections.
 - `Mage.Web.Client/e2e/private-replay-review.spec.ts` verifies desktop and mobile acceptance with authorized synthetic fixtures. `ReplayReview.test.tsx` and `HistoryReview.test.tsx` exercise stable cursors, authority transitions and counts.
