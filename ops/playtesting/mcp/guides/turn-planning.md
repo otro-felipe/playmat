@@ -49,7 +49,7 @@ Send this to `play_line`.
     },
     {
       "kind": "choose",
-      "guard": {"kind": "target", "targetSourceId": "<trespasser-id>", "targetZone": "HAND", "instruction": "Select a card (discard cost)"},
+      "guard": {"kind": "target", "targetSourceId": "<trespasser-id>", "instruction": "Select a card (discard cost)"},
       "select": {"objectId": "<kumano-id>", "zone": "hand"}
     },
     {
@@ -62,6 +62,8 @@ Send this to `play_line`.
   ]
 }
 ```
+
+The discard selector uses `zone:"hand"` to require the exact card in your hand. The source ID and instruction guard the Ward cost prompt.
 
 When the receipt has `planOwnsExecution:true`, call `wait_for_decision` with the same identifiers until the line stops. If combat ends the game before the requested end step, read the terminal `state.status`.
 
