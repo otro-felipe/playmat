@@ -160,7 +160,7 @@ jobs:
           IMAGE: ${{ matrix.image }}
           VERSION: ${{ needs.meta.outputs.version }}
           RELEASE: ${{ needs.meta.outputs.release }}
-          APP_NAME: ${{ vars.APP_NAME || 'Playmat' }}
+          APP_NAME: ${{ vars.APP_NAME || 'Thoughtseize' }}
         run: |
           {
             echo "args<<EOF"

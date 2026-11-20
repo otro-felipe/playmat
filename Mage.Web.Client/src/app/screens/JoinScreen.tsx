@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Bot, Lock, UserRound } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { APP_NAME } from '../brand';
 import { api } from '../connection';
 import { formatRules } from '../../core/decks/formats';
 import { inviteLink } from '../../core/social/chatLine';
@@ -56,7 +57,7 @@ function McpInviteGuide({ tableId, name, chatMode = 'quiet' }: { tableId: string
   const origin = window.location.origin;
   const endpoint = mcpEndpoint();
   const instructions = [
-    t('mcpInvite.instructions.connect', { endpoint }),
+    t('mcpInvite.instructions.connect', { app: APP_NAME, endpoint }),
     t('mcpInvite.instructions.read'),
     ...MCP_GUIDES.map((uri) => `- ${uri}`),
     t('mcpInvite.instructions.join', { link: inviteLink(origin, tableId) }),
@@ -78,7 +79,7 @@ function McpInviteGuide({ tableId, name, chatMode = 'quiet' }: { tableId: string
       <h2 className={styles.name}>{name}</h2>
       <McpConnectionEndpoint endpoint={endpoint} />
       <div className={styles.guide}>
-        <h3>{t('mcpInvite.resources')}</h3>
+        <h3>{t('mcpInvite.resources', { app: APP_NAME })}</h3>
         <p className={styles.note}>{t('mcpInvite.instructions.read')}</p>
         <ul>
           {MCP_GUIDES.map((uri) => <li key={uri}><code>{uri}</code></li>)}

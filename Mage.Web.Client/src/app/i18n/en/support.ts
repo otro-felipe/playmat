@@ -61,7 +61,7 @@ export default {
   // the thank-you, once, on the next visit after a payment reaches the account
   'support.notice.title': 'Thank you!',
   'support.notice.text': 'Your support reached your account. Your supporter sleeve, playmat, frame, title, flair and party corgi are ready.',
-  'support.notice.where': 'Choose the sleeve for a deck in Decks and the cloth in Settings, Playmat. The ring, the title and the heart show by your name, and the corgi comes to every game.',
+  'support.notice.where': 'Choose the sleeve for a deck in Decks and the cloth under Game table in Settings. The ring, the title and the heart show by your name, and the corgi comes to every game.',
   'support.notice.close': 'Lovely',
 
   // a thank-you item the player doesn't have yet, shown quietly in the pickers

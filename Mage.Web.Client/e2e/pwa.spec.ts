@@ -14,7 +14,11 @@ test.describe('app: installable, with an offline shell', () => {
     expect(href).toBe('/manifest.webmanifest');
     const manifest = await (await request.get(href!)).json();
     expect(manifest).toMatchObject({ start_url: '/', scope: '/', display: 'fullscreen' });
-    expect(manifest.name).toBeTruthy();
+    const name = process.env.VITE_APP_NAME?.trim() || 'Thoughtseize';
+    expect(manifest).toMatchObject({ name, short_name: name });
+    await expect(page).toHaveTitle(name);
+    await expect(page.locator('meta[property="og:site_name"]')).toHaveAttribute('content', name);
+    await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
     expect(manifest.icons).toEqual(expect.arrayContaining([
       expect.objectContaining({ sizes: '192x192' }),
       expect.objectContaining({ sizes: '512x512', purpose: 'maskable' }),

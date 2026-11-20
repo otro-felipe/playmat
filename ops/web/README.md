@@ -153,7 +153,7 @@ Set these in `ops/web/.env` (Compose reads it automatically) or in the environme
 | `LAN_IP` | empty | The host's LAN address, served too (Caddy signs a certificate for it) for devices that can't resolve `DOMAIN`. Add `https://<LAN_IP>:<HTTPS_PORT>` to `XMAGE_ALLOWED_ORIGINS`. |
 | `XMAGE_ADMIN_PASSWORD` | unset | Admin password (`-Dxmage.adminPassword`). Unset: admin login is disabled. |
 | `XMAGE_AUTH` | `false` | `authenticationActivated`. `true` makes players register and log in with a password. Use it on a public server. |
-| `APP_NAME` | `Playmat` | Product name shown in the web client and its page title. A build argument: rebuild the `web` image (`up -d --build web`) after changing it. |
+| `APP_NAME` | `Thoughtseize` | Product name shown in the web client and its page title. A build argument: rebuild the `web` image (`up -d --build web`) after changing it. |
 | `XMAGE_SAVE_GAMES` | `false` | `saveGameActivated`. Upstream marks game saving as unreliable. |
 | `XMAGE_REPLAYS` | `true` | Record finished games with at least one human player for the web client's replays (`-Dxmage.replays`). |
 | `XMAGE_REPLAY_DAYS` | `30` | Replays older than this many days are deleted. |

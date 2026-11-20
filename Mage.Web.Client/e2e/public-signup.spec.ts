@@ -4,11 +4,14 @@ const anonymous = { status: 401, json: {} };
 const signupApi = '/api/playtesting/signup';
 const token = 'a'.repeat(43);
 
-test.skip(process.env.VITE_PRIVATE_PLAYTESTING !== 'true', 'Uses the Playmat product build.');
+test.skip(process.env.VITE_PRIVATE_PLAYTESTING !== 'true', 'Uses the private Thoughtseize build.');
 
 test('[PUB-AC-01] public home offers signup and password sign-in', async ({ page }) => {
   await page.route('**/api/playtesting/me', (route) => route.fulfill(anonymous));
   await page.goto('/');
+  const name = process.env.VITE_APP_NAME?.trim() || 'Thoughtseize';
+  await expect(page).toHaveTitle(name);
+  await expect(page.getByText(name, { exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Play Magic. Get better.' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Sign in', exact: true })).toHaveAttribute('href', '/login');
   await page.getByRole('link', { name: 'Create account', exact: true }).click();

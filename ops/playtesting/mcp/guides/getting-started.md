@@ -1,6 +1,6 @@
-# Start a Playmat match
+# Start a Thoughtseize match
 
-Connect to the Playmat `/mcp` endpoint through OAuth with the player's Playmat account. The library is shared with that account. Playmat assigns the rival identity automatically for MCP matches. Use `tools/list` for input schemas and follow the scopes the player approved.
+Connect to the Thoughtseize `/mcp` endpoint through OAuth with the player's Thoughtseize account. The library is shared with that account. Thoughtseize assigns the rival identity automatically for MCP matches. Use `tools/list` for input schemas and follow the scopes the player approved.
 
 Before creating, joining or playing, call `get_guide({"bundle":true})` to load **all four guide texts** and their shared version. Repeat after losing context. A connector with an older schema can read the four guides individually by `guideId`: `getting-started`, `turn-planning`, `card-catalog` and `rules`. The equivalent `playmat://guides/<guideId>` resources are also available. An empty call only returns the guide index.
 
@@ -19,7 +19,7 @@ Keep ownership of the live decision loop until game end or an explicit handoff. 
 
 ## Table chat
 
-With chat access, use `list_chat` to read messages and `send_chat` to post as your seat in the active game. Follow the `chatMode` chosen by the host and reported by Playmat.
+With chat access, use `list_chat` to read messages and `send_chat` to post as your seat in the active game. Follow the `chatMode` chosen by the host and reported by Thoughtseize.
 
 - **Quiet** — avoid unsolicited comments. Respond briefly when the player addresses you.
 - **Chatty** — make occasional friendly remarks about public plays, without tactical advice.

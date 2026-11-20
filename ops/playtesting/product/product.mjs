@@ -20,7 +20,7 @@ const directory = dirname(fileURLToPath(import.meta.url))
 
 function send(res, status, data) {
   if (Buffer.isBuffer(data)) {
-    res.writeHead(status, { 'Content-Type': 'application/zip', 'Content-Disposition': 'attachment; filename="playmat-replays.zip"' })
+    res.writeHead(status, { 'Content-Type': 'application/zip', 'Content-Disposition': 'attachment; filename="thoughtseize-replays.zip"' })
     res.end(data)
     return
   }
@@ -49,7 +49,7 @@ function loginPage(res, next, wrong = false) {
   res.writeHead(wrong ? 401 : 200, { 'Content-Type': 'text/html; charset=utf-8' })
   res.end(`<!doctype html><html lang="es"><head>
     <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Playmat · Entrar</title>
+    <title>Thoughtseize · Entrar</title>
     <style>
     :root{color-scheme:dark;font:16px system-ui;background:#171c18;color:#f5f3ed}
     body{margin:0;min-height:100dvh;display:grid;place-items:center}
@@ -57,7 +57,7 @@ function loginPage(res, next, wrong = false) {
     h1{margin-top:0}form,label{display:grid;gap:.65rem}form{gap:1rem}
     input,button{border:1px solid #687568;border-radius:.5rem;padding:.8rem;color:inherit;font:inherit;background:#18201a}
     a{color:#c6dfaf}button{cursor:pointer;background:#c6dfaf;color:#182018;font-weight:650}p{color:#ffc4a8}
-    </style></head><body><main><h1>Playmat</h1>
+    </style></head><body><main><h1>Thoughtseize</h1>
     ${wrong ? '<p role="alert">Revisa tu usuario y contraseña.</p>' : ''}
     <form action="/login" method="post"><input type="hidden" name="next" value="${escapeHtml(next)}">
     <label>Usuario<input name="username" autocomplete="username" maxlength="24" required autofocus></label>

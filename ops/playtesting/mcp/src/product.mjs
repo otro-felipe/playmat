@@ -5,7 +5,7 @@ import { ToolError } from './game-seat.mjs';
 export function createProductClient(baseUrl, publicUrl) {
   const base = new URL(baseUrl);
   if (!['127.0.0.1', '::1', '[::1]', 'localhost'].includes(base.hostname)) {
-    throw new Error('The Playmat product service must bind on loopback.');
+    throw new Error('The Thoughtseize product service must bind on loopback.');
   }
 
   async function request(token, path, { method = 'GET', body } = {}) {
@@ -23,7 +23,7 @@ export function createProductClient(baseUrl, publicUrl) {
   async function authorize(token) {
     const reply = await request(token, '/internal/verify');
     if ([401, 403, 404].includes(reply.status)) return null;
-    if (!reply.ok) throw new Error('Playmat authorization service unavailable.');
+    if (!reply.ok) throw new Error('Thoughtseize authorization service unavailable.');
     const actor = await reply.json();
     if (!Array.isArray(actor.scopes)) return null;
     const scopes = new Set(actor.scopes);
@@ -117,7 +117,7 @@ export function createProductClient(baseUrl, publicUrl) {
         config = { method: 'POST', body: { gameIds: args.gameIds, mode: 'handle' } };
         break;
       default:
-        throw new ToolError('invalid_operation', 'No such Playmat operation.');
+        throw new ToolError('invalid_operation', 'No such Thoughtseize operation.');
     }
     const response = await request(token, path, config);
     if (!response.ok) {
@@ -158,7 +158,7 @@ export function createProductClient(baseUrl, publicUrl) {
     if (response.ok) return data;
     if (data.rpcCode === -32015) throw new McpError(-32015, 'Callback verification failed', { reason: data.reason });
     if (response.status < 500) throw new McpError(-32602, data.error ?? 'Invalid event request.');
-    throw new McpError(-32603, 'The Playmat event service is unavailable.');
+    throw new McpError(-32603, 'The Thoughtseize event service is unavailable.');
   }
 
   async function publishSeatEvent(operation, payload) {
@@ -167,7 +167,7 @@ export function createProductClient(baseUrl, publicUrl) {
       headers: { 'content-type': 'application/json' }, body: JSON.stringify({ operation, ...payload }),
     });
     await response.body?.cancel();
-    if (!response.ok) throw Error('The Playmat event service did not accept the game decision.');
+    if (!response.ok) throw Error('The Thoughtseize event service did not accept the game decision.');
   }
 
   return { authorize, operation, eventRequest, publishSeatEvent };

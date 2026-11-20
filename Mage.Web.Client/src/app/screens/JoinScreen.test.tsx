@@ -40,6 +40,7 @@ test('[PM-AC-04] an MCP invite shows and copies its endpoint, private link, reso
   const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined);
   const page = mount('coach');
   expect(await page.findByText(rules)).toBeTruthy();
+  expect(page.getByRole('heading', { name: 'Thoughtseize guides' })).toBeTruthy();
   expect(page.getByText(/get_guide with/)).toBeTruthy();
   expect(page.getByText('Coach', { exact: false })).toBeTruthy();
   fireEvent.click(page.getByRole('button', { name: 'Copy agent instructions' }));
@@ -48,7 +49,7 @@ test('[PM-AC-04] an MCP invite shows and copies its endpoint, private link, reso
   for (const detail of [
     `${window.location.origin}/mcp`, `${window.location.origin}${invitePath}`,
     'playmat://guides/getting-started', 'playmat://guides/card-catalog', 'playmat://guides/turn-planning', rules,
-    'get_guide with {"bundle":true}', 'join_game', 'Coach',
+    'Connect to Thoughtseize', 'get_guide with {"bundle":true}', 'join_game', 'Coach',
     'Before creating, joining or playing, load all four guides', 'Repeat after losing context',
     'play_line', 'as far as the visible state justifies',
     'strong public opportunity', 'After each completed human turn', 'concrete benefit',

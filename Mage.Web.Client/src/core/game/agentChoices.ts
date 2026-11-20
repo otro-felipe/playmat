@@ -83,8 +83,11 @@ export function visibleAgentGame(state: GameSessionState | undefined) {
       const selectedModeRules = card.rules.filter((rule) => rule.startsWith(prefix)).map((rule) => rule.slice(prefix.length));
       const casting = card.types?.some((type) => type === 'INSTANT' || type === 'SORCERY')
         && card.id && view?.stack?.[card.id]?.paid === false;
+      const spellTargetGroups = card.controllerId === state?.playerId && card.id
+        ? view?.stack?.[card.id]?.spellTargetGroups : undefined;
       return {
         ...card,
+        ...(spellTargetGroups ? { spellTargetGroups } : {}),
         ...(selectedModeRules.length ? { selectedModeRules } : {}),
         ...(casting ? { unpaid: true } : {}),
       };
@@ -138,6 +141,7 @@ interface AgentChoice {
   plainMana?: boolean;
   manaAbilities?: { abilityId: string; manaColors?: ManaColor[] }[];
   spellAbilities?: { abilityId: string; label?: string }[];
+  nonManaAbilities?: { abilityId: string; label?: string }[];
   answer?: boolean;
   intent?: 'attack_all' | 'confirm_attack' | 'confirm_block' | 'confirm_targets';
 }
@@ -218,6 +222,11 @@ export function projectedChoices(state: GameSessionState, promptId: string) {
       ? [...(legal?.basicCastAbilities ?? []), ...other.filter((ability) => ability.abilityType === 'SPELL')]
         .flatMap((ability) => ability.id ? [{ abilityId: ability.id, ...(ability.value ? { label: stripMarkup(ability.value) } : {}) }] : [])
       : [];
+    const visibleActivations = prompt.kind === 'priority' && card && !card.faceDown
+      && view.players?.some((player) => player.playerId === state.playerId && !!player.battlefield?.[id])
+      ? other.flatMap((ability) => ability.abilityType === 'ACTIVATED_NONMANA' && ability.id
+        ? [{ abilityId: ability.id, ...(ability.value ? { label: stripMarkup(ability.value) } : {}) }] : [])
+      : [];
     const plainMana = manaOnly && manaAbilities.every((ability) => typeof ability.plainMana === 'boolean')
       ? manaAbilities.every((ability) => ability.plainMana) : undefined;
     let label = pregame === 'startingPlayer' ? id === state.playerId ? 'Play first' : 'Draw first'
@@ -234,6 +243,7 @@ export function projectedChoices(state: GameSessionState, promptId: string) {
       ...(canPlayLand ? { canPlayLand: true } : {}),
       ...(visibleMana.length ? { manaAbilities: visibleMana } : {}),
       ...(visibleSpells.length ? { spellAbilities: visibleSpells } : {}),
+      ...(visibleActivations.length ? { nonManaAbilities: visibleActivations } : {}),
       ...(plainMana !== undefined ? { plainMana } : {}),
       ...(triggerSourceId ? { triggerSourceId } : {}),
     });
@@ -308,7 +318,7 @@ type AgentDecision = NonNullable<ReturnType<typeof projectedChoices>>;
 export function describeAgentDecision(decision: AgentDecision | null) {
   return decision && {
     ...decision,
-    choices: decision.choices.map(({ id, label, type, card, cards, objectId, intent, canPlayLand, abilityType, spellName, triggerSourceId, abilityId, manaColors, manaAbilities, spellAbilities, plainMana, answer }) => ({
+    choices: decision.choices.map(({ id, label, type, card, cards, objectId, intent, canPlayLand, abilityType, spellName, triggerSourceId, abilityId, manaColors, manaAbilities, spellAbilities, nonManaAbilities, plainMana, answer }) => ({
       id, label, type, ...(card ? { card } : {}), ...(cards ? { cards } : {}), ...(objectId ? { objectId } : {}), ...(intent ? { intent } : {}),
       ...(canPlayLand ? { canPlayLand } : {}),
       ...(abilityType ? { abilityType } : {}),
@@ -316,6 +326,7 @@ export function describeAgentDecision(decision: AgentDecision | null) {
       ...(manaColors ? { manaColors } : {}),
       ...(manaAbilities ? { manaAbilities } : {}),
       ...(spellAbilities ? { spellAbilities } : {}),
+      ...(nonManaAbilities ? { nonManaAbilities } : {}),
       ...(plainMana !== undefined ? { plainMana } : {}),
       ...(answer !== undefined ? { answer } : {}),
       ...(spellName ? { spellName } : {}),

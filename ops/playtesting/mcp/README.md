@@ -1,12 +1,12 @@
-# Playmat's private MCP
+# Thoughtseize's private MCP
 
 This service runs alongside the product identity service and the XMage engine. It listens on loopback. The reverse proxy exposes its `/mcp` route over HTTPS. Each request revalidates the connected seat against the product service. The granted, distinct engine username is forwarded only over the loopback trusted-header bridge.
 
 ## Connect an MCP client
 
-Add the remote `/mcp` URL in a client that supports OAuth. Sign in with your Playmat account and authorize the connection. Deck tools use that account's library. Playmat assigns the engine identity for an MCP rival automatically. The consent flow uses authorization code with S256 PKCE and rotating refresh tokens. Revoke a client from `/oauth/connections`.
+Add the remote `/mcp` URL in a client that supports OAuth. Sign in with your Thoughtseize account and authorize the connection. Deck tools use that account's library. Thoughtseize assigns the engine identity for an MCP rival automatically. The consent flow uses authorization code with S256 PKCE and rotating refresh tokens. Revoke a client from `/oauth/connections`.
 
-Clients from any vendor can use standard public-client OAuth. Playmat resolves HTTPS Client ID Metadata Documents (CIMD) and offers `POST /oauth/register` (RFC 7591) as a fallback for clients without metadata documents. There is no vendor allowlist. Discovery advertises both mechanisms; registration alone grants no account access. The player must sign in and approve the displayed client, destination and scopes.
+Clients from any vendor can use standard public-client OAuth. Thoughtseize resolves HTTPS Client ID Metadata Documents (CIMD) and offers `POST /oauth/register` (RFC 7591) as a fallback for clients without metadata documents. There is no vendor allowlist. Discovery advertises both mechanisms; registration alone grants no account access. The player must sign in and approve the displayed client, destination and scopes.
 
 `oidc-provider` owns DCR, CIMD validation/negotiation/cache and redirect matching. Native clients can use HTTP callbacks on `localhost`, `127.0.0.1` or `[::1]` with ephemeral ports. Only the port may vary from the registered native callback; the authorization code remains bound to the exact URI used in that request. DCR infers `native` for loopback callbacks when `application_type` is absent. CIMD clients should declare `application_type: "native"`. HTTPS callbacks, including fixed query parameters, match exactly. Private custom URI schemes and confidential-client authentication are not enabled.
 
@@ -14,16 +14,16 @@ Metadata fetches use HTTPS port 443, a non-root path, no query/fragment/credenti
 
 `PLAYMAT_OAUTH_CLIENTS` remains an optional static configuration, not the exclusive registry. Existing `{ "clientId": "...", "redirectUri": "https://...", "name": "..." }` entries still work. Multiple callbacks can use `{ "clientId": "...", "client_name": "...", "redirect_uris": ["..."], "application_type": "native", "token_endpoint_auth_method": "none" }`. Registrations are durable in PostgreSQL. OAuth tables are created by the product startup migration. Existing issued opaque tokens stay governed by account/grant/connection revocation and expiry; use `/oauth/connections` to disconnect a client rather than relying on removing static configuration.
 
-Create an MCP table while signed in to the same account. Tell the connected agent to find it with `list_joinable_games` or give it the private join link. Call `join_game` with the table ID or link, the rival's deck and an optional `displayName`. The host starts when Playmat shows the rival seated and ready. The name appears on the table, the board and in participant chat.
+Create an MCP table while signed in to the same account. Tell the connected agent to find it with `list_joinable_games` or give it the private join link. Call `join_game` with the table ID or link, the rival's deck and an optional `displayName`. The host starts when Thoughtseize shows the rival seated and ready. The name appears on the table, the board and in participant chat.
 
 ## Subscribe to game events
 
-An event-capable client uses `events/list`, `events/subscribe` and `events/unsubscribe` on `/mcp`. Playmat verifies each HTTPS receiver before delivering a Standard Webhooks-signed event.
+An event-capable client uses `events/list`, `events/subscribe` and `events/unsubscribe` on `/mcp`. Thoughtseize verifies each HTTPS receiver before delivering a Standard Webhooks-signed event.
 
-- `game.invitation.created` carries a table ID and format. A new MCP table automatically notifies subscribed clients connected to the host's Playmat account. The client can look up and claim it with `list_joinable_games` and `join_game`.
+- `game.invitation.created` carries a table ID and format. A new MCP table automatically notifies subscribed clients connected to the host's Thoughtseize account. The client can look up and claim it with `list_joinable_games` and `join_game`.
 - `game.decision.required` carries the game ID, decision ID, cursor and prompt kind for the subscribed seat. Optionally filter by `gameId`. Read `get_game_state` before acting and compare the current decision ID. Handle sideboarding with the sideboard tools. Webhook deliveries may arrive late, so continue using `wait_for_decision` during a live game when timing matters.
 
-If you have ChatGPT Dot, add Playmat as a private custom MCP server using OAuth. Ask your dot to monitor both events for your Playmat account. Each event includes only enough information for the client to look up the current invitation or decision.
+If you have ChatGPT Dot, add Thoughtseize as a private custom MCP server using OAuth. Ask your dot to monitor both events for your Thoughtseize account. Each event includes only enough information for the client to look up the current invitation or decision.
 
 The server advertises these guides at initialization. Every model loads all four complete texts with `get_guide({"bundle":true})` before creating, joining or playing, and again after losing context. The bundle version is a fingerprint of its full contents. `get_guide({})` returns the index and `get_guide({"guideId":"getting-started"})` reads one guide. Native MCP clients can read the equivalent resources. These options work before joining a table. The bootstrap appears in MCP initialization and gameplay tool descriptions. Guide reads are an instruction to the model.
 

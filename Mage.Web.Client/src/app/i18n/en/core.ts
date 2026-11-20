@@ -332,7 +332,7 @@ export default {
   'ui.ability.triggered': 'Triggered ability',
   'ui.ability.activated': 'Activated ability',
 
-  // Public Playmat landing and signup
+  // Public landing and signup
   'public.title': 'Play Magic.',
   'public.secondLine': 'Get better.',
   'public.lead': 'Play Magic: The Gathering in your browser. Test your decks with friends or an AI opponent and review your games.',
@@ -358,7 +358,7 @@ export default {
   'public.requestFailed': 'We couldn’t request the link. Try again.',
   'public.tryLater': 'Please wait a few minutes before trying again.',
   'public.chooseName': 'Choose your player name',
-  'public.chooseNameHint': 'Set a password to sign in to Playmat on any device.',
+  'public.chooseNameHint': 'Set a password to sign in to {app} on any device.',
   'public.username': 'Username',
   'public.usernameHint': '3–14 characters. Use letters A–Z, numbers, underscores or hyphens.',
   'public.password': 'Password',

@@ -1,5 +1,5 @@
 ---
-name: Playmat
+name: Thoughtseize
 description: The XMage web client as the player's own playmat. Printed neoprene, ivory ink, one amber for the decision in front of you.
 colors:
   decision: "#f0b13d"
@@ -183,7 +183,7 @@ components:
     padding: "8px 10px"
 ---
 
-# Design System: Playmat
+# Design System: Thoughtseize
 
 ## Overview
 

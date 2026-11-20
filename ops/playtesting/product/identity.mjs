@@ -87,7 +87,7 @@ async function nameExists(db, name) {
 export async function ensureOAuthAgent(db, accountId) {
   await db.query('SELECT pg_advisory_xact_lock(hashtext($1), 0)', [accountId])
   const account = await db.query('SELECT 1 FROM accounts WHERE id=$1 AND enabled FOR SHARE', [accountId])
-  if (!account.rowCount) throw new ProductError(401, 'Inicia sesión en Playmat')
+  if (!account.rowCount) throw new ProductError(401, 'Inicia sesión en Thoughtseize')
   const { rows: [existing] } = await db.query(`SELECT engine_key FROM agent_grants
     WHERE account_id=$1 AND oauth_managed AND revoked_at IS NULL`, [accountId])
   if (existing) return existing.engine_key
@@ -100,7 +100,7 @@ export async function ensureOAuthAgent(db, accountId) {
       VALUES($1,$2,$3,$3,$4,true)`, [randomBytes(32).toString('hex'), accountId, engineName, allScopes])
     return engineName
   }
-  throw new ProductError(503, 'No se pudo conectar el agente de Playmat')
+  throw new ProductError(503, 'No se pudo conectar el agente de Thoughtseize')
 }
 
 export function createIdentity(pool, insecureCookie, resolveOAuth = async () => null) {

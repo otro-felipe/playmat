@@ -280,3 +280,64 @@ test('[PM-LINE-COMBAT-1] the combat projection preserves public defender and blo
   const projected = visibleAgentGame({ view: { combat: [{ defenderId: 'me', isBlocked: false, unrelated: 'omit' }] } });
   assert.deepEqual(projected.combat, [{ defenderId: 'me', isBlocked: false, attackers: [], blockers: [] }]);
 });
+
+for (const variant of ['lethal-walker', 'split-walker', 'nonlethal-battle', 'wrong-defender', 'blocked', 'wrong-count',
+  'other-counter', 'wrong-destination', 'battle-unexpected-tap', 'battle-defeat-trigger', 'rival-action', 'new-information']) {
+  test(`[PM-LINE-COMBAT-2] reconciles exact counters on a declared permanent defender: ${variant}`, async (t) => {
+    const battle = variant.includes('battle');
+    const attacker = { id: 'nemesis', controllerId: 'me', types: ['CREATURE'], power: '3' };
+    const second = { ...attacker, id: 'second-attacker' };
+    const counter = battle ? 'defense' : 'loyalty';
+    const defender = { id: 'defender', cardId: 'defender-card', controllerId: 'rival',
+      name: battle ? 'Invasion of Regatha' : 'Liliana, Dreadhorde General',
+      types: [battle ? 'BATTLE' : 'PLANESWALKER'], tapped: false,
+      counters: [{ name: counter, count: ['nonlethal-battle', 'battle-unexpected-tap'].includes(variant) ? 5 : 3 }] };
+    if (battle) defender.controllerId = 'me';
+    const pilot = { id: 'me', yourSeat: true, life: 20, battlefield: battle ? [attacker, second, defender] : [attacker, second] };
+    const rival = { id: 'rival', life: 20, battlefield: battle ? [] : [defender], graveyard: [], exile: [] };
+    const combat = [{ defenderId: variant === 'wrong-defender' ? rival.id : defender.id,
+      isBlocked: variant === 'blocked', attackers: variant === 'split-walker' ? [attacker, second] : [attacker], blockers: [] }];
+    let state = { gameId: 'boundary', status: 'active', epoch: 1, cursor: 1, turn: 10, activePlayerId: pilot.id,
+      step: 'DECLARE_BLOCKERS', priority: 'self', ownHand: [], stack: [], sequenceEvidence: evidence(),
+      decision: priority('blocks'), combat, players: [pilot, rival] };
+    const listeners = new Set(), applied = [];
+    const update = (change) => {
+      state = { ...state, ...change, cursor: state.cursor + 1 };
+      for (const listener of [...listeners]) listener();
+    };
+    const seat = new GameSeat({ snapshot: () => state, subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
+      respond: async (id) => {
+        applied.push(id);
+        if (id === 'postcombat') return { submitted: true };
+        assert.equal(id, 'blocks');
+        const hits = [{ revision: 1, sourceId: attacker.id, controllerId: pilot.id, targetId: defender.id,
+          amount: variant === 'split-walker' ? 1 : 3, targetPermanent: true }];
+        if (variant === 'split-walker') hits.push({ ...hits[0], revision: 2, sourceId: second.id, amount: 2 });
+        const nonlethalBattle = ['nonlethal-battle', 'battle-unexpected-tap'].includes(variant);
+        const isLethal = !nonlethalBattle && !['wrong-count', 'other-counter', 'battle-defeat-trigger'].includes(variant);
+        const card = { id: defender.cardId, cardId: defender.cardId, name: defender.name, types: defender.types };
+        const counters = nonlethalBattle ? [{ name: counter, count: 2 }]
+          : variant === 'wrong-count' ? [{ name: counter, count: 1 }]
+            : variant === 'other-counter' ? [{ name: 'shield', count: 1 }] : [];
+        const updatedDefender = { ...defender, counters, tapped: variant === 'battle-unexpected-tap' };
+        update({ step: 'POSTCOMBAT_MAIN', combat: [], decision: priority('postcombat'),
+          sequenceEvidence: { ...evidence(), combatRevision: hits.length, combatDamage: hits,
+            publicActions: { me: 0, rival: Number(variant === 'rival-action') }, informationRevision: Number(variant === 'new-information') },
+          stack: variant === 'battle-defeat-trigger' ? [{ id: 'defeat', sourceId: defender.id,
+            controllerId: rival.id, abilityType: 'TRIGGERED_NONMANA' }] : [],
+          players: [battle ? { ...pilot, battlefield: [attacker, second, updatedDefender] } : pilot,
+            { ...rival, battlefield: battle || isLethal ? [] : [updatedDefender],
+            graveyard: isLethal && variant !== 'wrong-destination' ? [card] : [],
+            exile: variant === 'wrong-destination' ? [card] : [] }] });
+        return { submitted: true };
+      } });
+    t.after(() => seat.invalidate());
+    const result = await settled(seat, seat.startSequence({ gameId: 'boundary', cursor: 1, allowPlannedCombatDamage: true,
+      steps: [{ kind: 'pass_until', step: 'POSTCOMBAT_MAIN' }, { kind: 'answer', choiceId: 'pass', guard: { kind: 'priority', step: 'POSTCOMBAT_MAIN' } }] }, async () => true));
+    const matched = ['lethal-walker', 'split-walker', 'nonlethal-battle'].includes(variant);
+    assert.equal(result.status, matched ? 'completed' : 'interrupted', JSON.stringify(result));
+    if (!matched) assert.equal(result.reason, variant === 'rival-action' ? 'opponent_action' : variant === 'new-information' ? 'new_information'
+      : variant === 'battle-defeat-trigger' ? 'state_changed' : 'opponent_state_changed');
+    assert.deepEqual(applied, matched ? ['blocks', 'postcombat'] : ['blocks']);
+  });
+}

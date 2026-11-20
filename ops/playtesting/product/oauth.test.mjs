@@ -89,6 +89,7 @@ async function consent(f, headers, parameters = {}) {
   assert.equal(approval.status, 200)
   const html = await approval.text()
   assert.match(html, /mazos de la cuenta/)
+  assert.match(html, /Conectar tu cuenta de Thoughtseize/)
   assert.doesNotMatch(html, /name="seat"|<select|OwnDot|AnotherDot|AnalysisOnly|mcp_[a-f0-9]{10}/)
   const request = /name="request" value="([a-f0-9-]{36})"/.exec(html)?.[1]
   assert.ok(Boolean(request), 'The browser consent request can be submitted')

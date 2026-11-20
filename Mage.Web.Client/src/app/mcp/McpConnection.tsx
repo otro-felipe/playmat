@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { APP_NAME } from '../brand';
 import { registerMessages, useT } from '../i18n';
 import messages from '../i18n/en/social';
 import { Button } from '../ui/Button';
@@ -31,17 +32,17 @@ export function McpConnectionDialog({ onClose }: { onClose(): void }) {
   return (
     <Dialog
       open
-      title={t('mcpConnection.title')}
+      title={t('mcpConnection.title', { app: APP_NAME })}
       onOpenChange={(open) => !open && close()}
       footer={<Button variant="decision" onClick={close}>{t('home.continue')}</Button>}
     >
       <McpConnectionEndpoint endpoint={endpoint} />
       <ol className={styles.steps}>
-        <li>{t('mcpConnection.signIn')}</li>
-        <li>{t('mcpConnection.share', { copyLink: t('mcpInvite.copyLink') })}</li>
+        <li>{t('mcpConnection.signIn', { app: APP_NAME })}</li>
+        <li>{t('mcpConnection.share', { app: APP_NAME, copyLink: t('mcpInvite.copyLink') })}</li>
       </ol>
-      <p className={styles.dot}>{t('mcpConnection.dot', { invitation: 'game.invitation.created', decision: 'game.decision.required' })}</p>
-      <p className={styles.browser}>{t('mcpConnection.browser')}</p>
+      <p className={styles.dot}>{t('mcpConnection.dot', { app: APP_NAME, invitation: 'game.invitation.created', decision: 'game.decision.required' })}</p>
+      <p className={styles.browser}>{t('mcpConnection.browser', { app: APP_NAME })}</p>
       <a className={styles.manage} href="/oauth/connections">{t('mcpConnection.manage')}</a>
       <label className={styles.check}>
         <input type="checkbox" checked={hideAgain} onChange={(event) => setHideAgain(event.target.checked)} />

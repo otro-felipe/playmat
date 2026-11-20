@@ -479,3 +479,40 @@ for (const extraTarget of [false, true]) {
     ]);
   });
 }
+
+for (const { name, result, observed, duplicate } of [
+  { name: 'Reckless Rage', result: 'completed' },
+  { name: 'Pit Fight', result: 'completed' },
+  { name: 'Reckless Rage', result: 'interrupted', observed: 'wrong-role-target' },
+  { name: 'Pit Fight', result: 'interrupted', observed: 'wrong-role-target', duplicate: true },
+]) test(`[PM-LINE-SEM-3] ${name} reconciles an automatic first target by exact cast and role (${observed ? duplicate ? 'older matching copy' : 'mismatch' : 'match'})`, async (t) => {
+  const spell = { id: 'spell-object', cardId: 'spell-card', name, types: ['INSTANT'] };
+  const friendly = { id: 'friendly', name: 'Friendly creature', types: ['CREATURE'] };
+  const enemy = { id: 'enemy', name: 'Enemy creature', types: ['CREATURE'] };
+  const other = { id: 'wrong-role-target', name: 'Other creature', types: ['CREATURE'] };
+  const mana = { id: 'mana', name: 'Mana source', types: ['LAND'] };
+  const [first, second] = name === 'Reckless Rage' ? [enemy, friendly] : [friendly, enemy];
+  const announced = observed ?? first.id;
+  const spellOnStack = { ...spell, id: 'fresh-cast', controllerId: 'me', unpaid: true,
+    targets: [announced, first.id], spellTargetGroups: [[announced], []] };
+  const matchingStack = { ...spellOnStack, id: 'older-cast', unpaid: false, targets: [first.id], spellTargetGroups: [[first.id], []] };
+  const prior = duplicate ? [matchingStack] : [];
+  const current = { ...openingMain, ownHand: [spell], stack: prior,
+    players: [{ id: 'me', yourSeat: true, battlefield: [friendly, mana] }, { id: 'opponent', battlefield: [enemy, other] }],
+    decision: priority('start', { id: 'cast', card: spell, objectId: spell.id }) };
+  const table = game(t, {
+    start: { stack: [spellOnStack, ...prior], decision: { id: 'second-role', kind: 'target', targetZone: 'BATTLEFIELD',
+      targetSourceId: spell.id, targetRole: 1, choices: [{ id: 'second', card: second, objectId: second.id }] } },
+    'second-role': { stack: [{ ...spellOnStack, targets: [announced, second.id], spellTargetGroups: [[announced], [second.id]] }, ...prior],
+      decision: { id: 'pay', kind: 'payMana', choices: [{ id: 'tap', card: mana, objectId: mana.id }] } },
+    pay: { decision: priority('paid') },
+  }, current);
+  const select = observed ? { cardId: spell.cardId } : { objectId: spell.id };
+  const receipt = await table.submit([{ kind: 'play', when: 'priority', select,
+    targets: [{ select: { objectId: first.id }, role: 0, targetZone: 'BATTLEFIELD' },
+      { select: { objectId: second.id }, role: 1, targetZone: 'BATTLEFIELD' }],
+    payWith: [mana.id] }]);
+  assert.equal(receipt.status, result, JSON.stringify(receipt));
+  assert.deepEqual(table.applied.map(([decisionId, choiceId]) => [decisionId, choiceId]),
+    [['start', 'cast'], ...(result === 'completed' ? [['second-role', 'second'], ['pay', 'tap']] : [])]);
+});

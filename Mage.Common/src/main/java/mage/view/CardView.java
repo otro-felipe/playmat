@@ -128,6 +128,7 @@ public class CardView extends SimpleCardView {
     protected ArtRect artRect = ArtRect.NORMAL;
 
     protected List<UUID> targets;
+    protected List<List<UUID>> spellTargetGroups;
     protected UUID pairedCard;
     protected UUID preparedFromId;
     protected List<UUID> bandedCards;
@@ -256,6 +257,9 @@ public class CardView extends SimpleCardView {
 
         this.artRect = cardView.artRect;
         this.targets = cardView.targets == null ? null : new ArrayList<>(cardView.targets);
+        this.spellTargetGroups = cardView.spellTargetGroups == null ? null : cardView.spellTargetGroups.stream()
+                .map(ArrayList<UUID>::new)
+                .collect(Collectors.toList());
         this.pairedCard = cardView.pairedCard;
         this.bandedCards = cardView.bandedCards == null ? null : new ArrayList<>(cardView.bandedCards);
         this.paid = cardView.paid;
@@ -641,6 +645,13 @@ public class CardView extends SimpleCardView {
                     Mode mode = spellAbility.getModes().get(modeId);
                     if (!mode.getTargets().isEmpty()) {
                         addTargets(mode.getTargets(), mode.getEffects(), spellAbility, game);
+                        // Target roles are local to a spell ability and mode. A flat list
+                        // for stack arrows can include pointers and lose the role identity.
+                        if (spell.getSpellAbilities().size() == 1 && spellAbility.getModes().getSelectedModes().size() == 1) {
+                            this.spellTargetGroups = mode.getTargets().stream()
+                                    .map(target -> target.isChosen(game) ? new ArrayList<>(target.getTargets()) : Collections.<UUID>emptyList())
+                                    .collect(Collectors.toList());
+                        }
                     }
                 }
             }

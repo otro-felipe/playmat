@@ -102,7 +102,7 @@ export default {
   'settings.autoAssignTrample': "Assign trample damage for me",
   'settings.autoAssignTrample.detail': "Trample deals lethal damage to blockers and the rest to the player without asking.",
   'settings.rustEngine': 'Play on the Rust engine',
-  'settings.rustEngine.detail': "AI duels run on Playmat's new Rust engine when every card in both decks is supported; others stay on Java. A chip on the board shows when it's on.",
+  'settings.rustEngine.detail': "AI duels use the Rust engine from the Playmat project when it supports every card in both decks. All other duels use the Java engine. A label on the board shows when Rust is active.",
   'settings.beta': 'Beta',
   'settings.hideStarterDecks': 'Hide starter decks',
   'settings.hideStarterDecks.detail': 'Hide starter decks in your library and deck pickers. Saved copies stay visible. Random AI opponents can still use starters.',
@@ -216,7 +216,7 @@ export default {
   'settings.bookmarklet.step3': 'Click the bookmark. The deck opens here, ready to save.',
   'settings.bookmarklet.privacy': 'It only reads the deck page it runs on, and the deck travels in the link itself: no server sees it.',
 
-  'settings.tab.playmat': 'Playmat',
+  'settings.tab.playmat': 'Game table',
   'settings.playmat.cloth': 'Cloth',
   'settings.playmat.cloth.detail': 'The color your table is dyed in during a game.',
   'settings.playmat.cloth.green': 'Green',

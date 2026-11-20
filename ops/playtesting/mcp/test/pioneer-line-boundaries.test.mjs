@@ -206,7 +206,7 @@ const restlessCottage = { id: 'restless-cottage', name: 'Restless Cottage', cont
 
 function triggerOrderDecision(entries) {
   const ids = entries.map(([id]) => id);
-  const wiring = entries.map(([id, source]) => [id, { name: 'Ability', id, rules: source.rules, sourceCard: source }]);
+  const wiring = entries.map(([id, source]) => [id, { name: 'Ability', id, rules: source.rules, sourceCard: source, controllerId: pilot.id, abilityType: 'TRIGGERED_NONMANA' }]);
   const prompt = { kind: 'target', text: triggerInstruction, options: {},
     cards: Object.fromEntries(wiring), targets: ids, chosen: [], required: true };
   const battlefield = Object.fromEntries(entries.map(([, source]) => [source.id, source]));
@@ -421,3 +421,54 @@ test('[PM-AC-09-RESPONSES] Boseiju land-only workflow stops at main before namin
   assert.deepEqual(land.state.players[0].battlefield, [boseiju]);
   assert.deepEqual(applied, [['draw', 'pass'], ['main', 'open-boseiju'], ['panel', 'ability-0']]);
 });
+
+for (const variant of ['saga', 'spell', 'reordered', 'wrong-ability', 'extra', 'information']) {
+  test(`[PM-LINE-FLOW-5] follows an observed trigger order only on matching evidence: ${variant}`, async (t) => {
+    const printed = variant === 'spell' || variant === 'information'
+      ? ['Whenever you cast a spell, this creature gets +1/+1 until end of turn.',
+        variant === 'information' ? 'Whenever you cast a spell, draw a card.' : 'Whenever you cast a spell, this creature gets +2/+2 until end of turn.']
+      : ['I — Create a Food token.', 'II — Gain 2 life.'];
+    const sources = printed.map((text, index) => ({ id: `trigger-source-${index}`, name: `Source ${index}`, rules: [text] }));
+    const order = triggerOrderDecision(sources.map((source, index) => [`chosen-${index}`, source]));
+    const [first, second] = sources.map((source, index) => ({
+      id: `chosen-${index}`, name: 'Ability', sourceId: source.id, controllerId: pilot.id,
+      abilityType: 'TRIGGERED_NONMANA', abilityText: printed[index],
+    }));
+    const existing = variant === 'spell' || variant === 'information'
+      ? [{ id: 'known-spell-stack', name: 'Shock', types: ['INSTANT'], controllerId: pilot.id, rules: ['Shock deals 2 damage to any target.'] }] : [];
+    const resolving = [second, first, ...existing];
+    if (variant === 'reordered') resolving.splice(0, 2, first, second);
+    if (variant === 'wrong-ability') resolving[0] = { ...second, abilityText: 'Changed text' };
+    if (variant === 'extra') resolving.unshift({ ...first, id: 'unplanned' });
+    let revision = 0;
+    const resolutions = {};
+    const { run, applied } = fixture(t, { players: [{ ...pilot, battlefield: sources }, opponent], decision: order, stack: existing, step: 'BEGIN_COMBAT' },
+      (id, choice, update) => {
+        if (id === order.id) {
+          assert.equal(choice, 'object-chosen-0');
+          update({ stack: resolving, decision: priority('resolve-0') });
+        } else {
+          assert.equal(choice, 'pass');
+          const top = resolving[revision];
+          resolutions[top.id] = ++revision;
+          update({ stack: resolving.slice(revision), decision: priority(`resolve-${revision}`),
+            step: revision === resolving.length ? 'END_TURN' : 'BEGIN_COMBAT',
+            sequenceEvidence: { ...evidence, resolutions: { ...resolutions }, resolutionRevision: revision,
+              informationRevision: variant === 'information' ? 1 : 0 } });
+        }
+      });
+    const result = await run([
+      { kind: 'choose', decisionId: order.id, choiceId: 'object-chosen-0', adoptTriggerOrder: true },
+      { kind: 'pass_until', destination: 'end_step', policy: 'decline_optional' },
+    ]);
+    if (['saga', 'spell'].includes(variant)) {
+      assert.equal(result.status, 'completed', JSON.stringify(result.error));
+      assert.deepEqual(result.state.stack, []);
+      assert.equal(applied.length, 1 + resolving.length);
+    } else {
+      assert.equal(result.status, 'interrupted');
+      assert.equal(result.reason, variant === 'information' ? 'new_information' : 'state_changed');
+      assert.equal(applied.length, variant === 'information' ? 2 : 1);
+    }
+  });
+}

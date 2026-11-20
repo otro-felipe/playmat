@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { observedBlocks, PlannedDefenderCombat, PlannedPermanentCombat } from './planned-combat.mjs';
+import { observedAttacks, observedBlocks, PlannedDefenderCombat, PlannedPermanentCombat } from './planned-combat.mjs';
 import { canCallCoin, guardsEffectQuestion, needsEffectReevaluation, needsSpellReevaluation,
   needsStackReevaluation, optionalInformationEffect, plansInformationBranch, triggeredEffect } from './effect-boundaries.mjs';
 
@@ -61,9 +61,51 @@ function stackIdentity(stack) {
     [id, cardId, name, controllerId, abilityType, sourceId, abilityText]));
 }
 
+function sameTargetGroup(actual, expected) {
+  return Array.isArray(actual) && actual.length === expected.length && new Set(expected).size === expected.length
+    && expected.every((id) => id && actual.includes(id));
+}
+
+function sameTriggerText(actual, declared) {
+  // The battlefield capitalizes the first character of a rule. The raw stack
+  // rule can preserve a lowercase keyword or introductory word.
+  return actual === declared || typeof actual === 'string' && typeof declared === 'string'
+    && actual[0]?.toLowerCase() === declared[0]?.toLowerCase() && actual.slice(1) === declared.slice(1);
+}
+
+function lifeLossAwaitingOwnCombatDamage(state, previous, before, after, ownPlayerId, plannedAttackers) {
+  const expected = JSON.parse(before);
+  const actual = JSON.parse(after);
+  let lifeChanged = false;
+  for (const player of expected.players) {
+    const next = actual.players.find(({ id }) => id === player.id);
+    if (next?.life === player.life) continue;
+    const assigned = [state, previous].some((frame) => frame.combat?.some((group) =>
+      group.defenderId === player.id && !group.isBlocked && !group.blockers?.length
+      && group.attackers?.some(({ id }) => plannedAttackers.has(id))));
+    if (!assigned || !Number.isSafeInteger(player.life) || !Number.isSafeInteger(next?.life) || next.life >= player.life) return false;
+    player.life = next.life;
+    lifeChanged = true;
+  }
+  return state.activePlayerId === ownPlayerId && lifeChanged && JSON.stringify(expected) === after;
+}
+
+function clearedLosingPlayerZones(before, after, loserId) {
+  const expected = JSON.parse(before), actual = JSON.parse(after);
+  if (expected.players.length !== 1 || actual.players.length !== 1) return false;
+  const [loser] = expected.players, [next] = actual.players;
+  if (loser.id !== loserId || next.id !== loserId || loser.life > 0 || next.life !== loser.life) return false;
+  // PlayerImpl.leave() clears these three zones before GAME_OVER is delivered.
+  if (next.handCount === 0) loser.handCount = 0;
+  if (next.libraryCount === 0) loser.libraryCount = 0;
+  if (Array.isArray(next.graveyard) && !next.graveyard.length) loser.graveyard = [];
+  return JSON.stringify(expected) === after;
+}
+
 function declaredInformation(step, state) {
   return !!(step.reevaluateAfter || step.expectCast && needsSpellReevaluation(planCard(state, step))
     || step.expectAbility && needsEffectReevaluation(step.expectAbility.abilityText)
+    || step.kind === 'activate' && needsEffectReevaluation(step.abilityText)
     || step.expectTriggers?.some((trigger) => needsEffectReevaluation(triggeredEffect(trigger.abilityText))));
 }
 
@@ -270,15 +312,16 @@ export class GameSeat {
     const answeringObservedInformation = actions.length === 1 && actions[0].kind === 'choose' && initial.decision
       && (actions[0].decisionId === initial.decision.id || actions[0].guard?.kind === initial.decision.kind
         && actions[0].guard?.instruction === initial.decision.instruction && reaches(initial, actions[0].guard));
-    const respondingBeforeResolution = actions[0]?.kind === 'play' && actions[0].when === 'priority'
-      && actions.every((action) => action.kind === 'play' && action.when === 'priority' || guardedCostChoice(action));
+    const isPriorityResponse = (action) => ['play', 'activate'].includes(action?.kind) && action.when === 'priority';
+    const respondingBeforeResolution = isPriorityResponse(actions[0])
+      && actions.every((action) => isPriorityResponse(action) || guardedCostChoice(action));
     const resumingCast = resolvingInformation && resumesObservedCast(initial, actions, ownId, expectedStackIds);
     const passingObservedStack = actions.length === 1 && finalPass;
     if (resolvingInformation && actions.length && !answeringObservedInformation && !respondingBeforeResolution && !resumingCast && !passingObservedStack) throw new ToolError('reevaluation_required', 'The existing stack can reveal information or require an unknown decision. Resolve/inspect it before planning new actions; use when:priority for deliberate responses before resolution.');
     const exact = actions.length === 1 && actions[0];
     const singleObservedChoice = !settle && finish === 'none' && exact?.kind === 'choose' && exact.choiceId
       && exact.decisionId === initial.decision?.id && !exact.expectCast && !exact.expectAbility
-      && !exact.expectTriggers?.length && !exact.expectTargetTriggers?.length && !exact.reevaluateAfter && !expectedStackIds?.length;
+      && !exact.adoptTriggerOrder && !exact.expectTriggers?.length && !exact.expectTargetTriggers?.length && !exact.reevaluateAfter && !expectedStackIds?.length;
     let reevaluate = resolvingInformation;
     let beforeInformation = resolvingInformation && !answeringObservedInformation;
     let branchContinuation = resolvingBranch || passingObservedStack;
@@ -289,20 +332,30 @@ export class GameSeat {
       branchContinuation ||= plannedBranch;
       const terminal = !plannedBranch && declaredInformation({ ...action, expectCast: action.kind === 'play' ? action.playAs !== 'land' && action.expectCast !== false : action.expectCast }, initial);
       if (terminal && tail.some((next) => !guardedCostChoice(next) || declaredInformation(next, initial))) throw new ToolError('reevaluation_required', 'An information-changing intention must be last except for guarded casting costs/modes/targets. Inspect its actual result before planning the remainder.', { actionIndex });
-      const trackedEffect = action.expectAbility || (action.kind === 'play' ? action.expectCast !== false : action.expectCast)
+      const trackedEffect = action.kind === 'activate' || action.expectAbility || (action.kind === 'play' ? action.expectCast !== false : action.expectCast)
         && selectedCard?.cardId && Array.isArray(selectedCard.types) && !selectedCard.types.includes('LAND') && !selectedCard.faceDown;
       if (action.reevaluateAfter && actionIndex !== actions.length - 1 && !trackedEffect) throw new ToolError('reevaluation_required', 'An untracked terminal choice must be last; no later choice can be assumed to precede its unknown outcome.', { actionIndex });
       reevaluate ||= terminal;
       const firstStep = steps.length;
-      if (action.kind === 'play') {
-        steps.push({ kind: 'answer', guard: { kind: 'priority', priority: 'self' }, select: action.select, playAs: action.playAs,
-          expectCast: action.playAs === 'land' || action.expectCast === false ? false : 'auto', reevaluateAfter: action.reevaluateAfter, semanticPlay: true,
-          requiresEmptyStack: action.when !== 'priority', spellAbilityId: action.spellAbilityId,
-          expectTriggers: action.expectTriggers, expectTargetTriggers: action.expectTargetTriggers });
-        if (action.spellAbilityId) steps.push({ kind: 'answer', guard: { kind: 'panel' }, select: { abilityId: action.spellAbilityId },
-          semanticSpellOption: true, boundCast: true, expectCast: true });
-        if (action.modeId || action.mode) steps.push({ kind: 'answer', guard: { kind: 'panel', modePicker: true },
-          select: action.modeId ? { abilityId: action.modeId } : { label: action.mode }, semanticMode: true, boundCast: true });
+      const activating = action.kind === 'activate';
+      if (activating || action.kind === 'play') {
+        const guard = { kind: 'priority', priority: 'self' };
+        const requiresEmptyStack = action.when !== 'priority';
+        if (activating) {
+          const { sourceId, abilityId, abilityText } = action;
+          steps.push({ kind: 'answer', guard, requiresEmptyStack, semanticPlay: true,
+            select: { objectId: sourceId, zone: 'battlefield' }, activationId: abilityId,
+            expectAbility: { sourceId, abilityText }, reevaluateAfter: action.reevaluateAfter, expectTriggers: action.expectTriggers });
+        } else {
+          steps.push({ kind: 'answer', guard, requiresEmptyStack, select: action.select, playAs: action.playAs,
+            expectCast: action.playAs === 'land' || action.expectCast === false ? false : 'auto', reevaluateAfter: action.reevaluateAfter,
+            semanticPlay: true, spellAbilityId: action.spellAbilityId, expectTriggers: action.expectTriggers,
+            expectTargetTriggers: action.expectTargetTriggers });
+          if (action.spellAbilityId) steps.push({ kind: 'answer', guard: { kind: 'panel' }, select: { abilityId: action.spellAbilityId },
+            semanticSpellOption: true, boundCast: true, expectCast: true });
+          if (action.modeId || action.mode) steps.push({ kind: 'answer', guard: { kind: 'panel', modePicker: true },
+            select: action.modeId ? { abilityId: action.modeId } : { label: action.mode }, semanticMode: true, boundCast: true });
+        }
         const targetRoles = new Map();
         for (const target of action.targets ?? []) {
           const role = target.role;
@@ -312,14 +365,16 @@ export class GameSeat {
             targetRoles.set(role, roleIds);
           }
           steps.push({ kind: 'answer',
-            guard: { kind: 'target', instruction: target.instruction, targetZone: target.targetZone, targetRole: role },
-            select: target.select, intendedTargetIds: roleIds, semanticTarget: true, boundCast: true, skipIfTargetedBy: action.select.cardId,
-            singleDeclaredTarget: action.targets.length === 1 });
+            guard: { kind: 'target', instruction: target.instruction, targetZone: target.targetZone, targetRole: role,
+              targetSourceId: activating ? action.sourceId : undefined },
+            select: target.select, intendedTargetIds: roleIds, semanticTarget: true, boundCast: true,
+            singleDeclaredTarget: !activating && action.targets.length === 1 });
         }
         for (const entry of action.payWith ?? []) {
           const payment = typeof entry === 'string' ? { sourceId: entry } : entry;
           steps.push({ kind: 'answer', guard: { kind: 'payMana' }, select: { objectId: payment.sourceId, zone: 'battlefield' },
-            payment: payment.color || payment.abilityId ? payment : undefined, boundCast: true });
+            payment: payment.color || payment.abilityId ? payment : undefined, boundCast: true,
+            activationSourceId: activating ? action.sourceId : undefined });
         }
       } else if (action.kind === 'choose') {
         const allowOpeningTransition = actionIndex === 0 && !initial.step
@@ -332,9 +387,14 @@ export class GameSeat {
           ? { sourceId: select.objectId, abilityId: select.abilityId, color: select.manaColor } : undefined;
         steps.push({ ...action, kind: 'answer', payment, resumeCastId: resumingCast ? initial.stack[0].id : undefined, allowOpeningTransition });
       } else if (action.kind === 'attack') {
-        if (action.attackers === 'all' || action.attackers === undefined) steps.push({ kind: 'answer', guard: { kind: 'declareAttackers' }, intent: 'attack_all' });
+        if (action.assignments) {
+          for (const attackAssignment of action.assignments) {
+            steps.push({ kind: 'answer', guard: { kind: 'declareAttackers' }, select: { objectId: attackAssignment.attackerId }, attackAssignment });
+          }
+        } else if (action.attackers === 'all' || action.attackers === undefined) steps.push({ kind: 'answer', guard: { kind: 'declareAttackers' }, intent: 'attack_all' });
         else for (const id of action.attackers) steps.push({ kind: 'answer', guard: { kind: 'declareAttackers' }, select: { objectId: id, zone: 'battlefield' } });
-        steps.push({ kind: 'answer', guard: { kind: 'declareAttackers' }, intent: 'confirm_attack', expectTriggers: action.expectTriggers });
+        steps.push({ kind: 'answer', guard: { kind: 'declareAttackers' }, intent: 'confirm_attack',
+          confirmAttacks: action.assignments, expectTriggers: action.expectTriggers });
       } else if (action.kind === 'block') {
         for (const assignment of action.assignments) {
           steps.push({ kind: 'answer', guard: { kind: 'declareBlockers' }, select: { objectId: assignment.blockerId }, blockAssignment: assignment });
@@ -467,6 +527,9 @@ export class GameSeat {
       || initial.players?.some((player) => player.yourSeat && player.battlefield?.some((own) => own.id === card.id))).map((card) => card.id));
     let attackDeclarationPending = false;
     const pendingCombatDamage = new Map();
+    let awaitingOwnCombatWitness = false;
+    let awaitingCombatTerminal = false;
+    let verifiedCombatLoserId;
     const permanentCombat = new PlannedPermanentCombat();
     const defenderCombat = new PlannedDefenderCombat();
     let settlingResolution = false;
@@ -524,7 +587,8 @@ export class GameSeat {
     const castingSources = new Map();
     const observedSpellOptions = new Map();
     let pendingTriggers = [];
-    const pendingIntention = () => pendingCast
+    let orderedTriggers = [];
+    const pendingIntention = () => pendingCast || awaitingOwnCombatWitness || awaitingCombatTerminal || orderedTriggers.length
       || pendingTriggers.some((entry) => entry.abilityType === 'ACTIVATED_NONMANA' && entry.remaining > 0);
     const explicitInformationObjects = new Set();
     const approvedOptionalCosts = new Set();
@@ -575,7 +639,7 @@ export class GameSeat {
           if (hit.targetPermanent === true) {
             if (!Number.isSafeInteger(hit.amount) || hit.amount <= 0
               || !permanentCombat.record(previousPublicFrame, state, hit, ownPlayerId, plannedAttackers)) {
-              throw new ToolError('opponent_state_changed', 'Combat damage to a permanent did not match attackers and blockers already observed.');
+              throw new ToolError('opponent_state_changed', 'Combat damage to a permanent did not match the observed attackers, blockers or defender.');
             }
             continue;
           }
@@ -595,7 +659,7 @@ export class GameSeat {
         combatRevision = evidence.combatRevision;
       }
       for (const [id] of newResolutions) {
-        if (!allowPlannedResolutions || !plannedStackIds.has(id)) {
+        if (!allowPlannedResolutions || !plannedStackIds.has(id) || orderedTriggers.length) {
           throw new ToolError('state_changed', 'An unplanned stack object resolved between views.');
         }
         resolvingPlanned.add(id);
@@ -634,6 +698,15 @@ export class GameSeat {
           throw new ToolError('opponent_state_changed', 'Public player counters changed outside a declared own resolution.');
         }
       }
+      let deferOwnCombatWitness = false;
+      const nonActionableOwnCombat = witnessed && allowPlannedCombatDamage && state.status === 'active'
+        && !visibleDecision(state) && state.activePlayerId === ownPlayerId && ['FIRST_COMBAT_DAMAGE', 'COMBAT_DAMAGE'].includes(state.step)
+        && !permanentCombat.active && !defenderCombat.active && !newResolutions.length && !resolvingPlanned.size
+        && stackIdentity(state.stack) === expectedStack;
+      const canWaitForCombatWitness = () => nonActionableOwnCombat
+        && lifeLossAwaitingOwnCombatDamage(state, previousPublicFrame, expectedOpponentState, currentOpponentState, ownPlayerId, plannedAttackers);
+      const deferCombatTerminal = nonActionableOwnCombat && !!verifiedCombatLoserId && currentOpponentState !== expectedOpponentState
+        && clearedLosingPlayerZones(expectedOpponentState, currentOpponentState, verifiedCombatLoserId);
       if (permanentCombat.active || defenderCombat.active || currentOpponentState !== expectedOpponentState && pendingCombatDamage.size) {
         const expected = JSON.parse(expectedOpponentState);
         const actual = JSON.parse(currentOpponentState);
@@ -643,24 +716,30 @@ export class GameSeat {
         }
         if (defenderCombat.canClearGroups(state)) expected.combat = [];
         const accountedFor = [];
+        let combatLoserId;
         for (const player of expected.players) {
           const damage = pendingCombatDamage.get(player.id);
           if (!damage || !Number.isFinite(player.life)) continue;
           const afterDamage = player.life - damage;
           if (actual.players.find(({ id }) => id === player.id)?.life === afterDamage) {
+            if (player.life > 0 && afterDamage <= 0) combatLoserId = player.id;
             player.life = afterDamage;
             accountedFor.push(player.id);
           }
         }
         combatExplainsChange = JSON.stringify(expected) === currentOpponentState;
-        if (combatExplainsChange) for (const id of accountedFor) pendingCombatDamage.delete(id);
-        else if (currentOpponentState !== expectedOpponentState) {
-          throw new ToolError('opponent_state_changed', 'Combat damage did not match the exact witnessed life loss and permanent changes.');
+        if (combatExplainsChange) {
+          for (const id of accountedFor) pendingCombatDamage.delete(id);
+          if (expected.players.length === 1 && combatLoserId) verifiedCombatLoserId = combatLoserId;
+        } else if (currentOpponentState !== expectedOpponentState) {
+          deferOwnCombatWitness = canWaitForCombatWitness();
+          if (!deferOwnCombatWitness) throw new ToolError('opponent_state_changed', 'Combat damage did not match the exact witnessed life loss and permanent changes.');
         }
       }
       if (currentOpponentState !== expectedOpponentState
         && !(witnessed && ((allowPlannedResolutions && (resolvingPlanned.size || settlingResolution)) || advancingOwnTurn || combatExplainsChange))) {
-        throw new ToolError('opponent_state_changed', 'Public opponent state changed without verified planned resolution; inspect before continuing.');
+        deferOwnCombatWitness ||= canWaitForCombatWitness();
+        if (!deferOwnCombatWitness && !deferCombatTerminal) throw new ToolError('opponent_state_changed', 'Public opponent state changed without verified planned resolution; inspect before continuing.');
       }
       const commitEvidence = () => {
         expectedOpponentState = currentOpponentState;
@@ -689,6 +768,12 @@ export class GameSeat {
           else reportInformation(state, 'A newly visible card needs a fresh plan.');
         }
       }
+      // XMage informs the players of life loss before it records DAMAGED_PLAYER.
+      // Keep comparing with the last verified frame and never dispatch while the
+      // only visible change is awaiting its exact combat damage evidence.
+      awaitingOwnCombatWitness = deferOwnCombatWitness;
+      awaitingCombatTerminal = deferCombatTerminal;
+      if (deferOwnCombatWitness || deferCombatTerminal) return;
       const currentStack = stackIdentity(state.stack);
       if (currentStack === expectedStack) {
         // Mode, payment and targets can change while the stack identity stays put.
@@ -707,27 +792,48 @@ export class GameSeat {
         throw new ToolError('state_changed', 'The stack changed outside the sequence.');
       }
       let nextCast = pendingCast;
+      let announcedCast;
       const nextTriggers = pendingTriggers.map((trigger) => ({ ...trigger }));
+      const orderedIds = new Set(orderedTriggers.map((trigger) => trigger.id));
+      const placed = added.filter((item) => orderedIds.has(item.id)).reverse();
+      if (placed.some((item, index) => {
+        const expected = orderedTriggers[index];
+        return item.id !== expected.id || item.sourceId !== expected.sourceId || item.abilityText !== expected.abilityText
+          || item.controllerId !== ownPlayerId || item.abilityType !== 'TRIGGERED_NONMANA';
+      })) throw new ToolError('state_changed', 'A selected trigger changed identity, source, text or stack order.');
+      if (placed.length && placed.some((item, index) => state.stack[index]?.id !== placed.at(-index - 1).id)) {
+        throw new ToolError('state_changed', 'Selected triggers did not enter at the top of the stack in the declared order.');
+      }
       for (const item of added) {
         if (nextCast && item.cardId === nextCast.cardId && item.controllerId === nextCast.playerId
           && item.name === nextCast.name && item.id !== item.cardId && !item.abilityType) {
           if (nextCast.information) explicitInformationObjects.add(item.id);
+          if (nextCast.actionIndex !== undefined) announcedCast = [nextCast.actionIndex, item.id];
           nextCast = null;
           continue;
         }
         const expected = nextTriggers.filter((trigger) => trigger.remaining > 0
           && item.abilityType === (trigger.abilityType ?? 'TRIGGERED_NONMANA') && item.sourceId === trigger.sourceId
-          && item.abilityText === trigger.abilityText && item.controllerId === trigger.playerId
+          && (item.abilityType === 'TRIGGERED_NONMANA'
+            ? sameTriggerText(item.abilityText, trigger.abilityText) : item.abilityText === trigger.abilityText)
+          && item.controllerId === trigger.playerId
           && (!trigger.targetingCardId || state.stack.some((spell) => spell.cardId === trigger.targetingCardId && spell.controllerId === ownPlayerId && spell.targets?.includes(trigger.sourceId))));
-        if (expected.length !== 1) throw new ToolError('state_changed', 'An unexpected or ambiguous stack object needs a fresh plan.');
-        if (expected[0].information) explicitInformationObjects.add(item.id);
-        expected[0].remaining--;
+        if (expected.length > 1 || expected.length === 0 && !orderedIds.has(item.id)) {
+          throw new ToolError('state_changed', 'An unexpected or ambiguous stack object needs a fresh plan.');
+        }
+        if (expected[0]?.information) explicitInformationObjects.add(item.id);
+        if (expected[0]) expected[0].remaining--;
       }
       if (added.length || removed.length) {
         // Commit budgets only after validating the complete stack delta: a known
         // trigger must never hide an opponent response in the same update.
         pendingCast = nextCast;
+        if (announcedCast) {
+          const [actionIndex, stackId] = announcedCast;
+          castingSources.get(actionIndex).stackId = stackId;
+        }
         pendingTriggers = nextTriggers;
+        orderedTriggers = orderedTriggers.slice(placed.length);
         expectedStack = currentStack;
         expectedStackCards = state.stack;
         for (const card of added) plannedStackIds.add(card.id);
@@ -740,6 +846,8 @@ export class GameSeat {
     const checkGame = (state) => {
       accountTime(state);
       if (state.gameId !== sequence.gameId || state.status !== 'active' || state.epoch !== initial.epoch) {
+        if (awaitingOwnCombatWitness && state.gameId === sequence.gameId && state.epoch === initial.epoch
+          && ['game_over', 'match_over', 'sideboarding'].includes(state.status)) checkStack(state, false);
         throw new ToolError('invalidated', 'The game state changed.');
       }
       if (waitingForOpeningTurn && (state.turn == null || state.turn === 0 || state.turn === 1)) {
@@ -810,6 +918,7 @@ export class GameSeat {
         || ['instruction', 'sourceObjectId', 'targetSourceId', 'targetZone', 'targetRole', 'modePicker']
           .some((field) => guard[field] !== undefined && guard[field] !== decision[field]))) return false;
       const sourceId = castingSources.get(step.actionIndex)?.objectId;
+      if (step.activationSourceId && guard.kind === 'payMana') return decision.paymentSourceId === step.activationSourceId;
       if (step.semanticMode || step.semanticSpellOption) return !!sourceId && decision.sourceObjectId === sourceId;
       if (step.semanticTarget && guard.targetRole !== undefined) return !!sourceId && decision.targetSourceId === sourceId;
       if (step.boundCast && guard.kind === 'payMana' && decision.paymentSourceId && sourceId) return decision.paymentSourceId === sourceId;
@@ -828,15 +937,31 @@ export class GameSeat {
     };
     const canSkipTarget = (state, step) => {
       const targetId = step.select?.objectId ?? step.select?.cardId;
-      const sourceCardId = step.skipIfTargetedBy
-        ?? (step.singleDeclaredTarget ? castingSources.get(step.actionIndex)?.cardId : undefined);
-      if (!sourceCardId || step.guard?.kind !== 'target' || !targetId) return false;
-      const publicTarget = state.stack.some((card) => card.id === targetId) || state.players?.some((player) => player.id === targetId || player.battlefield?.some((card) => card.id === targetId));
-      const matching = state.stack.filter((card) => card.cardId === sourceCardId && card.controllerId === ownPlayerId && plannedStackIds.has(card.id));
-      return publicTarget && matching.length === 1 && matching[0].targets?.includes(targetId);
+      if (step.guard?.kind !== 'target' || !targetId) return false;
+      const publicTarget = state.stack.some((card) => card.id === targetId)
+        || state.players?.some((player) => player.id === targetId || player.battlefield?.some((card) => card.id === targetId));
+      if (!publicTarget) return false;
+      if (step.semanticTarget) {
+        const source = castingSources.get(step.actionIndex);
+        const cast = state.stack.find((card) => card.id === source?.stackId);
+        if (!cast) return false;
+        const role = step.guard.targetRole;
+        if (role !== undefined && cast.spellTargetGroups) {
+          const decision = visibleDecision(state);
+          if (decision?.targetRole !== undefined && (decision.targetSourceId !== source.objectId || decision.targetRole <= role)) return false;
+          const actual = cast.spellTargetGroups[role];
+          const expected = step.singleDeclaredTarget ? [targetId] : step.intendedTargetIds;
+          return sameTargetGroup(actual, expected);
+        }
+        // Compatibility with engines that only publish the flat target list.
+        return step.singleDeclaredTarget && cast.targets?.length === 1 && cast.targets[0] === targetId;
+      }
+      if (!step.skipIfTargetedBy) return false;
+      const matching = state.stack.filter((card) => card.cardId === step.skipIfTargetedBy && card.controllerId === ownPlayerId && plannedStackIds.has(card.id));
+      return matching.length === 1 && matching[0].targets?.includes(targetId);
     };
     const requireSettledCombat = () => {
-      if (pendingCombatDamage.size || permanentCombat.pending || defenderCombat.pending) throw new ToolError('opponent_state_changed', 'Combat damage has not produced its exact witnessed changes; read a fresh state.');
+      if (awaitingOwnCombatWitness || awaitingCombatTerminal || pendingCombatDamage.size || permanentCombat.pending || defenderCombat.pending) throw new ToolError('opponent_state_changed', 'Combat damage has not produced its exact witnessed changes; read a fresh state.');
     };
     const submit = async (args) => {
       requireSettledCombat();
@@ -977,6 +1102,24 @@ export class GameSeat {
           if ((pendingCast && !castingPicker && !step.boundCast) || state.turn !== turn && !waitingForOpeningTurn || !matchesAnswer(state, step)) {
             throw new ToolError('state_changed', 'The expected guarded decision changed.');
           }
+          const sameAttack = ({ attackerId, defenderId }) => attackerId === step.attackAssignment?.attackerId
+            && defenderId === step.attackAssignment?.defenderId;
+          if (step.attackAssignment) {
+            const existing = observedAttacks(state, ownPlayerId).filter(({ attackerId }) => attackerId === step.attackAssignment.attackerId);
+            if (existing.length === 1 && existing.some(sameAttack)) {
+              sequence.completedSteps++;
+              sequence.cursor = state.cursor;
+              continue;
+            }
+            if (existing.length) throw new ToolError('illegal_choice', 'The creature already attacks a different defender.');
+          }
+          if (step.confirmAttacks) {
+            const attacks = observedAttacks(state, ownPlayerId);
+            if (attacks.length !== step.confirmAttacks.length || !step.confirmAttacks.every(({ attackerId, defenderId }) =>
+              attacks.some((pair) => pair.attackerId === attackerId && pair.defenderId === defenderId))) {
+              throw new ToolError('state_changed', 'The visible attack assignments differ from the declared plan.');
+            }
+          }
           const samePair = (pair) => pair.blockerId === step.blockAssignment?.blockerId && pair.attackerId === step.blockAssignment?.attackerId;
           if (step.blockAssignment) {
             const { blockerId, attackerId } = step.blockAssignment;
@@ -1000,6 +1143,17 @@ export class GameSeat {
           }
           const choice = plannedChoice(state, decision, step);
           if (!choice) throw new ToolError('illegal_choice', 'The planned choice is unavailable in the current decision.');
+          if (step.adoptTriggerOrder) {
+            const options = decision.choices.filter((option) => option.type === 'object');
+            const ordered = options.length === 2 ? [choice, options.find((option) => option.id !== choice.id)] : [choice];
+            const canAdopt = (option) => option?.triggerSourceId && option.card?.sourceId === option.triggerSourceId
+              && option.card.id === option.objectId && option.card.abilityType === 'TRIGGERED_NONMANA'
+              && option.card.controllerId === ownPlayerId && option.card.abilityText && !plannedStackIds.has(option.objectId);
+            if (!decision.triggerOrder || orderedTriggers.length || options.length < 2 || !options.includes(choice) || !ordered.every(canAdopt)) {
+              throw new ToolError('response_available', 'Following the trigger order requires exact visible own trigger instances from the current prompt.');
+            }
+            orderedTriggers = ordered.map(({ card }) => card);
+          }
           if (step.expectAbility) {
             const own = state.players?.find((player) => player.yourSeat);
             const source = own?.battlefield?.find((card) => card.id === step.expectAbility.sourceId);
@@ -1007,6 +1161,12 @@ export class GameSeat {
               : decision.kind === 'chooseAbility' || decision.kind === 'panel' && decision.sourceObjectId === source?.id
                 && choice.type === 'option' && choice.abilityType === 'ACTIVATED_NONMANA';
             if (!source || source.faceDown || !matchesSource) throw new ToolError('bad_ability_expectation', 'Expect only an exact non-mana activation of the selected visible own battlefield source.');
+            if (step.activationId) {
+              if (!choice.nonManaAbilities?.some(({ abilityId }) => abilityId === step.activationId)) {
+                throw new ToolError('illegal_choice', 'The declared non-mana ability is unavailable from this source.');
+              }
+              castingSources.set(step.actionIndex, { objectId: source.id, cardId: source.cardId });
+            }
             if (pendingTriggers.some((entry) => entry.remaining > 0 && entry.sourceId === source.id && entry.abilityText === step.expectAbility.abilityText)) throw new ToolError('ambiguous_trigger_expectation', 'An exact own stack ability already has an unconsumed expectation.');
             pendingTriggers.push({ ...step.expectAbility, playerId: own.id, remaining: 1, abilityType: 'ACTIVATED_NONMANA', information: !!step.reevaluateAfter });
           }
@@ -1020,7 +1180,7 @@ export class GameSeat {
                 || !source.rules?.some((rule) => /^Ward(?:\b|[—–-])/i.test(rule)) || (!targetingCast && !existing)) {
                 throw new ToolError('bad_target_trigger_expectation', 'Expect only exact Ward on a visible opposing target of the declared own spell.');
               }
-              if (pendingTriggers.some((entry) => entry.remaining > 0 && entry.sourceId === trigger.sourceId && entry.abilityText === trigger.abilityText)) throw new ToolError('ambiguous_trigger_expectation', 'Declare one exact target-trigger budget.');
+              if (pendingTriggers.some((entry) => entry.remaining > 0 && entry.sourceId === trigger.sourceId && sameTriggerText(entry.abilityText, trigger.abilityText))) throw new ToolError('ambiguous_trigger_expectation', 'Declare one exact target-trigger budget.');
               pendingTriggers.push({ ...trigger, playerId: rival.id, remaining: trigger.count ?? 1 });
             }
           }
@@ -1037,7 +1197,7 @@ export class GameSeat {
                 throw new ToolError('bad_trigger_expectation', 'Predeclare only a visible own source or an exact trigger of the own spell you are casting or have adopted.');
               }
               if ([...pendingTriggers.filter((item) => item.remaining > 0), ...additions]
-                .some((item) => item.sourceId === trigger.sourceId && item.abilityText === trigger.abilityText)) {
+                .some((item) => item.sourceId === trigger.sourceId && sameTriggerText(item.abilityText, trigger.abilityText))) {
                 throw new ToolError('ambiguous_trigger_expectation', 'Use one bounded count for each exact source and ability.');
               }
               additions.push({ ...trigger, playerId: own.id, remaining: trigger.count ?? 1 });
@@ -1052,7 +1212,7 @@ export class GameSeat {
               throw new ToolError('bad_cast_expectation', 'Choose a typed spell option from the exact visible source of this cast.');
             }
             pendingCast = { objectId: card.id, cardId: card.cardId, name: choice.spellName, playerId,
-              information: !!step.reevaluateAfter || !!pendingCast?.information };
+              information: !!step.reevaluateAfter || !!pendingCast?.information, actionIndex: pendingCast?.actionIndex };
           } else if (step.expectCast && !castingPicker && !(step.expectCast === 'auto' && choice.card?.types?.includes('LAND'))) {
             // The engine's visible legal choice can cast from exile/graveyard too
             // (for example Wrenn's Resolve or flashback). Never infer permission
@@ -1064,6 +1224,7 @@ export class GameSeat {
             }
             pendingCast = { objectId: card.id, cardId: card.cardId, name: card.name, playerId, information: !!step.reevaluateAfter };
             if (step.semanticPlay) {
+              pendingCast.actionIndex = step.actionIndex;
               castingSources.set(step.actionIndex, { objectId: card.id, cardId: card.cardId });
               observedSpellOptions.set(step.actionIndex, choice.spellAbilities);
               if (step.spellAbilityId && choice.spellAbilities?.length
@@ -1116,6 +1277,32 @@ export class GameSeat {
               previousDecisionId = picker.id;
             }
           }
+          if (step.activationId) {
+            const observed = await waitForNext();
+            if (!observed) throw new ToolError('timeout', 'The activation did not reach its next decision.');
+            const picker = observed.decision;
+            const { sourceId, abilityText } = step.expectAbility;
+            if (picker.kind === 'panel' && !picker.modePicker) {
+              if (picker.sourceObjectId !== sourceId) throw new ToolError('response_available', 'The ability picker is for a different source.');
+              const options = picker.choices.filter((item) => item.type === 'option' && item.abilityType === 'ACTIVATED_NONMANA'
+                && item.abilityId === step.activationId && item.label === abilityText);
+              if (options.length !== 1) throw new ToolError(options.length ? 'ambiguous_choice' : 'illegal_choice',
+                'Select the exact legal non-mana ability from this source.');
+              await submit({ gameId: sequence.gameId, cursor: observed.cursor, decisionId: picker.id, choiceId: options[0].id,
+                idempotencyKey: `${sequence.id}:activate:${sequence.completedSteps}` });
+              sequence.appliedDecisions++;
+              previousDecisionId = picker.id;
+            } else {
+              const onlyNonManaAbility = choice.nonManaAbilities.length === 1 && !choice.manaAbilities?.length
+                && !choice.spellAbilities?.length && !choice.canPlayLand;
+              const isAnnouncement = onlyNonManaAbility && nextStep?.actionIndex === step.actionIndex && matchesAnswer(observed, nextStep);
+              const observedActivation = observed.stack.some((card) => plannedStackIds.has(card.id)
+                && !state.stack.some((prior) => prior.id === card.id) && card.sourceId === sourceId
+                && card.controllerId === ownPlayerId && card.abilityType === 'ACTIVATED_NONMANA' && card.abilityText === abilityText);
+              if (!isAnnouncement && !observedActivation) throw new ToolError('response_available',
+                'The engine did not confirm the exact ability or its guarded announcement.');
+            }
+          }
           if (selectedMana) {
             const observed = await waitForNext();
             if (!observed) throw new ToolError('timeout', 'The mana source did not reach its next decision.');
@@ -1138,8 +1325,7 @@ export class GameSeat {
             if (matchesAnswer(observed, step)) {
               const targetPicker = observed.decision;
               const confirmed = targetPicker.chosenTargetIds ?? [];
-              const confirmsPlan = confirmed.length === step.intendedTargetIds.length
-                && step.intendedTargetIds.every((id) => confirmed.includes(id));
+              const confirmsPlan = sameTargetGroup(confirmed, step.intendedTargetIds);
               const confirm = confirmsPlan && targetPicker.choices.find((item) => item.intent === 'confirm_targets');
               if (!confirm) throw new ToolError('response_available', 'The current target role still needs an exact confirmation.');
               await submit({ gameId: sequence.gameId, cursor: observed.cursor, decisionId: targetPicker.id, choiceId: confirm.id,
@@ -1148,18 +1334,27 @@ export class GameSeat {
               previousDecisionId = targetPicker.id;
             }
           }
-          if (step.blockAssignment) {
+          if (step.attackAssignment || step.blockAssignment) {
             let observed = await waitForNext();
-            if (observed?.decision.kind === 'target' && /select attacker to block/i.test(observed.decision.instruction ?? '')) {
-              const target = plannedChoice(observed, observed.decision, { select: { objectId: step.blockAssignment.attackerId } });
-              if (!target) throw new ToolError('illegal_choice', 'The declared creature cannot block that attacker.');
+            const attack = step.attackAssignment;
+            const targetPrompt = attack ? observed?.step === 'DECLARE_ATTACKERS' && !observed.decision.targetSourceId
+              && /^Select a player, planeswalker, or battle to attack(?: \([^()]+\))?$/i.test(observed.decision.instruction ?? '')
+              : /select attacker to block/i.test(observed?.decision.instruction ?? '');
+            if (observed?.decision.kind === 'target' && targetPrompt) {
+              const targetId = attack?.defenderId ?? step.blockAssignment.attackerId;
+              const target = plannedChoice(observed, observed.decision, { select: { objectId: targetId } });
+              if (!target) throw new ToolError('illegal_choice', attack ? 'The declared creature cannot attack that defender.'
+                : 'The declared creature cannot block that attacker.');
               await submit({ gameId: sequence.gameId, cursor: observed.cursor, decisionId: observed.decision.id,
-                choiceId: target.id, idempotencyKey: `${sequence.id}:block:${sequence.completedSteps}` });
+                choiceId: target.id, idempotencyKey: `${sequence.id}:combat:${sequence.completedSteps}` });
               sequence.appliedDecisions++;
               previousDecisionId = observed.decision.id;
               observed = await waitForNext();
             }
-            if (observed?.decision.kind !== 'declareBlockers' || !observedBlocks(observed, ownPlayerId).some(samePair)) {
+            if (attack && (observed?.decision.kind !== 'declareAttackers' || !observedAttacks(observed, ownPlayerId).some(sameAttack))) {
+              throw new ToolError('state_changed', 'The engine did not confirm the intended attack assignment.');
+            }
+            if (!attack && (observed?.decision.kind !== 'declareBlockers' || !observedBlocks(observed, ownPlayerId).some(samePair))) {
               throw new ToolError('state_changed', 'The engine did not confirm the intended blocker assignment.');
             }
           }

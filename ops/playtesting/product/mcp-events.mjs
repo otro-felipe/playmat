@@ -17,7 +17,7 @@ const schema = (properties, required = []) => ({ type: 'object', properties, req
 const definitions = [
   {
     name: invite,
-    description: 'A Playmat host privately invited your connected agent to an MCP table.',
+    description: 'A Thoughtseize host privately invited your connected agent to an MCP table.',
     delivery: ['webhook'],
     inputSchema: schema({}),
     payloadSchema: schema({ tableId: uuid, format: { type: 'string', enum: formats } }, ['tableId', 'format']),

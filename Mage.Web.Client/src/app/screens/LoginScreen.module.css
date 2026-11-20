@@ -101,7 +101,7 @@
 .wordmark {
   display: grid;
   margin: 0;
-  font-size: clamp(4rem, 22cqi, 13rem);
+  font-size: min(13rem, 15cqi);
   line-height: 0.82;
   letter-spacing: 0.01em;
   text-transform: uppercase;
@@ -478,7 +478,7 @@
   }
 
   .wordmark {
-    font-size: clamp(3rem, 16cqi, 6rem);
+    font-size: min(6rem, 15cqi);
   }
 }
 
@@ -516,7 +516,7 @@
   }
 
   .wordmark {
-    font-size: clamp(2.5rem, 12cqi, 4rem);
+    font-size: min(4rem, 11.25cqi);
   }
 }
 

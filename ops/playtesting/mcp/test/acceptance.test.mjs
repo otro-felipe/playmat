@@ -101,9 +101,11 @@ test('[PM-AC-08] authenticates every MCP request and binds decisions to one seat
   await assert.rejects(() => player.listTools(), /401|Unauthorized/i);
 });
 
-test('an invited agent can discover and read the Playmat guides before joining a game', async (t) => {
+test('an invited agent can discover Thoughtseize and read its guides before joining a game', async (t) => {
   const { url, fixtures, tokens } = await start(t);
   const rival = await connect(t, url, 'fixture-other');
+  assert.equal(rival.getServerVersion()?.name, 'thoughtseize');
+  assert.equal(rival.getServerVersion()?.title, 'Thoughtseize');
   assert.ok(rival.getServerCapabilities()?.resources);
   const gettingStarted = 'playmat://guides/getting-started';
   const cardCatalog = 'playmat://guides/card-catalog';

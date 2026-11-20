@@ -334,6 +334,7 @@ export interface CardView extends SimpleCardView {
     rotate?: boolean;
     rules?: string[];
     secondCardFace?: CardView;
+    spellTargetGroups?: string[][];
     startingDefense?: string;
     startingLoyalty?: string;
     subTypes?: SubType[];

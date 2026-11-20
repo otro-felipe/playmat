@@ -50,11 +50,11 @@ export const saveReviewAnnotationsInput = { gameId: z.uuid(), archiveRevision, e
 
 export function registerPostMatchReviewPrompt(mcp) {
   mcp.registerPrompt('review_playmat_replay', {
-    title: 'Review a completed Playmat replay',
+    title: 'Review a completed Thoughtseize replay',
     description: 'Analyze every recorded decision by seat, save revisable annotations and report coverage.',
     argsSchema: { gameId: z.uuid() },
   }, ({ gameId }) => ({
-    messages: [{ role: 'user', content: { type: 'text', text: `Review completed Playmat game ${gameId}.
+    messages: [{ role: 'user', content: { type: 'text', text: `Review completed Thoughtseize game ${gameId}.
 
 1. Call get_match_review with the game ID. Page the evidence for both acting seats and retain the archive revision. Use the match ID to inspect authorized public plays from earlier games and the acting seat's own sideboard changes. Page list_review_annotations to read prior grades and their revisions.
 2. Apply the guide below to each material decision. Compare credible legal alternatives from the acting seat's knowledge. Use recorded opening choices, revealed-hand decisions and priority receipts. Review a meaningful inferred omission with a bounded observed window when the save schema supports it. Describe what the archive actually shows.

@@ -11,7 +11,7 @@ export function registerEvents(server, actor, request) {
     server.setRequestHandler(schema, async ({ params }) => {
       if (!actor.scopes.includes('play')) {
         if (name === 'list') return { events: [] };
-        throw new McpError(-32001, 'A Playmat play seat is required.');
+        throw new McpError(-32001, 'A Thoughtseize play seat is required.');
       }
       return request(name, params ?? {});
     });

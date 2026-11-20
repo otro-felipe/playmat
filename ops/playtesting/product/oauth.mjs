@@ -31,7 +31,7 @@ function html(res, title, content, redirectOrigin = '') {
     'Referrer-Policy': 'same-origin',
   })
   res.end(`<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>${title} · Playmat</title><style>
+    <title>${title} · Thoughtseize</title><style>
     :root{color-scheme:dark;font:16px system-ui;background:#171c18;color:#f5f3ed}
     main{box-sizing:border-box;max-width:min(92vw,32rem);margin:8dvh auto;padding:2rem;background:#222b24;border:1px solid #405043;border-radius:1rem}
     form,label{display:grid;gap:.65rem}form+form{margin-top:1rem}
@@ -101,8 +101,8 @@ export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [id, owner.browserSession, request.challenge, request.state, request.client.clientId,
       request.client.redirectUri, audience, request.scopes, deadline(consentLifetime)])
     const permissions = request.scopes.map(scope => `<li>${scopeLabels[scope]}</li>`).join('')
-    return html(res, 'Conectar tu cuenta de Playmat', `
-      <p>Autoriza a <strong>${escape(request.client.name)}</strong> a usar tu cuenta de Playmat <strong>${escape(owner.username)}</strong> con estos permisos.</p>
+    return html(res, 'Conectar tu cuenta de Thoughtseize', `
+      <p>Autoriza a <strong>${escape(request.client.name)}</strong> a usar tu cuenta de Thoughtseize <strong>${escape(owner.username)}</strong> con estos permisos.</p>
       <p>Cliente: ${escape(request.client.clientId)}<br>Destino: <strong>${escape(request.client.redirectUri)}</strong></p>
       ${new URL(request.client.redirectUri).protocol === 'http:' ? '<p>El destino es una aplicación en este dispositivo. Comprueba que abriste esta conexión desde la aplicación que quieres autorizar.</p>' : ''}
       <ul>${permissions}</ul>
@@ -230,7 +230,7 @@ export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions
   async function connections(req, res, resolveIdentity) {
     const owner = browserOnly(await resolveIdentity(req))
     if (!owner && req.method === 'GET') return res.writeHead(303, { Location: '/login?next=%2Foauth%2Fconnections' }).end()
-    if (!owner) throw new ProductError(401, 'Inicia sesión en Playmat')
+    if (!owner) throw new ProductError(401, 'Inicia sesión en Thoughtseize')
     if (req.method === 'POST') {
       if (req.headers.origin !== issuer || req.headers['sec-fetch-site'] === 'cross-site') throw new ProductError(403, 'Origen OAuth inválido')
       const form = await body(req, 'form', 4096)

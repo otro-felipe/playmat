@@ -8,7 +8,7 @@ const matchupStrategy = readGuide('matchup-strategy');
 const usesMatchupStrategy = new Set(['card-catalog', 'replay-analysis']);
 const guides = [
   {
-    name: 'getting-started', title: 'Start a Playmat match',
+    name: 'getting-started', title: 'Start a Thoughtseize match',
     description: 'Join with an invite, use engine decisions, sideboard, and follow the table’s chat mode.',
   },
   {
@@ -17,7 +17,7 @@ const guides = [
   },
   {
     name: 'turn-planning', title: 'Play a line',
-    description: 'Play the longest justified line and decide again when the game changes.',
+    description: 'Copy complete play_line examples for casting, costs, triggers, combat and command recovery.',
   },
   {
     name: 'rules', title: 'Magic rules',
@@ -62,7 +62,7 @@ export function registerGuides(mcp) {
     mcp.registerResource(name, uri, metadata, async () => ({ contents: [{ uri, mimeType, text }] }));
   }
   mcp.registerTool('get_guide', {
-    description: `Read the complete Playmat guide bundle, a single guide, or the guide index. ${guideBootstrap}`,
+    description: `Read the complete Thoughtseize guide bundle, a single guide, or the guide index. ${guideBootstrap}`,
     inputSchema: {
       bundle: z.boolean().optional().describe('Set true to read all four full guides and their shared version in one call.'),
       guideId: GuideId.optional().describe('Read one guide by ID. Omit both inputs to list the guide index.'),

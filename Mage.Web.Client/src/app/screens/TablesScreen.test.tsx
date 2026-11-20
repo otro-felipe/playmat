@@ -107,7 +107,7 @@ test.each(['quiet', 'chatty', 'coach'])('[PM-AC-04] the host creates a Rival MCP
   expect(initial.getByLabelText('Invited player')).toBeTruthy();
   expect(initial.queryByLabelText('MCP chat style')).toBeNull();
   fireEvent.change(initial.getByLabelText('Opponent'), { target: { value: 'mcp' } });
-  const guide = within(await page.findByRole('dialog', { name: 'Connect to Playmat MCP' }));
+  const guide = within(await page.findByRole('dialog', { name: 'Connect to Thoughtseize MCP' }));
   fireEvent.click(guide.getByRole('button', { name: 'Continue' }));
   const dialog = within(await page.findByRole('dialog', { name: 'Host a table' }));
   expect(dialog.queryByLabelText('Invited player')).toBeNull();
@@ -132,7 +132,7 @@ test('[PM-AC-16] the host creates an account-private MCP invitation without sele
     : Response.json({ rivals: [] }));
   vi.stubGlobal('fetch', fetcher);
   const { page } = mount({ host: deck.id, opponent: 'mcp' });
-  const guide = within(await page.findByRole('dialog', { name: 'Connect to Playmat MCP' }));
+  const guide = within(await page.findByRole('dialog', { name: 'Connect to Thoughtseize MCP' }));
   fireEvent.click(guide.getByRole('button', { name: 'Continue' }));
   const dialog = within(await page.findByRole('dialog', { name: 'Host a table' }));
   expect(dialog.queryByLabelText('Notify agent')).toBeNull();
@@ -166,9 +166,9 @@ test('[PM-REVIEW-PRIV-1] hosting a private table requires no replay permission',
 test('[PM-AC-04] the play entry shows the connection guide and remembers the host’s choice', async () => {
   tables = [];
   const { page } = mount({ host: deck.id, opponent: 'mcp' });
-  const guide = within(await page.findByRole('dialog', { name: 'Connect to Playmat MCP' }));
+  const guide = within(await page.findByRole('dialog', { name: 'Connect to Thoughtseize MCP' }));
   expect(guide.getByText(`${window.location.origin}/mcp`)).toBeTruthy();
-  expect(guide.getByText(/Choose OAuth, sign in with your Playmat account/)).toBeTruthy();
+  expect(guide.getByText(/Choose OAuth, sign in with your Thoughtseize account/)).toBeTruthy();
   expect(guide.getByText(/game\.invitation\.created and game\.decision\.required/)).toBeTruthy();
   expect(guide.getByRole('link', { name: 'Manage MCP connections' }).getAttribute('href')).toBe('/oauth/connections');
   expect(guide.getByText(/Copy MCP link/)).toBeTruthy();
@@ -181,9 +181,9 @@ test('[PM-AC-04] the play entry shows the connection guide and remembers the hos
 
   const reopened = mount({ host: deck.id, opponent: 'mcp' }).page;
   const host = within(await reopened.findByRole('dialog', { name: 'Host a table' }));
-  expect(reopened.queryByRole('dialog', { name: 'Connect to Playmat MCP' })).toBeNull();
+  expect(reopened.queryByRole('dialog', { name: 'Connect to Thoughtseize MCP' })).toBeNull();
   fireEvent.click(host.getByRole('button', { name: 'Connection guide' }));
-  const manual = within(await reopened.findByRole('dialog', { name: 'Connect to Playmat MCP' }));
+  const manual = within(await reopened.findByRole('dialog', { name: 'Connect to Thoughtseize MCP' }));
   const saved = manual.getByRole('checkbox', { name: 'Don’t show this again' }) as HTMLInputElement;
   expect(saved.checked).toBe(true);
   fireEvent.click(saved);
@@ -191,7 +191,7 @@ test('[PM-AC-04] the play entry shows the connection guide and remembers the hos
   reopened.unmount();
 
   const reset = mount({ host: deck.id, opponent: 'mcp' }).page;
-  expect(await reset.findByRole('dialog', { name: 'Connect to Playmat MCP' })).toBeTruthy();
+  expect(await reset.findByRole('dialog', { name: 'Connect to Thoughtseize MCP' })).toBeTruthy();
 });
 
 test('[PM-AC-04] the MCP alias is visible when seated and Start follows the engine seat state', async () => {

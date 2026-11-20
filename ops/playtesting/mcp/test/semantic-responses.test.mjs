@@ -204,22 +204,21 @@ test('[PM-AC-09-RESPONSES] unrelated draw text on a permanent does not block its
 test('[PM-AC-09-RESPONSES] both Reckless Rage target roles, payment and the exact Ward discard execute in one semantic line',async(t)=>{
   const rage={id:'rage',cardId:'rage',name:'Reckless Rage',types:['INSTANT'],rules:['Deal 4 damage to target creature you do not control and 2 damage to target creature you control.']};
   const otter={id:'otter',cardId:'otter',name:'Otter',types:['CREATURE']}, enemy={id:'enemy',cardId:'enemy',name:'Graveyard Trespasser',types:['CREATURE'],rules:['Ward—Discard a card.']}, land={id:'mana',cardId:'mana',name:'Mountain',types:['LAND']}, discard={id:'discard',cardId:'discard',name:'Mountain',types:['LAND']};
-  const stack=(targets)=>({...rage,id:'rage-stack',controllerId:'me',targets});
+  const stack=(targetGroups, unpaid = true)=>({...rage,id:'rage-stack',controllerId:'me',unpaid,targets:targetGroups.flat(),spellTargetGroups:targetGroups});
   const ward={id:'ward',sourceId:'enemy',controllerId:'rival',abilityType:'TRIGGERED_NONMANA',abilityText:'Ward—Discard a card.'};
   const {result,applied}=await plan(t,{initial:{ownHand:[rage,discard],players:[{id:'me',yourSeat:true,battlefield:[otter,land]},{id:'rival',life:20,battlefield:[enemy]}],decision:priority('cast',{id:'rage-choice',card:rage})},actions:[
-    {kind:'play',select:{cardId:'rage'},targets:[{select:{cardId:'otter'},instruction:'Select target creature you control'},{select:{cardId:'enemy'},instruction:'Select target creature you do not control'}],payWith:['mana'],expectTargetTriggers:[{sourceId:'enemy',targetingCardId:'rage',abilityText:ward.abilityText}]},
-    {kind:'choose',select:{label:'Yes'},guard:{kind:'question',instruction:'discard a card?'}},
-    {kind:'choose',select:{cardId:'discard',zone:'hand'},guard:{kind:'target',instruction:'Select a card (discard cost)'}}],respond:({id,update,state})=>{
-    if(id==='cast')update({ownHand:[discard],stack:[stack([])],decision:{id:'first-target',kind:'target',instruction:'Select target creature you control',choices:[{id:'own-target',card:otter}]}});
-    else if(id==='first-target')update({stack:[stack(['otter'])],decision:{id:'second-target',kind:'target',instruction:'Select target creature you do not control',choices:[{id:'enemy-target',card:enemy}]}});
-    else if(id==='second-target')update({stack:[stack(['otter','enemy'])],decision:{id:'pay',kind:'payMana',choices:[{id:'tap',card:land,type:'manaAbility'}]}});
-    else if(id==='pay')update({stack:[stack(['otter','enemy']),ward],decision:priority('ward-priority')});
-    else if(id==='ward-priority')update({sequenceEvidence:{...evidence(),resolutions:{ward:1},resolutionRevision:1},priority:'opponent',decision:{id:'ward-question',kind:'question',instruction:'discard a card?',choices:[{id:'yes',label:'Yes'}]}});
-    else if(id==='ward-question')update({decision:{id:'discard-prompt',kind:'target',instruction:'Select a card (discard cost)',choices:[{id:'discard-choice',card:discard}]}});
-    else if(id==='discard-prompt')update({ownHand:[],stack:[stack(['otter','enemy'])],priority:'self',decision:priority('rage-priority')});
+    {kind:'play',select:{cardId:'rage'},targets:[{select:{objectId:'enemy'},role:0,targetZone:'BATTLEFIELD'},{select:{objectId:'otter'},role:1,targetZone:'BATTLEFIELD'}],payWith:['mana'],expectTargetTriggers:[{sourceId:'enemy',targetingCardId:'rage',abilityText:ward.abilityText}]},
+    {kind:'choose',select:{answer:true},guard:{kind:'question',instruction:'discard a card?',sourceObjectId:'enemy'}},
+    {kind:'choose',select:{cardId:'discard',zone:'hand'},guard:{kind:'target',instruction:'Select a card (discard cost)',targetZone:'HAND',targetSourceId:'enemy'}}],respond:({id,update,state})=>{
+    if(id==='cast')update({ownHand:[discard],stack:[stack([['enemy'],[]])],decision:{id:'second-target',kind:'target',instruction:'Select target creature you control',targetRole:1,targetSourceId:'rage',targetZone:'BATTLEFIELD',choices:[{id:'own-target',card:otter}]}});
+    else if(id==='second-target')update({stack:[stack([['enemy'],['otter']])],decision:{id:'pay',kind:'payMana',choices:[{id:'tap',card:land,type:'manaAbility'}]}});
+    else if(id==='pay')update({stack:[stack([['enemy'],['otter']], false),ward],decision:priority('ward-priority')});
+    else if(id==='ward-priority')update({sequenceEvidence:{...evidence(),resolutions:{ward:1},resolutionRevision:1},priority:'opponent',decision:{id:'ward-question',kind:'question',instruction:'discard a card?',sourceObjectId:'enemy',choices:[{id:'yes',answer:true}]}});
+    else if(id==='ward-question')update({decision:{id:'discard-prompt',kind:'target',instruction:'Select a card (discard cost)',targetZone:'HAND',targetSourceId:'enemy',choices:[{id:'discard-choice',card:discard}]}});
+    else if(id==='discard-prompt')update({ownHand:[],stack:[stack([['enemy'],['otter']], false)],priority:'self',decision:priority('rage-priority')});
     else update({stack:[],players:[state.players[0],{...state.players[1],battlefield:[],graveyard:[enemy]}],sequenceEvidence:{...evidence(),resolutions:{ward:1,'rage-stack':2},resolutionRevision:2},decision:priority('done')});
   }});
-  assert.equal(result.status,'completed');assert.deepEqual(applied.map(([id])=>id),['cast','first-target','second-target','pay','ward-priority','ward-question','discard-prompt','rage-priority']);
+  assert.equal(result.status,'completed');assert.deepEqual(applied.map(([id])=>id),['cast','second-target','pay','ward-priority','ward-question','discard-prompt','rage-priority']);
   assert.equal(result.lastSubmission.acknowledged,true);assert.ok(result.lastSubmission.finishedAtEpochMs>=result.lastSubmission.dispatchedAtEpochMs);
 });
 
@@ -309,3 +308,121 @@ for(const land of [false,true]) test(`[PM-AC-09-RESPONSES] an explicitly termina
   const card=land?{id:'land',cardId:'land',name:'Mountain',types:['LAND']}:bird;
   await assert.rejects(plan(t,{initial:{ownHand:[card],decision:priority('card',{id:'card-choice',card})},actions:[{kind:'play',select:{cardId:card.id},...(land?{}:{expectCast:false}),reevaluateAfter:true},{kind:'choose',select:{label:'Pay'},guard:{kind:'payMana'}}],respond:()=>assert.fail('Untracked terminal action must reject its tail before execution')}),{code:'reevaluation_required'});
 });
+
+for (const outcome of ['lethal', 'rival-response', 'missing-combat-witness', 'nonterminal-lethal-cleanup']) {
+  test(`[PM-LINE-SEM-3] one Rage line starts at eight life and handles ${outcome}`, async (t) => {
+    const rivalResponds = outcome === 'rival-response';
+    const missingCombatWitness = outcome === 'missing-combat-witness';
+    const wardText = 'Ward—Discard a card.';
+    const prowessText = 'Prowess (Whenever you cast a noncreature spell, this creature gets +1/+1 until end of turn.)';
+    const nemesisText = 'Whenever Screaming Nemesis is dealt damage, it deals that much damage to any other target.';
+    const rage = { id: 'rage-card', cardId: 'rage-card', name: 'Reckless Rage', types: ['INSTANT'] };
+    const kumano = { id: 'kumano', cardId: 'kumano', name: 'Kumano Faces Kakkazan', types: ['ENCHANTMENT'] };
+    const basic = { id: 'mountain', cardId: 'mountain', name: 'Mountain', types: ['LAND'] };
+    const nemesis = { id: 'nemesis', cardId: 'nemesis', name: 'Screaming Nemesis', types: ['CREATURE'],
+      controllerId: 'me', power: '4', toughness: '4', rules: [nemesisText] };
+    const swift = { id: 'swift', cardId: 'swift', name: 'Monastery Swiftspear', types: ['CREATURE'],
+      controllerId: 'me', power: '1', toughness: '2', rules: [prowessText] };
+    const trespasser = { id: 'trespasser', cardId: 'trespasser', name: 'Graveyard Trespasser', types: ['CREATURE'],
+      controllerId: 'rival', power: '3', toughness: '3', rules: [wardText] };
+    const pilot = { id: 'me', yourSeat: true, battlefield: [nemesis, swift, basic] };
+    const rival = { id: 'rival', life: 8, handCount: 6, libraryCount: 39, battlefield: [trespasser] };
+    const cast = (groups, unpaid = true) => ({ ...rage, id: 'rage-cast', controllerId: 'me',
+      unpaid, spellTargetGroups: groups, targets: groups.flat() });
+    const targeted = cast([[trespasser.id], [nemesis.id]], false);
+    const triggered = (id, sourceId, abilityText, controllerId = 'me') => ({ id, sourceId, abilityText, controllerId,
+      abilityType: 'TRIGGERED_NONMANA' });
+    // The battlefield's rules capitalize Ward, while the stack exposes the keyword's raw rule.
+    const ward = { ...triggered('ward', trespasser.id, 'ward—Discard a card.', 'rival'), targets: [targeted.id] };
+    const prowess = triggered('prowess', swift.id, prowessText);
+    const hurt = triggered('nemesis-trigger', nemesis.id, nemesisText);
+    const resolutions = (...ids) => ({ ...evidence(), resolutionRevision: ids.length,
+      resolutions: Object.fromEntries(ids.map((id, index) => [id, index + 1])) });
+    const power2 = { ...swift, power: '2', toughness: '3' };
+    const damagedNemesis = { ...nemesis, damage: 2 };
+    const withNoBlocker = { ...rival, battlefield: [], graveyard: [trespasser] };
+    const confirm = { id: 'confirm', intent: 'confirm_attack' };
+    const declare = (id, ...choices) => ({ id, kind: 'declareAttackers', choices: [...choices, confirm] });
+    const object = card => ({ id: card.id, objectId: card.id, card });
+    const group = (...attackers) => [{ defenderId: rival.id, attackers, blockers: [], isBlocked: false }];
+    const { result, applied, state } = await plan(t, {
+      initial: { ownHand: [rage, kumano], players: [pilot, rival], decision: priority('announce', object(rage)) },
+      actions: [
+        { kind: 'play', select: { objectId: rage.id },
+          targets: [trespasser, nemesis].map((card, role) => ({ role, targetZone: 'BATTLEFIELD', select: { objectId: card.id } })),
+          payWith: [basic.id], expectTargetTriggers: [{ targetingCardId: rage.cardId, sourceId: trespasser.id, abilityText: wardText }],
+          expectTriggers: [{ sourceId: swift.id, abilityText: prowessText }, { sourceId: nemesis.id, abilityText: nemesisText }] },
+        { kind: 'choose', guard: { kind: 'question', sourceObjectId: trespasser.id, instruction: 'discard a card?' },
+          select: { answer: true } },
+        { kind: 'choose', guard: { kind: 'target', targetSourceId: trespasser.id, targetZone: 'HAND', instruction: 'Select a card (discard cost)' },
+          select: { objectId: kumano.id, zone: 'hand' } },
+        { kind: 'choose', guard: { kind: 'target', targetSourceId: nemesis.id, targetRole: 0 }, select: { objectId: rival.id } },
+        { kind: 'attack', attackers: [nemesis.id, swift.id] },
+        { kind: 'pass_until', destination: 'end_step', policy: 'decline_optional' },
+      ],
+      respond: ({ id, update, state: before }) => {
+        switch (id) {
+          case 'announce': return update({ ownHand: [kumano], stack: [cast([[trespasser.id], []])],
+            decision: { id: 'role-one', kind: 'target', targetZone: 'BATTLEFIELD', targetSourceId: rage.id, targetRole: 1, choices: [object(nemesis)] } });
+          case 'role-one': return update({ stack: [{ ...targeted, unpaid: true }],
+            decision: { id: 'payment', kind: 'payMana', paymentSourceId: rage.id, choices: [object(basic)] } });
+          case 'payment': return update({ stack: [targeted, prowess, ward],
+            decision: priority('before-ward') });
+          case 'before-ward': {
+            if (rivalResponds) return update({ sequenceEvidence: { ...evidence(), publicActions: { me: 0, rival: 1 } },
+              stack: [...before.stack, { id: 'rival-response', name: 'Fatal Push', controllerId: 'rival', targets: [swift.id] }],
+              decision: priority('respond') });
+            return update({ sequenceEvidence: resolutions(ward.id), decision: { id: 'ward-question', kind: 'question',
+              instruction: 'discard a card?', sourceObjectId: trespasser.id, choices: [{ id: 'yes', answer: true }] } });
+          }
+          case 'ward-question': return update({ decision: { id: 'ward-cost', kind: 'target', instruction: 'Select a card (discard cost)',
+            targetSourceId: trespasser.id, targetZone: 'HAND', choices: [object(kumano)] } });
+          case 'ward-cost': return update({ ownHand: [], players: [{ ...pilot, graveyard: [kumano] }, rival],
+            stack: [targeted, prowess], decision: priority('before-prowess') });
+          case 'before-prowess': return update({ sequenceEvidence: resolutions(ward.id, prowess.id), stack: [targeted],
+            players: [{ ...before.players[0], battlefield: [nemesis, power2, basic] }, rival], decision: priority('before-rage') });
+          case 'before-rage': return update({ sequenceEvidence: resolutions(ward.id, prowess.id, targeted.id), stack: [hurt],
+            players: [{ ...before.players[0], battlefield: [damagedNemesis, power2, basic] }, withNoBlocker],
+            decision: { id: 'nemesis-target', kind: 'target', targetZone: 'ALL', targetRole: 0, targetSourceId: nemesis.id,
+              choices: [{ id: 'rival-player', objectId: rival.id }] } });
+          case 'nemesis-target': return update({ stack: [{ ...hurt, targets: [rival.id] }], decision: priority('before-nemesis') });
+          case 'before-nemesis': return update({ sequenceEvidence: resolutions(ward.id, prowess.id, targeted.id, hurt.id), stack: [],
+            players: [before.players[0], { ...withNoBlocker, life: 6 }], decision: priority('begin-combat') });
+          case 'begin-combat': return update({ step: 'DECLARE_ATTACKERS', decision: declare('choose-nemesis', object(damagedNemesis), object(power2)) });
+          case 'choose-nemesis': return update({ combat: group(damagedNemesis), decision: declare('choose-swift', object(power2)) });
+          case 'choose-swift': return update({ combat: group(damagedNemesis, power2), decision: declare('submit-attack') });
+          case 'submit-attack': return update({ step: 'DECLARE_BLOCKERS', decision: priority('combat-damage') });
+          case 'combat-damage': {
+            const firstHit = { revision: 1, sourceId: nemesis.id, controllerId: 'me', targetId: rival.id, amount: 4 };
+            const secondHit = { revision: 2, sourceId: swift.id, controllerId: 'me', targetId: rival.id, amount: 2 };
+            // LOST_LIFE's inform callback precedes DAMAGED_PLAYER for each hit.
+            update({ step: 'COMBAT_DAMAGE', players: [before.players[0], { ...withNoBlocker, life: 2 }], decision: null });
+            update({ players: [before.players[0], { ...withNoBlocker, life: 0 }],
+              sequenceEvidence: { ...before.sequenceEvidence, combatRevision: 1, combatDamage: [firstHit] } });
+            if (missingCombatWitness) return update({ decision: priority('unproved-actionable-frame') });
+            update({ sequenceEvidence: { ...before.sequenceEvidence, combatRevision: 2, combatDamage: [firstHit, secondHit] } });
+            // XMage removes the losing player's zones before sending GAME_OVER.
+            update({ players: [before.players[0], { ...withNoBlocker, life: 0, handCount: 0, libraryCount: 0, graveyard: [] }] });
+            if (outcome === 'nonterminal-lethal-cleanup') return update({ decision: priority('unexpected-after-lethal') });
+            return update({ status: 'game_over' });
+          }
+          default: assert.fail(`Unexpected action in one-line lethal: ${id}`);
+        }
+      },
+    });
+    assert.equal(result.skippedSteps, 1);
+    assert.equal(result.reason, {
+      lethal: 'invalidated', 'rival-response': 'opponent_action', 'missing-combat-witness': 'opponent_state_changed',
+      'nonterminal-lethal-cleanup': 'opponent_state_changed',
+    }[outcome], JSON.stringify(result));
+    if (rivalResponds) {
+      assert.deepEqual(applied.map(([id]) => id), ['announce', 'role-one', 'payment', 'before-ward']);
+      assert.deepEqual(state.ownHand, [kumano]);
+      assert.equal(state.players[1].life, 8);
+    } else {
+      assert.deepEqual(applied.slice(-5).map(([id]) => id), ['begin-combat', 'choose-nemesis', 'choose-swift', 'submit-attack', 'combat-damage']);
+      assert.equal(state.players[1].life, 0);
+      assert.deepEqual(state.players[0].graveyard, [kumano]);
+    }
+  });
+}

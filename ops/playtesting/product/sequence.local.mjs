@@ -23,7 +23,7 @@ const engineName = 'seq_' + randomBytes(3).toString('hex')
 const burnDeck = { name: 'Isolated causal burn fixture', cards: [
   { cardName: 'Mountain', amount: 52 }, { cardName: 'Lightning Bolt', amount: 4 }, { cardName: 'Shock', amount: 4 },
 ], sideboard: [] }
-const rivalDeck = { name: 'Isolated pass-only fixture', cards: [{ cardName: 'Mountain', amount: 60 }], sideboard: [] }
+const rivalDeck = { name: 'Isolated pass-only fixture', cards: [{ cardName: 'Mountain', setCode: 'DMU', cardNumber: '271', amount: 60 }], sideboard: [] }
 const prepareDeck = { name: 'Isolated mode and prepare fixture', cards: [
   { cardName: 'Mountain', amount: 52 }, { cardName: 'Pompous Battlemage', amount: 4 }, { cardName: "Heroes' Hangout", amount: 4 },
 ], sideboard: [] }
@@ -32,6 +32,8 @@ const totalDeadline = Date.now() + 480_000
 let acceptedSetup = 0
 let toolTrips = 0
 let injectRivalMana = false, rivalManaAccepted = false
+let rivalSetup
+function setRivalSetup(choose) { rivalSetup = choose }
 async function call(name, args = {}, measure) {
   toolTrips++
   const result = await client.callTool({ name, arguments: args })
@@ -89,8 +91,8 @@ async function rivalPass(boundary) {
   if (!mayDriveRival(state, boundary)) return false
   const decision = state.decision
   if (!decision || state.status !== 'active') return false
-  let choice, mana
-  if (decision.kind === 'priority') {
+  let choice = rivalSetup?.(state), mana
+  if (!choice && decision.kind === 'priority') {
     // Put one public mana source out before the tested line; afterwards this seat only passes.
     mana = injectRivalMana && !rivalManaAccepted && state.stack.length > 0
       && decision.choices.find(item => item.type === 'manaAbility' && item.card?.name === 'Mountain'
@@ -98,7 +100,7 @@ async function rivalPass(boundary) {
     choice = mana || !ownPlayer(state).battlefield.length && decision.choices.find(item => item.card?.name === 'Mountain'
       && state.ownHand.some(card => card.id === item.card.id))
     choice ||= decision.choices.find(item => item.type === 'pass')
-  } else choice = cleanupMountain(state)
+  } else if (!choice) choice = cleanupMountain(state)
     || decision.choices.find(item => state.step === 'CLEANUP' && state.ownHand.some(card => card.id === (item.objectId ?? item.card?.id)))
     || decision.choices.find(item => /^Keep\b|^Play first\b/.test(item.label)) || decision.choices.find(item => item.type === 'button')
   if (!choice) throw Error('Unexpected rival fixture decision: ' + decision.kind + ' ' + decision.instruction)
@@ -114,30 +116,51 @@ async function playLineWithPeer(command, boundary) {
     }
   })()
   try {
-    return await call('play_line', command)
+    let receipt = await call('play_line', command)
+    while (receipt.planOwnsExecution && Date.now() < totalDeadline) {
+      receipt = await call('wait_for_decision', { gameId: command.gameId, commandId: command.commandId, view: command.view, timeoutMs: 5_000 })
+      assert.equal(receipt.commandId, command.commandId, 'Recover the same accepted line')
+    }
+    assert.equal(receipt.planOwnsExecution, false, 'The isolated line must reach a terminal receipt')
+    return receipt
   } finally {
     done = true
     await peer
   }
 }
-async function waitNextOwn(oldId) {
+async function waitNextOwn(oldId, priorGameId) {
   while (Date.now() < totalDeadline) {
     await rivalPass()
     const state = await ownState()
-    if (state.status === 'active' && state.decision && state.decision.id !== oldId && state.decision.kind !== 'waiting') return state
+    if (state.status === 'active' && state.gameId !== priorGameId
+      && state.decision && state.decision.id !== oldId && state.decision.kind !== 'waiting') return state
     await sleep(15)
   }
   throw Error('No next own fixture decision before the bounded deadline')
 }
-async function startFixture(name, deck, seed, opponentDeck = rivalDeck) {
-  const created = await browser.createGame({ name, format: 'Modern', deck: opponentDeck, matchTimeLimit: 'MIN__15', seed }, async record => {
+async function startFixture(name, deck, seed, opponentDeck = rivalDeck, format = 'Modern') {
+  const priorGameId = (await ownState()).gameId
+  const created = await browser.createGame({ name, format, deck: opponentDeck, matchTimeLimit: 'MIN__15', seed }, async record => {
     const response = await fetch(base + '/api/playtesting/invites', { method: 'POST', headers: { 'content-type': 'application/json', Cookie: browserCookie }, body: JSON.stringify({ ...record, guestEngineName: engineName }) })
     assert.equal(response.status, 201)
     return response.json()
   })
   await call('join_game', { tableId: created.tableId, deck })
   await browser.startMatch(created.tableId)
-  return waitNextOwn()
+  return waitNextOwn(undefined, priorGameId)
+}
+async function warmDeckValidation() {
+  // Bridge health can precede the first fully initialized Java deck validation.
+  // This read-only probe can be retried without creating or joining a table.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const validation = await browser.validateDeck({ format: 'Modern', deck: rivalDeck })
+      assert.equal(validation.valid, true)
+      return
+    } catch (error) {
+      if (attempt >= 2 || error.message !== 'No answer from the server for deckValidate') throw error
+    }
+  }
 }
 let browserCookie
 
@@ -310,13 +333,14 @@ try {
   const viewTools = ['get_game_state', 'play_line', 'wait_for_decision'].map(name => discovered.tools.find(tool => tool.name === name))
   assert.ok(viewTools.every(tool => tool?.inputSchema.properties.view), 'Native catalog exposes compact state through every line entry point')
   const lineTools = JSON.stringify(viewTools.map(({ name, inputSchema }) => ({ name, inputSchema })))
-  assert.ok(['modeId', 'payWith', 'assignments', 'targetRole'].every(field => lineTools.includes('"' + field + '"')))
+  assert.ok(['modeId', 'payWith', 'assignments', 'targetRole', 'expectAbility', 'activate', 'adoptTriggerOrder'].every(field => lineTools.includes('"' + field + '"')))
   console.log(JSON.stringify({ phase: 'PM-LINE-MCP-2 real native discovery', version: client.getServerVersion()?.version,
     lineSchemaSha256: createHash('sha256').update(lineTools).digest('hex') }))
   const guideBundle = await call('get_guide', { bundle: true })
   assert.equal(guideBundle.guides.length, 4)
   assert.ok(guideBundle.guides.every(guide => guide.text?.length > 0))
   assert.ok(JSON.stringify(discovered.tools.find(tool => tool.name === 'play_sequence').inputSchema).includes('allowPlannedResolutions'))
+  await warmDeckValidation()
   const scenarios = process.env.PLAYMAT_SEQUENCE_SCENARIOS
   if (scenarios === 'review' || scenarios === 'all') {
     const capture = await verifyReplayCapture({ startFixture, call, ownPlayer, rivalPlayer, answer, waitNextOwn, totalDeadline })
@@ -325,13 +349,26 @@ try {
     await verifyDiscardChoiceCapture({ startFixture, ownPlayer, rivalPlayer, call, answer, waitNextOwn, totalDeadline })
     if (scenarios === 'review') await verifyPreparedModeLine('Patrol Night', true)
   }
-  if (scenarios !== 'review') {
+  const fixture = { startFixture, ownPlayer, rivalPlayer, answer, waitNextOwn,
+    playLineWithPeer, call, totalDeadline, setRivalSetup }
+  const pioneerScenarios = [
+    ['casting', './casting-and-order.local.mjs', 'verifyCastingCosts'],
+    ['order', './casting-and-order.local.mjs', 'verifyTriggerOrder'],
+    ['activation', './creature-land-activation.local.mjs', 'verifyCreatureLandActivation'],
+    ['combat', './combat-destinations.local.mjs', 'verifyPlaneswalkerCombat'],
+    ['ward', './multi-target-ward.local.mjs', 'verifyMultiTargetWard'],
+  ]
+  for (const [name, modulePath, run] of pioneerScenarios) {
+    if (['all', 'pioneer', name].includes(scenarios)) await (await import(modulePath))[run](fixture)
+  }
+  const pioneerOnly = scenarios === 'pioneer' || pioneerScenarios.some(([name]) => name === scenarios)
+  if (scenarios !== 'review' && !pioneerOnly) {
     await verifyPreparedModeLine('Patrol Night', scenarios === 'all')
     await verifyPreparedModeLine('Date Night')
     await verifyPreparedModeLine('Improvised Act Yes')
     await verifyPreparedModeLine('Low-level control')
   }
-  if (scenarios !== 'modal' && scenarios !== 'review') {
+  if (!['modal', 'review'].includes(scenarios) && !pioneerOnly) {
     await verifyTypedManaTalent({ startFixture, ownPlayer, answer, waitNextOwn, playLineWithPeer, call, totalDeadline })
     await verifyCausalBurn()
   }

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { APP_NAME } from '../brand';
 import { api } from '../connection';
 import { useSession } from '../stores/session';
 import { Button } from '../ui/Button';
@@ -44,7 +45,7 @@ export function RecoveryScreen() {
     <h1>Return to your match</h1>
     <p>Recovery uses the last durably confirmed boundary. Clocks stay paused during downtime and while both participants reconnect and agree.</p>
     {error && <p role="alert">{error}</p>}
-    {!connected && <p>Reconnect to Playmat to check your reserved seat.</p>}
+    {!connected && <p>Reconnect to {APP_NAME} to check your reserved seat.</p>}
     {matches.map((row) => <article key={row.matchId}>
       <h2>Game {row.gameNumber} · {row.status}</h2>
       <p>{row.message}</p>

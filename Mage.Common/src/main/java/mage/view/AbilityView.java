@@ -18,11 +18,13 @@ public class AbilityView extends CardView {
 
     public AbilityView(Ability ability, String sourceName, CardView sourceCard) {
         this.id = ability.getId();
+        this.controllerId = ability.getControllerId();
+        this.abilityType = ability.getAbilityType();
         this.name = "Ability";
         this.sourceName = sourceName;
         this.sourceCard = sourceCard;
         this.rules = new ArrayList<>();
-        rules.add(ability.getRule());
+        rules.add(sourceCard.isFaceDown() || sourceCard.hideInfo() ? ability.getRule() : ability.getRule(sourceName));
         this.power = "";
         this.toughness = "";
         this.loyalty = "";

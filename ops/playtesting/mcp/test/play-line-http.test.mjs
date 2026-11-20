@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
+import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -99,6 +100,28 @@ test('[PM-LINE-MCP-1] native stale line transport preserves the preflight reject
   assert.equal(result.gameId, f.request.gameId);
   assert.equal(result.state.cursor, f.request.cursor + 1);
   assert.equal(result.recovery, 'replan_from_state');
+  assert.deepEqual(f.applied, []);
+});
+
+test('[PM-LINE-MCP-2] the turn guide examples pass the published native MCP input contracts', async (t) => {
+  const guide = await readFile(new URL('../guides/turn-planning.md', import.meta.url), 'utf8');
+  const examples = [...guide.matchAll(/```json\n([\s\S]*?)\n```/g)].map(([, body]) => JSON.parse(body));
+  const lines = examples.filter(({ actions }) => actions);
+  assert.equal(lines.length, 5);
+  assert.equal(lines[0].actions[0].select.objectId, '<rage-object-id>', 'The lethal is the first copyable example');
+  const f = await fixture(t);
+  for (const args of lines) {
+    const { isError, result } = await f.call('play_line', args);
+    assert.equal(isError, false, args.commandId);
+    assert.equal(result.stage, 'preflight', JSON.stringify(result.issues));
+    assert.equal(result.code, 'stale_decision', args.commandId);
+    assert.equal(result.appliedDecisions, 0);
+  }
+  const recover = examples.find(({ timeoutMs }) => timeoutMs);
+  assert.equal(recover.commandId, lines[0].commandId);
+  assert.equal(recover.gameId, lines[0].gameId);
+  const { result } = await f.call('wait_for_decision', recover);
+  assert.equal(result.code, 'unknown_command');
   assert.deepEqual(f.applied, []);
 });
 
@@ -338,4 +361,190 @@ test('[PM-LINE-03] a stale request returns the current same-game state without s
   assert.equal(foreign.isError, true);
   assert.equal(foreign.result.state, undefined);
   assert.equal(f.applied.length, 0);
+});
+
+const landActivations = [
+  { name: 'Mutavault', text: "{1}: Mutavault becomes a 2/2 creature with all creature types until end of turn. It's still a land." },
+  { name: "Mishra's Factory", text: "{1}: Mishra's Factory becomes a 2/2 Assembly-Worker artifact creature until end of turn. It's still a land." },
+];
+
+async function activationFixture(t, { name, text }, variant) {
+  const land = { id: 'creature-land', name, types: ['LAND'], rules: ['{T}: Add {C}.', text] };
+  const mana = { id: 'mana-source', name: 'Mountain', types: ['LAND'] };
+  const own = { id: 'pilot', yourSeat: true, battlefield: [land, mana] };
+  const rival = { id: 'rival', yourSeat: false, battlefield: [], life: 20 };
+  const pass = { id: 'pass', label: 'Pass', type: 'pass' };
+  const animation = { id: 'animate', label: text, type: 'option', abilityType: 'ACTIVATED_NONMANA', abilityId: 'animation-id' };
+  const activation = { id: 'animation-on-stack', sourceId: land.id, abilityType: animation.abilityType,
+    abilityText: text, controllerId: own.id };
+  const first = { id: 'priority-before', kind: 'priority', choices: [pass, {
+    id: 'open-land', type: 'object', objectId: land.id, card: land,
+    nonManaAbilities: [{ abilityId: variant === 'unavailable-ability' ? 'other-ability-id' : animation.abilityId, label: text }],
+  }] };
+  const second = { id: 'picker', kind: 'panel', sourceObjectId: land.id, choices: [
+    { id: 'make-mana', type: 'option', label: '{T}: Add {C}.', abilityType: 'ACTIVATED_MANA', abilityId: 'mana-id' },
+    variant === 'changed-option' ? { ...animation, abilityId: 'different-ability-id' } : animation,
+  ] };
+  const targeted = variant === 'targeted-ability';
+  const target = { id: 'target', kind: 'target', targetSourceId: land.id, targetRole: 0, targetZone: 'BATTLEFIELD',
+    choices: [{ id: 'choose-creature', type: 'object', objectId: 'public-creature' }] };
+  const pay = { id: 'cost', kind: 'payMana', paymentSourceId: variant === 'changed-payment' ? 'other' : land.id,
+    choices: [{ id: 'tap-source', type: 'manaAbility', objectId: mana.id, card: mana,
+      manaAbilities: [{ abilityId: 'mountain-id', manaColors: ['R'] }] }] };
+  const afterPay = { id: 'resolve', kind: 'priority', choices: [pass] };
+  const requestAction = { kind: 'activate', sourceId: land.id, abilityId: animation.abilityId, abilityText: text,
+    ...(targeted ? { targets: [{ select: { objectId: 'public-creature' }, targetZone: 'BATTLEFIELD', role: 0 }] } : {}),
+    ...(variant === 'unwitnessed-activation' ? {} : { payWith: [{ sourceId: mana.id, color: 'R' }] }) };
+  const f = await fixture(t, {
+    first, initial: { players: [own, rival] },
+    onResponse: ({ decisionId, choiceId }, update, state) => {
+      if (decisionId === first.id) {
+        assert.equal(choiceId, 'open-land');
+        if (variant === 'direct') update({ decision: pay });
+        else if (variant === 'unwitnessed-activation') update({ decision: afterPay });
+        else update({ decision: second });
+      } else if (decisionId === second.id) {
+        assert.equal(choiceId, 'animate');
+        update({ decision: targeted ? target : pay, stack: [{ ...activation, unpaid: true,
+          abilityText: variant === 'changed-stack' ? 'An unintended activation' : text }] });
+      } else if (decisionId === target.id) {
+        assert.equal(choiceId, 'choose-creature');
+        update({ decision: pay, stack: [{ ...activation, unpaid: true, targets: ['public-creature'] }] });
+      } else if (decisionId === pay.id) {
+        assert.equal(choiceId, 'tap-source');
+        update({ decision: afterPay, stack: [activation], players: [{ ...own, battlefield: [land, { ...mana, tapped: true }] }, rival] });
+      } else if (decisionId === afterPay.id) {
+        assert.equal(choiceId, 'pass');
+        if (variant === 'rival-response') {
+          update({ sequenceEvidence: { ...state.sequenceEvidence, publicActions: { pilot: 0, rival: 1 } },
+            stack: [activation, { id: 'rival-spell', controllerId: rival.id, name: 'Lightning Bolt' }],
+            decision: { id: 'respond-to-rival', kind: 'priority', choices: [pass] } });
+        } else {
+          update({ sequenceEvidence: { ...state.sequenceEvidence, resolutionRevision: 1, resolutions: { [activation.id]: 1 } },
+            decision: { id: 'after-animation', kind: 'priority', choices: [pass] }, stack: [],
+            players: [{ ...own, battlefield: [{ ...land, types: ['LAND', 'CREATURE'] }, { ...mana, tapped: true }] }, rival] });
+        }
+      } else assert.fail('The fixture received an unplanned decision');
+    },
+  });
+  return { ...f, actions: variant === 'unwitnessed-activation'
+    ? [requestAction, { kind: 'choose', select: { label: 'Pass' }, guard: { kind: 'priority' } }]
+    : [requestAction] };
+}
+
+test('[PM-LINE-SEM-5] native tool discovery publishes a typed activation action', async (t) => {
+  const f = await fixture(t);
+  const { tools } = await f.listTools();
+  const schema = tools.find(({ name }) => name === 'play_line').inputSchema;
+  const activation = schema.properties.actions.items.anyOf.find(({ properties }) => properties.kind?.const === 'activate');
+  assert.deepEqual(activation?.required, ['kind', 'sourceId', 'abilityId', 'abilityText']);
+  assert.ok(activation.properties.payWith);
+  assert.ok(activation.properties.targets);
+  const choose = schema.properties.actions.items.anyOf.find(({ properties }) => properties.kind?.const === 'choose');
+  assert.ok(choose.properties.expectAbility, 'Existing guarded ability selections remain discoverable');
+});
+
+for (const land of landActivations) {
+  test(`[PM-LINE-SEM-5] native line activates ${land.name}, pays the exact source and follows its resolution`, async (t) => {
+    const f = await activationFixture(t, land);
+    const { isError, result } = await f.call('play_line', { ...f.request, actions: f.actions, view: 'compact' });
+    assert.equal(isError, false, JSON.stringify(result));
+    assert.equal(result.status, 'completed', JSON.stringify(result));
+    assert.equal(result.state.decision.id, 'after-animation');
+    assert.deepEqual(result.state.players[0].battlefield.map(({ types, tapped }) => [types, tapped]),
+      [[['LAND', 'CREATURE'], undefined], [['LAND'], true]]);
+    assert.deepEqual(f.applied.map(({ choiceId }) => choiceId), ['open-land', 'animate', 'tap-source', 'pass']);
+  });
+}
+
+for (const [variant, applied] of [
+  ['direct', ['open-land', 'tap-source', 'pass']],
+  ['targeted-ability', ['open-land', 'animate', 'choose-creature', 'tap-source', 'pass']],
+]) {
+  test(`[PM-LINE-SEM-5] native activation handles ${variant}`, async (t) => {
+    const input = variant === 'direct' ? landActivations[0] : {
+      name: 'Targeted fixture permanent', text: '{1}: Target creature gets +1/+1 until end of turn.',
+    };
+    const f = await activationFixture(t, input, variant);
+    const { result } = await f.call('play_line', { ...f.request, actions: f.actions });
+    assert.equal(result.status, 'completed', JSON.stringify(result));
+    assert.deepEqual(f.applied.map(({ choiceId }) => choiceId), applied);
+  });
+}
+
+for (const [variant, expected, applied] of [
+  ['unavailable-ability', 'illegal_choice', []],
+  ['unwitnessed-activation', 'response_available', ['open-land']],
+  ['changed-option', 'illegal_choice', ['open-land']],
+  ['changed-stack', 'state_changed', ['open-land', 'animate']],
+  ['changed-payment', 'response_available', ['open-land', 'animate']],
+  ['rival-response', 'opponent_action', ['open-land', 'animate', 'tap-source', 'pass']],
+]) {
+  test(`[PM-LINE-SEM-5] native activation stops at ${variant}`, async (t) => {
+    const f = await activationFixture(t, landActivations[0], variant);
+    const { result } = await f.call('play_line', { ...f.request, actions: f.actions });
+    assert.equal(result.reason, expected, JSON.stringify(result));
+    assert.deepEqual(f.applied.map(({ choiceId }) => choiceId), applied);
+  });
+}
+
+for (const variant of ['exact', 'wrong-assignment', 'unexpected-prompt', 'mixed-selectors', 'duplicate-attacker']) {
+  test(`[PM-LINE-COMBAT-2] native play_line binds the defender to the intended attacker: ${variant}`, async (t) => {
+    const attacker = { id: 'attacker', controllerId: 'pilot' };
+    const walker = { id: 'walker', controllerId: 'rival', types: ['PLANESWALKER'] };
+    const declare = (id) => ({ id, kind: 'declareAttackers', choices: [
+      { id: 'toggle-attacker', card: attacker, objectId: attacker.id },
+      { id: 'confirm', intent: 'confirm_attack' }, { id: 'attack-all', intent: 'attack_all' },
+    ] });
+    const f = await fixture(t, { first: declare('declare'),
+      initial: { step: 'DECLARE_ATTACKERS', combat: [], players: [
+        { id: 'pilot', yourSeat: true, battlefield: [attacker] }, { id: 'rival', life: 20, battlefield: [walker] },
+      ] },
+      onResponse({ choiceId }, update) {
+        if (choiceId === 'toggle-attacker') {
+          update({ decision: { id: 'pick-destination', kind: 'target',
+            instruction: variant === 'unexpected-prompt' ? 'Select target planeswalker' : 'Select a player, planeswalker, or battle to attack',
+            choices: [{ id: 'wrong', objectId: 'rival' }, { id: 'right', objectId: walker.id, card: walker }] } });
+        } else if (choiceId === 'right') {
+          update({ decision: declare('confirm-selection'), combat: [{ defenderId: variant === 'wrong-assignment' ? 'rival' : walker.id,
+            attackers: [attacker], blockers: [], isBlocked: false }] });
+        } else {
+          assert.equal(choiceId, 'confirm');
+          update({ decision: { id: 'declared', kind: 'priority', choices: [{ id: 'pass', type: 'pass' }] } });
+        }
+      },
+    });
+    const { tools } = await f.listTools();
+    const actions = tools.find(({ name }) => name === 'play_line').inputSchema.properties.actions;
+    assert.ok(JSON.stringify(actions).includes('"defenderId"'), 'Native tool discovery exposes the exact defender');
+    const attack = { kind: 'attack', assignments: [{ attackerId: attacker.id, defenderId: walker.id }] };
+    if (variant === 'mixed-selectors') attack.attackers = 'all';
+    if (variant === 'duplicate-attacker') attack.assignments.push({ attackerId: attacker.id, defenderId: 'rival' });
+    const { isError, result } = await f.call('play_line', { ...f.request, actions: [attack] });
+    assert.equal(isError, false);
+    const expectedAnswerIds = {
+      exact: ['toggle-attacker', 'right', 'confirm'], 'wrong-assignment': ['toggle-attacker', 'right'],
+      'unexpected-prompt': ['toggle-attacker'], 'mixed-selectors': [], 'duplicate-attacker': [],
+    };
+    assert.equal(result.status, variant === 'exact' ? 'completed' : expectedAnswerIds[variant].length ? 'interrupted' : 'rejected',
+      JSON.stringify(result));
+    if (!expectedAnswerIds[variant].length) assert.equal(result.code, 'invalid_line_arguments');
+    assert.deepEqual(f.applied.map(({ choiceId }) => choiceId), expectedAnswerIds[variant]);
+  });
+}
+
+test('[PM-LINE-SEM-3] native MCP accepts the exact own-hand Ward discard guard', async (t) => {
+  const card = { id: 'kumano', cardId: 'kumano', name: 'Kumano Faces Kakkazan' };
+  const ward = { id: 'discard-cost', kind: 'target', targetZone: 'HAND', targetSourceId: 'trespasser',
+    instruction: 'Select a card (discard cost)', choices: [{ id: 'discard-kumano', card, objectId: card.id }] };
+  const f = await fixture(t, { first: ward, initial: { ownHand: [card] }, onResponse: (_choice, update) => {
+    update({ ownHand: [], decision: choice('next', 'priority') });
+  } });
+  const { result } = await f.call('play_line', { ...f.request, actions: [{
+    kind: 'choose', guard: { kind: 'target', targetZone: 'HAND', targetSourceId: 'trespasser',
+      instruction: 'Select a card (discard cost)' }, select: { objectId: card.id, zone: 'hand' },
+  }] });
+  assert.equal(result.status, 'completed', JSON.stringify(result));
+  assert.equal(result.state.ownHand.length, 0);
+  assert.deepEqual(f.applied.map(({ choiceId }) => choiceId), ['discard-kumano']);
 });

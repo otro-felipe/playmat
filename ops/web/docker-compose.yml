@@ -143,7 +143,7 @@ services:
       context: ../..
       dockerfile: ops/web/Dockerfile.web
       args:
-        VITE_APP_NAME: ${APP_NAME:-Playmat}
+        VITE_APP_NAME: ${APP_NAME:-Thoughtseize}
     environment:
       DOMAIN: ${DOMAIN:?set DOMAIN}
       # https: Caddy owns 80/443 and the certificates. external: plain HTTP on port 80 for your own reverse proxy

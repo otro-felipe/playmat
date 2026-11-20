@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from 'node:util';
+
 const damageSteps = new Set(['DECLARE_BLOCKERS', 'FIRST_COMBAT_DAMAGE', 'COMBAT_DAMAGE', 'END_COMBAT']);
 const afterCombatSteps = new Set(['POSTCOMBAT_MAIN', 'END_TURN', 'CLEANUP']);
 
@@ -6,6 +8,30 @@ export function observedBlocks(state, ownId) {
   return (state.combat ?? []).flatMap(({ attackers = [], blockers = [] }) => attackers.flatMap(({ id: attackerId }) =>
     blockers.filter(({ id, controllerId }) => controllerId === ownId || ownIds.has(id))
       .map(({ id: blockerId }) => ({ blockerId, attackerId }))));
+}
+
+export function observedAttacks(state, ownId) {
+  const ownIds = new Set(state.players?.find((player) => player.id === ownId)?.battlefield?.map(({ id }) => id));
+  return (state.combat ?? []).flatMap(({ defenderId, attackers = [] }) => attackers
+    .filter(({ id, controllerId }) => controllerId === ownId || ownIds.has(id))
+    .map(({ id: attackerId }) => ({ attackerId, defenderId })));
+}
+
+function attackedDefender({ combat, activePlayerId }, hit, ownId, declaredAttackers) {
+  return activePlayerId === ownId && hit.controllerId === ownId && declaredAttackers.has(hit.sourceId)
+    && combat?.some(({ defenderId, isBlocked, attackers, blockers = [] }) =>
+      defenderId === hit.targetId && isBlocked === false && blockers.length === 0
+      && attackers?.some(({ id, controllerId }) => id === hit.sourceId && controllerId === ownId));
+}
+
+function counterCount(card, name) {
+  const counter = (card.counters ?? []).filter((entry) => entry.name === name);
+  return counter.length > 1 ? NaN : counter[0]?.count ?? 0;
+}
+
+function withoutCounter({ counters, hints: _derivedHints, ...card }, name) {
+  return { ...card, counters: (counters ?? []).filter((entry) => entry.name !== name)
+    .sort((a, b) => a.name.localeCompare(b.name)) };
 }
 
 function combatPartners({ combat, activePlayerId }, hit, ownId, declaredAttackers) {
@@ -36,15 +62,27 @@ export class PlannedPermanentCombat {
 
   record(previous, state, hit, ownId, declaredAttackers) {
     if (previous.turn !== state.turn || !ownId || state.activePlayerId !== previous.activePlayerId
-      || !damageSteps.has(previous.step) || !combatPartners(previous, hit, ownId, declaredAttackers)) return false;
+      || !damageSteps.has(previous.step)) return false;
     const target = previous.players?.flatMap((player) => player.battlefield ?? []).find((card) => card.id === hit.targetId);
-    if (target?.faceDown || !target?.types?.includes('CREATURE') || !Number.isSafeInteger(target.damage) || target.damage < 0) return false;
+    if (target?.faceDown || !target?.types) return false;
+    const walker = target.types.includes('PLANESWALKER');
+    const battle = target.types.includes('BATTLE');
+    const creature = target.types.includes('CREATURE');
+    // Animated planeswalkers or battles can change both damage and counters.
+    if (Number(walker) + Number(battle) + Number(creature) !== 1) return false;
+    const counter = walker ? 'loyalty' : battle ? 'defense' : null;
+    const observed = counter ? attackedDefender(previous, hit, ownId, declaredAttackers)
+      : combatPartners(previous, hit, ownId, declaredAttackers);
+    if (!observed) return false;
+    const before = counter ? counterCount(target, counter) : target.damage;
+    if (!Number.isSafeInteger(before) || before < (counter ? 1 : 0)) return false;
     const prior = this.#hits.get(target.id);
-    if (prior?.dead) return false;
-    const damage = (prior?.damage ?? target.damage) + hit.amount;
-    if (!Number.isSafeInteger(damage)) return false;
+    if (prior && (prior.dead || prior.counter !== counter)) return false;
+    const from = prior?.after ?? before;
+    const after = counter ? Math.max(0, from - hit.amount) : from + hit.amount;
+    if (!Number.isSafeInteger(after)) return false;
     this.#turn = state.turn;
-    this.#hits.set(target.id, { target, damage, priorDamage: target.damage, settled: false, dead: false });
+    this.#hits.set(target.id, { target, counter, before, after, settled: false, dead: false });
     return true;
   }
 
@@ -52,20 +90,25 @@ export class PlannedPermanentCombat {
     if (state.turn !== this.#turn || !damageSteps.has(state.step) && !afterCombatSteps.has(state.step)) return false;
     const actualCards = state.players?.flatMap((player) => player.battlefield ?? []) ?? [];
     for (const effect of this.#hits.values()) {
-      const { target, damage, priorDamage } = effect;
+      const { target, counter, before, after } = effect;
       const card = actualCards.find(({ id }) => id === target.id);
       if (card) {
         if (effect.dead || card.controllerId !== target.controllerId || card.faceDown) return false;
-        if (card.damage === damage) effect.settled = true;
-        else if (effect.settled || card.damage !== priorDamage) return false;
+        if (counter && !isDeepStrictEqual(withoutCounter(target, counter), withoutCounter(card, counter))) return false;
+        const value = counter ? counterCount(card, counter) : card.damage;
+        if (value === after) effect.settled = true;
+        else if (effect.settled || value !== before) return false;
         const opponent = expected.players.find(({ id }) => id === target.controllerId);
         const expectedCard = opponent?.battlefield?.find(({ id }) => id === target.id);
-        if (expectedCard) expectedCard.damage = card.damage;
+        if (expectedCard) {
+          if (counter) expectedCard.counters = card.counters;
+          else expectedCard.damage = card.damage;
+        }
       } else if (!effect.dead) {
         const toughness = Number(target.toughness);
+        const lethal = counter ? after === 0 : Number.isSafeInteger(toughness) && toughness > before && after >= toughness;
         const grave = graveyardEntry(state.players ?? [], target.cardId);
-        if (!Number.isSafeInteger(toughness) || toughness <= priorDamage || damage < toughness || !grave
-          || graveyardEntry(previous.players ?? [], target.cardId)) return false;
+        if (!lethal || !grave || graveyardEntry(previous.players ?? [], target.cardId)) return false;
         effect.settled = true;
         effect.dead = true;
         const opponent = expected.players.find(({ id }) => id === target.controllerId);
@@ -92,7 +135,7 @@ export class PlannedPermanentCombat {
         for (const card of group[kind]) {
           const effect = this.#hits.get(card.id);
           const observed = opposing?.[kind].find(({ id }) => id === card.id);
-          if (effect && observed?.damage === effect.damage) card.damage = effect.damage;
+          if (effect && !effect.counter && observed?.damage === effect.after) card.damage = effect.after;
         }
       }
     }

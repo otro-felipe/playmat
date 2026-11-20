@@ -2,7 +2,7 @@
 
 ### PUB-AC-01 — Public home and authorized play
 
-Given a visitor without a session, when they open `/`, they see Playmat’s landing page with links to create an account and sign in. An existing authenticated browser opens its play home on `/`. A visitor following a protected match link continues through sign-in with the original destination intact.
+Given a visitor without a session, when they open `/`, they see Thoughtseize’s landing page with links to create an account and sign in. An existing authenticated browser opens its play home on `/`. A visitor following a protected match link continues through sign-in with the original destination intact.
 
 ### PUB-AC-02 — Email signup
 
@@ -10,11 +10,11 @@ Given a visitor on `/register`, submitting a valid email requests a registration
 
 ### PUB-AC-03 — First password
 
-Given a visitor follows `/register/complete#token=…`, the token stays in the fragment until completion and only goes to the signup API in the request body. The player chooses a username and password. A successful response establishes a session and opens Playmat. A taken username can be corrected without obtaining a new link. An invalid or expired link gives the player a path to request a fresh one. Opening the link alone does not consume it. A registration started from a match invitation returns to that match after verification in the same browser.
+Given a visitor follows `/register/complete#token=…`, the token stays in the fragment until completion and only goes to the signup API in the request body. The player chooses a username and password. A successful response establishes a session and opens Thoughtseize. A taken username can be corrected without obtaining a new link. An invalid or expired link gives the player a path to request a fresh one. Opening the link alone does not consume it. A registration started from a match invitation returns to that match after verification in the same browser.
 
 ## Browser coverage
 
-`Mage.Web.Client/e2e/public-signup.spec.ts` uses the Playmat product frontend build with controlled signup and identity responses.
+`Mage.Web.Client/e2e/public-signup.spec.ts` uses the Thoughtseize product frontend build with controlled signup and identity responses.
 
 - `[PUB-AC-01] public home offers signup and password sign-in`
 - `[PUB-AC-02] retries a failed verification email request with the address intact`
@@ -26,7 +26,7 @@ Given a visitor follows `/register/complete#token=…`, the token stays in the f
 
 ### PM-SIGNUP-AC-01 — Verify an email and set a password
 
-A visitor can request a registration email. The link opens the public setup page without consuming the token. Submitting a valid username and password creates a verified account and signs it in. The account can subsequently sign in through the usual password form. Playmat stores a digest of each token and disables email tracking for registration links.
+A visitor can request a registration email. The link opens the public setup page without consuming the token. Submitting a valid username and password creates a verified account and signs it in. The account can subsequently sign in through the usual password form. Thoughtseize stores a digest of each token and disables email tracking for registration links.
 
 ### PM-SIGNUP-AC-02 — Enforce verification and uniqueness
 

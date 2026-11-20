@@ -72,11 +72,26 @@ const Payment = z.union([StringId, z.object({
 }).strict()]).describe('Source object ID, or select an exact legal mana ability or color at that source.');
 const DecisionGuard = z.object({
   kind: StringId, instruction: z.string().min(1).max(2000).optional(), ...GameCondition,
-  sourceObjectId: StringId.optional(),
-  targetSourceId: StringId.optional(),
-  targetZone: TargetZone.optional(),
+  sourceObjectId: StringId.optional().describe('Visible source object ID for a question or panel.'),
+  targetSourceId: StringId.optional().describe('Visible source object ID for a target or casting-cost prompt.'),
+  targetZone: z.enum([...TargetZone.options, 'HAND']).optional().describe('Exact projected zone, including HAND for a cost choosing a known card from your hand.'),
   targetRole: z.number().int().nonnegative().max(32).optional(),
   modePicker: z.literal(true).optional(),
+}).strict();
+const PlannedTargets = z.array(z.object({ select: ChoiceSelector, instruction: z.string().min(1).max(2000).optional(),
+  targetZone: TargetZone.optional(), role: z.number().int().nonnegative().max(32).optional()
+    .describe('Zero-based target role from the engine. Supply a role or exact target instruction.'),
+}).strict()).max(8).describe('Known targets in engine prompt order, using visible object IDs.');
+const TurnActivation = z.object({
+  kind: z.literal('activate'),
+  sourceId: StringId.describe('Visible battlefield object ID of your permanent.'),
+  abilityId: StringId.describe('Exact engine ability ID from this source’s nonManaAbilities in the priority choice.'),
+  abilityText: z.string().min(1).max(2000).describe('Full public ability rule text for verifying the stack object.'),
+  when: z.enum(['stack_empty', 'priority']).default('stack_empty'),
+  targets: PlannedTargets.optional().describe('Exact legal target selectors with their role or prompt guard.'),
+  payWith: z.array(Payment).max(16).optional(),
+  reevaluateAfter: z.boolean().optional(),
+  expectTriggers: z.array(OwnTrigger).max(4).optional(),
 }).strict();
 const TurnPlayShape = z.object({ kind: z.literal('play'), select: ChoiceSelector, when: z.enum(['stack_empty', 'priority']).default('stack_empty'),
   playAs: z.literal('land').optional().describe('Require an engine-confirmed land play. If the object opens a picker, use the unique land option for that exact source. Omit for other plays.'),
@@ -85,9 +100,7 @@ const TurnPlayShape = z.object({ kind: z.literal('play'), select: ChoiceSelector
   spellAbilityId: StringId.optional().describe('Choose this exact spell or alternative-cost ability from the selected source picker.'),
   modeId: StringId.optional().describe('Choose this exact engine mode ID from the selected spell’s mode picker.'),
   mode: z.string().trim().min(1).max(2000).optional().describe('Exact visible mode option text when the mode ID has not been observed.'),
-  targets: z.array(z.object({ select: ChoiceSelector, instruction: z.string().min(1).max(2000).optional(),
-    targetZone: TargetZone.optional(), role: z.number().int().nonnegative().max(32).optional(),
-  }).strict()).max(8).optional(),
+  targets: PlannedTargets.optional(),
   payWith: z.array(Payment).max(16).optional(),
   expectTriggers: z.array(OwnTrigger).max(4).optional(), expectTargetTriggers: z.array(TargetTrigger).max(2).optional(),
 }).strict();
@@ -100,6 +113,7 @@ const TurnChooseShape = z.object({ kind: z.literal('choose'),
   select: ChoiceSelector.optional().describe('For a planned prompt, uniquely identify the legal option by object ID or exact option label.'),
   decisionId: StringId.optional().describe('Copy decision.id from the same observed state as the choice.'),
   guard: DecisionGuard.optional(),
+  adoptTriggerOrder: z.literal(true).optional().describe('Follow the exact visible trigger selected from a trigger-order prompt and the final forced option when two remain. Confirm both on the stack before resolving.'),
   value: Value.optional(), reevaluateAfter: z.boolean().optional(), expectCast: z.boolean().optional(), expectAbility: OwnActivation.optional(), skipIfTargetedBy: StringId.optional(), expectTriggers: z.array(OwnTrigger).max(4).optional(), expectTargetTriggers: z.array(TargetTrigger).max(2).optional(),
 }).strict();
 const TurnChoose = TurnChooseShape.refine(({ choiceId, select }) => !!choiceId !== !!select, 'Use one exact choiceId or one semantic select, as with submit_decision.')
@@ -109,16 +123,23 @@ const TurnChoose = TurnChooseShape.refine(({ choiceId, select }) => !!choiceId !
     || guard.kind === 'question' && guard.sourceObjectId && select?.answer !== undefined
     || guard.kind === 'target' && guard.targetSourceId && guard.targetRole !== undefined && select?.objectId
   ), 'Use the observed decisionId, or guard a future mandatory choice with exact instruction or typed source and option.');
-const TurnAttackShape = z.object({ kind: z.literal('attack'), attackers: z.union([z.literal('all'), z.array(StringId).max(16)]).default('all'),
+const TurnAttackShape = z.object({ kind: z.literal('attack'), attackers: z.union([z.literal('all'), z.array(StringId).max(16)]).optional(),
+  assignments: z.array(z.object({ attackerId: StringId, defenderId: StringId }).strict()).max(16)
+    .optional().describe('Exact visible attacker–defender pairs. A defender can be a player, planeswalker or battle. Supply assignments or attackers.'),
   expectTriggers: z.array(OwnTrigger).max(4).optional() }).strict();
-const TurnAttack = TurnAttackShape.refine(({ attackers }) => attackers === 'all' || new Set(attackers).size === attackers.length, 'Name each attacker once.');
+const TurnAttack = TurnAttackShape.refine(({ attackers, assignments }) => attackers === undefined || assignments === undefined,
+  'Supply either attackers or exact assignments.')
+  .refine(({ attackers, assignments }) => {
+    const ids = assignments?.map(({ attackerId }) => attackerId) ?? (Array.isArray(attackers) ? attackers : []);
+    return new Set(ids).size === ids.length;
+  }, 'Name each attacker once.');
 const TurnBlockShape = z.object({ kind: z.literal('block'),
   assignments: z.array(z.object({ blockerId: StringId, attackerId: StringId }).strict()).max(16)
     .describe('Exact visible blocker–attacker pairs to confirm. An empty list declares no blockers.'),
 }).strict();
 const TurnBlock = TurnBlockShape.refine(({ assignments }) => new Set(assignments.map(({ blockerId }) => blockerId)).size === assignments.length,
   'Name each blocker once. Use the live engine decision for a creature that can block multiple attackers.');
-const Turn = { gameId: Uuid, cursor: Cursor, actions: z.array(z.union([TurnPlay, TurnChoose, TurnAttack, TurnBlock, Pace])).max(32),
+const Turn = { gameId: Uuid, cursor: Cursor, actions: z.array(z.union([TurnPlay, TurnActivation, TurnChoose, TurnAttack, TurnBlock, Pace])).max(32),
   expectedStackIds: z.array(StringId).max(16).optional(), finish: z.enum(['next_turn', 'end_step', 'none']).default('next_turn') };
 const LinePassUntilShape = z.object({
   kind: z.literal('pass_until'),
@@ -130,12 +151,12 @@ const LinePassUntil = LinePassUntilShape.refine((value) => (value.destination ==
   'Use phase, step or priority only with current_turn. At least one condition is required for current_turn.');
 const LinePassPriority = z.object({ kind: z.literal('pass_priority') }).strict()
   .describe('Deliberately pass once and return at the next actionable boundary.');
-const LineActions = z.array(z.discriminatedUnion('kind', [TurnPlay, TurnChoose, TurnAttack, TurnBlock, Pace, LinePassUntil, LinePassPriority])).min(1).max(32);
+const LineActions = z.array(z.discriminatedUnion('kind', [TurnPlay, TurnActivation, TurnChoose, TurnAttack, TurnBlock, Pace, LinePassUntil, LinePassPriority])).min(1).max(32);
 const Line = {
   gameId: Uuid, cursor: Cursor, commandId: StringId.describe('Choose a unique ID for this line. For an uncertain result, reuse this ID with the same game, cursor and actions.'),
-  actions: z.array(z.union([TurnPlayShape, TurnChooseShape, TurnAttackShape, TurnBlockShape, Pace, LinePassUntilShape, LinePassPriority])).min(1).max(32)
+  actions: z.array(z.union([TurnPlayShape, TurnActivation, TurnChooseShape, TurnAttackShape, TurnBlockShape, Pace, LinePassUntilShape, LinePassPriority])).min(1).max(32)
     .describe('Plan as far as current information justifies. Use exact choices for visible engine prompts. Put pass_until or pass_priority last.'),
-  expectedStackIds: z.array(StringId).max(16).optional(),
+  expectedStackIds: z.array(StringId).max(16).optional().describe('Exact objects already visible on the stack. For a current trigger-order prompt, use choose.adoptTriggerOrder instead.'),
   waitMs: z.number().int().min(0).max(25_000).default(5_000).describe('Bound how long this call waits for the result. If the plan still owns execution, wait_for_decision with this gameId and commandId.'),
   view: StateView,
 };
@@ -213,7 +234,7 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
           return textResult(formatGameReceipt(receipt, args.view), true);
         }
         if (extra.signal.aborted) return textResult({ code: 'cancelled', message: 'The request was cancelled.' }, true);
-        return textResult({ code: 'operation_failed', message: 'Playmat could not verify completion. Read the latest state before retrying.' }, true);
+        return textResult({ code: 'operation_failed', message: 'Thoughtseize could not verify completion. Read the latest state before retrying.' }, true);
       }
     });
   }
@@ -274,7 +295,7 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
   tool('advance_to_own_turn', 'Pass only when the current engine offers no non-mana optional play, stopping before your next turn or any useful legal play, mandatory decision, public opponent action or missing causal evidence. Zero mana is never evidence that no action exists.', { gameId: Uuid, cursor: Cursor },
     'play', ({ gameId, cursor }) => getSeat().startSequence({ gameId, cursor, steps: [{ kind: 'advance_to_own_turn' }] }, reauthorize));
   const playSequence = (args) => getSeat().startSequence(args, reauthorize);
-  tool('play_line', 'Submit the longest justified line of plays, choices, attacks and passes from the current cursor, on either turn. Ordinary handoffs are automatic. The line stops on new information, rival actions or a required choice it cannot answer. Returns applied progress and seat-visible game state. Check status, code and recovery when a line is rejected. For an exact choice use its current decisionId and choiceId. Prefer this tool for gameplay.', Line, 'play', async (args, signal) => {
+  tool('play_line', 'Submit the longest justified line of plays, activations, choices, attacks and passes from the current cursor, on either turn. Ordinary handoffs are automatic. The line stops on new information, rival actions or a required choice it cannot answer. Returns applied progress and seat-visible game state. Check status, code and recovery when a line is rejected. For an exact choice use its current decisionId and choiceId. Read the turn-planning guide for complete JSON examples, including two targets, Ward, activation, combat and command recovery.', Line, 'play', async (args, signal) => {
     const actions = LineActions.safeParse(args.actions);
     if (!actions.success) return lineArgumentRejection(args, actions.error);
     try {
@@ -302,7 +323,7 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
     guestEngineName: z.string().trim().min(1).max(36),
   }, 'play', async ({ guestEngineName, ...args }) => getSeat().engine.createGame(args,
     (record) => fromProduct('create_game_invite', { ...record, guestEngineName })));
-  tool('join_game', 'Join a private table from its Playmat invite link or table ID. Use a legal deck and an optional seat display name.', {
+  tool('join_game', 'Join a private table from its Thoughtseize invite link or table ID. Use a legal deck and an optional seat display name.', {
     tableId: Uuid.optional(), inviteLink: z.url().max(2048).optional(),
     displayName: z.string().trim().min(1).max(24).optional(), deck: Deck,
   }, 'play', async ({ tableId, inviteLink, displayName, deck }) => {
@@ -312,7 +333,7 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
         const [, , id] = url.pathname.split('/');
         if (!allowedOrigins.includes(url.origin) || url.username || url.password || url.search || url.hash
           || url.pathname !== `/join/${id}` || !Uuid.safeParse(id).success) {
-          throw new ToolError('invalid_invite', 'Provide the private link copied from this Playmat deployment.');
+          throw new ToolError('invalid_invite', 'Provide the private link copied from this Thoughtseize deployment.');
         }
         tableId = id;
       }
@@ -429,7 +450,7 @@ export function createMcpServer({
       }
       return seat;
     }
-    const mcp = new McpServer({ name: 'playmat-private', version: '0.4.0' }, { instructions: guideInstructions });
+    const mcp = new McpServer({ name: 'thoughtseize', title: 'Thoughtseize', version: '0.4.0' }, { instructions: guideInstructions });
     const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true, sessionIdGenerator: undefined });
     registerGuides(mcp);
     if (eventRequest) registerEvents(mcp.server, actor, (method, args) => eventRequest(token, method, args));

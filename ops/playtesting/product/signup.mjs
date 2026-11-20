@@ -84,8 +84,8 @@ export function postmarkSignupMailer({ token, from }) {
         body: JSON.stringify({
           From: from,
           To: to,
-          Subject: 'Crea tu cuenta en Playmat',
-          TextBody: `Tu cuenta en Playmat está a un paso. Abre este enlace para elegir tu usuario y contraseña:\n\n${url}\n\nEl enlace vence en ${lifetimeMinutes} minutos. Si no lo pediste, puedes ignorar este correo.`,
+          Subject: 'Crea tu cuenta en Thoughtseize',
+          TextBody: `Tu cuenta en Thoughtseize está a un paso. Abre este enlace para elegir tu usuario y contraseña:\n\n${url}\n\nEl enlace vence en ${lifetimeMinutes} minutos. Si no lo pediste, puedes ignorar este correo.`,
           TrackOpens: false,
           TrackLinks: 'None',
           MessageStream: 'outbound',

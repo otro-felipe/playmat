@@ -141,8 +141,8 @@ test('insufficient private mana leaves AUTO PAY disabled and cancel available', 
 
 test('an expired browser cookie returns to the product sign-in instead of offering an XMage identity', async ({ page }) => {
   await page.route('**/api/playtesting/me', (route) => route.fulfill({ status: 401, json: { error: 'Authentication required' } }));
-  await page.route('**/login?next=*', (route) => route.fulfill({ contentType: 'text/html', body: '<h1>Cuenta Playmat</h1>' }));
+  await page.route('**/login?next=*', (route) => route.fulfill({ contentType: 'text/html', body: '<h1>Cuenta Thoughtseize</h1>' }));
   await page.goto('/e2e/fixtures/private-library.html');
   await expect(page).toHaveURL(/\/login\?next=%2Fdecks$/);
-  await expect(page.getByRole('heading', { name: 'Cuenta Playmat' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Cuenta Thoughtseize' })).toBeVisible();
 });

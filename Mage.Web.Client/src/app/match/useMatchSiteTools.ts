@@ -1,10 +1,11 @@
+import { APP_NAME } from '../brand';
 import { commandForAgentChoice, describeAgentDecision, projectedChoices, visibleAgentGame } from '../../core/game/agentChoices';
 import type { GameSession, GameSessionState } from '../../core/game/gameSession';
 import { NO_INPUT, useSiteTool } from '../webmcp';
 
 const GET_MATCH_STATE = {
   name: 'get_match_state',
-  description: 'Read the board, your own hand and available engine choices from your seat in this Playmat tab.',
+  description: `Read the board, your own hand and available engine choices from your seat in this ${APP_NAME} tab.`,
   inputSchema: NO_INPUT,
   annotations: { readOnlyHint: true, untrustedContentHint: true },
 };

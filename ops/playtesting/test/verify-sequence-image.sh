@@ -12,11 +12,13 @@ network=$prefix-network
 stamp=$(git rev-parse HEAD)
 app_created=false
 pg_created=false
+network_created=false
 finish() {
  result=$?
  trap - EXIT
- if [[ $app_created == true ]]; then docker stop "$app" >/dev/null 2>&1 || true; fi
- if [[ $pg_created == true ]]; then docker stop "$pg" >/dev/null 2>&1 || true; fi
+ if [[ $app_created == true ]]; then docker rm -f "$app" >/dev/null 2>&1 || true; fi
+ if [[ $pg_created == true ]]; then docker rm -f "$pg" >/dev/null 2>&1 || true; fi
+ if [[ $network_created == true ]]; then docker network rm "$network" >/dev/null 2>&1 || true; fi
  [[ $result == 0 ]] || echo 'Isolated real-engine sequence acceptance failed; no private state exported' >&2
  exit "$result"
 }
@@ -32,8 +34,9 @@ if [[ -n ${PLAYMAT_SEQUENCE_TEST_SUBNET:-} ]]; then
 else
  docker network create "$network" >/dev/null
 fi
+network_created=true
 docker run -d --name "$pg" --network "$network" --network-alias playmat-sequence-pg --memory 256m \
- -v "$prefix-postgres:/var/lib/postgresql/data" -e POSTGRES_USER=playmat -e POSTGRES_DB=sequence_fixture \
+ --tmpfs /var/lib/postgresql/data:size=128m -e POSTGRES_USER=playmat -e POSTGRES_DB=sequence_fixture \
  -e POSTGRES_PASSWORD=isolated-sequence-fixture postgres:17-alpine >/dev/null
 pg_created=true
 for attempt in {1..60}; do
@@ -41,14 +44,14 @@ for attempt in {1..60}; do
  [[ $attempt != 60 ]] || { echo 'Isolated PostgreSQL did not become ready' >&2; exit 1; }
  sleep 1
 done
-docker run -d --name "$app" --network "$network" --memory 4g -v "$prefix-engine:/var/lib/playmat" \
+docker run -d --name "$app" --network "$network" --memory 4g --tmpfs /var/lib/playmat:size=512m --tmpfs /opt/xmage/cards-db:size=1024m --tmpfs /opt/xmage/gamesHistory:size=32m,mode=1777 \
  -e DATABASE_URL=postgresql://playmat:isolated-sequence-fixture@playmat-sequence-pg:5432/sequence_fixture \
  -e PLAYMAT_PUBLIC_URL=http://127.0.0.1:8080 -e PLAYMAT_INSECURE_COOKIE=true -e PLAYMAT_PVP_RECOVERY=on \
  -e PLAYMAT_SEQUENCE_LOCAL_TEST=yes -e XMAGE_MEMORY=1024m "$image" >/dev/null
 app_created=true
 docker exec "$app" node -e '
-const end=Date.now()+60000;
-while(Date.now()<end){try{const r=await fetch("http://127.0.0.1:8080/healthz");if(r.ok){const h=await r.json();if(h.status==="ok")process.exit(0)}}catch{}await new Promise(r=>setTimeout(r,500));}process.exit(1);'
+const end=Date.now()+150000;
+while(Date.now()<end){try{const r=await fetch("http://127.0.0.1:8080/healthz");if(r.ok){const h=await r.json();if(h.status==="ok")process.exit(0)}}catch{}await new Promise(r=>setTimeout(r,500));}console.error("Isolated XMage health did not become ready");process.exit(1);'
 docker exec --user xmage -w /opt/xmage -e PLAYMAT_SEQUENCE_SCENARIOS="${PLAYMAT_SEQUENCE_SCENARIOS:-all}" \
  "$app" node /opt/playtesting/product/sequence.local.mjs
 echo 'Complete isolated real-engine causal sequence acceptance passed'

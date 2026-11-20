@@ -65,7 +65,7 @@ export function playLine(seat, { gameId, cursor, commandId, actions, expectedSta
   try {
     // An exact prompt response may only select an option. Settle an announced
     // line of plays, but do not assume a choose-only line also authorizes passes.
-    const settle = actions.some(({ kind }) => kind === 'play' || kind === 'attack');
+    const settle = actions.some(({ kind }) => ['play', 'activate', 'attack'].includes(kind));
     started = seat.startTurn({ gameId, cursor, actions, expectedStackIds, finish: 'none', settle }, reauthorize);
   } catch (error) {
     if (error instanceof ToolError && error.code !== 'forbidden_game') {

@@ -10,9 +10,9 @@ export default {
   // a game the Rust engine plays (EngineBadge)
   'match.engine.rust': 'Rust engine',
   'match.engine.beta': 'Beta',
-  'match.engine.rust.tooltip': "This game runs on Playmat's Rust engine (beta).",
+  'match.engine.rust.tooltip': 'This game runs on the Rust engine from the Playmat project (beta).',
   'match.engine.notice.title': 'Playing on the Rust engine',
-  'match.engine.notice.body': "This game runs on Playmat's new Rust engine instead of the Java one. It's quicker, but it's new: if a card or a prompt acts strangely, let us know.",
+  'match.engine.notice.body': "This game uses the Rust engine from the Playmat project. It's in beta, so let us know if a card or a prompt acts strangely.",
   'match.engine.notice.settings': 'You can turn it off in Settings → Gameplay.',
   'match.engine.notice.dontShow': "Don't show this again",
   'match.engine.notice.ok': 'Got it',
