@@ -1,9 +1,37 @@
 // @vitest-environment happy-dom
 import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { StackZone } from './StackZone';
-import type { GameView, StackAbilityView } from '../../protocol/generated/views';
+import type { CardView, GameView, StackAbilityView } from '../../protocol/generated/views';
+import './matchMessages';
 import { useMatchUi } from './matchUi';
+
+vi.mock('../../core/images/useCardImage', () => ({
+  useCardImage: (card: CardView | null) => card?.subTypes?.includes('ROOM') ? '/combined-room-art.png' : undefined,
+}));
+
+describe('Room spells on the live stack', () => {
+  const props = { clickable: new Set<string>(), selected: new Set<string>(), sleeveOf: () => '', onClick: () => undefined, originOf: () => undefined };
+
+  test.each(['Unholy Annex', 'Ritual Chamber'])('[READ-AC-008] names the cast door %s over the combined artwork', (door) => {
+    const spell: CardView = { id: 'room', name: door, mageObjectType: 'SPELL', subTypes: ['ROOM'] };
+    render(<StackZone {...props} items={[spell]} />);
+    expect(screen.getByRole('img', { name: door }).getAttribute('src')).toBe('/combined-room-art.png');
+    expect(screen.getByText(`Casting ${door}`)).toBeTruthy();
+    expect(screen.getByRole('listitem', { name: `Casting ${door}, resolves next` })).toBeTruthy();
+    expect(screen.getByText('Resolving next')).toBeTruthy();
+  });
+
+  test.each([
+    { name: 'Unholy Annex // Ritual Chamber', subTypes: ['ROOM'] },
+    { name: 'Unholy Annex', subTypes: ['ROOM'], faceDown: true },
+    { name: 'Lightning Bolt' },
+  ] as CardView[])('[READ-AC-008] shows no door when the stack view does not identify a public Room half', (spell) => {
+    render(<StackZone {...props} items={[{ ...spell, id: 'spell', mageObjectType: 'SPELL' }]} />);
+    expect(screen.queryByText(/^Casting/)).toBeNull();
+    expect(screen.getByText('Resolving next')).toBeTruthy();
+  });
+});
 
 describe('[READ-AC-001] stack target announcements', () => {
   test.each([

@@ -89,6 +89,30 @@
   box-shadow: 0 2px 8px rgb(var(--shade-rgb) / 0.5);
 }
 
+/* The image shows both Room doors, so name the cast one above the resolve badge. */
+.roomStatus {
+  position: absolute;
+  inset: 6px 6px auto;
+  display: grid;
+  gap: 4px;
+}
+
+.roomStatus > span:first-child {
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: var(--mat-900);
+  color: var(--ink);
+  font: 700 max(16px, calc(var(--touch-target, 44px) * 0.28))/1.2 var(--font-print);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.roomStatus .next {
+  position: static;
+  justify-self: center;
+  translate: none;
+}
+
 /* On a portrait table the stack stays to the right and above the decision corner. */
 :global([data-layout='tall']) .zone {
   right: 34px;

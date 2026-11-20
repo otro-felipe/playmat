@@ -218,6 +218,8 @@ export default {
   'match.zoom.mechanics': 'Mechanics',
   // a Room's doors on the board
   'match.room.doors': 'Doors',
+  'match.room.casting': 'Casting {name}',
+  'match.room.doorUnlocked': 'Door unlocked',
   'match.room.unlocked': '{name}: unlocked',
   'match.room.locked': '{name}: locked',
   // counters on a permanent, as badges on the board

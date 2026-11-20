@@ -7,7 +7,7 @@ import { ToolError } from './game-seat.mjs';
 const MAX_MESSAGES = 50;
 const ROLLBACK_VOTE = 'ADD_PERMISSION_TO_ROLLBACK_TURN';
 // Use the normal XMage defaults for the managed MCP identity, with distinct
-// upkeep, draw and end-step windows which would otherwise auto-pass.
+// upkeep on either turn, plus own draw and both end-step windows.
 const MCP_USER_DATA = {
   confirmEmptyManaPool: true,
   manaPoolAutomatic: true,
@@ -17,7 +17,7 @@ const MCP_USER_DATA = {
   useSameSettingsForReplacementEffects: true,
   userSkipPrioritySteps: {
     yourTurn: { upkeep: true, draw: true, endOfTurn: true },
-    opponentTurn: { endOfTurn: true },
+    opponentTurn: { upkeep: true, endOfTurn: true },
   },
 };
 

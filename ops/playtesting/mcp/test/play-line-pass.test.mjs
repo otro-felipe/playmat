@@ -230,6 +230,86 @@ test('[PM-LINE-02] a line at own upkeep can advance to this turn’s draw', asyn
   assert.deepEqual(table.applied.map(([id]) => id), ['upkeep']);
 });
 
+for (const [fixtureName, text, controllerId, drawerId] of [
+  ['Sheoldred on the opponent draw', 'Whenever an opponent draws a card, they lose 2 life.', 'me', 'opponent'],
+  ['Sheoldred on the pilot draw', 'Whenever you draw a card, you gain 2 life.', 'me', 'me'],
+  ['Howling Mine on either draw', "At the beginning of each player's draw step, that player draws an additional card.", 'opponent', 'opponent'],
+]) test(`[PM-LINE-FLOW-6] stops at upkeep before ${fixtureName} and allows an explicit new line`, async (t) => {
+  const nextUpkeep = { ...upkeep, activePlayerId: drawerId, activePlayer: drawerId === 'me' ? 'Pilot' : 'Opponent' };
+  const source = { id: 'source', cardId: 'source', controllerId, rules: [text] };
+  const players = ['me', 'opponent'].map((id) => ({ id, yourSeat: id === 'me', battlefield: id === controllerId ? [source] : [] }));
+  const table = game(t, { end: nextUpkeep, upkeep: drawerId === 'me' ? draw : { ...nextUpkeep, step: 'DRAW', decision: priority('draw') },
+    draw: { ...upkeep, turn: 9 }, }, {
+    activePlayerId: drawerId === 'me' ? 'opponent' : 'me', activePlayer: drawerId === 'me' ? 'Opponent' : 'Pilot', players,
+  });
+  const advance = { kind: 'pass_until', destination: 'my_draw', policy: 'decline_optional' };
+  const stopped = await table.submit([advance]);
+  assert.equal(stopped.reason, 'before_draw_trigger');
+  assert.equal(stopped.lastDestination.step, 'UPKEEP');
+  assert.equal(stopped.lastDestination.activePlayerId, drawerId);
+  assert.deepEqual(table.applied.map(([id]) => id), ['end']);
+
+  const deliberate = await table.submit([{ kind: 'pass_priority' }]);
+  assert.equal(deliberate.status, drawerId === 'me' ? 'interrupted' : 'completed');
+  assert.deepEqual(table.applied.map(([id]) => id), ['end', 'upkeep']);
+});
+
+test('[PM-LINE-FLOW-6] a queued cast cannot pass the upcoming upkeep after a draw trigger enters play', async (t) => {
+  const sheoldred = { id: 'sheoldred', cardId: 'sheoldred', controllerId: 'me', name: 'Sheoldred, the Apocalypse',
+    types: ['CREATURE'], rules: ['Whenever an opponent draws a card, they lose 2 life.'] };
+  const spell = { ...sheoldred, id: 'sheoldred-stack' };
+  const opponentUpkeep = { ...upkeep, activePlayerId: 'opponent', activePlayer: 'Opponent' };
+  const table = game(t, {
+    cast: { stack: [spell], ownHand: [], decision: priority('resolve') },
+    resolve: { stack: [], players: [{ id: 'me', yourSeat: true, battlefield: [sheoldred] }, { id: 'opponent' }],
+      decision: priority('end'), step: 'END_TURN',
+      sequenceEvidence: { ...evidence, resolutions: { [spell.id]: 1 }, resolutionRevision: 1 } },
+    end: opponentUpkeep,
+    upkeep: { ...opponentUpkeep, step: 'DRAW', decision: priority('their-draw') },
+  }, { activePlayerId: 'me', activePlayer: 'Pilot', step: 'PRECOMBAT_MAIN', ownHand: [sheoldred],
+    decision: priority('cast', { id: 'cast-sheoldred', objectId: sheoldred.id, card: sheoldred }) });
+  const stopped = await table.submit([
+    { kind: 'play', select: { objectId: sheoldred.id, zone: 'hand' } },
+    { kind: 'pass_until', destination: 'my_draw', policy: 'decline_optional' },
+  ]);
+  assert.equal(stopped.reason, 'before_draw_trigger');
+  assert.equal(stopped.lastDestination.step, 'UPKEEP');
+  assert.deepEqual(table.applied.map(([id]) => id), ['cast', 'resolve', 'end']);
+});
+
+test('[PM-LINE-FLOW-6] a new flash draw trigger stops a line that already started in upkeep', async (t) => {
+  const source = { id: 'flash-source', cardId: 'flash-source', controllerId: 'me', name: 'Flash source',
+    types: ['CREATURE'], rules: ['Flash', 'Whenever you draw a card, put a +1/+1 counter on this creature.'] };
+  const spell = { ...source, id: 'flash-stack' };
+  const table = game(t, {
+    upkeep: { stack: [spell], ownHand: [], decision: priority('resolve-flash') },
+    'resolve-flash': { stack: [], players: [{ id: 'me', yourSeat: true, battlefield: [source] }, { id: 'opponent' }],
+      decision: priority('after-flash'), sequenceEvidence: { ...evidence, resolutions: { [spell.id]: 1 }, resolutionRevision: 1 } },
+    'after-flash': { ...draw, sequenceEvidence: { ...draw.sequenceEvidence, resolutions: { [spell.id]: 1 }, resolutionRevision: 1 } },
+  }, { ...upkeep, ownHand: [source], decision: priority('upkeep', { id: 'cast-flash', objectId: source.id, card: source }) });
+  const stopped = await table.submit([
+    { kind: 'play', select: { objectId: source.id, zone: 'hand' } },
+    { kind: 'pass_until', destination: 'my_draw', policy: 'decline_optional' },
+  ]);
+  assert.equal(stopped.reason, 'before_draw_trigger');
+  assert.equal(stopped.lastDestination.step, 'UPKEEP');
+  assert.deepEqual(table.applied.map(([id]) => id), ['upkeep', 'resolve-flash']);
+});
+
+for (const [name, source] of [
+  ['a source that applies only to the other player', { rules: ['Whenever an opponent draws a card, they lose 2 life.'] }],
+  ['a card draw effect whose trigger is unrelated', { rules: ['Whenever you cast a spell, draw a card.'] }],
+  ['a face-down source', { faceDown: true, rules: ['Whenever you draw a card, you gain 2 life.'] }],
+]) test(`[PM-LINE-FLOW-6] does not stop before a normal own draw without a relevant public trigger: ${name}`, async (t) => {
+  const table = game(t, { end: upkeep, upkeep: draw }, {
+    players: [{ id: 'me', yourSeat: true, battlefield: [{ id: 'source', controllerId: 'me', ...source }] }, { id: 'opponent' }],
+  });
+  const result = await table.submit([{ kind: 'pass_until', destination: 'my_draw', policy: 'decline_optional' }]);
+  assert.equal(result.status, 'completed');
+  assert.equal(result.lastDestination.step, 'DRAW');
+  assert.deepEqual(table.applied.map(([id]) => id), ['end', 'upkeep']);
+});
+
 for (const [cause, transition, reason] of [
   ['opponent action', { ...upkeep, sequenceEvidence: { ...evidence, publicActions: { me: 0, opponent: 1 } } }, 'opponent_action'],
   ['unseen mandatory choice', { step: 'CLEANUP', decision: { id: 'trigger-choice', kind: 'target', choices: [] } }, 'response_available'],

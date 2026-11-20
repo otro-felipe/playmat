@@ -13,6 +13,35 @@ export function triggeredEffect(text) {
   return text.replace(/^(?:Whenever|When|At)\b[^,.]*,\s*/i, '');
 }
 
+function triggersOnDraw(rule, controllerIsDrawing) {
+  // Only the condition clause, not the result of an unrelated trigger that happens to draw a card.
+  const clauses = rule.trim().split(/(?:[.;]\s*|\band\s+)(?=(?:when(?:ever)?|at the beginning of)\b)/i);
+  for (const clause of clauses) {
+    const [drawCondition] = clause.split(/,/, 1);
+    if (/^at the beginning of\b.*\bdraw step\b/i.test(drawCondition)) {
+      if (/\byour draw step\b/i.test(drawCondition) && !controllerIsDrawing
+        || /\bopponents?['’]s? draw step\b/i.test(drawCondition) && controllerIsDrawing) continue;
+      return true;
+    }
+    if (/^when(?:ever)?\b.*(?:\bdraws?\b.*\bcards?\b|\bcards?\b.*\bdrawn\b)/i.test(drawCondition)) {
+      if (/^when(?:ever)? you draw\b/i.test(drawCondition) && !controllerIsDrawing
+        || /^when(?:ever)? (?:an? |one or more )opponents? draws?\b/i.test(drawCondition) && controllerIsDrawing) continue;
+      // Intervening clauses and draw-count exceptions are conservative.
+      // Additional draws and replacement effects can depend on the rest of the board.
+      return true;
+    }
+  }
+  return false;
+}
+
+export function drawTriggerSources(state) {
+  if (!state.activePlayerId) return [];
+  return (state.players ?? []).flatMap((player) => (player.battlefield ?? []).filter((source) =>
+    source.id && !source.faceDown && !source.hideInfo && source.rules?.some((rule) =>
+      triggersOnDraw(rule, (source.controllerId ?? player.id) === state.activePlayerId)))
+    .map((source) => source.id));
+}
+
 export function needsSpellReevaluation(card) {
   return spellRules(card).some(needsEffectReevaluation);
 }

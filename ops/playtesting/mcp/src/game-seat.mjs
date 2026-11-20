@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { observedAttacks, observedBlocks, PlannedDefenderCombat, PlannedPermanentCombat } from './planned-combat.mjs';
-import { canCallCoin, guardsEffectQuestion, needsEffectReevaluation, needsSpellReevaluation,
+import { canCallCoin, drawTriggerSources, guardsEffectQuestion, needsEffectReevaluation, needsSpellReevaluation,
   needsStackReevaluation, optionalInformationEffect, plansInformationBranch, triggeredEffect } from './effect-boundaries.mjs';
 
 const RESPONSE_TIMEOUT_MS = 18_000;
@@ -586,6 +586,7 @@ export class GameSeat {
     let pendingCast = null;
     const castingSources = new Map();
     const observedSpellOptions = new Map();
+    const handledSpellModes = new Set();
     let pendingTriggers = [];
     let orderedTriggers = [];
     const pendingIntention = () => pendingCast || awaitingOwnCombatWitness || awaitingCombatTerminal || orderedTriggers.length
@@ -907,6 +908,14 @@ export class GameSeat {
     const recordDestination = (state) => {
       sequence.lastDestination = { cursor: state.cursor, turn: state.turn, activePlayerId: state.activePlayerId, phase: state.phase, step: state.step };
     };
+    const observedDrawTriggerSources = new Set(initial.step === 'UPKEEP' ? drawTriggerSources(initial) : []);
+    const requireBeforeDrawTrigger = (state) => {
+      if (!autoAdvance || state.step !== 'UPKEEP') return;
+      const sameUpkeep = initial.step === 'UPKEEP' && state.turn === initial.turn && state.activePlayerId === initial.activePlayerId;
+      if (!drawTriggerSources(state).some((id) => !sameUpkeep || !observedDrawTriggerSources.has(id))) return;
+      recordDestination(state);
+      throw new ToolError('before_draw_trigger', 'A public ability can trigger on the upcoming draw. Inspect this upkeep before passing.');
+    };
     const matchesAnswer = (state, step) => {
       const decision = visibleDecision(state);
       if (step?.kind !== 'answer' || !decision || step.requiresEmptyStack && state.stack.length > 0) return false;
@@ -1045,6 +1054,11 @@ export class GameSeat {
           if (state.decision?.id !== id) throw new ToolError('state_changed', 'The current decision changed while holding.');
           sequence.effectiveDelayMs = effective;
         } else if (step.kind === 'answer') {
+          if (step.semanticMode && handledSpellModes.has(step.actionIndex)) {
+            sequence.completedSteps++;
+            sequence.cursor = state.cursor;
+            continue;
+          }
           while (!visibleDecision(state) || state.decision.id === previousDecisionId) {
             if (!await waitForNext()) throw new ToolError('timeout', 'The expected decision did not arrive.');
             state = await stateForStep();
@@ -1082,6 +1096,7 @@ export class GameSeat {
                 || (!step.semanticPlay && !['declareAttackers', 'declareBlockers'].includes(step.guard?.kind) && !state.stack.length)) {
                 throw new ToolError('response_available', 'An unplanned mandatory choice or unavailable intention needs a fresh plan.');
               }
+              requireBeforeDrawTrigger(state);
               if (++passCount > 80) throw new ToolError('pass_limit', 'The semantic turn reached its priority limit.');
               await submit({ gameId: sequence.gameId, cursor: state.cursor, decisionId: decision.id, choiceId: pass.id, idempotencyKey: `${sequence.id}:implicit:${passCount}` });
               sequence.appliedDecisions++; previousDecisionId = decision.id;
@@ -1267,12 +1282,20 @@ export class GameSeat {
             if (!observed) throw new ToolError('timeout', 'The spell did not reach its next decision.');
             const picker = observed.decision;
             if (pendingCast && picker.kind === 'panel' && !picker.modePicker && picker.sourceObjectId === pendingCast.objectId) {
-              const spellOptions = picker.choices.filter((item) => item.abilityType === 'SPELL' && item.spellName);
-              if (spellOptions.length !== 1) throw new ToolError('response_available', 'Choose the exact spell ability for this source.');
-              const [spellOption] = spellOptions;
+              const spellOptions = picker.choices.filter((item) => item.type === 'option' && item.abilityType === 'SPELL' && item.spellName);
+              const requestedMode = nextStep?.semanticMode ? nextStep.select : undefined;
+              const matchingModes = requestedMode ? spellOptions.filter((item) => requestedMode.abilityId !== undefined
+                ? item.abilityId === requestedMode.abilityId : [item.spellName, item.label].includes(requestedMode.label)) : [];
+              const projected = observedSpellOptions.get(step.actionIndex);
+              const soleProjected = projected?.length === 1 && spellOptions.find((item) => item.abilityId === projected[0].abilityId);
+              const soleSpell = spellOptions.length === 1 ? spellOptions[0] : soleProjected;
+              const spellOption = matchingModes.length === 1 ? matchingModes[0]
+                : !matchingModes.length && (!requestedMode || soleSpell?.spellName === pendingCast.name) ? soleSpell : null;
+              if (!spellOption) throw new ToolError('response_available', 'Choose the exact spell ability for this source.');
               pendingCast.name = spellOption.spellName;
               await submit({ gameId: sequence.gameId, cursor: observed.cursor, decisionId: picker.id, choiceId: spellOption.id,
                 idempotencyKey: `${sequence.id}:spell:${sequence.completedSteps}` });
+              if (matchingModes.length === 1) handledSpellModes.add(step.actionIndex);
               sequence.appliedDecisions++;
               previousDecisionId = picker.id;
             }
@@ -1384,6 +1407,7 @@ export class GameSeat {
           if (decision.kind !== 'priority' || state.priority !== 'self' || !choice || pendingIntention() || state.stop) {
             throw new ToolError('response_available', 'Yield requires your ordinary priority decision.');
           }
+          requireBeforeDrawTrigger(state);
           await submit({ gameId: sequence.gameId, cursor: state.cursor, decisionId: decision.id,
             choiceId: choice.id, idempotencyKey: `${sequence.id}:yield:${sequence.completedSteps}` });
           sequence.appliedDecisions++;
@@ -1448,6 +1472,7 @@ export class GameSeat {
             }
             if (sequence.observedNewInformation) throw new ToolError('new_information', 'New information is available. Inspect the current decision before continuing.');
             requireBeforeInformation(state, step);
+            requireBeforeDrawTrigger(state);
             const choice = state.decision.choices.find((item) => item.type === 'pass');
             if (state.decision.kind !== 'priority' || state.priority !== 'self' || !choice || pendingIntention() || state.stop
               || (!step.skipOptionalResponses && state.decision.choices.some((item) => item.type !== 'pass' && !plainManaChoice(item)))) {
@@ -1481,6 +1506,7 @@ export class GameSeat {
               || (!step.skipOptionalResponses && state.decision.choices.some((item) => item.type !== 'pass' && (autoAdvance ? !plainManaChoice(item) : item.type !== 'manaAbility')))) {
               throw new ToolError('response_available', 'A new response or mandatory prompt needs a decision.');
             }
+            requireBeforeDrawTrigger(state);
             if (++passCount > (autoAdvance ? 80 : 30)) throw new ToolError('pass_limit', 'The sequence reached its priority window limit.');
             await submit({
               gameId: sequence.gameId, cursor: state.cursor, decisionId: state.decision.id, choiceId: choice.id,

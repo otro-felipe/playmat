@@ -19,6 +19,19 @@ Role is a working hypothesis. Aggro typically wants to apply pressure before slo
 | Midrange vs combo | Compare fast pressure backed by disruption, the opponent's likely combo window, and the value of holding an answer through priority. |
 | Midrange mirror | Compare card advantage, mana efficiency, and which threat or land will dominate after trades. Re-evaluate the clock after each meaningful exchange. |
 
+## Identify the last useful priority window
+
+- Before passing into a draw, check public abilities that would trigger on that specific draw. The active player takes their normal draw before anyone gets draw-step priority. Upkeep is the last opportunity to remove Sheoldred and prevent its trigger from going on the stack. After the draw, an answer can interact with the trigger on the stack if it legally can. Check who draws, whose ability it is, and whether the text excludes that draw. [Wizards on upkeep priority](https://magic.wizards.com/en/news/feature/tactical-protocol-your-opponents-turn-2007-04-14) · [Dominaria United release notes](https://magic.wizards.com/en/news/feature/dominaria-united-release-notes-2022-08-26)
+- In a race, compare the next draw's life swing against the value of holding instant-speed removal. In a mirror, killing an opposing Sheoldred in your upkeep can save two life. Acting on the preceding end step can put the removal through with fewer opposing responses and leave your next main-phase mana available. Check the untapped resources on both sides before choosing a window.
+
+## Count what a sweeper will actually remove
+
+Check permanent types, mana values, protection and return effects before committing mana. In a Golgari mirror, Culling Ritual can kill Badgermole Cub while leaving its earthbent lands on the battlefield. Count only permanents the spell would destroy when budgeting a follow-up spell. If the Cub is the only qualifying permanent, compare the Ritual with a planeswalker removal ability that preserves mana for the same-turn threat, or save the Ritual for a wider board. Against tokens or cheap nonland permanents, Ritual can free enough mana to rebuild in the same main phase. [Strixhaven release notes](https://magic.wizards.com/en/news/feature/strixhaven-school-mages-and-commander-2021-edition-release-notes-2021-04-16) · [Avatar release notes](https://magic.wizards.com/en/news/feature/avatar-the-last-airbender-release-notes)
+
+## Account for animated mana sources before combat
+
+Before attacking with animated mana sources, count the spells they could fund. With a Badgermole Cub and two untapped earthbent lands that each tap for black, their combined mana is enough for Sheoldred. Compare casting a stabilizer against pressure from those attackers. Damage to a planeswalker matters more when it kills the planeswalker or delays a decisive ultimate. Against known removal or a near-lethal opponent, the attack may have more value. [Badgermole Cub rules notes](https://magic.wizards.com/en/news/feature/avatar-the-last-airbender-release-notes)
+
 ## Pioneer example: Izzet Prowess vs Golgari Midrange
 
 - If earlier games establish a Golgari list with limited early creature development, a turn-one Stormchaser's Talent creates an immediate clock and a future reload engine. Compare holding Burst Lightning against credible targets and account for cheap disruption such as Fatal Push and Thoughtseize. Low creature density on turn one is different from having no one-mana interaction.

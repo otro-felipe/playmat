@@ -75,6 +75,64 @@ for (const variant of ['pending', 'observed', 'wrong-source', 'wrong-type', 'wro
   });
 }
 
+for (const [variant, options] of [
+  ['label', { mode: 'Cast Unholy Annex' }],
+  ['face name', { mode: 'Unholy Annex' }],
+  ['other face by exact option', { modeId: 'spell-1' }],
+  ['sole projected cast', {}],
+  ['multiple legal faces', {}],
+  ['unknown face', { mode: 'Wrong Door' }],
+]) test(`[PM-LINE-SEM-2] Room face and declared mana stay in one play: ${variant}`, async (t) => {
+  const room = { id: 'room', cardId: 'room', name: 'Unholy Annex // Ritual Chamber', types: ['ENCHANTMENT'] };
+  const faces = ['Unholy Annex', 'Ritual Chamber'].map((spellName, index) => ({
+    id: `face-${index}`, label: `Cast ${spellName}`, type: 'option', abilityType: 'SPELL', spellName, abilityId: `spell-${index}`,
+  }));
+  const expected = variant === 'other face by exact option' ? faces[1] : faces[0];
+  const face = { ...room, id: 'room-stack', name: expected.spellName, controllerId: 'me' };
+  const marsh = { id: 'marsh', name: 'Blooming Marsh', types: ['LAND'] };
+  const swamps = Array.from({ length: expected === faces[1] ? 4 : 2 }, (_, index) => ({
+    id: `swamp-${index + 1}`, name: 'Swamp', types: ['LAND'],
+  }));
+  const lands = [marsh, ...swamps];
+  const manaOptions = ['B', 'G'].map((color) => ({ id: `make-${color}`, manaColors: [color], abilityType: 'ACTIVATED_MANA' }));
+  const pay = (index) => ({ id: `payment-${index}`, kind: 'payMana',
+    choices: [{ id: `tap-${lands[index].id}`, card: lands[index], objectId: lands[index].id }] });
+  const { result, applied } = await plan(t, {
+    initial: { ownHand: [room], players: [{ id: 'me', yourSeat: true, battlefield: lands }, { id: 'rival' }],
+      decision: priority('open', { id: 'cast-room', card: room, objectId: room.id,
+        spellAbilities: (variant === 'sole projected cast' ? faces.slice(0, 1) : faces).map(({ abilityId, label }) => ({ abilityId, label })) }) },
+    actions: [{ kind: 'play', select: { objectId: room.id, zone: 'hand' }, ...options,
+      payWith: [{ sourceId: marsh.id, color: 'B' }, ...swamps.map(({ id }) => id)] }],
+    respond: ({ id, choice, update }) => {
+      if (id === 'open') return update({ decision: { id: 'choose-face', kind: 'panel', sourceObjectId: room.id, choices: faces } });
+      if (id === 'choose-face') {
+        assert.equal(choice, expected.id);
+        return update({ ownHand: [], stack: [face], decision: pay(0) });
+      }
+      if (id === 'payment-0') return update({ decision: { id: 'mana-panel', kind: 'panel', sourceObjectId: marsh.id, choices: manaOptions } });
+      if (id === 'mana-panel') {
+        assert.equal(choice, 'make-B');
+        return update({ decision: pay(1) });
+      }
+      if (id.startsWith('payment-')) {
+        const next = Number(id.split('-')[1]) + 1;
+        return update({ decision: next < lands.length ? pay(next) : priority('resolve-room') });
+      }
+      if (id === 'resolve-room') return update({ stack: [], decision: priority('done'),
+        sequenceEvidence: { ...evidence(), resolutions: { [face.id]: 1 }, resolutionRevision: 1 } });
+      assert.fail(`Unexpected decision ${id}`);
+    },
+  });
+  if (['multiple legal faces', 'unknown face'].includes(variant)) {
+    assert.equal(result.reason, 'response_available');
+    assert.deepEqual(applied.map(([, answer]) => answer), ['cast-room']);
+  } else {
+    assert.equal(result.status, 'completed', JSON.stringify(result.error));
+    assert.deepEqual(applied.map(([, answer]) => answer),
+      ['cast-room', expected.id, 'tap-marsh', 'make-B', ...swamps.map(({ id }) => `tap-${id}`), 'pass']);
+  }
+});
+
 for (const variant of ['own','rival','trigger','other-text']) test(`[PM-AC-09-RESPONSES] exact Class activation forecast keeps triggers and rival sources separate: ${variant}`,async(t)=>{
   const text='{3}{U}: Level 2';
   const {result,applied}=await plan(t,{initial:{decision:priority('level',{id:'level-choice',card:talent})},actions:[{kind:'choose',select:{cardId:'talent',zone:'battlefield'},guard:{kind:'priority'},expectAbility:{sourceId:variant==='rival'?'enemy':'talent',abilityText:text}}],respond:({id,update})=>{
