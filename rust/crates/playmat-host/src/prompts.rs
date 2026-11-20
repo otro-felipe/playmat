@@ -109,6 +109,16 @@ pub fn prompt(game: &Game, seat: Seat, q: &Query) -> Value {
             } else {
                 format!("Select a card{}", about(game))
             };
+            if let Some(choice) = game.revealed_hand_choice.as_ref().filter(|choice| {
+                choice.chooser == seat && !objs.is_empty() && objs.iter().all(|card| choice.shown.contains(card))
+            }) {
+                let targets = refs(game, objs);
+                return json!({"method": "GAME_TARGET", "data": {
+                    "message": text, "flag": required, "cardsView1": cards_view(game, &choice.shown),
+                    "targets": targets, "min": 0, "max": 0,
+                    "options": {"queryType": "PICK_TARGET", "targetZone": "HAND", "possibleTargets": targets,
+                        "chosenTargets": refs(game, &choice.chosen)}}});
+            }
             // a library search shows the whole library; only the cards of the filter can be picked, and the ones
             // chosen so far can be picked again to take them back (`HumanPlayer.chooseTarget`'s options)
             if let Some((shown, chosen)) = &game.searching {
@@ -396,5 +406,52 @@ mod tests {
         assert!(p["data"].get("cardsView1").is_none(), "{p}");
         assert_eq!(p["data"]["options"]["targetZone"], "HAND");
         assert_eq!(p["data"]["targets"], json!(refs(&game, &hand)));
+    }
+
+    // READ-AC-005
+    #[test]
+    fn a_revealed_hand_choice_exposes_the_whole_hand_with_only_legal_answers() {
+        use playmat_engine::decide::{Answer, Decider};
+        use playmat_engine::rules::play_from_priority;
+        use playmat_engine::state::{StackItem, Step, Target};
+
+        struct DiscardChoice(Option<Value>);
+        impl Decider for DiscardChoice {
+            fn answer(&mut self, game: &Game, seat: Seat, q: &Query) -> Answer {
+                if let Query::Cards { objs, .. } = q {
+                    self.0 = Some(prompt(game, seat, q));
+                    return Answer::Obj(objs[0]);
+                }
+                Answer::Bool(false)
+            }
+
+            fn stop_after(&mut self, _: &Game, _: Step) -> bool {
+                true
+            }
+        }
+
+        let db = playmat_engine::cards();
+        let target_deck = Deck::parse("target", "4 Plains\n2 Shock\n1 Llanowar Elves");
+        for (name, legal) in [("Thoughtseize", 3), ("Duress", 2)] {
+            let source_deck = Deck::parse("caster", &format!("20 {name}"));
+            let mut game = new_duel(&db, [&source_deck, &target_deck], 1, 0).unwrap();
+            let spell = game.players[0].hand[0];
+            game.move_to(spell, Zone::Stack);
+            let item = StackItem {
+                targets: vec![vec![Target::Player(1)]],
+                target_zcc: vec![vec![0]],
+                ..StackItem::spell(spell, 0)
+            };
+            Arc::make_mut(&mut game.stack).push(item);
+            game.step = Some(Step::PrecombatMain);
+            let expected = cards_view(&game, &game.players[1].hand);
+            let mut decider = DiscardChoice(None);
+            play_from_priority(&mut game, &mut decider, 0);
+            let p = decider.0.expect("the spell asks which card to discard");
+            assert_eq!(p["data"]["cardsView1"], expected);
+            assert_eq!(p["data"]["options"]["targetZone"], "HAND");
+            assert_eq!(p["data"]["targets"].as_array().unwrap().len(), legal);
+            assert_eq!(game.players[1].graveyard.len(), 1);
+        }
     }
 }

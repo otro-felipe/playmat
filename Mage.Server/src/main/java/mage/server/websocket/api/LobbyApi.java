@@ -1,6 +1,7 @@
 package mage.server.websocket.api;
 
 import mage.cards.decks.DeckCardLists;
+import mage.constants.TableState;
 import mage.game.Table;
 import mage.server.AuthorizedUserRepository;
 import mage.server.User;
@@ -167,14 +168,18 @@ final class LobbyApi {
                 RpcMethod.named("roomGetTableById")
                         .params(of("roomId", UUID), of("tableId", UUID))
                         .returns("TableView | null")
-                        .doc("One table of a room.")
+                        .doc("One table of a room. An eligible player with an unlisted invitation may view its waiting table by ID.")
                         .handler(call -> {
                             TableView table = ctx.server.roomGetTableById(call.uuid(0), call.uuid(1));
                             if (!ProductGateway.enabled() || table == null) {
                                 return table;
                             }
                             String viewer = signedIn(ctx, call);
-                            return visibleToSeat(table, viewer, ProductGateway.visibleInvitations(viewer)) ? table : null;
+                            if (visibleToSeat(table, viewer, ProductGateway.visibleInvitations(viewer))) {
+                                return table;
+                            }
+                            return table.getTableState() == TableState.WAITING
+                                    && ProductGateway.canViewByLink(table.getTableId(), table.getControllerName(), viewer) ? table : null;
                         }),
 
                 RpcMethod.named("roomGetFinishedMatches")

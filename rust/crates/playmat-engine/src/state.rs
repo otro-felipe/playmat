@@ -659,6 +659,14 @@ pub struct Revealed {
     pub cards: Vec<(ObjId, Zone)>,
 }
 
+/// The authorized presentation for an active choice from a revealed hand.
+#[derive(Clone, Debug)]
+pub struct RevealedHandChoice {
+    pub chooser: Seat,
+    pub shown: Vec<ObjId>,
+    pub chosen: Vec<ObjId>,
+}
+
 /// Cards a player looked at while an object resolves (`GameState.lookedAt`, `Player.lookAtCards`): who looked, the
 /// source and its zone change count (in the title unless `bare`: Mishra's Bauble's is its id name alone), the cards
 #[derive(Clone, Debug)]
@@ -1134,6 +1142,7 @@ pub struct Game {
     /// sorted by name, and the cards chosen so far. The question's cards are the ones that can still be picked
     /// (Java's `possibleTargets`).
     pub searching: Option<(Vec<ObjId>, Vec<ObjId>)>,
+    pub revealed_hand_choice: Option<RevealedHandChoice>,
     pub loop_stack: usize,
     pub loop_lives: Option<Vec<i32>>,
     pub loop_count: u32,
@@ -1633,6 +1642,7 @@ impl Game {
             special_mana: false,
             paying_mana: false,
             searching: None,
+            revealed_hand_choice: None,
             loop_stack: 0,
             loop_lives: None,
             loop_count: 0,

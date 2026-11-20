@@ -111,8 +111,11 @@ export default {
   'match.plate.aria.lost': '{name}, out of the game',
   'match.plate.aria.disconnected': 'disconnected',
 
-  // an opponent's card revealed from their hand, still in it
+  // a card publicly revealed from hand, still in it
   'match.hand.revealed': 'Revealed',
+  'match.graveyard.mine': 'Your graveyard',
+  'match.graveyard.theirs': "{name}'s graveyard",
+  'match.graveyard.unknownPlayer': 'Opponent',
 
   // the decision corner
   'match.conceding': 'Concession sent. The game ends as soon as the server applies it.',

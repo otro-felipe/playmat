@@ -10,7 +10,6 @@ import type { DeckCardInfo } from '../../../core/decks/types';
 import { useServerState } from '../../queries';
 import { sleeveFor, useDecks, type RosterDeck } from '../../stores/decks';
 import { useImportSheet } from '../../stores/importSheet';
-import { usePlay } from '../../stores/play';
 import { notify } from '../../stores/toasts';
 import { Button, ButtonLink } from '../../ui/Button';
 import { Dialog } from '../../ui/Dialog';
@@ -404,8 +403,8 @@ function PreviewStep({ flow, draft, onDone }: { flow: Flow; draft: ImportDraft; 
     draft: false,
   };
 
-  async function save(then: 'stay' | 'play' | 'build') {
-    if (counts.main === 0) return;
+  async function save(then: 'stay' | 'build') {
+    if (busy || counts.main === 0) return;
     setBusy(true);
     try {
       useCardInfoStore.getState().remember([...info.values()]);
@@ -422,10 +421,7 @@ function PreviewStep({ flow, draft, onDone }: { flow: Flow; draft: ImportDraft; 
         label: 'Undo',
         run: () => void useDecks.getState().remove(id),
       });
-      if (then === 'play') {
-        navigate('/');
-        void usePlay.getState().playVsAi(id);
-      } else if (then === 'build') {
+      if (then === 'build') {
         navigate(`/decks/${encodeURIComponent(id)}`);
       } else {
         navigate('/decks');
@@ -447,7 +443,6 @@ function PreviewStep({ flow, draft, onDone }: { flow: Flow; draft: ImportDraft; 
 
   const problems = validation.data?.errors ?? [];
   const playable = problems.length === 0;
-  const ready = issues.length === 0 && playable;
   const problemList = useRef<HTMLUListElement>(null);
   const sleeve = sleeveFor(sleeves, roster);
 
@@ -612,10 +607,7 @@ function PreviewStep({ flow, draft, onDone }: { flow: Flow; draft: ImportDraft; 
         ) : (
           <>
             <Button variant="quiet" disabled={busy || counts.main === 0} onClick={() => void save('build')}>Open in builder</Button>
-            {/* one amber at most: Save and play when the deck is ready, Save when it can't be played yet,
-                and none while cards need a look (Find it is the decision then) */}
-            <Button variant={issues.length === 0 && !playable ? 'decision' : 'print'} disabled={busy || counts.main === 0} onClick={() => void save('stay')}>Save</Button>
-            <Button variant={ready ? 'decision' : 'print'} busy={busy} disabled={counts.main === 0 || !playable} onClick={() => void save('play')}>Save and play</Button>
+            <Button variant={issues.length === 0 ? 'decision' : 'print'} busy={busy} disabled={counts.main === 0} onClick={() => void save('stay')}>Save</Button>
           </>
         )}
       </footer>

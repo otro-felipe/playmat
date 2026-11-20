@@ -2,7 +2,7 @@
 
 Status: **implemented 2026-10-07** (DI-0 to DI-5) on `phase-0-foundation`. DX-1 (Moxfield direct import) stays deferred until Playmat is public. See "Implementation notes" at the end for where the build differs from this plan.
 
-Players paste a link from one of the ten most-used deck websites, or a deck list, or drop a file, and the deck lands on their shelf ready to play. Import must feel like part of Playmat, not a utility dialog: one surface, instant site recognition, a preview of the deck box before saving, inline fixes for unknown cards, and a "Save and play" path.
+Players paste a link from one of the ten most-used deck websites, paste a deck list, or drop a file. The import sheet recognizes the source, previews the deck box, and offers inline fixes for unknown cards. Saving adds the deck to the shelf and selects it for the next match. See [PM-SETUP-AC-01](../../../docs/specs/playtesting/deck-import-and-invitations.md#pm-setup-ac-01).
 
 ## Decisions (made)
 
@@ -92,7 +92,7 @@ Goal: one import surface that replaces "Import file" and "Paste a list" and work
   - "N maybeboard cards weren't imported" note.
 - **Card fixes.** Unresolved and ambiguous cards appear as amber rows above the list ("3 cards need a look"). Each row has a printing picker (reusing `searchAlternates` and `parseAlternateSearch`) and a "leave out" option. The resolver already remembers choices, so the same fix isn't asked again.
 - **Printings toggle:** "Keep the site's printings" or "Use my preferred art".
-- **Actions:** `Save and play` (decision), `Open in builder`, `Save`. Enter saves. Esc goes back a step, then closes.
+- **Actions** are `Save` and `Open in builder`. Enter saves. Esc goes back a step, then closes.
 - **After save:** the sheet closes, the new deck box animates onto the shelf and is selected, and a toast offers "Undo".
 - Copy follows the voice in PRODUCT.md: short, second person, no jargon.
 
@@ -105,12 +105,12 @@ Goal: one import surface that replaces "Import file" and "Paste a list" and work
 - Home: an `Import` action next to `Manage` on the roster.
 
 ### DI-1.5 Store and storage · S
-- `useDecks.importDraft(draft, { play?: boolean })` replaces `importText`, and the old callers are migrated.
+- `useDecks.saveImported(deck)` saves the preview and selects the resulting deck.
 - `DeckCardLists` gets an optional `source?: DeckSource`, stored as part of the deck in localStorage (`DeckStorageService`). No migration is needed because the field is optional. `DeckSummary` exposes `source.site` for the detail pane.
 
 ### DI-1.6 Tests and a11y · S
 - Vitest for the store and the pipeline.
-- Playwright: paste a list → fix one card → Save and play → the game starts (live-server spec).
+- The live-server Playwright spec pastes a list, fixes one card, and saves it. The player opens Play with the imported deck selected and starts the game there.
 - Add the sheet (both steps) to `e2e/app-accessibility.spec.ts`. Fix results are announced in a live region, and focus moves to the first card that needs a fix.
 
 DI-1 exit: all gates green (`typecheck`, `lint`, `test`, `build`, axe), plus screenshots in `.impeccable/review/` for the input, preview and fix states.

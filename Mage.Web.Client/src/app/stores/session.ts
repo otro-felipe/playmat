@@ -150,6 +150,10 @@ function describeError(error: unknown): string {
 }
 
 const remembered = readJson<RememberedLogin | null>(LOGIN_KEY, null);
+// The prior trusted login is captured before a different account can sign in.
+export const rememberedSignOn = remembered?.signOn
+  ? { serverUrl: remembered.serverUrl, userName: remembered.userName }
+  : null;
 
 async function connectTo(serverUrl: string): Promise<void> {
   if (rpc.getStatus() !== 'open' || rpc.getUrl() !== serverUrl) {

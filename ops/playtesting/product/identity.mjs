@@ -204,10 +204,37 @@ export function createIdentity(pool, insecureCookie, resolveOAuth = async () => 
     const row = await lookupByUsername(name)
     const verified = await verifyPassword(password, row?.password_hash ?? dummyHash)
     if (!verified || !row?.enabled) return null
+    return createSession(pool, row.id)
+  }
+
+  async function createSession(db, accountId) {
     const token = newToken()
-    await pool.query('INSERT INTO browser_sessions(digest,account_id,expires_at) VALUES ($1,$2,$3)',
-      [digest(token), row.id, new Date(Date.now() + browserDuration)])
+    await db.query('INSERT INTO browser_sessions(digest,account_id,expires_at) VALUES ($1,$2,$3)',
+      [digest(token), accountId, new Date(Date.now() + browserDuration)])
     return cookieName + '=' + token + '; Max-Age=' + browserDuration / 1000 + attributes
+  }
+
+  async function completeSignup(tokenDigest, username, password) {
+    if (!validName(username) || username.length > 14) throw new ProductError(400, 'El usuario debe tener entre 3 y 14 letras, números, guiones o guiones bajos.')
+    if (typeof password !== 'string' || password.length < 12 || password.length > 128) {
+      throw new ProductError(400, 'La contraseña debe tener entre 12 y 128 caracteres.')
+    }
+    const expired = 'El enlace venció o ya se usó. Solicita un enlace nuevo.'
+    const exists = await pool.query('SELECT 1 FROM signup_links WHERE token_digest=$1 AND expires_at>now()', [tokenDigest])
+    if (!exists.rowCount) throw new ProductError(410, expired)
+    const hash = await hashPassword(password)
+    return transaction(pool, async db => {
+      const { rows: [link] } = await db.query(`DELETE FROM signup_links
+        WHERE token_digest=$1 AND expires_at>now() RETURNING email`, [tokenDigest])
+      if (!link) throw new ProductError(410, expired)
+      await lockName(db, username)
+      if (await nameExists(db, username)) throw new ProductError(409, 'Ese usuario ya está ocupado.')
+      const accountId = randomUUID()
+      const { rowCount } = await db.query(`INSERT INTO accounts(id,username,username_key,password_hash,email)
+        VALUES ($1,$2,$3,$4,$5) ON CONFLICT (email) DO NOTHING`, [accountId, username, normalize(username), hash, link.email])
+      if (!rowCount) throw new ProductError(410, expired)
+      return createSession(db, accountId)
+    })
   }
 
   function sessionDigest(req) {
@@ -285,7 +312,7 @@ export function createIdentity(pool, insecureCookie, resolveOAuth = async () => 
     return rowCount === 1
   }
 
-  return { provisionHuman, provisionAgent, revokeAgent, importProvisionBundle, signIn, signOut, resolve, fromEngine,
+  return { provisionHuman, provisionAgent, revokeAgent, importProvisionBundle, signIn, signOut, resolve, fromEngine, completeSignup,
     recoveryPrincipal, validateRecoveryPrincipal }
 }
 

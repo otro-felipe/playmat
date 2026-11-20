@@ -34,6 +34,8 @@ export interface HandProps {
   label?: string;
   /** cards shown with the hand that are played from another zone (an adventurer in exile, flashback), by id */
   fromZone?: ReadonlyMap<string, PlayableZone>;
+  /** physical IDs of hand cards revealed to other players */
+  revealed?: ReadonlySet<string>;
   /** stage x the fan keeps right of (your seat), and how far it keeps from the stage's right edge (the decision corner) */
   clearLeft?: number;
   clearRight?: number;
@@ -52,7 +54,7 @@ const REVEAL_MARGIN = 24;
 const WHEEL_LINE = 40;
 
 /** The player's hand, fanned along the bottom edge. Hover lifts a card; drag it up (or click it) to play it. */
-export function Hand({ cards, choosing = false, clickable, selected, pending = null, sleeve, onPlay, playLine, libraryOrigin, faceDown = false, label = 'Your hand', fromZone, clearLeft = 0, clearRight = 0, cardWidth = HAND_CARD_WIDTH }: HandProps) {
+export function Hand({ cards, choosing = false, clickable, selected, pending = null, sleeve, onPlay, playLine, libraryOrigin, faceDown = false, label = 'Your hand', fromZone, revealed, clearLeft = 0, clearRight = 0, cardWidth = HAND_CARD_WIDTH }: HandProps) {
   const t = useT();
   const stage = useStage();
   const hints = useKeyboardHints();
@@ -190,6 +192,7 @@ export function Hand({ cards, choosing = false, clickable, selected, pending = n
             libraryOrigin={libraryOrigin}
             faceDown={faceDown}
             fromZone={fromZone?.get(card.id!)}
+            revealedLabel={!faceDown && !fromZone?.has(card.id!) && revealed?.has(card.cardId ?? card.id!) ? t('match.hand.revealed') : undefined}
             shift={scroll}
             sweeps={maxScroll > 0}
             onFocus={reveal}
@@ -237,6 +240,7 @@ interface HandCardProps {
   libraryOrigin?: string;
   faceDown: boolean;
   fromZone?: PlayableZone;
+  revealedLabel?: string;
   /** how far the fan is scrolled */
   shift: number;
   /** the fan scrolls: a sideways drag sweeps it instead of lifting the card */
@@ -244,7 +248,7 @@ interface HandCardProps {
   onFocus(index: number): void;
 }
 
-function HandCard({ card, choosing, index, hints, left, rotate, drop, lifted, clickable, selected, pending, sleeve, onPlay, playLine, libraryOrigin, faceDown, fromZone, shift, sweeps, onFocus }: HandCardProps) {
+function HandCard({ card, choosing, index, hints, left, rotate, drop, lifted, clickable, selected, pending, sleeve, onPlay, playLine, libraryOrigin, faceDown, fromZone, revealedLabel, shift, sweeps, onFocus }: HandCardProps) {
   const ref = useRef<HTMLDivElement>(null);
   const stage = useStage();
   const setZoom = useMatchUi((state) => state.setZoom);
@@ -305,7 +309,7 @@ function HandCard({ card, choosing, index, hints, left, rotate, drop, lifted, cl
       tabIndex={clickable ? 0 : -1}
       onMouseDown={preventMatchObjectMouseFocus}
       onFocus={() => onFocus(index)}
-      aria-label={`${faceDown ? 'Hidden card' : card.name ?? 'Card'}${fromZone ? `, ${ZONE_TAG[fromZone].toLowerCase()}` : ''}${clickable ? ', playable' : ''}${selected ? ', chosen' : ''}`}
+      aria-label={`${faceDown ? 'Hidden card' : card.name ?? 'Card'}${fromZone ? `, ${ZONE_TAG[fromZone].toLowerCase()}` : ''}${revealedLabel ? `, ${revealedLabel}` : ''}${clickable ? ', playable' : ''}${selected ? ', chosen' : ''}`}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
@@ -329,6 +333,7 @@ function HandCard({ card, choosing, index, hints, left, rotate, drop, lifted, cl
       <CardFace card={card} sleeve={sleeve} hidden={faceDown} />
       {!faceDown && clickable && index < 10 && <kbd className={[styles.keyHint, hints ? styles.keyHintShown : ''].join(' ')} aria-hidden="true">{(index + 1) % 10}</kbd>}
       {fromZone && <span className={styles.fromZone} aria-hidden="true">{ZONE_TAG[fromZone]}</span>}
+      {revealedLabel && <span className={`${styles.fromZone} ${styles.revealed}`} aria-hidden="true">{revealedLabel}</span>}
     </div>
   );
 }

@@ -7,6 +7,7 @@ import { JoinScreen } from './JoinScreen';
 const tableId = '22222222-2222-4222-8222-222222222222';
 const inviteUrl = `/api/playtesting/invites/${tableId}`;
 const refetch = vi.fn();
+const getTable = vi.fn<(room: string, tableId: string) => Promise<typeof table>>(async () => table);
 const select = vi.fn();
 const joinTable = vi.fn(async () => undefined);
 const roster = [{ id: 'first', name: 'First deck' }, { id: 'second', name: 'Second deck' }];
@@ -14,6 +15,7 @@ const session = { userName: 'Guest', phase: 'signedIn', connection: 'open', room
 const matchingInvite = { mode: 'friend', guestEngineName: 'gUeSt' };
 const fixturePassword = 'fixture-password';
 const table = { tableId, tableName: 'Pioneer test', tableState: 'WAITING', passworded: true, seats: [{ playerName: 'Host' }, {}] };
+let listedTables = [table];
 
 type SiteTool = {
   name: string;
@@ -26,8 +28,11 @@ const registerTool = vi.fn((tool: SiteTool, { signal }: { signal: AbortSignal })
 });
 
 vi.mock('../playtesting', async (original) => ({ ...await original<typeof import('../playtesting')>(), PRIVATE_PLAYTESTING: true }));
+vi.mock('../connection', () => ({
+  api: { roomGetTableById: (...args: [string, string]) => getTable(...args), recoveryList: async () => [] },
+}));
 vi.mock('../queries', () => ({
-  useTables: () => ({ data: [table], dataUpdatedAt: Infinity, refetch }),
+  useTables: () => ({ data: listedTables, dataUpdatedAt: Infinity, refetch }),
 }));
 vi.mock('../stores/session', () => ({
   useSession: Object.assign((pick: (state: typeof session) => unknown) => pick(session), { subscribe: vi.fn() }),
@@ -38,12 +43,24 @@ vi.mock('./joinTable', () => ({ joinTable: (...args: unknown[]) => joinTable(...
 
 beforeEach(() => {
   tools.clear();
+  listedTables = [table];
   session.phase = 'signedIn';
   session.connection = 'open';
   session.serverUrl = window.location.origin.replace(/^http/, 'ws') + '/ws';
   vi.stubGlobal('isSecureContext', true);
   vi.stubGlobal('location', window.location);
   Object.defineProperty(document, 'modelContext', { configurable: true, value: { registerTool } });
+});
+
+test('[PM-SETUP-AC-03] an unlisted table opens from its link while absent from the lobby', async () => {
+  listedTables = [];
+  const page = mount({ mode: 'friend', guestEngineName: null, unlisted: true });
+  const join = await page.findByRole('button', { name: 'Take a seat' });
+  expect(getTable).toHaveBeenCalledWith(session.roomId, tableId);
+  expect(page.fetch.mock.calls.some(([uri]) => uri === `${inviteUrl}/claim`)).toBe(false);
+  fireEvent.click(join);
+  expect(await page.findByText('Tables route')).toBeTruthy();
+  expect(joinTable).toHaveBeenCalledWith(table, 'first', fixturePassword, undefined);
 });
 
 afterEach(() => {

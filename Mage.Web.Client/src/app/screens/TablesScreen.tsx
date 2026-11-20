@@ -248,7 +248,8 @@ function MyTable({ table }: { table: TableView }) {
     try {
       await navigator.clipboard.writeText(link);
       notify('Invite link copied', mcpInvite ? 'Share the private link with your MCP agent.'
-        : !PRIVATE_PLAYTESTING && table.passworded ? 'Send it to a friend, with the table password.' : 'Send it to the invited player.');
+        : invitation?.unlisted ? t('tableInvite.shareUnlisted')
+          : !PRIVATE_PLAYTESTING && table.passworded ? 'Send it to a friend, with the table password.' : 'Send it to the invited player.');
     } catch {
       notify('Invite link', link);
     }
@@ -313,6 +314,8 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
   const [chatMode, setChatMode] = useState<McpChatMode>('quiet');
   const [password, setPassword] = useState('');
   const [guest, setGuest] = useState('');
+  const friends = useSocial((state) => state.friends);
+  const invitedFriend = friends.includes(guest) ? guest : undefined;
   const [advanced, setAdvanced] = useState<TableAdvanced>(DEFAULT_ADVANCED);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -339,11 +342,11 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
   const menu = formatMenu(PRIVATE_PLAYTESTING ? PRIVATE_FORMATS : serverState?.deckTypes ?? []);
   const listed = menu.some((group) => group.types.includes(deckType));
   const aiCount = PRIVATE_PLAYTESTING ? (opponent === 'ai' ? 1 : 0) : aiSeats;
-  const needsGuest = PRIVATE_PLAYTESTING && opponent === 'friend';
 
   function closeDialog() {
     setChatMode('quiet');
     setOpponent('friend');
+    setGuest('');
     onOpenChange(false);
   }
 
@@ -384,7 +387,7 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
       if (PRIVATE_PLAYTESTING && opponent !== 'ai') {
         await createPlaytestingInvite({ tableId: table.tableId, roomId, format: deckType, password: tablePassword },
           opponent === 'mcp' ? { mode: 'mcp', chatMode }
-            : { mode: 'friend', guestEngineName: guest.trim() });
+            : { mode: 'friend', guestEngineName: invitedFriend });
       }
       if (aiCount > 0) {
         // the AI brings the format's own decks, or starter decks of the right kind; a deck that doesn't fit gets a copy of yours
@@ -423,7 +426,7 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
       footer={
         <>
           <Button variant="quiet" onClick={closeDialog}>Cancel</Button>
-          <Button variant="decision" busy={busy} disabled={!deckId || (needsGuest && !guest.trim())} onClick={() => void host()}>Host</Button>
+          <Button variant="decision" busy={busy} disabled={!deckId} onClick={() => void host()}>Host</Button>
         </>
       }
     >
@@ -480,7 +483,15 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
             </select>
           </label>}
         </div>
-        {PRIVATE_PLAYTESTING ? (needsGuest && <Field label="Invited player" value={guest} onChange={(event) => setGuest(event.target.value)} />)
+        {PRIVATE_PLAYTESTING ? (opponent === 'friend' && (
+          <label className={styles.selectField}>
+            <span>{t('tableInvite.guest')}</span>
+            <select value={invitedFriend ?? ''} onChange={(event) => setGuest(event.target.value)}>
+              <option value="">{t('tableInvite.anyoneWithLink')}</option>
+              {friends.map((friend) => <option key={friend} value={friend}>{friend}</option>)}
+            </select>
+          </label>
+        ))
           : <Field label="Password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} hint="Leave empty for an open table." />}
         {PRIVATE_PLAYTESTING && opponent === 'mcp' && (
           <div>

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { gameOver, importTestDeck } from './helpers/app';
-import { qaAccount, setPrivateInput, signInPrivate, tableRow } from './helpers/private';
+import { addPrivateFriend, qaAccount, signInPrivate, tableRow } from './helpers/private';
 
 type ToolInput = Record<string, string | number>;
 type Decision = {
@@ -152,13 +152,14 @@ test.describe('Private Playmat with native WebMCP', () => {
         await signInPrivate(page, account);
         await importTestDeck(page, deckName, '60 Plains');
       }
+      await addPrivateFriend(host, guestAccount.username);
       await host.getByRole('link', { name: 'Tables', exact: true }).click();
       await host.getByRole('button', { name: 'Host a table' }).click();
       const dialog = host.getByRole('dialog', { name: 'Host a table' });
       await dialog.getByLabel('Table name').fill(tableName);
       await dialog.getByLabel('Format').selectOption('Constructed - Pioneer');
       await dialog.getByLabel('Games to win').selectOption('2');
-      await setPrivateInput(dialog.getByLabel('Invited player'), guestAccount.username);
+      await dialog.getByLabel('Invited player').selectOption(guestAccount.username);
       await dialog.getByRole('button', { name: 'Host', exact: true }).click();
       await expect(dialog).toBeHidden({ timeout: 25_000 });
       await expect(row.getByRole('button', { name: 'Start' })).toBeDisabled();

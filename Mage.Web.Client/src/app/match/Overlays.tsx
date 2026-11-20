@@ -72,12 +72,13 @@ export function MulliganOverlay({ hand, interaction, sleeve, onCommand }: {
 
 /**
  * Choose among cards: off-board cards (library search, revealed cards) or the hand during a London mulligan.
- * Each click toggles a card; the server answers with the updated choice. Only the cards that can be chosen are shown
- * (a library search shows the lands it allows, not the whole library); Show all brings back the rest, greyed.
+ * Each click toggles a card; the server answers with the updated choice. Hand choices include the visible hand
+ * context. Other choices lead with selectable cards and let the player show any remaining cards from the payload.
  */
-export function CardPicker({ title, cards, interaction, sleeve, footer, onCommand }: {
+export function CardPicker({ title, cards, graveyards, interaction, sleeve, footer, onCommand }: {
   title: string;
   cards: CardView[];
+  graveyards?: ReadonlyMap<string, { id: string; label: string }>;
   interaction: Interaction;
   sleeve: string;
   /** more ways to answer, beside the main button */
@@ -92,7 +93,18 @@ export function CardPicker({ title, cards, interaction, sleeve, footer, onComman
   const main = interaction.mainButton;
   const choosable = cards.filter((card) => interaction.clickable.has(card.id!) || interaction.selected.has(card.id!));
   const others = cards.length - choosable.length;
-  const shown = showAll ? cards : choosable;
+  const handChoice = interaction.prompt?.kind === 'target' && interaction.prompt.options.targetZone === 'HAND';
+  const groups = new Map<string, { label?: string; cards: CardView[] }>();
+  for (const card of handChoice || showAll ? cards : choosable) {
+    const graveyard = graveyards?.get(card.id!);
+    const groupId = graveyard?.id ?? '';
+    let group = groups.get(groupId);
+    if (!group) {
+      group = { label: graveyard?.label, cards: [] };
+      groups.set(groupId, group);
+    }
+    group.cards.push(card);
+  }
   if (hidden) {
     return (
       <div className={styles.peek}>
@@ -105,7 +117,7 @@ export function CardPicker({ title, cards, interaction, sleeve, footer, onComman
       <div className={styles.panel}>
         <header className={styles.panelHead}>
           <h2 className={styles.panelTitle}>{cards.length > 0 && cards.every(isStackAbility) ? 'Choose an ability' : cleanText(title)}</h2>
-          {others > 0 && (
+          {others > 0 && !handChoice && (
             <Button variant="quiet" size="sm" aria-pressed={showAll} onClick={() => setShowAll(!showAll)}>
               {showAll ? 'Only what can be chosen' : `Show all (${cards.length})`}
             </Button>
@@ -113,31 +125,38 @@ export function CardPicker({ title, cards, interaction, sleeve, footer, onComman
           <Button variant="quiet" size="sm" onClick={() => setHidden(true)}>See the board</Button>
         </header>
         <p className={styles.panelText}><PromptText text={interaction.headline} /></p>
-        {shown.length === 0 && <p className={styles.panelText}>None of these can be chosen.</p>}
-        <div className={styles.grid}>
-          {shown.map((card) => {
-            const id = card.id!;
-            const clickable = interaction.clickable.has(id);
-            const selected = interaction.selected.has(id);
-            const ability = isStackAbility(card) ? card : null;
-            const name = ability ? `${ability.sourceCard?.name ?? 'Ability'}: ${(ability.rules ?? []).map(stripMarkup).join(' ')}` : card.name;
-            return (
-              <button
-                key={id}
-                data-choice
-                type="button"
-                className={[styles.pick, clickable ? styles.pickable : styles.unpickable, selected ? styles.picked : ''].join(' ')}
-                disabled={!clickable}
-                aria-pressed={selected}
-                data-card-id={id}
-                aria-label={`${name}${selected ? ', chosen' : ''}`}
-                onClick={() => onCommand({ type: 'uuid', id })}
-                {...zoom(card)}
-              >
-                {ability ? <AbilityCard ability={ability} sleeve={sleeve} /> : <CardFace card={card} sleeve={sleeve} size="normal" />}
-              </button>
-            );
-          })}
+        {choosable.length === 0 && <p className={styles.panelText}>None of these can be chosen.</p>}
+        <div className={styles.pickerGroups}>
+          {[...groups].map(([key, group]) => (
+            <section key={key} aria-label={group.label} className={styles.pickerGroup}>
+              {group.label && <h3 className={styles.pickerGroupTitle}>{group.label}</h3>}
+              <div className={styles.grid}>
+                {group.cards.map((card) => {
+                  const id = card.id!;
+                  const clickable = interaction.clickable.has(id);
+                  const selected = interaction.selected.has(id);
+                  const ability = isStackAbility(card) ? card : null;
+                  const name = ability ? `${ability.sourceCard?.name ?? 'Ability'}: ${(ability.rules ?? []).map(stripMarkup).join(' ')}` : card.name;
+                  return (
+                    <button
+                      key={id}
+                      data-choice
+                      type="button"
+                      className={[styles.pick, clickable ? styles.pickable : styles.unpickable, selected ? styles.picked : ''].join(' ')}
+                      disabled={!clickable}
+                      aria-pressed={selected}
+                      data-card-id={id}
+                      aria-label={`${name}${selected ? ', chosen' : ''}`}
+                      onClick={() => onCommand({ type: 'uuid', id })}
+                      {...zoom(card)}
+                    >
+                      {ability ? <AbilityCard ability={ability} sleeve={sleeve} /> : <CardFace card={card} sleeve={sleeve} size="normal" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
         </div>
         {(main || footer || interaction.secondaryButtons.length > 0) && (
           <footer className={styles.panelFoot}>

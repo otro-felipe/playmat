@@ -269,6 +269,51 @@ test('[PM-AC-04] the claimed guest and actual table host control admission', { s
   assert.equal((await f.path(gate.replace('=Alice', '=Carol'))).status, 404)
 })
 
+test('[PM-SETUP-AC-03] an unlisted link is undiscoverable and reserves a single human guest seat', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const host = await signIn(f, 'UnlistedHost')
+  const guests = ['LinkGuestA', 'LinkGuestB']
+  const browsers = await Promise.all(guests.map(name => signIn(f, name)))
+  const delegated = { Authorization: 'Bearer ' + await f.product.provisionAgent('LinkGuestA', 'LinkAgent', ['play']) }
+  const tableId = randomUUID()
+  const route = '/api/playtesting/invites'
+  const invite = route + '/' + tableId
+  const gate = (guest, mode = '') => f.path(`/internal/invites/${tableId}?host=UnlistedHost&guest=${guest}${mode}`)
+  const created = await f.path(route, json('POST', host, {
+    tableId, roomId: randomUUID(), mode: 'friend', format: 'Pioneer', password,
+  }))
+  assert.equal(created.status, 201)
+  assert.equal((await created.json()).unlisted, true)
+  assert.equal((await f.path(invite)).status, 401)
+  assert.equal((await f.path(invite, { headers: delegated })).status, 404)
+  assert.equal((await f.path(invite + '/claim', { method: 'POST', headers: delegated })).status, 404)
+  for (const [index, headers] of browsers.entries()) {
+    const name = guests[index]
+    assert.deepEqual((await (await f.path(route, { headers })).json()).invites, [])
+    assert.deepEqual(await (await f.path('/internal/invites?guest=' + name)).json(), [])
+    const view = await (await f.path(invite, { headers })).json()
+    assert.equal(view.guestEngineName, null)
+    assert.equal(Object.hasOwn(view, 'password'), false)
+    assert.equal((await gate(name)).status, 404)
+    assert.equal((await gate(name, '&lookup=link')).status, 200)
+  }
+  assert.equal((await gate('LinkAgent', '&lookup=link')).status, 404)
+  const claim = headers => f.path(invite + '/claim', { method: 'POST', headers })
+  const answers = await Promise.all(browsers.map(claim))
+  assert.deepEqual(answers.map(response => response.status).sort(), [200, 404])
+  const winningIndex = answers.findIndex(response => response.status === 200)
+  const winner = guests[winningIndex], other = guests[1 - winningIndex]
+  assert.equal((await answers[winningIndex].json()).password, password)
+  assert.equal((await claim(browsers[winningIndex])).status, 200)
+  assert.equal((await gate(winner)).status, 200)
+  assert.equal((await gate(other)).status, 404)
+  assert.equal((await gate(other, '&lookup=link')).status, 404)
+  assert.deepEqual(await (await f.path('/internal/invites?guest=' + winner)).json(), [])
+  await withTestDatabase(f, db => db.query("UPDATE invitations SET expires_at=now()-interval '1 minute' WHERE table_id=$1", [tableId]))
+  assert.equal((await gate(winner, '&lookup=link')).status, 404)
+  assert.equal((await claim(browsers[winningIndex])).status, 404)
+})
+
 test('[PM-AC-04] an existing legacy MCP link admits exactly one delegated identity with a display-only alias', { skip: !databaseUrl }, async t => {
   const f = await fixture(t)
   const host = await signIn(f, 'Host')
@@ -1298,4 +1343,86 @@ test('social discovery classifies real delegated identities without guessing fro
   assert.deepEqual(await (await f.path('/internal/social/agents')).json(), ['legacyrival', 'mcp_1234567890'])
   const external = await fixture(t, new Map(), { enableInternal: false })
   assert.equal((await external.path('/internal/social/agents')).status, 404)
+})
+
+const signupPath = '/api/playtesting/signup'
+function signupFixture(t, send = async () => {}) {
+  const messages = []
+  const signup = { async send(message) {
+    await send(message)
+    messages.push(message)
+  } }
+  return fixture(t, new Map(), { publicUrl: 'https://playmat.example.test', signup }).then(f => ({
+    ...f, messages,
+    request: email => f.path(`${signupPath}/request`, json('POST', {}, { email })),
+    complete: (token, username, secret = password) => f.path(`${signupPath}/complete`, json('POST', {}, { token, username, password: secret })),
+    token: () => new URLSearchParams(new URL(messages.at(-1).url).hash.slice(1)).get('token'),
+  }))
+}
+
+test('[PM-SIGNUP-AC-01] creates a password account only after email verification', { skip: !databaseUrl }, async t => {
+  const f = await signupFixture(t)
+  const joinPath = '/join/' + randomUUID()
+  const loginPage = await f.path('/login?next=' + encodeURIComponent(joinPath))
+  assert.ok((await loginPage.text()).includes('href="/register?next=' + encodeURIComponent(joinPath) + '"'))
+  assert.equal((await f.request('  Player@EXAMPLE.test  ')).status, 202)
+  assert.equal(f.messages.length, 1)
+  assert.equal(f.messages[0].to, 'player@example.test')
+  const url = new URL(f.messages[0].url)
+  assert.equal(url.origin, 'https://playmat.example.test')
+  assert.equal(url.pathname, '/register/complete')
+  assert.equal(url.search, '')
+  const token = f.token()
+  assert.match(token, /^[A-Za-z0-9_-]{43}$/)
+  await withTestDatabase(f, async db => {
+    assert.equal((await db.query('SELECT 1 FROM accounts')).rowCount, 0)
+    const { rows: [record] } = await db.query('SELECT token_digest FROM signup_links')
+    assert.match(record.token_digest, /^[a-f0-9]{64}$/)
+  })
+  const created = await f.complete(token, 'EmailPlayer')
+  assert.equal(created.status, 201, await created.clone().text())
+  const session = created.headers.get('set-cookie')
+  assert.match(session, /HttpOnly/)
+  assert.equal((await f.path('/api/playtesting/me', { headers: { Cookie: session.split(';')[0] } })).status, 200)
+  const login = await f.path('/login', {
+    method: 'POST', redirect: 'manual', body: new URLSearchParams({ username: 'EmailPlayer', password }),
+  })
+  assert.equal(login.status, 303)
+  assert.equal((await f.request('PLAYER@example.test')).status, 202)
+  assert.equal(f.messages.length, 1)
+})
+
+test('[PM-SIGNUP-AC-02] rejects expired and reused links and preserves valid links after input conflicts', { skip: !databaseUrl }, async t => {
+  const f = await signupFixture(t)
+  await f.product.provisionHuman('Existing', password)
+  assert.equal((await f.request('claim@example.test')).status, 202)
+  const token = f.token()
+  assert.equal((await f.complete(token, 'a'.repeat(15))).status, 400)
+  assert.equal((await f.complete(token, 'NewPlayer', 'short')).status, 400)
+  assert.equal((await f.complete(token, 'existing')).status, 409)
+  const results = await Promise.all([f.complete(token, 'NewPlayer'), f.complete(token, 'OtherPlayer')])
+  assert.deepEqual(results.map(r => r.status).sort(), [201, 410])
+  assert.equal((await f.complete(token, 'NewPlayer')).status, 410)
+  assert.equal((await f.request('expired@example.test')).status, 202)
+  const expired = f.token()
+  await withTestDatabase(f, db => db.query("UPDATE signup_links SET expires_at=now() WHERE email='expired@example.test'"))
+  assert.equal((await f.complete(expired, 'ExpiredPlayer')).status, 410)
+})
+
+test('[PM-SIGNUP-AC-03] limits delivery and releases failed delivery for retry', { skip: !databaseUrl }, async t => {
+  let attempts = 0
+  const f = await signupFixture(t, async () => { if (++attempts === 1) throw new Error('synthetic provider failure') })
+  assert.equal((await f.request('invalid')).status, 400)
+  assert.equal((await f.path(`${signupPath}/request`, json('POST', { Origin: 'https://foreign.example' }, { email: 'test@example.test' }))).status, 403)
+  assert.equal((await f.request('retry@example.test')).status, 503)
+  assert.equal((await f.request('retry@example.test')).status, 202)
+  assert.equal((await f.request('retry@example.test')).status, 202)
+  assert.equal(f.messages.length, 1)
+  for (let n = 0; n < 32; n += 1) {
+    if ((await f.request(`test${n}@example.test`)).status === 429) break
+  }
+  assert.equal((await f.request('blocked@example.test')).status, 429)
+  const off = await fixture(t)
+  assert.equal((await signIn(off, 'ExistingUser')).Cookie.startsWith('playmat-session='), true)
+  assert.equal((await off.path(`${signupPath}/request`, json('POST', {}, { email: 'new@example.test' }))).status, 503)
 })

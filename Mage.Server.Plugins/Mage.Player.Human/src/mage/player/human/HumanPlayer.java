@@ -1019,6 +1019,14 @@ public class HumanPlayer extends PlayerImpl {
         return options;
     }
 
+    private Map<String, Serializable> getCardOptions(TargetCard target, Ability source, Set<UUID> possibleTargets) {
+        Map<String, Serializable> options = getOptions(target, null, source);
+        options.put("chosenTargets", new HashSet<>(target.getTargets()));
+        // Displayed cards can include cards that the player cannot choose.
+        options.put("possibleTargets", new HashSet<>(possibleTargets));
+        return options;
+    }
+
     @Override
     public boolean choose(Outcome outcome, Cards cards, TargetCard target, Ability source, Game game) {
         if (!canCallFeedback(game)) {
@@ -1062,11 +1070,7 @@ public class HumanPlayer extends PlayerImpl {
 
             // manual choice
             if (responseId == null) {
-                Map<String, Serializable> options = getOptions(target, null, source);
-                options.put("chosenTargets", new HashSet<>(target.getTargets()));
-                if (!possibleTargets.isEmpty()) {
-                    options.put("possibleTargets", (Serializable) possibleTargets);
-                }
+                Map<String, Serializable> options = getCardOptions(target, source, possibleTargets);
 
                 prepareForResponse(game);
                 if (!isExecutingMacro()) {
@@ -1165,12 +1169,7 @@ public class HumanPlayer extends PlayerImpl {
 
             // manual choice
             if (responseId == null) {
-                Map<String, Serializable> options = getOptions(target, null, source);
-                options.put("chosenTargets", new HashSet<>(target.getTargets()));
-
-                if (!possibleTargets.isEmpty()) {
-                    options.put("possibleTargets", (Serializable) possibleTargets);
-                }
+                Map<String, Serializable> options = getCardOptions(target, source, possibleTargets);
 
                 prepareForResponse(game);
                 if (!isExecutingMacro()) {

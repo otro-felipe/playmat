@@ -5,6 +5,10 @@
 export default {
   'social.level.badge': 'Lv {level}',
   'social.level.aria': 'Level {level}',
+  'tableInvite.guest': 'Invited player',
+  'tableInvite.anyoneWithLink': 'Anyone with the link',
+  'tableInvite.shareUnlisted': 'The first player to accept the link gets the seat.',
+  'tableInvite.unavailable': 'This invitation is unavailable for your account.',
 
   'mcpInvite.chat.label': 'MCP chat style',
   'mcpInvite.chat.quiet': 'Quiet',

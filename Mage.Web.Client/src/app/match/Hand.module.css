@@ -191,6 +191,11 @@
   pointer-events: none;
 }
 
+.revealed {
+  color: var(--brass-ink);
+  box-shadow: inset 0 0 0 1px var(--brass);
+}
+
 .keyHint {
   position: absolute;
   top: 8px;

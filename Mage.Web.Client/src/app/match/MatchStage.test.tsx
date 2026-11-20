@@ -8,6 +8,7 @@ import { parsePrompt } from '../../core/game/prompt';
 import { EventBus } from '../../core/rpc/EventBus';
 import { loadTestCatalog } from '../../test/catalog';
 import type { GameView } from '../../protocol/generated/views';
+import type { Prompt } from '../../core/game/prompt';
 import { api, rpc } from '../connection';
 import { queryClient } from '../queries';
 import { useDecks } from '../stores/decks';
@@ -58,9 +59,9 @@ function match(watch = false, seatDisplayNames?: Readonly<Record<string, string>
   const rendered = render(stage(state));
   return {
     ...rendered,
-    updateView(view: GameView, hasPrompt: boolean, status: string | null = null, resyncing = false) {
-      const prompt = hasPrompt ? parsePrompt('GAME_SELECT', { message: 'Play spells and abilities' }) : null;
-      const snapshot = { ...state, view, prompt, status, resyncing, interaction: deriveInteraction(view, prompt) };
+    updateView(view: GameView, next: boolean | Prompt, status: string | null = null, resyncing = false, rollbackRevision = 0) {
+      const prompt = next === true ? parsePrompt('GAME_SELECT', { message: 'Play spells and abilities' }) : next || null;
+      const snapshot = { ...state, view, prompt, status, resyncing, rollbackRevision, interaction: deriveInteraction(view, prompt) };
       act(() => {
         session.store.setState(snapshot);
         rendered.rerender(stage(snapshot));
@@ -81,6 +82,72 @@ const BOARD: GameView = {
   players: [{ playerId: 'me', name: 'Alice', life: 20 }, { playerId: 'them', name: 'Bob', life: 20 }],
   canPlayObjects: { objects: { bolt: {} } },
 };
+
+test.each([{ targets: ['shock'] }, { targets: [] }])('[READ-AC-005] opens the revealed hand with ineligible cards visible but disabled ($targets)', ({ targets }) => {
+  const game = match();
+  const cards = {
+    swamp: { id: 'swamp', ownerId: 'them', name: 'Swamp' },
+    shock: { id: 'shock', ownerId: 'them', name: 'Shock' },
+  };
+  const prompt = parsePrompt('GAME_TARGET', {
+    message: 'Choose a nonland card',
+    cardsView1: cards,
+    options: { targetZone: 'HAND', possibleTargets: targets },
+    flag: targets.length > 0,
+  })!;
+  game.updateView({ ...BOARD, myHand: { bolt: { id: 'bolt', name: 'Lightning Bolt' } } }, prompt);
+  const picker = within(game.getByRole('dialog', { name: 'Choose cards' }));
+  expect((picker.getByRole('button', { name: 'Swamp' }) as HTMLButtonElement).disabled).toBe(true);
+  expect((picker.getByRole('button', { name: 'Shock' }) as HTMLButtonElement).disabled).toBe(targets.length === 0);
+  expect(picker.queryByRole('button', { name: 'Lightning Bolt' })).toBeNull();
+  game.dispose();
+});
+
+test('[READ-AC-006] groups selectable graveyard cards under their seat names', () => {
+  const game = match(false, { Bob: 'Rival' });
+  const myCard = { id: 'mine', name: 'Opt' };
+  const rivalCard = { id: 'theirs', name: 'Consider' };
+  const view: GameView = {
+    ...BOARD,
+    players: [
+      { ...BOARD.players![0], graveyard: { mine: myCard } },
+      { ...BOARD.players![1], graveyard: { theirs: rivalCard } },
+    ],
+  };
+  const picked = { message: 'Exile a card from a graveyard', targets: ['mine', 'theirs'], flag: true };
+  for (const cardsView1 of [undefined, { mine: myCard, theirs: rivalCard }]) {
+    game.updateView(view, parsePrompt('GAME_TARGET', { ...picked, cardsView1 })!);
+    const picker = within(game.getByRole('dialog', { name: 'Choose cards' }));
+    expect(within(picker.getByRole('region', { name: 'Your graveyard' })).getByRole('button', { name: 'Opt' })).toBeTruthy();
+    expect(within(picker.getByRole('region', { name: "Rival's graveyard" })).getByRole('button', { name: 'Consider' })).toBeTruthy();
+  }
+  game.dispose();
+});
+
+test('[READ-AC-007] clears the mark after a private zone change and accepts a fresh reveal', () => {
+  const game = match();
+  const forest = { id: 'forest', cardId: 'forest', ownerId: 'me', name: 'Forest' };
+  const bolt = { id: 'bolt', ownerId: 'me', name: 'Lightning Bolt' };
+  const held = { ...BOARD, myHand: { forest, bolt } };
+  const marked = () => game.queryByRole('listitem', { name: 'Forest, Revealed' });
+  game.updateView(held, false);
+  expect(marked()).toBeNull();
+  const revealed: GameView['revealed'] = [{ name: 'Duress [1a2]', cards: { forest: { ...forest, zone: 'HAND' } } }];
+  game.updateView({ ...held, revealed }, false);
+  expect(marked()).toBeTruthy();
+  expect(game.getByRole('listitem', { name: 'Lightning Bolt' })).toBeTruthy();
+  game.updateView({ ...held, step: 'POSTCOMBAT_MAIN' }, false);
+  expect(marked()).toBeTruthy();
+  game.updateView({ ...held, myHand: { bolt }, revealed }, false);
+  game.updateView({ ...held, revealed }, false);
+  expect(game.getByRole('listitem', { name: 'Forest' })).toBeTruthy();
+  expect(marked()).toBeNull();
+  game.updateView({ ...held, revealed: [...revealed, { ...revealed[0], name: 'Thoughtseize [1a3]' }] }, false);
+  expect(marked()).toBeTruthy();
+  game.updateView(held, false, null, false, 1);
+  expect(marked()).toBeNull();
+  game.dispose();
+});
 
 test('[PM-AC-01] priority can change without moving the phase and the stack changes the offered action', () => {
   const game = match(false, { Bob: 'CodexRival' });

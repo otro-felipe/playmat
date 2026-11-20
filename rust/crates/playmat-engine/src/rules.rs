@@ -9,8 +9,8 @@ use crate::card::{
 use crate::decide::{Answer, Decider, Query};
 use crate::log;
 use crate::state::{
-    Boost, Delayed, EventKind, Game, GameEvent, Grant, ObjId, Requirement, RequirementKind, Seat, StackItem, Step,
-    Target, TriggerCause, Zone,
+    Boost, Delayed, EventKind, Game, GameEvent, Grant, ObjId, Requirement, RequirementKind, RevealedHandChoice, Seat,
+    StackItem, Step, Target, TriggerCause, Zone,
 };
 use std::sync::Arc;
 
@@ -19855,7 +19855,13 @@ fn choose_cards_with(
     rule: &str,
     cancellable: bool,
 ) -> Option<Vec<ObjId>> {
-    let _ = shown;
+    // The full input set may contain private cards. Present the set only if it matches a public hand reveal.
+    let show_revealed_hand = !shown.is_empty()
+        && shown.iter().all(|c| game.obj(*c).zone == Zone::Hand)
+        && game.revealed.iter().any(|group| {
+            group.cards.len() == shown.len()
+                && group.cards.iter().all(|(c, zone)| *zone == Zone::Hand && shown.contains(c))
+        });
     let rule = rule.to_lowercase();
     let feel_bad = ["discard", "sacrifice", "destroy", "exile"].iter().any(|w| rule.contains(w));
     let mut chosen: Vec<ObjId> = Vec::new();
@@ -19872,7 +19878,15 @@ fn choose_cards_with(
             }
         }
         let required = chosen.len() < min && !left.is_empty();
-        match ask(game, d, seat, &Query::Cards { objs: left.clone(), required }) {
+        let presentation = show_revealed_hand.then(|| RevealedHandChoice {
+            chooser: seat,
+            shown: shown.to_vec(),
+            chosen: chosen.clone(),
+        });
+        let previous = std::mem::replace(&mut game.revealed_hand_choice, presentation);
+        let answer = ask(game, d, seat, &Query::Cards { objs: left.clone(), required });
+        game.revealed_hand_choice = previous;
+        match answer {
             Answer::Obj(o) if chosen.contains(&o) => chosen.retain(|c| *c != o),
             Answer::Obj(o) if left.contains(&o) => {
                 chosen.push(o);

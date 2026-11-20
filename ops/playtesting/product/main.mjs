@@ -1,5 +1,6 @@
 import { createProduct } from './product.mjs'
 import { s3Store } from './archive.mjs'
+import { postmarkSignupMailer } from './signup.mjs'
 
 async function start() {
   const bucket = process.env.PLAYMAT_S3_BUCKET
@@ -16,6 +17,7 @@ async function start() {
     store,
     insecureCookie: process.env.PLAYMAT_INSECURE_COOKIE === 'true',
     publicUrl: process.env.PLAYMAT_PUBLIC_URL,
+    signup: postmarkSignupMailer({ token: process.env.PLAYMAT_POSTMARK_TOKEN, from: process.env.PLAYMAT_POSTMARK_FROM }),
     oauthClients: JSON.parse(process.env.PLAYMAT_OAUTH_CLIENTS ?? '[]'),
   })
   const provision = process.env.PLAYMAT_PROVISION_ONCE

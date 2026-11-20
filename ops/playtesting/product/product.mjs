@@ -7,6 +7,7 @@ import pg from 'pg'
 import { createArchive } from './archive.mjs'
 import { createTheoryStore, evaluateTheoryTactics } from './theory-store.mjs'
 import { createIdentity, identityView } from './identity.mjs'
+import { createSignup } from './signup.mjs'
 import { createInvitations } from './invitations.mjs'
 import { createMcpEvents } from './mcp-events.mjs'
 import { createOAuth } from './oauth.mjs'
@@ -43,6 +44,8 @@ function escapeHtml(value) {
 }
 
 function loginPage(res, next, wrong = false) {
+  const joinTable = /^\/join\/([a-f0-9-]+)$/i.exec(next)
+  const signupHref = '/register' + (joinTable && isUuid(joinTable[1]) ? '?next=' + encodeURIComponent(next) : '')
   res.writeHead(wrong ? 401 : 200, { 'Content-Type': 'text/html; charset=utf-8' })
   res.end(`<!doctype html><html lang="es"><head>
     <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -53,13 +56,13 @@ function loginPage(res, next, wrong = false) {
     main{box-sizing:border-box;width:min(92vw,25rem);padding:2rem;background:#222b24;border:1px solid #405043;border-radius:1rem}
     h1{margin-top:0}form,label{display:grid;gap:.65rem}form{gap:1rem}
     input,button{border:1px solid #687568;border-radius:.5rem;padding:.8rem;color:inherit;font:inherit;background:#18201a}
-    button{cursor:pointer;background:#c6dfaf;color:#182018;font-weight:650}p{color:#ffc4a8}
+    a{color:#c6dfaf}button{cursor:pointer;background:#c6dfaf;color:#182018;font-weight:650}p{color:#ffc4a8}
     </style></head><body><main><h1>Playmat</h1>
     ${wrong ? '<p role="alert">Revisa tu usuario y contraseña.</p>' : ''}
     <form action="/login" method="post"><input type="hidden" name="next" value="${escapeHtml(next)}">
     <label>Usuario<input name="username" autocomplete="username" maxlength="24" required autofocus></label>
     <label>Contraseña<input name="password" type="password" autocomplete="current-password" maxlength="128" required></label>
-    <button type="submit">Entrar</button></form></main></body></html>`)
+    <button type="submit">Entrar</button></form><p><a href="${signupHref}">Crear cuenta</a></p></main></body></html>`)
 }
 
 function sameOrigin(req, insecureCookie) {
@@ -100,7 +103,7 @@ function rejectMissing(value, message) {
 
 export async function createProduct({
   databaseUrl, schema = 'playmat_product', replayDirectory, store, insecureCookie = false, enableInternal = true,
-  publicUrl, oauthClients = [], oauthClientOptions, eventOptions,
+  publicUrl, oauthClients = [], oauthClientOptions, eventOptions, signup,
 }) {
   if (!databaseUrl || !/^[a-z_][a-z0-9_]{0,60}$/.test(schema)) throw Error('A valid product database configuration is required')
   const pool = new pg.Pool({
@@ -120,6 +123,7 @@ export async function createProduct({
   const oauth = createOAuth(pool, publicUrl, { body, clients: oauthClients, clientOptions: oauthClientOptions })
   const permissions = createReviewPermissions(pool)
   const id = createIdentity(pool, insecureCookie, oauth.resolve)
+  const registration = createSignup(pool, id, publicUrl, signup)
   const archive = createArchive(pool, replayDirectory, store)
   const review = createPostMatchReview(pool, archive, permissions)
   const theory = createTheoryStore(pool, review)
@@ -186,6 +190,15 @@ export async function createProduct({
     }
     if (await oauth.route(req, res, url, id.resolve)) return
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !sameOrigin(req, insecureCookie)) throw new ProductError(403, 'Cross-origin request')
+    if (path === '/api/playtesting/signup/request' && req.method === 'POST') {
+      await registration.request(req, await body(req, 'json', 1024))
+      return send(res, 202, {})
+    }
+    if (path === '/api/playtesting/signup/complete' && req.method === 'POST') {
+      const cookie = await registration.complete(req, await body(req, 'json', 2048))
+      res.setHeader('Set-Cookie', cookie)
+      return send(res, 201, {})
+    }
     if (path === '/login' && req.method === 'GET') {
       const next = safeNext(url.searchParams.get('next'))
       if (await id.resolve(req)) return res.writeHead(303, { Location: next }).end()
@@ -220,7 +233,7 @@ export async function createProduct({
       return send(res, valid ? 200 : 403, { valid })
     }
     if (enableInternal && path === '/internal/invites' && req.method === 'GET') {
-      const result = await pool.query('SELECT table_id FROM invitations WHERE invitee_key=$1 AND expires_at>now()', [
+      const result = await pool.query('SELECT table_id FROM invitations WHERE invitee_key=$1 AND expires_at>now() AND NOT unlisted', [
         normalize(url.searchParams.get('guest')),
       ])
       return send(res, 200, result.rows.map(row => row.table_id))
@@ -228,7 +241,11 @@ export async function createProduct({
     if (enableInternal && path.startsWith('/internal/invites/') && req.method === 'GET') {
       const tableId = path.slice('/internal/invites/'.length)
       if (!isUuid(tableId)) throw new ProductError(404, 'Invitation not found')
-      const allowed = await invitations.admit(tableId, url.searchParams.get('host'), url.searchParams.get('guest'))
+      const host = url.searchParams.get('host')
+      const guest = url.searchParams.get('guest')
+      const allowed = await (url.searchParams.get('lookup') === 'link'
+        ? invitations.canViewByLink(tableId, host, guest)
+        : invitations.admit(tableId, host, guest))
       return send(res, allowed ? 200 : 404, { allowed })
     }
     if (enableInternal && path.startsWith('/internal/mcp-events/') && req.method === 'POST') {

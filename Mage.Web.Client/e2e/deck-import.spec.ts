@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { expect, test, type Page } from '@playwright/test';
 
 /**
- * Deck import against a running local server: a pasted list with a typo is fixed and played; a deck from
+ * Deck import against a running local server: a pasted list with a typo is fixed and saved before playing; a deck from
  * a site that blocks other apps comes over by copy and paste; the "Send to Playmat" bookmarklet hands a
  * deck over through the URL fragment, across sign-in.
  * Run with MAGE_E2E_REQUIRE_SERVER=1. The @network test reads a real Archidekt deck and also needs
@@ -42,7 +42,7 @@ test.describe('deck import', () => {
     await expect(sheet(page).getByLabel('Deck name')).toBeVisible();
   });
 
-  test('a pasted list: fix a typo, save and play', async ({ page }) => {
+  test('[PM-SETUP-AC-01] a pasted list can be fixed and saved before explicitly playing', async ({ page }) => {
     test.setTimeout(120_000);
     await signIn(page);
     // ⌘V anywhere on the shelf opens the sheet with the list
@@ -57,7 +57,13 @@ test.describe('deck import', () => {
     await expect(page.getByText('Every card matched.')).toBeVisible();
 
     await page.getByLabel('Deck name').fill('Typo Burn');
-    await page.getByRole('button', { name: 'Save and play' }).click();
+    await expect(page.getByRole('button', { name: 'Save and play' })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(page).toHaveURL(/\/decks$/);
+    await expect(page.getByText('Deck imported')).toBeVisible();
+    await page.getByRole('link', { name: 'Play', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Typo Burn', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Play', exact: true }).click();
     await page.waitForURL(/\/game\//, { timeout: 60_000 });
     const starter = page.getByRole('dialog', { name: /who starts/i });
     const hand = page.getByRole('dialog', { name: /opening hand/i });

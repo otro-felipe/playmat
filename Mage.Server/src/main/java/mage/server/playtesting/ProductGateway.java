@@ -113,12 +113,20 @@ public final class ProductGateway {
     }
 
     public static boolean canJoin(UUID tableId, String hostEngineName, String guestEngineName) {
+        return authorizedInvitation(tableId, hostEngineName, guestEngineName, false);
+    }
+
+    public static boolean canViewByLink(UUID tableId, String hostEngineName, String viewer) {
+        return authorizedInvitation(tableId, hostEngineName, viewer, true);
+    }
+
+    private static boolean authorizedInvitation(UUID tableId, String hostEngineName, String guestEngineName, boolean viewing) {
         if (hostEngineName == null || guestEngineName == null) {
             return false;
         }
         try {
             String path = "/internal/invites/" + tableId + "?host=" + parameter(hostEngineName)
-                    + "&guest=" + parameter(guestEngineName);
+                    + "&guest=" + parameter(guestEngineName) + (viewing ? "&lookup=link" : "");
             return request(path, 2000, null, null, false).status == 200;
         } catch (IOException exception) {
             return false;

@@ -1,12 +1,12 @@
 import { create } from 'zustand';
 import { api } from '../connection';
+import { PRIVATE_PLAYTESTING } from '../playtesting';
 import { readJson, writeJson } from './persist';
-import { useSession } from './session';
+import { rememberedSignOn, useSession, type SessionState } from './session';
 
 /**
- * Friends and ignored players, kept in this browser per server (names are only unique per server). The server learns
- * the ignore list after every login, to hold back ignored players' chat and whispers; tables this player hosts keep
- * ignored players out.
+ * Browser-local friends and ignores belong to a server, and in private Playmat to the signed-in account.
+ * The server receives the ignore list at login to filter chat, whispers and invites.
  */
 interface SocialLists {
   friends: string[];
@@ -14,10 +14,15 @@ interface SocialLists {
 }
 
 const SOCIAL_KEY = 'playmat.social';
+const ACCOUNT_SOCIAL_KEY = 'playmat.social.accounts';
 export const MAX_IGNORED = 500;
 
-interface SocialState extends SocialLists {
+interface SocialScope {
   serverUrl: string;
+  accountKey: string | null;
+}
+
+interface SocialState extends SocialLists, SocialScope {
   addFriend(name: string): void;
   removeFriend(name: string): void;
   ignore(name: string): void;
@@ -27,6 +32,10 @@ interface SocialState extends SocialLists {
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 const without = (list: readonly string[], name: string) => list.filter((item) => !same(item, name));
 const includes = (list: readonly string[], name: string) => list.some((item) => same(item, name));
+const profileKey = (name: string) => 'account:' + name.toLowerCase();
+
+type ServerLists = Record<string, SocialLists>;
+type AccountLists = Record<string, ServerLists>;
 
 export function isIgnored(state: SocialLists, name: string | null | undefined): boolean {
   return !!name && includes(state.ignored, name);
@@ -36,13 +45,39 @@ export function isFriend(state: SocialLists, name: string | null | undefined): b
   return !!name && includes(state.friends, name);
 }
 
-function load(serverUrl: string): SocialLists {
-  const saved = readJson<Record<string, Partial<SocialLists>>>(SOCIAL_KEY, {})[serverUrl];
+function socialScope({ serverUrl, phase, userName }: SessionState): SocialScope {
+  return {
+    serverUrl,
+    accountKey: PRIVATE_PLAYTESTING && phase === 'signedIn' && userName ? profileKey(userName) : null,
+  };
+}
+
+function migratePrivateLists(serverUrl: string): void {
+  const legacy = readJson<ServerLists>(SOCIAL_KEY, {})[serverUrl];
+  if (!legacy) return;
+  const accounts = readJson<AccountLists>(ACCOUNT_SOCIAL_KEY, {});
+  if (Object.hasOwn(accounts, serverUrl)) return;
+  const owner = rememberedSignOn?.serverUrl === serverUrl ? rememberedSignOn.userName : null;
+  // An empty entry records that an ownerless legacy list cannot be adopted by a later login.
+  accounts[serverUrl] = owner ? { [profileKey(owner)]: legacy } : {};
+  writeJson(ACCOUNT_SOCIAL_KEY, accounts);
+}
+
+function load({ serverUrl, accountKey }: SocialScope): SocialLists {
+  const saved = accountKey
+    ? readJson<AccountLists>(ACCOUNT_SOCIAL_KEY, {})[serverUrl]?.[accountKey]
+    : !PRIVATE_PLAYTESTING ? readJson<ServerLists>(SOCIAL_KEY, {})[serverUrl] : undefined;
   return { friends: saved?.friends ?? [], ignored: saved?.ignored ?? [] };
 }
 
-function save(serverUrl: string, lists: SocialLists): void {
-  const all = readJson<Record<string, SocialLists>>(SOCIAL_KEY, {});
+function save({ serverUrl, accountKey }: SocialScope, lists: SocialLists): void {
+  if (accountKey) {
+    const accounts = readJson<AccountLists>(ACCOUNT_SOCIAL_KEY, {});
+    accounts[serverUrl] = { ...accounts[serverUrl], [accountKey]: lists };
+    writeJson(ACCOUNT_SOCIAL_KEY, accounts);
+    return;
+  }
+  const all = readJson<ServerLists>(SOCIAL_KEY, {});
   all[serverUrl] = lists;
   writeJson(SOCIAL_KEY, all);
 }
@@ -55,16 +90,19 @@ function syncIgnored(ignored: string[]): void {
 
 export const useSocial = create<SocialState>((set, get) => {
   const change = (next: Partial<SocialLists>) => {
-    const lists = { friends: next.friends ?? get().friends, ignored: next.ignored ?? get().ignored };
-    save(get().serverUrl, lists);
+    const state = get();
+    if (PRIVATE_PLAYTESTING && !state.accountKey) return;
+    const lists = { friends: next.friends ?? state.friends, ignored: next.ignored ?? state.ignored };
+    save(state, lists);
     set(lists);
     if (next.ignored) syncIgnored(lists.ignored);
   };
   const myName = () => useSession.getState().userName;
-  const initialServer = useSession.getState().serverUrl;
+  const scope = socialScope(useSession.getState());
+  if (PRIVATE_PLAYTESTING) migratePrivateLists(scope.serverUrl);
   return {
-    serverUrl: initialServer,
-    ...load(initialServer),
+    ...scope,
+    ...load(scope),
 
     addFriend(name) {
       const trimmed = name.trim();
@@ -86,8 +124,10 @@ export const useSocial = create<SocialState>((set, get) => {
 });
 
 useSession.subscribe((state, previous) => {
-  if (state.serverUrl !== useSocial.getState().serverUrl) {
-    useSocial.setState({ serverUrl: state.serverUrl, ...load(state.serverUrl) });
+  const scope = socialScope(state);
+  const current = useSocial.getState();
+  if (scope.serverUrl !== current.serverUrl || scope.accountKey !== current.accountKey) {
+    useSocial.setState({ ...scope, ...load(scope) });
   }
   // the server forgets the list with the session: send it after every login
   if (state.phase === 'signedIn' && state.loginCount !== previous.loginCount) {

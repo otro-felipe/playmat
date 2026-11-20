@@ -9,6 +9,7 @@ function invitationView(row) {
   if (!row) throw new ProductError(404, 'Invitation not found')
   return {
     tableId: row.table_id, roomId: row.room_id, format: row.format, mode: row.mode,
+    ...(row.unlisted ? { unlisted: true } : {}),
     ...(row.mode === 'mcp' ? { chatMode: row.chat_mode } : {}),
     guestEngineName: row.invitee_name, guestDisplayName: row.guest_display_name, expiresAt: row.expires_at,
   }
@@ -27,7 +28,7 @@ export function createInvitations(pool, identity, events) {
   async function list(actor, requestedLimit) {
     const limit = Math.max(1, Math.min(50, Number.parseInt(requestedLimit, 10) || 25))
     const { rows } = await pool.query(
-      `SELECT * FROM invitations WHERE expires_at>now() AND (
+      `SELECT * FROM invitations WHERE expires_at>now() AND NOT unlisted AND (
         (owner_account_id IS NULL AND invitee_key=$1)
         OR (owner_account_id=$2 AND (invitee_key IS NULL OR invitee_key=$1))
       ) ORDER BY expires_at DESC,table_id LIMIT $3`,
@@ -48,11 +49,16 @@ export function createInvitations(pool, identity, events) {
     }
     const chatMode = data.chatMode ?? 'quiet'
     if (data.notifyEngineName !== undefined) throw new ProductError(400, 'MCP invitations use the host account')
+    const unlisted = mode === 'friend' && data.guestEngineName === undefined
     let friend = null
     if (mode === 'friend') {
-      friend = await identity.fromEngine(data.guestEngineName)
-      if (!friend || normalize(friend.engineName) === normalize(actor.engineName) || !friend.scopes.includes('play')) {
-        throw new ProductError(400, 'Provide a provisioned guest seat')
+      if (unlisted) {
+        if (actor.agent) throw new ProductError(403, 'Sign in as the host account to create an unlisted invitation')
+      } else {
+        friend = await identity.fromEngine(data.guestEngineName)
+        if (!friend || normalize(friend.engineName) === normalize(actor.engineName) || !friend.scopes.includes('play')) {
+          throw new ProductError(400, 'Provide a provisioned guest seat')
+        }
       }
     } else if (data.guestEngineName !== undefined) {
       throw new ProductError(400, 'An MCP invitation cannot name a guest account')
@@ -61,10 +67,10 @@ export function createInvitations(pool, identity, events) {
     return transaction(pool, async db => {
       const invitee = friend?.engineName ?? null
       const { rows: [invite] } = await db.query(`INSERT INTO invitations(
-        table_id,room_id,format,creator_key,invitee_key,invitee_name,table_password,expires_at,mode,chat_mode,owner_account_id
-      ) VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '48 hours',$8,$9,$10) ON CONFLICT (table_id) DO NOTHING RETURNING *`,
+        table_id,room_id,format,creator_key,invitee_key,invitee_name,table_password,expires_at,mode,chat_mode,owner_account_id,unlisted
+      ) VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '48 hours',$8,$9,$10,$11) ON CONFLICT (table_id) DO NOTHING RETURNING *`,
       [data.tableId, data.roomId, format, normalize(actor.engineName), invitee ? normalize(invitee) : null,
-        invitee, data.password, mode, chatMode, ownerAccountId])
+        invitee, data.password, mode, chatMode, ownerAccountId, unlisted])
       if (!invite) throw new ProductError(409, 'This table already has an invitation')
       if (ownerAccountId) {
         const { rows: [agent] } = await db.query(`SELECT engine_name FROM agent_grants
@@ -81,7 +87,8 @@ export function createInvitations(pool, identity, events) {
   async function inspect(actor, tableId) {
     const { rows: [invite] } = await pool.query(`SELECT * FROM invitations WHERE table_id=$1 AND expires_at>now()
       AND (creator_key=$2
-        OR (owner_account_id IS NULL AND (invitee_key=$2 OR (mode='mcp' AND invitee_key IS NULL AND $3)))
+        OR (owner_account_id IS NULL AND (invitee_key=$2 OR (invitee_key IS NULL AND (
+          (unlisted AND NOT $3) OR (mode='mcp' AND $3)))))
         OR (owner_account_id=$4 AND (invitee_key IS NULL OR invitee_key=$2)))`,
     [tableId, normalize(actor.engineName), actor.agent, rivalAccount(actor)])
     return invitationView(invite)
@@ -97,7 +104,8 @@ export function createInvitations(pool, identity, events) {
       guest_display_name=CASE WHEN mode='mcp' THEN COALESCE(guest_display_name,$4,$7) ELSE guest_display_name END
       WHERE table_id=$1 AND creator_key<>$2 AND expires_at>now()
         AND (owner_account_id IS NULL OR owner_account_id=$6) AND (
-        (mode='friend' AND invitee_key=$2) OR (mode='mcp' AND $5 AND (invitee_key IS NULL OR invitee_key=$2))
+        (mode='friend' AND (invitee_key=$2 OR (unlisted AND invitee_key IS NULL AND NOT $5)))
+        OR (mode='mcp' AND $5 AND (invitee_key IS NULL OR invitee_key=$2))
       ) RETURNING *`, [tableId, key, actor.engineName, alias, actor.agent, rivalAccount(actor), fallback])
     return { ...invitationView(invite), password: invite.table_password }
   }
@@ -113,5 +121,13 @@ export function createInvitations(pool, identity, events) {
     return Boolean(rowCount)
   }
 
-  return { list, create, inspect, claim, admit }
+  async function canViewByLink(tableId, host, viewer) {
+    const { rowCount } = await pool.query(`SELECT 1 FROM invitations i
+      JOIN accounts a ON a.username_key=$3 AND a.enabled
+      WHERE i.table_id=$1 AND i.creator_key=$2 AND i.unlisted AND i.expires_at>now()
+        AND (i.invitee_key IS NULL OR i.invitee_key=$3)`, [tableId, normalize(host), normalize(viewer)])
+    return Boolean(rowCount)
+  }
+
+  return { list, create, inspect, claim, admit, canViewByLink }
 }

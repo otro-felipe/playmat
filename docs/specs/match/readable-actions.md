@@ -24,6 +24,18 @@ Public plays SHALL receive a short, ordered presentation independent of the auth
 #### Scenario: READ-AC-003 — Fast sequence
 Several updates in one render interval are captured in order. A spell's target announcement and resolution remain readable after the live board advances. Overflow is counted. A new decision uses the current board and prompt immediately.
 
+### Requirement: READ-REQ-004 — Readable card choices and hand knowledge
+The chooser SHALL show the hand cards provided for the active choice, with unavailable cards dimmed and disabled. The applicable choice payload determines which cards the viewer can see and select. Graveyard choices SHALL identify their players, including when a prompt spans multiple graveyards. The player's hand SHALL visibly mark its cards revealed from hand while they remain there.
+
+#### Scenario: READ-AC-005 — Revealed hand with a restricted choice
+After a hand is revealed for a nonland discard, both the land and nonland are present when the chooser opens. The land cannot be selected. Other hidden cards never enter the chooser.
+
+#### Scenario: READ-AC-006 — Choices across two graveyards
+Cards from each graveyard appear under the owning seat's name, including when the engine provides only target IDs.
+
+#### Scenario: READ-AC-007 — Revealed hand marker follows the current hand
+A public reveal marks the card even after the reveal panel expires. If the card leaves and later returns to the hand, a fresh reveal is required before the mark appears again. Rolling back the game clears hand knowledge from the abandoned timeline.
+
 ## Traceability
 The previous target-panel implementation's regressions executed successfully in the combined main candidate's [web run](https://github.com/otro-felipe/playmat/actions/runs/44164549318): 1,568 unit tests passed, 42 skipped, with TypeScript, ESLint and accessibility checks passing. That run's overall size gate failed; functional test success alone did not approve deployment. This does not validate the subsequent READ-AC-004 arrow-only change; its gates and browser screenshots are pending execution.
 
@@ -34,6 +46,9 @@ The final [optimized web run](https://github.com/otro-felipe/playmat/actions/run
 | READ-AC-001 | `Mage.Web.Client/src/core/game/publicTargets.test.ts` — `labels players, permanents, graveyards and other spells before they resolve`; `never names private, face-down, hidden or missing objects`. `Mage.Web.Client/src/app/match/StackZone.test.tsx` — `keeps public target names accessible for every waiting spell and ability without a visible panel` | Changed case pending execution; physical mobile device rendering |
 | READ-AC-002 | `Mage.Web.Client/src/app/match/GameLog.test.tsx` — `[READ-AC-002] receives turns and resolutions after reconnect, including lines delivered during chatJoin`; `[READ-AC-002] a full log still scrolls to new actions after the bounded buffer stops growing`; `[READ-AC-002] retries an initially refused chat join and receives subsequent actions`; `[READ-AC-002] an old join resolving late cannot leave the newer membership` | Real disconnected mobile transport |
 | READ-AC-003 | `Mage.Web.Client/src/core/game/actionPresentation.test.ts` — `captures cast, targets and stack departure across unrendered updates without delaying the real state`; `bounds a burst and accounts for every omitted preview, then drains and resumes`; `discards obsolete receipts on %s and never replays the reconnect snapshot`; `shows battlefield entries and hides the identity of a face-down play`. `Mage.Web.Client/src/app/match/RecentActions.test.tsx` — `presents rapid public actions in order as read-only history while the real stack has advanced`. `Mage.Web.Client/src/app/match/useAutoPass.test.tsx` — `leaves a complete reading beat for a targeted stack object even while passing the turn`; `manual priority responses are immediate during the presentation beat`; `does not answer a newer prompt arriving before React cleans up the old timer`; `rejects the old automated answer after %s`; `rechecks the live settings before executing a previously scheduled automated answer` | Live multiplayer cadence |
+| READ-AC-005 | `Mage.Web.Client/src/app/match/MatchStage.test.tsx` — `[READ-AC-005] opens the revealed hand with ineligible cards visible but disabled`. `rust/crates/playmat-host/src/prompts.rs` — `a_revealed_hand_choice_exposes_the_whole_hand_with_only_legal_answers` | Live multiplayer visual check |
+| READ-AC-006 | `Mage.Web.Client/src/app/match/MatchStage.test.tsx` — `[READ-AC-006] groups selectable graveyard cards under their seat names` | Physical mobile device rendering |
+| READ-AC-007 | `Mage.Web.Client/src/app/match/MatchStage.test.tsx` — `[READ-AC-007] clears the mark after a private zone change and accepts a fresh reveal` | Live reconnect with a previously revealed hand |
 
 ## Known limitations
 The server does not replay game-chat history on rejoin, so lines broadcast while disconnected cannot be reconstructed by this client change. The reported turn-3 session has no transport trace; regressions reproduce concrete client failure modes, not the exact original connection.

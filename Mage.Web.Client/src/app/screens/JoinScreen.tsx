@@ -1,3 +1,4 @@
+import { useQuery } from '@tanstack/react-query';
 import { Bot, Lock, UserRound } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
@@ -96,6 +97,7 @@ function McpInviteGuide({ tableId, name, chatMode = 'quiet' }: { tableId: string
 
 /** Where an invite link leads: the table, and a seat at it with one of your decks. */
 export function JoinScreen() {
+  const t = useT();
   const { tableId = '' } = useParams();
   const navigate = useNavigate();
   const { data: tables = [], dataUpdatedAt, refetch } = useTables();
@@ -108,6 +110,7 @@ export function JoinScreen() {
   }, [refetch]);
   const fresh = dataUpdatedAt >= openedAt;
   const userName = useSession((state) => state.userName);
+  const roomId = useSession((state) => state.roomId);
   const serverUrl = useSession((state) => state.serverUrl);
   const connected = useSession((state) => state.phase === 'signedIn' && state.connection === 'open' && !!state.roomId);
   const decks = useDecks();
@@ -122,15 +125,27 @@ export function JoinScreen() {
     if (!decks.loaded) void decks.refresh();
   }, [decks]);
 
-  const table = tables.find((candidate) => candidate.tableId === tableId) ?? null;
+  const listedTable = tables.find((candidate) => candidate.tableId === tableId);
+  const lookupUnlisted = connected && !!roomId && invitation?.unlisted === true && !listedTable;
+  const linkedTable = useQuery({
+    queryKey: ['linked-table', roomId, tableId, userName],
+    queryFn: () => api.roomGetTableById(roomId!, tableId),
+    enabled: lookupUnlisted,
+    refetchInterval: lookupUnlisted ? 2_000 : false,
+    retry: false,
+  });
+  const table = listedTable ?? (lookupUnlisted ? linkedTable.data : null);
   const chosen = roster.find((deck) => deck.id === (deckId ?? decks.selectedId)) ?? roster[0] ?? null;
   const seated = !!table?.seats?.some((seat) => seat.playerName === userName);
   const open = table?.tableState === 'WAITING' && !!table.seats?.some((seat) => !seat.playerName);
   const allowedInvite = PRIVATE_PLAYTESTING
-    ? !invitationPending && !invitationFetching && !invitationError && invitation?.mode === 'friend'
-      && invitation.guestEngineName?.toLowerCase() === userName.toLowerCase()
+    ? !invitationPending && !invitationError && invitation?.mode === 'friend'
+      && (invitation.guestEngineName
+        ? invitation.guestEngineName.toLowerCase() === userName.toLowerCase()
+        : invitation.unlisted === true)
     : !table?.passworded;
-  const siteToolAvailable = connected && !!userName && fresh && open && !!chosen && !seated && allowedInvite
+  const siteToolAvailable = connected && !!userName && (fresh || !!linkedTable.data) && open
+    && !!chosen && !seated && allowedInvite && (!PRIVATE_PLAYTESTING || !invitationFetching)
     && isSiteToolOrigin(serverUrl);
 
   useSiteTool(siteToolAvailable, JOIN_MATCH, (_, signal) => siteToolAvailable
@@ -138,7 +153,7 @@ export function JoinScreen() {
     : { error: 'The invitation has no available seat for this session.' }, `${serverUrl}|${userName}|${tableId}`);
 
   async function join(signal?: AbortSignal) {
-    if (!table || !chosen || !open || seated || joining.current) {
+    if (!table || !chosen || !open || seated || joining.current || (PRIVATE_PLAYTESTING && !allowedInvite)) {
       return { error: 'This invitation has no available seat or deck.' };
     }
     joining.current = true;
@@ -164,11 +179,12 @@ export function JoinScreen() {
     }
   }
 
+  const loading = (PRIVATE_PLAYTESTING && invitationPending) || (lookupUnlisted ? linkedTable.isPending : !fresh);
   if (!table || (PRIVATE_PLAYTESTING && invitationPending)) {
     return (
       <div className={styles.page}>
         <Zone label="Invite" className={styles.card}>
-          {!fresh || (PRIVATE_PLAYTESTING && invitationPending) ? <p className={styles.note} role="status">Looking for the table…</p> : (
+          {loading ? <p className={styles.note} role="status">Looking for the table…</p> : (
             <>
               <p className={styles.note}>This table is gone: the game may have started, or the host closed it.</p>
               <RecoveryFromInvite tableId={tableId} />
@@ -217,6 +233,8 @@ export function JoinScreen() {
             <p className={styles.note}>This table has no open seat any more.</p>
             <Button variant="print" onClick={() => navigate('/tables')}>See open tables</Button>
           </>
+        ) : PRIVATE_PLAYTESTING && !allowedInvite ? (
+          <p className={styles.note}>{t('tableInvite.unavailable')}</p>
         ) : (
           <form
             className={styles.form}

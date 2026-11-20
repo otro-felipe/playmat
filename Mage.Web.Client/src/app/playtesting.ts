@@ -10,11 +10,12 @@ export interface PlaytestingInvite {
 export const MCP_CHAT_MODES = ['quiet', 'chatty', 'coach'] as const;
 export type McpChatMode = typeof MCP_CHAT_MODES[number];
 
-export type PlaytestingOpponent = { mode: 'friend'; guestEngineName: string }
+export type PlaytestingOpponent = { mode: 'friend'; guestEngineName?: string }
   | { mode: 'mcp'; chatMode: McpChatMode };
 
 export interface PlaytestingInvitationView {
   mode: 'friend' | 'mcp';
+  unlisted?: true;
   guestEngineName: string | null;
   guestDisplayName: string | null;
   chatMode?: McpChatMode;
@@ -31,7 +32,11 @@ async function sendInviteRequest(path: string, input?: Record<string, unknown>, 
   if (response.status === 401) {
     window.location.assign(`/login?next=${encodeURIComponent(window.location.pathname)}`);
   }
-  if (!response.ok) throw new Error('This invitation could not be used. Check the player name or ask for a new link.');
+  if (!response.ok) throw new Error(input
+    ? input.guestEngineName
+      ? 'This invitation could not be created. Check that your selected friend has an active account.'
+      : 'This invitation could not be created. Try again.'
+    : 'This invitation could not be used. Ask the host for a new link.');
   return response;
 }
 

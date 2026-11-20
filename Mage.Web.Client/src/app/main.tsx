@@ -15,6 +15,7 @@ import { HomeScreen } from './screens/HomeScreen';
 import { LoginScreen } from './screens/LoginScreen';
 import { PRIVATE_PLAYTESTING } from './playtesting';
 import { PrivateSession } from './PrivateSession';
+import { PublicLanding } from './publicSite/PublicLanding';
 import { RequestDialog } from './RequestDialog';
 import { RouteError } from './screens/RouteError';
 import { useEvents } from './stores/events';
@@ -51,7 +52,7 @@ function SignedIn() {
   }, [redirect, navigate]);
 
   // come back here after signing in
-  if (phase !== 'signedIn') return PRIVATE_PLAYTESTING ? <PrivateSession /> : <Navigate to="/login" replace state={{ from: location.pathname + location.search + location.hash }} />;
+  if (phase !== 'signedIn') return PRIVATE_PLAYTESTING ? <PrivateSession anonymousHome={<PublicLanding />} /> : <Navigate to="/login" replace state={{ from: location.pathname + location.search + location.hash }} />;
   return (
     <>
       <Outlet />
@@ -83,6 +84,10 @@ if (import.meta.env.PROD && !NATIVE_APP && 'serviceWorker' in navigator) {
 
 const router = createBrowserRouter([
   { path: '/login', element: <LoginScreen /> },
+  ...(PRIVATE_PLAYTESTING ? [
+    { path: '/register', lazy: () => import('./publicSite/SignupScreen').then((m) => ({ Component: m.SignupScreen })) },
+    { path: '/register/complete', lazy: () => import('./publicSite/SignupScreen').then((m) => ({ Component: m.SignupCompletionScreen })) },
+  ] : []),
   // an invite link to a contributors-only server: registration with the invite filled in
   { path: '/join', element: <LoginScreen /> },
   // back from Sign in with GitHub

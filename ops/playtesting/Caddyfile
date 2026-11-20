@@ -33,6 +33,13 @@
 			reverse_proxy 127.0.0.1:8791
 		}
 
+		@signup path /api/playtesting/signup/request /api/playtesting/signup/complete
+		handle @signup {
+			reverse_proxy 127.0.0.1:8790 {
+				header_up X-Playmat-Client-IP {remote_host}
+			}
+		}
+
 		@product path /login /logout /api/playtesting/* /oauth/authorize /oauth/token /oauth/register /oauth/revoke /oauth/connections /.well-known/oauth-authorization-server /.well-known/oauth-protected-resource /.well-known/oauth-protected-resource/mcp
 		handle @product {
 			reverse_proxy 127.0.0.1:8790
@@ -40,6 +47,21 @@
 
 		handle /internal/* {
 			respond 404
+		}
+
+		@publicPages path / /register /register/ /register/complete /register/complete/ /index.html
+		handle @publicPages {
+			header Referrer-Policy no-referrer
+			header Cache-Control no-cache
+			root * /srv/playmat
+			rewrite * /index.html
+			file_server
+		}
+
+		@publicAssets path /assets/* /sw.js /favicon.svg /robots.txt /manifest.webmanifest /apple-touch-icon.png /icon-192.png /icon-512.png /icon-maskable-512.png
+		handle @publicAssets {
+			root * /srv/playmat
+			file_server
 		}
 
 		handle {

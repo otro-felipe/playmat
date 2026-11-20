@@ -29,5 +29,13 @@ export async function signInPrivate(page: Page, account: Account) {
   await page.waitForURL((url) => url.pathname === '/decks', { timeout: 30_000 });
 }
 
+export async function addPrivateFriend(page: Page, friend: string) {
+  await page.getByRole('button', { name: /^Lobby:/ }).click();
+  await page.getByRole('tab', { name: 'Players', exact: false }).click();
+  await page.getByRole('button', { name: `Actions for ${friend}`, exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Add friend', exact: true }).click();
+  await page.getByRole('button', { name: 'Close lobby', exact: true }).click();
+}
+
 export const tableRow = (page: Page, name: string) =>
   page.getByRole('article').filter({ has: page.getByRole('heading', { name, exact: false }) });

@@ -17,7 +17,7 @@ export interface RevealedHand {
   handCount: number;
   /** this player's cards in public zones, by physical card id: what the hand can lose without a secret */
   inPublic: ReadonlySet<string>;
-  /** cards known to have left the hand while their reveal is still listed */
+  /** reveal entries already invalidated by a card leaving the hand */
   forgotten: ReadonlySet<string>;
 }
 
@@ -45,42 +45,47 @@ export function rememberRevealedHands(previous: RevealedHands, view: GameView): 
     addSeen(player.exile);
   }
   // the reveals still listed, each card with the zone it was revealed from
-  const revealed: { key: string; card: CardView }[] = [];
+  const revealed: { key: string; entry: string; card: CardView }[] = [];
   for (const group of view.revealed ?? []) {
-    for (const [id, card] of Object.entries(group.cards ?? {})) revealed.push({ key: physicalId(card, id), card: { ...card, id: card.id ?? id } });
+    for (const [id, card] of Object.entries(group.cards ?? {})) {
+      const key = physicalId(card, id);
+      revealed.push({ key, entry: `${group.name ?? ''}\0${key}`, card: { ...card, id: card.id ?? id } });
+    }
   }
-  const listed = new Set(revealed.map(({ key }) => key));
+  const listed = new Set(revealed.map(({ entry }) => entry));
 
   const next = new Map<string, RevealedHand>();
   for (const player of view.players ?? []) {
     const playerId = player.playerId;
     if (!playerId) continue;
     const before = previous.get(playerId);
-    const handCount = player.handCount ?? 0;
+    const ownHand = view.myPlayerId === playerId ? view.myHand : undefined;
+    const held = ownHand && new Set(Object.entries(ownHand).map(([id, card]) => physicalId(card, id)));
+    const handCount = held?.size ?? player.handCount ?? 0;
     const inPublic = new Set([...seen].filter(([, owner]) => owner === playerId).map(([key]) => key));
     const forgotten = new Set([...before?.forgotten ?? []].filter((key) => listed.has(key)));
     const cards = new Map(before?.cards ?? []);
     const forgetAll = () => {
-      for (const key of cards.keys()) forgotten.add(key);
-      for (const { key, card } of revealed) if (card.ownerId === playerId && card.zone === 'HAND') forgotten.add(key);
+      for (const { entry, card } of revealed) if (card.ownerId === playerId && card.zone === 'HAND') forgotten.add(entry);
       cards.clear();
     };
 
     // the hand lost more cards than showed up in public: some left for a hidden zone, which ones is unknown
-    if (before) {
+    if (before && !held) {
       const lost = before.handCount - handCount;
       // theirs by owner, or by being a card remembered in their hand
       const surfaced = new Set([...inPublic, ...[...cards.keys()].filter((key) => seen.has(key))].filter((key) => !before.inPublic.has(key))).size;
       if (lost > 0 && lost > surfaced) forgetAll();
     }
     for (const key of cards.keys()) {
-      if (seen.has(key)) {
+      if (seen.has(key) || (held && !held.has(key))) {
         cards.delete(key);
-        forgotten.add(key);
       }
     }
-    for (const { key, card } of revealed) {
-      if (card.ownerId !== playerId || card.zone !== 'HAND' || seen.has(key) || forgotten.has(key)) continue;
+    for (const { key, entry, card } of revealed) {
+      if (card.ownerId !== playerId || card.zone !== 'HAND') continue;
+      if (seen.has(key) || (held && !held.has(key))) forgotten.add(entry);
+      if (forgotten.has(entry)) continue;
       if (!cards.has(key)) cards.set(key, card);
     }
     // more remembered than held: which ones left is unknown

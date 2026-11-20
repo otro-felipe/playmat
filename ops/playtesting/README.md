@@ -26,6 +26,9 @@ Run one app replica, a private PostgreSQL service, and an S3 bucket. Mount the e
 
 Bind `DATABASE_URL` by reference to the private Postgres service. Set `PLAYMAT_PUBLIC_URL` to the canonical public HTTPS origin. List the allowed HTTPS origins in `XMAGE_ALLOWED_ORIGINS`, separated by commas. WebSocket and MCP requests use this list. Configure `PLAYMAT_S3_BUCKET`, optional `PLAYMAT_S3_ENDPOINT`, and AWS region and credentials through runtime secret variables. Railway Buckets use virtual-hosted requests. Set `PLAYMAT_S3_FORCE_PATH_STYLE=true` only for providers that need path style. Replay objects have content-addressed keys regardless of the bucket's provider versioning features.
 
+Public registration uses `PLAYMAT_PUBLIC_URL` for email links. Set `PLAYMAT_POSTMARK_FROM` to the verified sender and `PLAYMAT_POSTMARK_TOKEN` as a secret runtime variable. Password sign-in for existing accounts works without Postmark configuration. Registration mail requires the transactional `outbound` stream. For a delivery-free provider contract check, use Postmark's public `POSTMARK_API_TEST` token in an isolated environment.
+
+
 ## Provisioning
 
 Pass newly chosen credentials from a masked or restricted write-only source. The provisioning command reads the password or bearer token from standard input. Keep values out of command arguments, shell transcripts, repositories and public logs.

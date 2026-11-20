@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { importTestDeck, gameOver } from './helpers/app';
 import { finishBestOfThree, sideboardDeck } from './helpers/bo3';
-import { qaAccount, setPrivateInput, signInPrivate, tableRow } from './helpers/private';
+import { addPrivateFriend, qaAccount, signInPrivate, tableRow } from './helpers/private';
 
 const baseURL = process.env.PLAYMAT_PRIVATE_BASE_URL;
 
@@ -10,6 +10,61 @@ test.use({ trace: 'off', video: 'off', screenshot: 'off' });
 test.describe('Private playtesting browser acceptance', () => {
   test.skip(!baseURL, 'Set PLAYMAT_PRIVATE_BASE_URL to opt in using provisioned QA accounts.');
   test.describe.configure({ retries: 0 });
+
+  test('[PM-SETUP-AC-01, PM-SETUP-AC-03] a saved deck stays in the library and an unlisted match opens only by link', async ({ browser }) => {
+    test.setTimeout(120_000);
+    process.env.PLAYWRIGHT_NO_COPY_PROMPT = '1';
+    const origin = new URL(baseURL!).origin;
+    const options = { baseURL: origin, locale: 'en-US', serviceWorkers: 'block' as const };
+    const hostContext = await browser.newContext(options);
+    const guestContext = await browser.newContext(options);
+    hostContext.setDefaultTimeout(20_000);
+    guestContext.setDefaultTimeout(20_000);
+    const host = await hostContext.newPage();
+    const guest = await guestContext.newPage();
+    const tableName = `Unlisted browser QA ${Date.now()}`;
+    const deckName = `Unlisted Pioneer QA ${Date.now()}`;
+    const hostTable = tableRow(host, tableName);
+    try {
+      for (const [page, seat] of [[host, 'A'], [guest, 'B']] as const) {
+        await signInPrivate(page, qaAccount(seat));
+        await importTestDeck(page, deckName, '60 Plains');
+        await expect(page).toHaveURL(/\/decks$/);
+        await page.getByRole('link', { name: 'Play', exact: true }).click();
+        await expect(page.getByRole('heading', { name: deckName, exact: true })).toBeVisible();
+        await page.getByRole('link', { name: 'Tables', exact: true }).click();
+      }
+
+      await host.getByRole('button', { name: 'Host a table' }).click();
+      const dialog = host.getByRole('dialog', { name: 'Host a table' });
+      await dialog.getByLabel('Table name').fill(tableName);
+      await expect(dialog.getByLabel('Invited player')).toHaveValue('');
+      await dialog.getByRole('button', { name: 'Host', exact: true }).click();
+      await expect(dialog).toBeHidden();
+      await expect(hostTable.getByRole('button', { name: 'Start' })).toBeDisabled();
+      await guest.reload();
+      await expect(guest.getByRole('heading', { name: 'Open tables', exact: true })).toBeVisible();
+      await expect(tableRow(guest, tableName)).toHaveCount(0);
+
+      await hostContext.grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
+      await hostTable.getByRole('button', { name: 'Invite', exact: true }).click();
+      const target = new URL(await host.evaluate(() => navigator.clipboard.readText()));
+      if (target.origin !== origin || !/^\/join\/[\da-f-]{36}$/i.test(target.pathname) || target.search || target.hash) {
+        throw new Error('Expected an invitation for a table on this origin.');
+      }
+      await guest.goto(target.pathname);
+      await expect(guest.getByRole('heading', { name: tableName, exact: false })).toBeVisible();
+      await expect(guest.getByRole('combobox', { name: 'Deck', exact: true }).locator('option:checked')).toHaveText(deckName);
+      await guest.getByRole('button', { name: 'Take a seat' }).click();
+      await guest.waitForURL('**/tables');
+      await expect(tableRow(guest, tableName)).toBeVisible();
+      await expect(hostTable.getByRole('button', { name: 'Start' })).toBeEnabled();
+      await expect(host).toHaveURL(/\/tables$/);
+      await hostTable.getByRole('button', { name: 'Close', exact: true }).click();
+    } finally {
+      await Promise.all([hostContext.close(), guestContext.close()]);
+    }
+  });
 
   test('[PM-AC-04, PM-AC-06] a provisioned friend takes the invited seat and plays a Pioneer Bo3', async ({ browser }) => {
     test.setTimeout(240_000);
@@ -40,13 +95,14 @@ test.describe('Private playtesting browser acceptance', () => {
       });
 
       await test.step('The host copies the invitation and the invited account occupies the second seat', async () => {
+        await addPrivateFriend(host, guestAccount.username);
         await host.getByRole('link', { name: 'Tables', exact: true }).click();
         await host.getByRole('button', { name: 'Host a table' }).click();
         const dialog = host.getByRole('dialog', { name: 'Host a table' });
         await dialog.getByLabel('Table name').fill(tableName);
         await dialog.getByLabel('Format').selectOption('Constructed - Pioneer');
         await dialog.getByLabel('Games to win').selectOption('2');
-        await setPrivateInput(dialog.getByLabel('Invited player'), guestAccount.username);
+        await dialog.getByLabel('Invited player').selectOption(guestAccount.username);
         await dialog.getByRole('button', { name: 'Host', exact: true }).click();
         await expect(dialog).toBeHidden({ timeout: 25_000 });
         await expect(hostTable.getByRole('button', { name: 'Start' })).toBeDisabled();

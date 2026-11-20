@@ -6,6 +6,17 @@ CREATE TABLE IF NOT EXISTS accounts (
   enabled boolean NOT NULL DEFAULT TRUE
 );
 
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS email text;
+CREATE UNIQUE INDEX IF NOT EXISTS accounts_verified_email ON accounts(email);
+
+CREATE TABLE IF NOT EXISTS signup_links (
+  email text PRIMARY KEY,
+  token_digest text NOT NULL UNIQUE,
+  issued_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS signup_links_expiration ON signup_links(expires_at);
+
 CREATE TABLE IF NOT EXISTS browser_sessions (
   digest text PRIMARY KEY,
   account_id uuid NOT NULL REFERENCES accounts(id),
@@ -139,6 +150,7 @@ CREATE INDEX IF NOT EXISTS invitations_by_invitee ON invitations(invitee_key, ex
 
 ALTER TABLE invitations
   ADD COLUMN IF NOT EXISTS mode text NOT NULL DEFAULT 'friend' CHECK (mode IN ('friend', 'mcp')),
+  ADD COLUMN IF NOT EXISTS unlisted boolean NOT NULL DEFAULT false CHECK (NOT unlisted OR mode='friend'),
   ADD COLUMN IF NOT EXISTS guest_display_name text,
   ADD COLUMN IF NOT EXISTS chat_mode text NOT NULL DEFAULT 'quiet' CHECK (chat_mode IN ('quiet', 'chatty', 'coach')),
   ADD COLUMN IF NOT EXISTS owner_account_id uuid REFERENCES accounts(id) ON DELETE CASCADE,

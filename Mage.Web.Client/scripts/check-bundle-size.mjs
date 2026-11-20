@@ -132,9 +132,9 @@ import { gzipSync } from 'node:zlib';
 const BUDGET_KB = {
   entry: 86,
   initial: 221,
-  // Replay decision navigation, card previews and rating markers load with the replay or history.
-  // The standard and private release builds measured about 847 kB. Entry and initial limits stay fixed.
-  app: 851,
+  // Public registration and the match selection and invitation changes bring the private build to about 854 kB.
+  // Entry and initial limits stay fixed.
+  app: 856,
 };
 
 const dist = new URL('../dist/', import.meta.url).pathname;

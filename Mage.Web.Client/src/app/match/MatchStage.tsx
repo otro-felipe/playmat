@@ -185,7 +185,7 @@ export interface MatchStageProps {
 
 export function MatchStage({ session, state, replayLog, replayHands, reviewLayout, onLeave, seatDisplayNames }: MatchStageProps) {
   const { view, interaction, playerId, mode, awaitingServer, prediction } = state;
-  const revealedHands = useRevealedHands(view, mode !== 'replay');
+  const revealedHands = useRevealedHands(view, mode === 'replay' ? null : `${state.gameId}:${state.rollbackRevision ?? 0}`);
   const reveals = useReveals(view, mode !== 'replay');
   const t = useT();
   const navigate = useNavigate();
@@ -369,6 +369,7 @@ export function MatchStage({ session, state, replayLog, replayHands, reviewLayou
   }, [blockDrop]);
 
   const myId = board.me?.player.playerId ?? null;
+  const revealedOwnIds = useMemo(() => new Set(revealedInHand(revealedHands, myId ?? undefined).map((card) => card.cardId ?? card.id!)), [revealedHands, myId]);
   usePickIdentical(session, state, automation.pickIdentical && mode === 'play');
   useSmartPreselect(session, state, myId, automation.smartPreselect && mode === 'play');
   const attackDrop = useAttackTarget(session, state, myId, automation.attackPlayerByDefault && mode === 'play');
@@ -522,6 +523,19 @@ export function MatchStage({ session, state, replayLog, replayHands, reviewLayou
   const enginePriorityName = (view?.players ?? []).find((player) => player.hasPriority && player.playerId !== myId)?.name
     ?? (view?.priorityPlayerName !== board.me?.player.name ? view?.priorityPlayerName ?? null : null);
   const displayName = (engineName?: string | null) => engineName == null ? undefined : seatDisplayName(engineName, seatDisplayNames);
+  const graveyards = new Map<string, { id: string; label: string }>();
+  if (pickerCards) {
+    for (const player of view?.players ?? []) {
+      if (!player.graveyard || !player.playerId) continue;
+      const seat = {
+        id: player.playerId,
+        label: player.playerId === myId
+          ? t('match.graveyard.mine')
+          : t('match.graveyard.theirs', { name: displayName(player.name) ?? t('match.graveyard.unknownPlayer') }),
+      };
+      for (const [id, card] of Object.entries(player.graveyard)) graveyards.set(card.id ?? id, seat);
+    }
+  }
   const priorityName = displayName(enginePriorityName) ?? null;
   let priorityLabel: string | null = null;
   if (interaction.mode === 'declareAttackers') priorityLabel = t('match.hud.attackers');
@@ -734,6 +748,7 @@ export function MatchStage({ session, state, replayLog, replayHands, reviewLayou
               <Hand
                 cards={handAndPlayables}
                 fromZone={fromZone}
+                revealed={revealedOwnIds}
                 choosing={choosingInHand}
                 clickable={pickerCards ? EMPTY : clickable}
                 selected={interaction.selected}
@@ -832,6 +847,7 @@ export function MatchStage({ session, state, replayLog, replayHands, reviewLayou
               <CardPicker
                 title={choosingFromHand ? 'Put cards on the bottom' : 'Choose cards'}
                 cards={pickerCards}
+                graveyards={graveyards}
                 interaction={interaction}
                 sleeve={sleeves.mine}
                 footer={prompt ? <TriggerOrderOptions gameId={state.gameId} prompt={prompt} onCommand={onCommand} /> : undefined}

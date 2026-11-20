@@ -200,12 +200,13 @@ export function parsePrompt<M extends PromptEventName>(method: M, data: Callback
       const message = data as GameClientMessage;
       const common = base(message);
       const cards = message.cardsView1 && Object.keys(message.cardsView1).length > 0 ? message.cardsView1 : null;
+      const targets = idList(message.targets);
       return {
         ...common,
         kind: 'target',
-        targets: idList(message.targets).length > 0
-          ? idList(message.targets)
-          : idList(common.options.possibleTargets).length > 0
+        targets: targets.length > 0
+          ? targets
+          : Array.isArray(common.options.possibleTargets)
             ? idList(common.options.possibleTargets)
             : Object.keys(cards ?? {}),
         cards,

@@ -9,6 +9,7 @@ const tableId = '22222222-2222-4222-8222-222222222222';
 const roomId = '33333333-3333-4333-8333-333333333333';
 const deck = { id: 'fixture', name: 'Pioneer fixture', format: 'Constructed - Pioneer', cards: [], sideboard: [] };
 let tables: TableView[];
+let friends: string[];
 const calls = vi.hoisted(() => ({ create: vi.fn(), join: vi.fn(), notify: vi.fn() }));
 
 vi.mock('../playtesting', async (original) => ({ ...await original<typeof import('../playtesting')>(), PRIVATE_PLAYTESTING: true }));
@@ -25,14 +26,60 @@ vi.mock('../stores/decks', () => {
 });
 vi.mock('../stores/useDeckRoster', () => ({ useDeckRoster: () => [deck] }));
 vi.mock('../stores/toasts', () => ({ notify: calls.notify }));
-vi.mock('../stores/social', () => ({ useSocial: { getState: () => ({ ignored: [] }) } }));
+vi.mock('../stores/social', () => ({
+  useSocial: Object.assign((pick: (state: { friends: string[] }) => unknown) => pick({ friends }), {
+    getState: () => ({ ignored: [] }),
+  }),
+}));
 vi.mock('../ui/imageCache', () => ({ warmDeck: vi.fn() }));
 vi.mock('../social/LevelBadge', () => ({ NameLevel: () => null }));
 
 afterEach(() => {
+  friends = [];
   localStorage.clear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+
+test('[PM-SETUP-AC-02] the host selects a saved friend for the invitation', async () => {
+  tables = [];
+  friends = ['Guest', 'OtherFriend'];
+  calls.create.mockResolvedValue({ tableId });
+  calls.join.mockResolvedValue(true);
+  const fetcher = vi.fn<(url: string, request: RequestInit) => Promise<Response>>(async () => Response.json({}, { status: 201 }));
+  vi.stubGlobal('fetch', fetcher);
+  const { page } = mount();
+  fireEvent.click(page.getByRole('button', { name: 'Host a table' }));
+  const dialog = within(await page.findByRole('dialog', { name: 'Host a table' }));
+  const selector = dialog.getByRole('combobox', { name: 'Invited player' });
+  expect(within(selector).getAllByRole('option').map(option => option.textContent)).toEqual([
+    'Anyone with the link', 'Guest', 'OtherFriend',
+  ]);
+  fireEvent.change(selector, { target: { value: 'Guest' } });
+  fireEvent.click(dialog.getByRole('button', { name: /^Host$/ }));
+  await waitFor(() => expect(fetcher).toHaveBeenCalledWith('/api/playtesting/invites', expect.objectContaining({ method: 'POST' })));
+  const [, request] = fetcher.mock.calls[0];
+  expect(JSON.parse(String(request.body))).toMatchObject({ tableId, mode: 'friend', guestEngineName: 'Guest' });
+});
+
+test('[PM-SETUP-AC-03] the host can create a link-only invitation with an empty friends list', async () => {
+  tables = [];
+  friends = [];
+  calls.create.mockResolvedValue({ tableId });
+  calls.join.mockResolvedValue(true);
+  const fetcher = vi.fn<(url: string, request: RequestInit) => Promise<Response>>(async () => Response.json({}, { status: 201 }));
+  vi.stubGlobal('fetch', fetcher);
+  const { page } = mount();
+  fireEvent.click(page.getByRole('button', { name: 'Host a table' }));
+  const dialog = within(await page.findByRole('dialog', { name: 'Host a table' }));
+  const selector = dialog.getByRole<HTMLSelectElement>('combobox', { name: 'Invited player' });
+  expect(selector.selectedOptions[0].textContent).toBe('Anyone with the link');
+  fireEvent.click(dialog.getByRole('button', { name: /^Host$/ }));
+  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+  const [, request] = fetcher.mock.calls[0];
+  const invite = JSON.parse(String(request.body));
+  expect(invite).toMatchObject({ tableId, mode: 'friend' });
+  expect(invite).not.toHaveProperty('guestEngineName');
 });
 
 function mount(state?: { host: string; opponent: 'mcp' }) {
@@ -101,6 +148,7 @@ test('[PM-AC-16] the host creates an account-private MCP invitation without sele
 
 test('[PM-REVIEW-PRIV-1] hosting a private table requires no replay permission', async () => {
   tables = [];
+  friends = ['Guest'];
   calls.create.mockResolvedValue({ tableId });
   const fetcher = vi.fn(async (url: string, request?: RequestInit) =>
     Response.json({ tableId }, { status: request?.method === 'POST' ? 201 : 200 }));
