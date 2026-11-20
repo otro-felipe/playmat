@@ -4,6 +4,7 @@
   --public-muted: #bebeb1;
   --public-line: #ffffff22;
   --public-width: 1280px;
+  container-type: inline-size;
   min-height: 100%;
   height: 100%;
   overflow: auto;
@@ -94,7 +95,7 @@
 
 .heroCopy { max-width: 610px; }
 .heroCopy h1 {
-  font-size: clamp(60px, 8vw, 118px);
+  font-size: clamp(3.75rem, 8cqi, 7.375rem);
   letter-spacing: -.028em;
   line-height: .86;
   text-wrap: initial;
@@ -111,7 +112,7 @@
   max-width: 365px;
   margin-block: 28px 26px;
   color: var(--public-muted);
-  font-size: clamp(18px, 1.6vw, 22px);
+  font-size: clamp(1.125rem, 1.6cqi, 1.375rem);
   line-height: 1.45;
 }
 
@@ -162,7 +163,7 @@
 .back { display: inline-flex; align-items: center; gap: 7px; color: var(--public-muted); text-decoration: none; }
 .back:hover { color: var(--public-paper); text-decoration: underline; }
 .formIntro { margin-block: 24px; }
-.formIntro h1 { font-size: clamp(38px, 6vw, 64px); text-wrap: initial; }
+.formIntro h1 { font-size: clamp(2.375rem, 6cqi, 4rem); text-wrap: initial; }
 .formIntro p { margin-top: 11px; color: var(--public-muted); font-size: 17px; overflow-wrap: anywhere; }
 .formIntro :is(a, button) { margin-top: 20px; }
 .formIntro .mail { margin-bottom: 10px; }
@@ -181,7 +182,7 @@
   .hero { align-items: end; min-height: 548px; border-radius: 12px; }
   .heroArt { width: 100%; height: 76%; object-position: 61% 44%; }
   .hero::after { background: linear-gradient(0deg, #141c15 19%, #141c15 27%, #141c15c7 48%, #141c1533 77%, transparent); }
-  .heroCopy h1 { font-size: clamp(53px, 12vw, 80px); }
+  .heroCopy h1 { font-size: clamp(3.3125rem, 12cqi, 5rem); }
   .heroCopy p { margin-block: 19px; }
   .features { grid-template-columns: 1fr; margin-top: 18px; }
   .feature { padding-block: 18px; }
