@@ -1872,6 +1872,8 @@ const es: Catalog = {
   'match.trigger.label': 'Disparada',
   'match.zoom.mechanics': 'Mecánicas',
   'match.room.doors': 'Puertas',
+  'match.room.casting': 'Lanzando {name}',
+  'match.room.doorUnlocked': 'Puerta desbloqueada',
   'match.room.unlocked': '{name}: desbloqueada',
   'match.room.locked': '{name}: bloqueada',
   'match.counter.chapter': 'Cap.',

@@ -1,6 +1,7 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { ActionPresentation } from '../../core/game/actionPresentation';
 import type { GameSession } from '../../core/game/gameSession';
+import { useT } from '../i18n';
 import type { SeatDisplayNames } from './seatDisplayNames';
 import styles from './RecentActions.module.css';
 
@@ -15,6 +16,7 @@ export function RecentActions({ session, seatDisplayNames }: { session: GameSess
 }
 
 function ActionReceipt({ feed }: { feed: ActionPresentation; seatDisplayNames?: SeatDisplayNames }) {
+  const t = useT();
   const state = useSyncExternalStore(feed.subscribe, feed.getSnapshot);
   const action = state.items[0];
   if (!action && !state.overflow) return null;
@@ -23,7 +25,7 @@ function ActionReceipt({ feed }: { feed: ActionPresentation; seatDisplayNames?: 
       <small>Recent action{action?.turn ? ` · Turn ${action.turn}` : ''}</small>
       {action && <>
         <strong>{action.name}</strong>
-        <span>{action.kind}</span>
+        <span>{action.kind === 'Door unlocked' ? t('match.room.doorUnlocked') : action.kind}</span>
       </>}
       {state.items.length > 1 && <small>{state.items.length - 1} queued</small>}
       {state.overflow > 0 && <small>{state.overflow} more actions · see Log</small>}

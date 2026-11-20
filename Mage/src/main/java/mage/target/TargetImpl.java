@@ -13,6 +13,7 @@ import mage.game.events.TargetEvent;
 import mage.game.permanent.Permanent;
 import mage.game.stack.Spell;
 import mage.players.Player;
+import mage.target.common.TargetOpponent;
 import mage.util.CardUtil;
 import mage.util.RandomUtil;
 
@@ -876,12 +877,15 @@ public abstract class TargetImpl implements Target {
 
         String abilityText = source.getRule(true).toLowerCase();
         boolean strictModeEnabled = player.getStrictChooseMode();
+        boolean forcedOpponentTarget = this instanceof TargetOpponent && !isNotTarget()
+                && getMinNumberOfTargets() == 1 && possibleTargets.size() == 1;
         boolean canAutoChoose = this.getMinNumberOfTargets() == this.getMaxNumberOfTargets() // Targets must be picked
                 && isOnline
                 && possibleTargets.size() == this.getMinNumberOfTargets() - this.getSize() // Available targets are equal to the number that must be picked
                 && !strictModeEnabled  // Test AI is not set to strictChooseMode(true)
                 && playerAutoTargetLevel > 0 // Human player has enabled auto-choose in settings
-                && !abilityText.contains("search"); // Do not autochoose for any effects which involve searching
+                // Naming the only legal opponent does not choose any card in a later search.
+                && (forcedOpponentTarget || !abilityText.contains("search"));
 
 
         if (canAutoChoose) {
@@ -891,6 +895,10 @@ public abstract class TargetImpl implements Target {
                 // choosen and unchoosing the same target.
                 if (this.targets.containsKey(possibleChooseId)) {
                     continue;
+                }
+                // A required single-opponent target has no tactical choice when only one is legal.
+                if (forcedOpponentTarget) {
+                    return canTarget(abilityControllerId, possibleChooseId, source, game) ? possibleChooseId : null;
                 }
                 if (autoTargetAll) { // No need for further checks since all targeting is to be automated
                     return possibleChooseId;

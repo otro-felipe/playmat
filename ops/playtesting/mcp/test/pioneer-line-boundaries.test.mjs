@@ -65,13 +65,14 @@ test('[PM-AC-09-RESPONSES] only a public unpaid instant or sorcery on the stack 
   assert.equal(state.ownHand[0].unpaid, undefined);
 });
 
-function discardFixture(t, spell, { unpaid = true, castingEvidence = evidence } = {}) {
+function discardFixture(t, spell, { unpaid = true, castingEvidence = evidence, chooseManaColor = false } = {}) {
   const stack = [{ ...spell, id: 'discard-stack', controllerId: pilot.id, unpaid }];
   const target = { id: 'select-player', kind: 'target', instruction: spell.targetInstruction,
     choices: [{ id: 'target-opponent', objectId: opponent.id, type: 'object' },
       ...(spell.canTargetSelf ? [{ id: 'target-self', objectId: pilot.id, type: 'object' }] : [])] };
   const revealedCard = { id: 'fixture-revealed-card', name: 'Negate' };
-  return fixture(t, { ownHand: [spell], players: [{ ...pilot, battlefield: [swamp] }, opponent],
+  const manaSource = chooseManaColor ? { ...swamp, id: 'marsh', name: 'Blooming Marsh' } : swamp;
+  return fixture(t, { ownHand: [spell], players: [{ ...pilot, battlefield: [manaSource] }, opponent],
     decision: priority('cast', object('cast-discard', spell)) }, (decisionId, _choiceId, update) => {
     switch (decisionId) {
       case 'cast':
@@ -79,9 +80,18 @@ function discardFixture(t, spell, { unpaid = true, castingEvidence = evidence } 
         break;
       case 'select-player':
         update({ stack: [{ ...stack[0], targets: [opponent.id] }],
-          decision: { id: 'pay', kind: 'payMana', choices: [object('tap-swamp', swamp)] } });
+          decision: { id: 'pay', kind: 'payMana', choices: [object(`tap-${manaSource.id}`, manaSource)] } });
         break;
       case 'pay':
+        if (chooseManaColor) {
+          update({ decision: { id: 'mana-picker', kind: 'panel', sourceObjectId: manaSource.id,
+            choices: ['B', 'G'].map((color) => ({ id: `make-${color}`, abilityType: 'ACTIVATED_MANA', manaColors: [color] })) } });
+          break;
+        }
+        update({ stack: [{ ...stack[0], unpaid: false, targets: [opponent.id] }], decision: priority('resolve') });
+        break;
+      case 'mana-picker':
+        assert.equal(_choiceId, 'make-B');
         update({ stack: [{ ...stack[0], unpaid: false, targets: [opponent.id] }], decision: priority('resolve') });
         break;
       case 'resolve':
@@ -107,6 +117,18 @@ for (const spell of discardSpells) {
       ['pay', 'tap-swamp'], ['resolve', 'pass']]);
   });
 }
+
+test('[PM-LINE-SEM-2] Thoughtseize with its declared black mana crosses a dual-land picker before reveal', async (t) => {
+  const [spell] = discardSpells;
+  const { run, applied } = discardFixture(t, spell, { chooseManaColor: true });
+  const result = await run([{ kind: 'play', select: { cardId: spell.id },
+    targets: [{ select: { objectId: opponent.id }, instruction: spell.targetInstruction }],
+    payWith: [{ sourceId: 'marsh', color: 'B' }] }]);
+  assert.equal(result.reason, 'new_information');
+  assert.equal(result.state.decision.id, 'pick-revealed');
+  assert.deepEqual(applied, [['cast', 'cast-discard'], ['select-player', 'target-opponent'],
+    ['pay', 'tap-marsh'], ['mana-picker', 'make-B'], ['resolve', 'pass']]);
+});
 
 test('[PM-AC-09-RESPONSES] Thoughtseize recovery groups the observed cast target and payment before reveal', async (t) => {
   const [thoughtseize] = discardSpells;

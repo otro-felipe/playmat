@@ -1,6 +1,7 @@
 import type { GameView } from '../../protocol/generated/views';
 import type { GameSession, GameSessionState } from './gameSession';
 import { publicCardName, publicTargetLabels } from './publicTargets';
+import { roomDoors } from './rooms';
 
 export const ACTION_BEAT_MS = 900;
 export const MAX_ACTION_PREVIEWS = 8;
@@ -8,7 +9,7 @@ export const MAX_ACTION_PREVIEWS = 8;
 export interface ActionPreview {
   key: number;
   objectId: string;
-  kind: 'On the stack' | 'Targets announced' | 'Left the stack' | 'Entered the battlefield';
+  kind: 'On the stack' | 'Targets announced' | 'Left the stack' | 'Entered the battlefield' | 'Door unlocked';
   name: string;
   targets: readonly string[];
   turn: number | undefined;
@@ -92,10 +93,17 @@ export class ActionPresentation {
     for (const [id, card] of Object.entries(before.stack ?? {})) {
       if (!view.stack?.[id]) actions.push({ objectId: id, kind: 'Left the stack', name: publicCardName(card), targets: publicTargetLabels(card, before), turn: before.turn });
     }
-    const known = new Set((before.players ?? []).flatMap((player) => Object.keys(player.battlefield ?? {})));
+    const known = new Map((before.players ?? []).flatMap((player) => Object.entries(player.battlefield ?? {})));
     for (const player of view.players ?? []) {
       for (const [id, card] of Object.entries(player.battlefield ?? {})) {
-        if (!known.has(id)) actions.push({ objectId: id, kind: 'Entered the battlefield', name: publicCardName(card), targets: [], turn: view.turn });
+        const previous = known.get(id);
+        const previousDoors = previous ? roomDoors(previous) : null;
+        const unlocked = (roomDoors(card) ?? []).filter((door) => door.unlocked
+          && (!previous || previousDoors?.some((old) => old.name === door.name && !old.unlocked)));
+        for (const door of unlocked) {
+          actions.push({ objectId: id, kind: 'Door unlocked', name: door.name, targets: [], turn: view.turn });
+        }
+        if (!previous && unlocked.length === 0) actions.push({ objectId: id, kind: 'Entered the battlefield', name: publicCardName(card), targets: [], turn: view.turn });
       }
     }
     if (!actions.length) return;

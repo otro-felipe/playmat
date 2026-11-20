@@ -3,6 +3,8 @@ import type { CardView, GameView } from '../../protocol/generated/views';
 import { publicCardName, publicTargetLabels } from '../../core/game/publicTargets';
 import { isStackAbility } from '../../core/game/cards';
 import { stackSourceId } from '../../core/game/promptSource';
+import { roomCastDoor } from '../../core/game/rooms';
+import { useT } from '../i18n';
 import { AbilityCard } from '../ui/AbilityCard';
 import { CardFace } from '../ui/CardFace';
 import { zoneKeys } from './boardModel';
@@ -64,6 +66,7 @@ function StackItem({ item, index, total, clickable, selected, sleeve, onClick, o
   origin: string | undefined;
   targets: string[];
 }) {
+  const t = useT();
   const ref = useRef<HTMLLIElement>(null);
   const setZoom = useMatchUi((state) => state.setZoom);
   const setSourceHover = useMatchUi((state) => state.setSourceHover);
@@ -71,6 +74,9 @@ function StackItem({ item, index, total, clickable, selected, sleeve, onClick, o
   const focused = useMatchUi((state) => state.stackFocus === item.id);
   const ability = isStackAbility(item) ? item : null;
   const face = ability?.sourceCard ?? item;
+  const door = roomCastDoor(item);
+  const castLabel = door ? t('match.room.casting', { name: door }) : null;
+  const next = index === 0 && <span className={styles.next}>Resolving next</span>;
   useFlip(ability ? item.id : (item.cardId ?? item.id), ref, { fallbackOrigin: origin });
 
   return (
@@ -94,10 +100,10 @@ function StackItem({ item, index, total, clickable, selected, sleeve, onClick, o
       onBlur={() => setStackFocus(null)}
       onClick={() => clickable && onClick(item.id!)}
       data-object-id={item.id}
-      aria-label={`${publicCardName(item)}${index === 0 ? ', resolves next' : ''}${targets.length ? `, targets: ${targets.join(', ')}` : ''}`}
+      aria-label={`${castLabel ?? publicCardName(item)}${index === 0 ? ', resolves next' : ''}${targets.length ? `, targets: ${targets.join(', ')}` : ''}`}
     >
       {ability ? <AbilityCard ability={item} sleeve={sleeve} /> : <CardFace card={face} sleeve={sleeve} size="normal" />}
-      {index === 0 && <span className={styles.next}>Resolving next</span>}
+      {castLabel ? <div className={styles.roomStatus}><span>{castLabel}</span>{next}</div> : next}
       <span className={styles.arrowOrigin} data-stack-arrow-origin={item.id} aria-hidden="true" />
     </li>
   );

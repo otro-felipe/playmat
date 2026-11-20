@@ -36,6 +36,9 @@ Cards from each graveyard appear under the owning seat's name, including when th
 #### Scenario: READ-AC-007 — Revealed hand marker follows the current hand
 A public reveal marks the card even after the reveal panel expires. If the card leaves and later returns to the hand, a fresh reveal is required before the mark appears again. Rolling back the game clears hand knowledge from the abandoned timeline.
 
+#### Scenario: READ-AC-008 — Announced Room door
+When a Room half is cast, the live stack SHALL name the public spell face. The combined Room card can supply the artwork and context. A door that opens on entry or through the unlock special action SHALL be identified in recent actions from its public battlefield state. If the public state does not identify the exact door, retain the available public label.
+
 ## Traceability
 The previous target-panel implementation's regressions executed successfully in the combined main candidate's [web run](https://github.com/otro-felipe/playmat/actions/runs/44164549318): 1,568 unit tests passed, 42 skipped, with TypeScript, ESLint and accessibility checks passing. That run's overall size gate failed; functional test success alone did not approve deployment. This does not validate the subsequent READ-AC-004 arrow-only change; its gates and browser screenshots are pending execution.
 
@@ -49,6 +52,7 @@ The final [optimized web run](https://github.com/otro-felipe/playmat/actions/run
 | READ-AC-005 | `Mage.Web.Client/src/app/match/MatchStage.test.tsx` — `[READ-AC-005] opens the revealed hand with ineligible cards visible but disabled`. `rust/crates/playmat-host/src/prompts.rs` — `a_revealed_hand_choice_exposes_the_whole_hand_with_only_legal_answers` | Live multiplayer visual check |
 | READ-AC-006 | `Mage.Web.Client/src/app/match/MatchStage.test.tsx` — `[READ-AC-006] groups selectable graveyard cards under their seat names` | Physical mobile device rendering |
 | READ-AC-007 | `Mage.Web.Client/src/app/match/MatchStage.test.tsx` — `[READ-AC-007] clears the mark after a private zone change and accepts a fresh reveal` | Live reconnect with a previously revealed hand |
+| READ-AC-008 | `Mage.Web.Client/src/app/match/StackZone.test.tsx` — `[READ-AC-008] names the cast door %s over the combined artwork`, `[READ-AC-008] shows no door when the stack view does not identify a public Room half`. `Mage.Web.Client/src/app/match/RecentActions.test.tsx` — `[READ-AC-008] announces which Room door unlocked on entry and which unlocked later` | Production match rendering |
 
 ## Known limitations
 The server does not replay game-chat history on rejoin, so lines broadcast while disconnected cannot be reconstructed by this client change. The reported turn-3 session has no transport trace; regressions reproduce concrete client failure modes, not the exact original connection.
