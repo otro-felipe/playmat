@@ -113,6 +113,7 @@
       "Jeskai Creativity",
       "Jeskai Ensoul",
       "Jund",
+      "Jund Aggro",
       "Jund Artifact Sacrifice",
       "Jund Sacrifice",
       "Landless Spy",
@@ -1065,5 +1066,19 @@
       "Domain",
       "Five-Color"
     ]
+  },
+  "aliases": {
+    "Devotion to Green": "Mono-Green Devotion",
+    "Red Deck Wins": "Mono-Red Aggro",
+    "RDW": "Mono-Red Aggro",
+    "UR Aggro": "Izzet Aggro",
+    "UW Control": "Azorius Control",
+    "UR Control": "Izzet Control",
+    "UB Mill": "Dimir Mill",
+    "Lotus Field": "Lotus Field Combo",
+    "The Rock (Golgari Control)": "Golgari Midrange",
+    "Arclight Phoenix": "Izzet Phoenix",
+    "Weenie White": "Mono-White Aggro",
+    "4/5c Control": "Four/Five-Color Control"
   }
 }
