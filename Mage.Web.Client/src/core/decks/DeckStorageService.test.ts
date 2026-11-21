@@ -113,3 +113,13 @@ test('saves explicit deck copies without overwriting an existing same-name deck'
   assert.equal(summaries.length, 2);
   assert.deepEqual(new Set(summaries.map(deck => deck.id)), new Set([firstId, copyId]));
 });
+
+test('a pending save cannot write into a different account library', async () => {
+  installMemoryStorage();
+  const storage = new LocalDeckStorage();
+  storage.setAccountScope('first');
+  const save = storage.saveDeck(makeDeck());
+  storage.setAccountScope('second');
+  await assert.rejects(save, /library changed/);
+  assert.deepEqual(await storage.listDecks(), []);
+});

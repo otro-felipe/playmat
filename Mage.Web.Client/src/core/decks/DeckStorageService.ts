@@ -1,4 +1,3 @@
-import { archetypesFor, classifyArchetype } from "./archetypes/library.mjs";
 import type { DeckCardLists, DeckImportSource } from "./types.js";
 import { DeckSerializer } from "./DeckSerializer.js";
 import { newId } from "../util/uuid.js";
@@ -110,6 +109,10 @@ export class LocalDeckStorage implements IDeckStorage {
     }
 
     async saveDeck(deck: DeckCardLists, options: SaveDeckOptions = {}): Promise<string> {
+        // Saving is the first storage operation that needs the format catalog.
+        const scope = this.accountStores;
+        const { archetypesFor, classifyArchetype } = await import("./archetypes/library.mjs");
+        if (scope !== this.accountStores) throw new Error("The deck library changed while saving.");
         const meta = this.getMeta();
 
         // Use existing deck ID if available, otherwise generate new one or find by name

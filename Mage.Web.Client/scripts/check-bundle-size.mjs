@@ -132,8 +132,9 @@ import { gzipSync } from 'node:zlib';
 const BUDGET_KB = {
   entry: 86,
   initial: 221,
-  // The history dashboard, bilingual labels and batched player identity display bring the private build to 861 kB.
-  app: 864,
+  // The deck analysis screens, bilingual labels and on-demand archetype catalog measure
+  // 872.9 kB for the private app and 864.5 kB for the public app (2026-11-21).
+  app: 874,
 };
 
 const dist = new URL('../dist/', import.meta.url).pathname;
