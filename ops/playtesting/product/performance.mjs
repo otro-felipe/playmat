@@ -187,6 +187,15 @@ function archetypeGroups(decks, matches, query) {
     )
 }
 
+function withoutCard(known, present) {
+  return {
+    total: known.total - present.total,
+    wins: known.wins - present.wins,
+    losses: known.losses - present.losses,
+    draws: known.draws - present.draws,
+  }
+}
+
 function rankCards(map) {
   return [...map]
     .map(([card, games]) => ({ card, games }))
@@ -200,6 +209,8 @@ async function summarize(selected, loadEvidence, includeCards) {
     mulligans = new Map(),
     openingCards = new Map(),
     opponentCards = new Map()
+  const keptResults = emptyRecord()
+  const replayExamples = new Map()
   const coverage = { keptHands: 0, opponentCards: 0, games: 0 }
   const byGame = includeCards ? await loadEvidence(selected.flatMap((match) => match.games)) : null
   for (const match of selected) {
@@ -230,11 +241,18 @@ async function summarize(selected, loadEvidence, includeCards) {
       const evidence = byGame.get(game.id)
       if (evidence.opening !== null) {
         coverage.keptHands++
+        record(keptResults)
         for (const card of evidence.opening) record(group(openingCards, card, emptyRecord))
       }
       if (evidence.opponent !== null) {
         coverage.opponentCards++
-        for (const card of evidence.opponent) record(group(opponentCards, card, emptyRecord))
+        for (const card of evidence.opponent) {
+          record(group(opponentCards, card, emptyRecord))
+          if (!game.object_key || game.archive_state !== 'ready') continue
+          const examples = group(replayExamples, card, () => ({ losses: [], others: [] }))
+          const bucket = game.winner && normalize(game.winner) !== game.engine_key ? examples.losses : examples.others
+          if (bucket.length < 3) bucket.push(game.id)
+        }
       }
     }
   }
@@ -243,8 +261,11 @@ async function summarize(selected, loadEvidence, includeCards) {
     splits,
     matchups: [...matchups.values()].sort((a, b) => b.matches.total - a.matches.total),
     mulligans: [...mulligans].sort(([a], [b]) => a - b).map(([count, games]) => ({ count, games })),
-    openingCards: rankCards(openingCards),
-    opponentCards: rankCards(opponentCards),
+    openingCards: rankCards(openingCards).map(entry => ({ ...entry, without: withoutCard(keptResults, entry.games) })),
+    opponentCards: rankCards(opponentCards).map(entry => {
+      const examples = replayExamples.get(entry.card)
+      return { ...entry, gameIds: examples ? [...examples.losses, ...examples.others].slice(0, 3) : [] }
+    }),
     coverage,
   }
 }
