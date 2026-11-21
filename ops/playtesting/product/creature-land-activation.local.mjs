@@ -8,7 +8,7 @@ const scenarios = [
 ]
 
 export async function verifyCreatureLandActivation({ startFixture, ownPlayer, rivalPlayer, answer, waitNextOwn,
-  playLineWithPeer, call, totalDeadline, setRivalSetup }) {
+  playLineWithPeer, call, gameClock, setRivalSetup }) {
   for (const { landName, format, rivalResponse } of scenarios) {
     const deck = { name: 'Isolated creature land fixture', cards: [
       { cardName: landName, amount: 4 }, { cardName: 'Mountain', amount: 56 },
@@ -16,7 +16,7 @@ export async function verifyCreatureLandActivation({ startFixture, ownPlayer, ri
     let state = await startFixture('Isolated activation of ' + landName, deck, 77, undefined, format)
     let playedLandTurn
     let source, mountain, activation, abilityText
-    while (Date.now() < totalDeadline) {
+    while (gameClock.hasTime()) {
       const own = ownPlayer(state)
       const { decision } = state
       const ownMain = state.step === 'PRECOMBAT_MAIN' && state.activePlayerId === own.id && decision.kind === 'priority'

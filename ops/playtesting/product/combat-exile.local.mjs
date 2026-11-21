@@ -34,7 +34,7 @@ function routine(state, player, basic) {
 }
 
 async function exercise(fixture, defending) {
-  const { startFixture, ownPlayer, rivalPlayer, answer, waitNextOwn, playLineWithPeer, call, setRivalSetup, totalDeadline } = fixture
+  const { startFixture, ownPlayer, rivalPlayer, answer, waitNextOwn, playLineWithPeer, call, setRivalSetup, gameClock } = fixture
   const partnerName = defending ? swift : nemesis
   let pilotReady = false, engage = false, paired = false
   setRivalSetup(state => {
@@ -69,7 +69,7 @@ async function exercise(fixture, defending) {
     deck('Isolated red replacement', mountain, [saga, rage, partnerName]), 2753,
     deck('Isolated black combatants', swamp, defending ? [sheoldred, trespasser] : [trespasser]), 'Pioneer')
   try {
-    while (Date.now() < totalDeadline) {
+    while (gameClock.hasTime()) {
       const pilot = ownPlayer(state), rival = rivalPlayer(state), decision = state.decision
       const source = permanent(pilot, etching), partner = permanent(pilot, partnerName)
       const werewolf = permanent(rival, defending ? glutton : trespasser)

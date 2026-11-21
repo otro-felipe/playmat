@@ -42,7 +42,7 @@ function requireIsolatedFixture() {
   }
 }
 
-export async function verifyReplayCapture({ startFixture, call, ownPlayer, rivalPlayer, answer, waitNextOwn, totalDeadline }) {
+export async function verifyReplayCapture({ startFixture, call, ownPlayer, rivalPlayer, answer, waitNextOwn, gameClock }) {
   requireIsolatedFixture()
   let state = await startFixture('Isolated actual draws and seat visibility', deck, 77)
   const move = async choice => {
@@ -53,7 +53,7 @@ export async function verifyReplayCapture({ startFixture, call, ownPlayer, rival
     assert.equal(Object.hasOwn(state, 'review'), false, 'Live MCP state carries no replay-only overlay')
   }
   let cast, land
-  while (Date.now() < totalDeadline) {
+  while (gameClock.hasTime()) {
     const player = ownPlayer(state)
     const main = state.step === 'PRECOMBAT_MAIN' && state.activePlayerId === player.id && state.decision.kind === 'priority'
     const untappedLand = player.battlefield.find(card => card.name === 'Mountain' && !card.tapped)
@@ -78,13 +78,13 @@ export async function verifyReplayCapture({ startFixture, call, ownPlayer, rival
   const spellId = state.stack[0].id
   await move(state.decision.choices.find(choice => choice.type === 'pass'))
   const castTurn = state.turn
-  while (state.turn <= castTurn + 2 && Date.now() < totalDeadline) {
+  while (state.turn <= castTurn + 2 && gameClock.hasTime()) {
     const ownEnd = state.turn > castTurn && state.activePlayerId === playerId && state.step === 'END_TURN'
     await move(fallback(state))
     if (ownEnd) break
   }
   await call('concede', { gameId: state.gameId, entireMatch: true })
-  const { info, rows } = await archived(state.gameId, Math.min(totalDeadline, Date.now() + 10_000))
+  const { info, rows } = await archived(state.gameId, gameClock.deadlineWithin(10_000))
 
   assert.equal(info.reviewVersion, 2, '[PM-REV-02] Automatically captured replay has real engine revision metadata')
   assert.deepEqual(new Set(info.players.map(row => row.playerId)), new Set([playerId, rivalId]))
@@ -133,12 +133,12 @@ export async function verifyReplayCapture({ startFixture, call, ownPlayer, rival
   return { gameId: state.gameId, matchId: info.matchId, castCursor, cardName: cast.name, playerId, rivalId, rivalDrawCursor }
 }
 
-export async function verifyHumanReplayCapture({ startHumanReviewFixture, totalDeadline }) {
+export async function verifyHumanReplayCapture({ startHumanReviewFixture, gameClock }) {
   requireIsolatedFixture()
   return startHumanReviewFixture(async (seats) => {
     let activeId
     let tookMulligan = false
-    while (Date.now() < totalDeadline) {
+    while (gameClock.hasTime()) {
       const observations = seats.map(seat => seat.snapshot())
       const [first, second] = observations
       if (observations.every(state => state.status === 'active' && state.step && state.turn >= 1
@@ -167,7 +167,7 @@ export async function verifyHumanReplayCapture({ startHumanReviewFixture, totalD
     await seats[0].concede(activeId, true)
     // The concession RPC acknowledges scheduling. Settle any still-visible
     // ordinary prompt on the other fixture seat until the terminal frame arrives.
-    const { info, rows } = await archived(activeId, Math.min(totalDeadline, Date.now() + 30_000), async () => {
+    const { info, rows } = await archived(activeId, gameClock.deadlineWithin(30_000), async () => {
       const state = seats[1].snapshot()
       if (state.status !== 'active' || state.gameId !== activeId || !state.decision || state.decision.kind === 'waiting') return
       const choice = fallback(state)
@@ -202,7 +202,7 @@ export async function verifyHumanReplayCapture({ startHumanReviewFixture, totalD
   })
 }
 
-export async function verifyDiscardChoiceCapture({ startFixture, ownPlayer, rivalPlayer, call, answer, waitNextOwn, totalDeadline }) {
+export async function verifyDiscardChoiceCapture({ startFixture, ownPlayer, rivalPlayer, call, answer, waitNextOwn, gameClock }) {
   requireIsolatedFixture()
   const actingDeck = { name: 'Isolated Thoughtseize choice fixture', cards: [
     { cardName: 'Swamp', amount: 52 }, { cardName: 'Thoughtseize', amount: 4 }, { cardName: 'Duress', amount: 4 },
@@ -222,7 +222,7 @@ export async function verifyDiscardChoiceCapture({ startFixture, ownPlayer, riva
   const chooserId = ownPlayer(state).id
   const affectedId = rivalPlayer(state).id
   let cast, manaSource
-  while (Date.now() < totalDeadline) {
+  while (gameClock.hasTime()) {
     if (state.step === 'PRECOMBAT_MAIN' && state.activePlayerId === chooserId && state.decision.kind === 'priority') {
       const card = state.ownHand.find(card => card.name === 'Thoughtseize')
       cast = card && state.decision.choices.find(choice => byObject(choice, card.id))
@@ -244,7 +244,7 @@ export async function verifyDiscardChoiceCapture({ startFixture, ownPlayer, riva
   assert.ok(chosen?.card)
   await move(chosen)
   await call('concede', { gameId: state.gameId, entireMatch: true })
-  const { rows } = await archived(state.gameId, Math.min(totalDeadline, Date.now() + 10_000))
+  const { rows } = await archived(state.gameId, gameClock.deadlineWithin(10_000))
   const selection = rows.find(row => row.action === 'select' && row.decision?.sourceCard?.name === 'Thoughtseize')
   assert.equal(selection?.decisionPlayerId, chooserId)
   assert.equal(selection.actorPlayerId, chooserId)
@@ -259,9 +259,9 @@ export async function verifyDiscardChoiceCapture({ startFixture, ownPlayer, riva
   console.log(JSON.stringify({ phase: '[PM-REV-02] real Java discard choice', exactChooser: true, legalAlternatives: true }))
 }
 
-export async function verifyModeAndUseCapture(gameId, deadline) {
+export async function verifyModeAndUseCapture(gameId, gameClock) {
   requireIsolatedFixture()
-  const { rows } = await archived(gameId, Math.min(deadline, Date.now() + 10_000))
+  const { rows } = await archived(gameId, gameClock.deadlineWithin(10_000))
   const mode = rows.find(row => row.decision?.choiceKind === 'mode' && /Patrol Night/i.test(row.decision.selectedText ?? ''))
   assert.ok(mode?.decision.optionDetails.some(option => /Date Night/i.test(option.label ?? '')), 'Other legal mode is preserved')
   assert.ok(rows.some(row => row.action === 'cast' && row.objectId === mode.parentActionId), 'Modal choice is linked to its cast')

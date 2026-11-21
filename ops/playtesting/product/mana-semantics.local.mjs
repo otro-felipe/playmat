@@ -6,11 +6,11 @@ const deck = { name: 'Isolated colored mana fixture', cards: [
   { cardName: 'Island', amount: 52 }, { cardName: 'Shivan Reef', amount: 4 }, { cardName: "Stormchaser's Talent", amount: 4 },
 ], sideboard: [] }
 
-export async function verifyTypedManaTalent({ startFixture, ownPlayer, answer, waitNextOwn, playLineWithPeer, call, totalDeadline }) {
+export async function verifyTypedManaTalent({ startFixture, ownPlayer, answer, waitNextOwn, playLineWithPeer, call, gameClock }) {
   let state = await startFixture('Isolated typed colored payment and Class trigger', deck, 77)
   const cardInHand = (name) => state.ownHand.find((card) => card.name === name)
   let reef, talent
-  while (Date.now() < totalDeadline) {
+  while (gameClock.hasTime()) {
     const decision = state.decision
     const ownMain = state.step === 'PRECOMBAT_MAIN' && state.activePlayerId === ownPlayer(state).id && decision.kind === 'priority'
     reef = cardInHand('Shivan Reef')
@@ -28,7 +28,7 @@ export async function verifyTypedManaTalent({ startFixture, ownPlayer, answer, w
     await answer(state, choice)
     state = await waitNextOwn(decision.id)
   }
-  assert.ok(reef && talent && Date.now() < totalDeadline, 'The seeded fixture offers Reef and Talent in the same own main phase')
+  assert.ok(reef && talent && gameClock.hasTime(), 'The seeded fixture offers Reef and Talent in the same own main phase')
   const life = ownPlayer(state).life
   const etb = talent.rules.find((rule) => /^When .+ enters\b.*\bcreate\b.*\bOtter\b/i.test(rule))
   assert.ok(etb, 'The visible Talent card publishes the exact entry trigger')

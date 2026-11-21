@@ -67,7 +67,7 @@ function discardForCleanup(state, preferredLand, preserve = {}) {
 const fallbackSetup = (state, preserve) => discardForCleanup(state, redLand, preserve)
   || state.decision.choices.find(item => /^Keep\b|^Play first\b/.test(item.label) || item.type === 'pass')
 
-async function verifyRageLethal({ startFixture, ownPlayer, rivalPlayer, answer, waitNextOwn, playLineWithPeer, totalDeadline, setRivalSetup }) {
+async function verifyRageLethal({ startFixture, ownPlayer, rivalPlayer, answer, waitNextOwn, playLineWithPeer, gameClock, setRivalSetup }) {
   const rageName = 'Reckless Rage'
   const pilotDeck = list('Isolated red lethal line', [[redLand, 44], [rageName, 4], [nemesis, 4], [swiftspear, 4], [kumano, 4]])
   const rivalDeck = list('Isolated Ward target', [[darkLand, 56], [trespasser, 4]])
@@ -80,7 +80,7 @@ async function verifyRageLethal({ startFixture, ownPlayer, rivalPlayer, answer, 
 
   let state = await startFixture('Isolated Rage and Ward lethal', pilotDeck, 77, rivalDeck, 'Pioneer')
   let ready
-  while (Date.now() < totalDeadline) {
+  while (gameClock.hasTime()) {
     const { decision } = state
     const pilot = ownPlayer(state), rival = rivalPlayer(state)
     const swift = namedBattlefield(pilot, swiftspear), scream = namedBattlefield(pilot, nemesis)
@@ -160,7 +160,7 @@ async function verifyRageLethal({ startFixture, ownPlayer, rivalPlayer, answer, 
     appliedDecisions: receipt.appliedDecisions, triggeredDamage: 2, combatDamage: 6, terminalStatus: after.status }))
 }
 
-async function verifyFight({ startFixture, ownPlayer, rivalPlayer, answer, waitNextOwn, playLineWithPeer, call, totalDeadline, setRivalSetup }) {
+async function verifyFight({ startFixture, ownPlayer, rivalPlayer, answer, waitNextOwn, playLineWithPeer, call, gameClock, setRivalSetup }) {
   const spell = 'Pit Fight'
   const ownDeck = list('Isolated two-role fight', [[redLand, 52], [spell, 4], [goblin, 4]])
   const rivalDeck = list('Isolated public fight targets', [[darkLand, 44], [rat, 16]])
@@ -168,7 +168,7 @@ async function verifyFight({ startFixture, ownPlayer, rivalPlayer, answer, waitN
     || discardForCleanup(state, darkLand))
   let state = await startFixture('Isolated public fight targets', ownDeck, 77, rivalDeck, 'Pioneer')
   let ready
-  while (Date.now() < totalDeadline) {
+  while (gameClock.hasTime()) {
     const { decision } = state
     const pilot = ownPlayer(state)
     const first = namedBattlefield(pilot, goblin)

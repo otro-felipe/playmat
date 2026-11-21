@@ -27,8 +27,8 @@ const ownMain = (state, ownPlayer) => state.decision.kind === 'priority'
   && state.step === 'PRECOMBAT_MAIN' && ownPlayer(state)?.id === state.activePlayerId
 
 async function setup(fixture, state, config) {
-  const { ownPlayer, answer, waitNextOwn, totalDeadline } = fixture
-  while (Date.now() < totalDeadline) {
+  const { ownPlayer, answer, waitNextOwn, gameClock } = fixture
+  while (gameClock.hasTime()) {
     const decision = state.decision
     if (config.ready(state)) return state
     const lands = ownPlayer(state)?.battlefield.filter(card => card.types.includes('LAND')) ?? []

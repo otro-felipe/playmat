@@ -1,4 +1,5 @@
 // Opt-in real-Java fixture. Never run against a real account, database, game or public endpoint.
+import { fixtureGameClock } from './fixture-game-clock.mjs'
 import { fixtureMcpFetch } from './fixture-mcp-fetch.mjs'
 import assert from 'node:assert/strict'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
@@ -29,7 +30,9 @@ const prepareDeck = { name: 'Isolated mode and prepare fixture', cards: [
   { cardName: 'Mountain', amount: 52 }, { cardName: 'Pompous Battlemage', amount: 4 }, { cardName: "Heroes' Hangout", amount: 4 },
 ], sideboard: [] }
 let browser, client
-const totalDeadline = Date.now() + 480_000
+const gameClock = fixtureGameClock()
+const startFixture = gameClock.forGame(createFixture)
+const startHumanReviewFixture = gameClock.forGame(createHumanReviewFixture)
 let acceptedSetup = 0
 let toolTrips = 0
 let injectRivalMana = false, rivalManaAccepted = false
@@ -111,7 +114,7 @@ async function rivalPass(boundary) {
 async function drivePeerDuring(work, boundary) {
   let done = false
   const peer = (async () => {
-    while (!done && Date.now() < totalDeadline) {
+    while (!done && gameClock.hasTime()) {
       await rivalPass(boundary)
       await sleep(25)
     }
@@ -122,7 +125,7 @@ async function drivePeerDuring(work, boundary) {
 async function playLineWithPeer(command, boundary) {
   return drivePeerDuring(async () => {
     let receipt = await call('play_line', command)
-    while (receipt.planOwnsExecution && Date.now() < totalDeadline) {
+    while (receipt.planOwnsExecution && gameClock.hasTime()) {
       receipt = await call('wait_for_decision', { gameId: command.gameId, commandId: command.commandId, view: command.view, timeoutMs: 5_000 })
       assert.equal(receipt.commandId, command.commandId, 'Recover the same accepted line')
     }
@@ -131,7 +134,7 @@ async function playLineWithPeer(command, boundary) {
   }, boundary)
 }
 async function waitNextOwn(oldId, priorGameId) {
-  const end = Math.min(totalDeadline, Date.now() + 35_000)
+  const end = gameClock.deadlineWithin(35_000)
   let last
   while (Date.now() < end) {
     const receipt = await drivePeerDuring(() => call('wait_for_decision', { afterDecisionId: oldId, timeoutMs: 1500 }))
@@ -146,7 +149,7 @@ async function waitNextOwn(oldId, priorGameId) {
   }
   throw Error('No next own fixture decision: ' + JSON.stringify(last))
 }
-async function startFixture(name, deck, seed, opponentDeck = rivalDeck, format = 'Modern') {
+async function createFixture(name, deck, seed, opponentDeck = rivalDeck, format = 'Modern') {
   const priorGameId = (await ownState()).gameId
   const created = await browser.createGame({ name, format, deck: opponentDeck, matchTimeLimit: 'MIN__15', seed }, async record => {
     const response = await fetch(base + '/api/playtesting/invites', { method: 'POST', headers: { 'content-type': 'application/json', Cookie: browserCookie }, body: JSON.stringify({ ...record, guestEngineName: engineName }) })
@@ -179,7 +182,7 @@ async function browserLogin(username) {
   return response.headers.get('set-cookie').split(';')[0]
 }
 
-async function startHumanReviewFixture(run) {
+async function createHumanReviewFixture(run) {
   const login = await browserLogin('SequenceBob')
   const peer = new PlaymatEngineSeat({ engineUrl: 'ws://127.0.0.1:8080/ws', engineName: 'SequenceBob',
     trustedHeader: 'X-Playmat-User', authenticationHeaders: { Cookie: login } })
@@ -207,7 +210,7 @@ async function startHumanReviewFixture(run) {
 
 async function playPreparedTurnDecisionByDecision(state, { hangoutId, actId, attackerId, lands }) {
   let castCount = 0, payments = 0
-  while (Date.now() < totalDeadline && state.step !== 'END_TURN') {
+  while (gameClock.hasTime() && state.step !== 'END_TURN') {
     const decision = state.decision
     const selectObject = (choice, id) => choice.objectId === id || choice.card?.id === id
     let choice
@@ -249,7 +252,7 @@ async function verifyPreparedModeLine(mode, verifyArchive = false) {
   const hangout = state => state.ownHand.find(card => card.name === "Heroes' Hangout")
   const prepared = state => ownPlayer(state).exile.find(card => card.name === 'Improvised Act')
   let battlemageCastTurn
-  while (Date.now() < totalDeadline) {
+  while (gameClock.hasTime()) {
     const decision = state.decision
     const ownMain = state.step === 'PRECOMBAT_MAIN' && state.activePlayerId === ownPlayer(state).id && decision.kind === 'priority'
     if (ownMain && battlemage(state) && state.turn > battlemageCastTurn && hangout(state)
@@ -320,7 +323,7 @@ async function verifyPreparedModeLine(mode, verifyArchive = false) {
   console.log(JSON.stringify({ phase: 'PM-LINE-FLOW-1 PM-LINE-FLOW-2 real Java', mode,
     status: receipt.status, toolTrips: toolTrips - startTrips, appliedDecisions: receipt.appliedDecisions, elapsedMs: Math.round(performance.now() - started) }))
   await call('concede', { gameId: state.gameId, entireMatch: true })
-  if (verifyArchive) await verifyModeAndUseCapture(state.gameId, totalDeadline)
+  if (verifyArchive) await verifyModeAndUseCapture(state.gameId, gameClock)
 }
 const scenarios = process.env.PLAYMAT_SEQUENCE_SCENARIOS
 try {
@@ -351,7 +354,7 @@ try {
   assert.ok(JSON.stringify(discovered.tools.find(tool => tool.name === 'play_sequence').inputSchema).includes('allowPlannedResolutions'))
   await warmDeckValidation()
   const fixture = { startFixture, ownPlayer, rivalPlayer, answer, waitNextOwn,
-    playLineWithPeer, call, totalDeadline, setRivalSetup }
+    playLineWithPeer, call, gameClock, setRivalSetup }
   const pioneerScenarios = [
     ['mulligan', './london-mulligan.local.mjs', 'verifyLondonMulligan'],
     ['casting', './casting-and-order.local.mjs', 'verifyCastingCosts'],
@@ -364,11 +367,11 @@ try {
   ]
   const pioneer = pioneerScenarios.find(([name]) => name === scenarios)
   if (scenarios === 'review') {
-    const capture = await verifyReplayCapture({ startFixture, call, ownPlayer, rivalPlayer, answer, waitNextOwn, totalDeadline })
-    const humanCapture = await verifyHumanReplayCapture({ startHumanReviewFixture, totalDeadline })
+    const capture = await verifyReplayCapture({ startFixture, call, ownPlayer, rivalPlayer, answer, waitNextOwn, gameClock })
+    const humanCapture = await verifyHumanReplayCapture({ startHumanReviewFixture, gameClock })
     await verifyReplayReviewOverMcp({ capture, humanCapture, Client, StreamableHTTPClientTransport, token })
   } else if (scenarios === 'discard-capture') {
-    await verifyDiscardChoiceCapture({ startFixture, ownPlayer, rivalPlayer, call, answer, waitNextOwn, totalDeadline })
+    await verifyDiscardChoiceCapture({ startFixture, ownPlayer, rivalPlayer, call, answer, waitNextOwn, gameClock })
   } else if (scenarios === 'review-prepared') {
     // This line also verifies mode/use evidence in the archived replay using the history grant.
     await verifyPreparedModeLine('Patrol Night', true)
@@ -382,7 +385,7 @@ try {
   } else if (scenarios === 'low-level-control') {
     await verifyPreparedModeLine('Low-level control')
   } else if (scenarios === 'typed') {
-    await verifyTypedManaTalent({ startFixture, ownPlayer, answer, waitNextOwn, playLineWithPeer, call, totalDeadline })
+    await verifyTypedManaTalent({ startFixture, ownPlayer, answer, waitNextOwn, playLineWithPeer, call, gameClock })
   } else if (scenarios === 'causal') {
     await verifyCausalBurn()
   } else throw Error('Select a real-engine family using verify-sequence-image.sh')
@@ -393,7 +396,7 @@ async function verifyCausalBurn() {
   let state = await startFixture('Isolated causal sequence acceptance', burnDeck, 77)
   let testedOwnStops = false
   let testedLandIntent = false
-  while (Date.now() < totalDeadline) {
+  while (gameClock.hasTime()) {
     await rivalPass()
     state = await ownState()
     if (state.status !== 'active' || !state.decision || state.decision.kind === 'waiting') { await sleep(15); continue }
@@ -512,7 +515,7 @@ async function verifyCausalBurn() {
   // Independent second scenario: actually activate rival mana with a planned burn spell on the stack.
   // PlayerImpl's mana path emits no ACTIVATED_ABILITY rules event, so only the neutral observer can catch it.
   state = after
-  while (Date.now() < totalDeadline) {
+  while (gameClock.hasTime()) {
     await rivalPass()
     state = await ownState()
     if (!state.decision || state.decision.kind === 'waiting') { await sleep(15); continue }
@@ -538,7 +541,7 @@ async function verifyCausalBurn() {
   injectRivalMana = true
   const reactionPlan = await call('play_sequence', { gameId: state.gameId, cursor: state.cursor, steps: reactionSteps })
   let interrupted
-  while (Date.now() < totalDeadline) {
+  while (gameClock.hasTime()) {
     await rivalPass()
     interrupted = await call('get_sequence_status', { gameId: state.gameId, sequenceId: reactionPlan.sequenceId })
     if (interrupted.status !== 'running') break
@@ -554,7 +557,7 @@ async function verifyCausalBurn() {
   assert.ok(interrupted.completedSteps < reactionSteps.length)
   injectRivalMana = false
   state = await ownState()
-  while (state.stack.length && Date.now() < totalDeadline) {
+  while (state.stack.length && gameClock.hasTime()) {
     await rivalPass()
     state = await ownState()
     const choice = state.decision?.kind === 'priority' && state.decision.choices.find(item => item.type === 'pass')

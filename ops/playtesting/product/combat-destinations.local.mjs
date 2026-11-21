@@ -37,7 +37,7 @@ function counter(card, name) {
 }
 
 export async function verifyPlaneswalkerCombat({
-  startFixture, ownPlayer, rivalPlayer, answer, waitNextOwn, playLineWithPeer, call, totalDeadline, setRivalSetup,
+  startFixture, ownPlayer, rivalPlayer, answer, waitNextOwn, playLineWithPeer, call, gameClock, setRivalSetup,
 }) {
   for (const defenderName of [walker, battle]) {
     const siege = defenderName === battle;
@@ -63,7 +63,7 @@ export async function verifyPlaneswalkerCombat({
       state = await startFixture('Isolated permanent defender: ' + defenderName,
         deck('Own combat deck', siege ? [creature, battle] : [creature]), 77,
         deck('Rival combat deck', siege ? [] : [walker]));
-      while (Date.now() < totalDeadline) {
+      while (gameClock.hasTime()) {
         const player = ownPlayer(state);
         const decision = state.decision;
         const ownMain = state.step === 'PRECOMBAT_MAIN' && state.activePlayerId === player.id

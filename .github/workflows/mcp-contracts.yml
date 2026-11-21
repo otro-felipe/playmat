@@ -7,6 +7,7 @@ on:
       - "ops/playtesting/mcp/**"
       - "ops/playtesting/product/sequence.local.mjs"
       - "ops/playtesting/product/fixture-mcp-fetch*.mjs"
+      - "ops/playtesting/product/fixture-game-clock*.mjs"
       - "ops/playtesting/product/combat-exile.local.mjs"
       - "ops/playtesting/product/london-mulligan.local.mjs"
       - "ops/playtesting/product/mana-semantics.local.mjs"
@@ -52,7 +53,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
-      - run: node --test ../product/fixture-mcp-fetch.test.mjs
+      - run: node --test ../product/fixture-mcp-fetch.test.mjs ../product/fixture-game-clock.test.mjs
       - name: Prove own-effect regressions fail on the deployed baseline
         if: hashFiles('ops/playtesting/mcp/test/sequence-own-effects.test.mjs') != ''
         shell: bash

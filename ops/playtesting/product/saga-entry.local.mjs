@@ -11,11 +11,11 @@ const fixtureDeck = name => ({ name: 'Isolated Saga ' + name, cards: [
 ], sideboard: [] })
 
 async function verifyLaterChapters(fixture, initial, permanent) {
-  const { ownPlayer, answer, waitNextOwn, playLineWithPeer, totalDeadline } = fixture
+  const { ownPlayer, answer, waitNextOwn, playLineWithPeer, gameClock } = fixture
   let state = initial
   for (const chapter of ['II', 'III']) {
     // Start the next plan after the draw. Reaching main phase will put a new chapter on the stack.
-    while (Date.now() < totalDeadline && !(state.activePlayerId === ownPlayer(state).id
+    while (gameClock.hasTime() && !(state.activePlayerId === ownPlayer(state).id
       && state.step === 'DRAW' && state.decision?.kind === 'priority')) {
       const { decision } = state
       if (decision?.kind && decision.kind !== 'waiting') {
@@ -41,11 +41,11 @@ async function verifyLaterChapters(fixture, initial, permanent) {
 }
 
 async function exercise(fixture, name, announce) {
-  const { startFixture, ownPlayer, rivalPlayer, answer, waitNextOwn, playLineWithPeer, call, totalDeadline } = fixture
+  const { startFixture, ownPlayer, rivalPlayer, answer, waitNextOwn, playLineWithPeer, call, gameClock } = fixture
   let state = await startFixture('Isolated chapter entry ' + name, fixtureDeck(name), 77, undefined, 'Modern')
   try {
     const cost = name === kumano ? 1 : 3
-    while (Date.now() < totalDeadline) {
+    while (gameClock.hasTime()) {
       const { decision } = state
       const pilot = ownPlayer(state)
       const main = decision.kind === 'priority' && state.activePlayerId === pilot.id && state.step === 'PRECOMBAT_MAIN' && !state.stack.length
