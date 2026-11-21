@@ -1,3 +1,4 @@
+import { createPerformance, historyFormatFilter } from './performance.mjs'
 import { createHash } from 'node:crypto'
 import { readdir, readFile, rename, stat, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -185,7 +186,7 @@ async function projectedEvents(store, game, viewer, includeCursor = false) {
 function gameView(row) {
   return {
     gameId: row.id, matchId: row.match_id, tableId: row.table_id, tableName: row.name,
-    deckType: row.format ? 'Constructed - ' + row.format : undefined, gameNumber: row.game_number,
+    deckType: row.engine_format ?? (row.format ? 'Constructed - ' + row.format : undefined), gameNumber: row.game_number,
     startedAt: Number(row.started_at), endedAt: row.ended_at === null ? 0 : Number(row.ended_at),
     result: row.result, winner: row.winner, startPlayer: row.start_player, turns: row.turns,
     events: row.events, archiveState: row.archive_state, status: row.status,
@@ -195,7 +196,7 @@ function gameView(row) {
 }
 
 const selectGame = `
-  SELECT g.*, m.table_id, m.name, m.format, m.status AS match_status,
+  SELECT g.*, m.table_id, m.name, m.format, m.engine_format, m.status AS match_status,
     (SELECT json_agg(json_build_object('name',p.engine_name,'human',p.human,'displayName',COALESCE(a.username,p.engine_name),
         'isMcp',a.id IS NOT NULL,'model',p.model,'reasoningEffort',p.reasoning_effort) ORDER BY p.engine_name)
        FROM game_players p LEFT JOIN agent_grants seat ON p.human AND seat.engine_key=p.engine_key
@@ -402,13 +403,12 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
 
   async function matchList(actor, opts = {}) {
     const [older, earlierMatch] = parseCursor(opts.cursor)
-    const format = opts.format ? normalizeFormat(opts.format) : null
-    if (opts.format && !format) throw new ProductError(400, 'Unsupported format')
+    const format = historyFormatFilter(opts.format)
     const limit = Math.max(1, Math.min(100, Number.parseInt(opts.limit ?? '25', 10) || 25))
     const matchId = opts.id ?? null
     const { rows } = await pool.query(
       `SELECT m.* FROM matches m JOIN retained_match_history h ON h.match_id=m.id AND h.account_id=$7
-       WHERE ($2::text IS NULL OR m.format=$2)
+       WHERE ($2::text IS NULL OR COALESCE(m.format,m.engine_format,'Unknown')=$2)
          AND ($3::bigint IS NULL OR (m.started_at,m.id)<($3,$4::uuid))
          AND ($6::uuid IS NULL OR m.id=$6)
          AND EXISTS(SELECT 1 FROM games g JOIN game_players p ON p.game_id=g.id WHERE g.match_id=m.id AND p.engine_key=ANY($1::text[]))
@@ -423,7 +423,7 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
     )
     return {
       matches: page.map(m => ({
-        id: m.id, tableId: m.table_id, name: m.name, format: m.format, status: m.status, winner: m.winner,
+        id: m.id, tableId: m.table_id, name: m.name, format: m.format ?? m.engine_format ?? 'Unknown', status: m.status, winner: m.winner,
         startedAt: Number(m.started_at), endedAt: m.ended_at ? Number(m.ended_at) : null,
         games: games.filter(g => g.match_id === m.id).map(gameView),
       })),
@@ -458,37 +458,7 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
     return { ...base, total: positions.length, next: end < positions.length ? end : null, positions: positions.slice(start, end) }
   }
 
-  async function statistics(actor, requestedFormat) {
-    const format = requestedFormat ? normalizeFormat(requestedFormat) : null
-    if (requestedFormat && !format) throw new ProductError(400, 'Unsupported format')
-    const { rows } = await pool.query(
-      `WITH eligible AS (
-         SELECT m.id AS match_id, m.format, g.winner, g.start_player, g.turns, p.engine_key, p.mulligans,
-           p.deck_snapshot->>'name' AS deck_name, COALESCE(p.deck_signature, md5(p.deck_snapshot::text)) AS signature
-         FROM games g JOIN matches m ON m.id=g.match_id
-         JOIN retained_match_history h ON h.match_id=m.id AND h.account_id=$3
-         JOIN LATERAL (
-           SELECT * FROM game_players seat WHERE seat.game_id=g.id AND seat.engine_key=ANY($1::text[])
-           ORDER BY array_position($1::text[],seat.engine_key) LIMIT 1
-         ) p ON TRUE
-         WHERE g.status='completed' AND m.status='completed' AND ($2::text IS NULL OR m.format=$2)
-       )
-       SELECT GROUPING(format, signature) <> 0 AS total, COUNT(DISTINCT match_id)::integer AS matches,
-         format, MAX(deck_name) AS "deckName", signature AS "deckVersion",
-         COUNT(*)::integer AS games, COUNT(*) FILTER (WHERE lower(winner)=engine_key)::integer AS wins,
-         COUNT(*) FILTER (WHERE lower(start_player)=engine_key)::integer AS "onPlay",
-         COUNT(*) FILTER (WHERE lower(start_player)<>engine_key)::integer AS "onDraw",
-         AVG(mulligans)::float AS "averageMulligans", AVG(turns)::float AS "averageTurns"
-       FROM eligible GROUP BY GROUPING SETS ((), (format, signature))
-       ORDER BY total DESC, games DESC, format, signature LIMIT 101`,
-      [viewerNames(actor), format, actor.accountId],
-    )
-    const [totals, ...decks] = rows
-    return {
-      totals: { matches: totals.matches, games: totals.games, wins: totals.wins },
-      groups: decks.map(({ total, matches, ...group }) => group),
-    }
-  }
+  const { statistics, performance } = createPerformance(pool, game => rawEvents(store, game))
 
   async function authorizeExport(actor, ids) {
     if (!Array.isArray(ids) || !ids.length || ids.length > maxEntries || ids.some(id => !isUuid(id))) {
@@ -523,6 +493,6 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
     return zipSync(all, { level: 4 })
   }
 
-  return { archiveGames, matchList, replayPage, evaluation, exportReplays, authorizeExport, statistics,
+  return { archiveGames, matchList, replayPage, evaluation, exportReplays, authorizeExport, statistics, performance,
     reviewGame, reviewGames, reviewOwnDeckPair, readReviewArchive: game => rawEvents(store, game) }
 }

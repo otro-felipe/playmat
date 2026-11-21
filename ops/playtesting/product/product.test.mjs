@@ -1526,18 +1526,22 @@ test('[PM-AC-12] grouped stats use finalized games and the requesting player’s
   assert.equal(group.averageTurns, 4)
   assert.doesNotMatch(JSON.stringify(group), /private:Bob/)
   assert.deepEqual(await (await f.path('/api/playtesting/stats', { headers: carol })).json(), { groups: [], totals: { matches: 0, games: 0, wins: 0 } })
-  // More deck versions than the chart can return must still count in the dashboard.
+  // A new registered list starts a new match. All of its post-board games
+  // remain attributed to the opening list, regardless of their card signature.
+  await f.product.setUnlimitedMatchHistory(['Alice'], true)
   await withTestDatabase(f, db => db.query(
-    `WITH extra AS (
+    `WITH extra_matches AS (
+       INSERT INTO matches(id,table_id,format,started_at,status,winner)
+       SELECT gen_random_uuid(),gen_random_uuid(),'Pioneer',n,'completed','Alice' FROM generate_series(1,101) n RETURNING id
+     ), extra_games AS (
        INSERT INTO games(id,match_id,started_at,game_number,winner,status,archive_state)
-       SELECT gen_random_uuid(), $1, 1, n+2, 'Alice', 'completed', 'ready' FROM generate_series(1,101) n
-       RETURNING id
+       SELECT gen_random_uuid(),id,1,1,'Alice','completed','ready' FROM extra_matches RETURNING id
      )
-     INSERT INTO game_players(game_id,engine_key,engine_name,human,deck_signature)
-     SELECT id,'alice','Alice',true,id::text FROM extra`, [match]))
+     INSERT INTO game_players(game_id,engine_key,engine_name,human,deck_snapshot)
+     SELECT id,'alice','Alice',true,jsonb_build_object('cards',jsonb_build_array(id::text)) FROM extra_games`))
   const capped = await (await f.path('/api/playtesting/stats?format=Pioneer', { headers: alice })).json()
   assert.equal(capped.groups.length, 100)
-  assert.deepEqual(capped.totals, { matches: 1, games: 103, wins: 102 })
+  assert.deepEqual(capped.totals, { matches: 102, games: 103, wins: 102 })
   const otherFormat = await (await f.path('/api/playtesting/stats?format=Modern', { headers: alice })).json()
   assert.deepEqual(otherFormat.totals, { matches: 0, games: 0, wins: 0 })
 
@@ -1824,3 +1828,204 @@ test('a selected library copy registers once per seat from game one and cannot n
     assert.deepEqual(rows, [{ deck_id: selectedCopy, engine_key: 'alice', list_version: 1, archetype: 'Golgari Midrange' }])
   })
 })
+test(
+  'deck performance reconstructs a registered Bo3, an exact kept hand and public matchup evidence',
+  { skip: !databaseUrl },
+  async (t) => {
+    const f = await fixture(t)
+    const alice = await signIn(f, 'Alice')
+    const bob = await signIn(f, 'Bob')
+    const outsider = await signIn(f, 'Outsider')
+    const library = '/api/playtesting/decks/'
+    const deck = {
+      name: 'League list',
+      format: 'Pioneer',
+      archetype: 'Golgari Midrange',
+      cards: [{ cardName: 'Forest', amount: 60 }],
+      sideboard: [{ cardName: 'Duress', amount: 1 }],
+    }
+    const save = (data, expectedRevision) => f.path(library + 'golgari', json('PUT', alice, { data, expectedRevision }))
+    assert.equal((await save(deck, 0)).status, 200)
+    const revised = { ...deck, cards: [{ cardName: 'Swamp', amount: 60 }] }
+    assert.equal((await save(revised, 1)).status, 200)
+    const match = randomUUID(),
+      own = randomUUID(),
+      rival = randomUUID()
+    const winner = ['Alice', 'Bob', 'Alice']
+    const card = (name, ownerId, extra) => ({ name, ownerId, ...extra })
+    for (let n = 0; n < 3; n++) {
+      const id = randomUUID()
+      const metadata = {
+        gameId: id,
+        matchId: match,
+        tableId: match,
+        startedAt: 1000 + n,
+        endedAt: 2000 + n,
+        gameNumber: n + 1,
+        winsNeeded: 2,
+        result: 'Complete',
+        winner: winner[n],
+        startPlayer: n === 1 ? 'Bob' : 'Alice',
+        deckType: 'Constructed - Pioneer',
+        players: [
+          {
+            name: 'Alice',
+            playerId: own,
+            human: true,
+            mulligans: n,
+            deck:
+              n === 0
+                ? deck
+                : {
+                    ...deck,
+                    cards: [
+                      { cardName: 'Forest', amount: 59 },
+                      { cardName: 'Duress', amount: 1 },
+                    ],
+                    sideboard: [{ cardName: 'Forest', amount: 1 }],
+                  },
+          },
+          { name: 'Bob', playerId: rival, human: true, mulligans: n === 1 ? 1 : 0 },
+        ],
+      }
+      await writeFile(join(f.replayDirectory, id + '.json'), JSON.stringify(metadata))
+      const rows = [
+        { kind: 'action', action: 'mulligan', actorPlayerId: own, decision: { cards: [{ name: 'Rejected' }] } },
+        { kind: 'action', action: 'keep', actorPlayerId: rival, decision: { cards: [{ name: 'Hidden rival keep' }] } },
+        ...(n === 1
+          ? []
+          : [
+              {
+                kind: 'action',
+                action: 'keep',
+                actorPlayerId: own,
+                decision: { cards: [{ name: 'Forest' }, { name: 'Forest' }] },
+              },
+            ]),
+        {
+          view: {
+            turn: 1,
+            step: 'PRECOMBAT_MAIN',
+            players: [
+              { name: 'Alice', playerId: own, battlefield: {} },
+              {
+                name: 'Bob',
+                playerId: rival,
+                battlefield: {
+                  a: card('Monastery Swiftspear', rival),
+                  b: card('Hidden permanent', rival, { faceDown: true }),
+                  c: card('Stolen forest', own),
+                  d: card('Goblin', rival, { isToken: true }),
+                },
+              },
+            ],
+          },
+          hands: { Bob: { e: { name: 'Hidden hand' } } },
+        },
+      ]
+      await writeFile(
+        join(f.replayDirectory, id + '.ndjson.gz'),
+        gzipSync(rows.map((row) => JSON.stringify(row)).join('\n')),
+      )
+    }
+    await writeFile(
+      join(f.replayDirectory, match + '.match.json'),
+      JSON.stringify({ matchId: match, endedAt: 2010, winner: 'Alice' }),
+    )
+    await f.product.archiveGames()
+    const performance = async (headers, query) => {
+      const response = await f.path('/api/playtesting/performance?' + query, { headers })
+      assert.equal(response.status, 200)
+      return response.json()
+    }
+    const rec = (wins, losses) => ({ total: wins + losses, wins, losses, draws: 0 })
+    const restricted = { Authorization: 'Bearer ' + (await f.product.provisionAgent('Alice', 'OnlyHistory', ['history'])) }
+    assert.equal((await f.path('/api/playtesting/performance?scope=all', { headers: restricted })).status, 403)
+    const latest = await performance(alice, 'deckId=golgari')
+    assert.equal(latest.selected.version, 2)
+    assert.equal(latest.summary.matches.total, 0)
+    const data = await performance(alice, 'deckId=golgari&version=1&bestOf=3')
+    assert.deepEqual(data.summary, { matches: rec(1, 0), games: rec(2, 1) })
+    assert.deepEqual(data.splits, { preboard: rec(1, 0), postboard: rec(1, 1), play: rec(2, 0), draw: rec(0, 1) })
+    assert.deepEqual(data.openingCards, [{ card: 'Forest', games: rec(2, 0) }])
+    assert.deepEqual(data.opponentCards, [{ card: 'Monastery Swiftspear', games: rec(2, 1) }])
+    assert.deepEqual(data.coverage, { keptHands: 2, opponentCards: 3, games: 3 })
+    assert.deepEqual(data.matchIds, [match])
+    assert.deepEqual(data.matchups[0].mulligans, { known: 3, taken: 2, opponentKnown: 3, opponentTaken: 1 })
+    assert.doesNotMatch(JSON.stringify(data), /Hidden rival keep|Hidden permanent|Hidden hand|Stolen forest|Rejected/)
+    assert.equal((await performance(alice, 'deckId=golgari&scope=deck')).summary.games.total, 3)
+    assert.equal((await performance(alice, 'deckId=golgari&version=1&bestOf=1')).summary.games.total, 0)
+    assert.equal((await performance(outsider, 'scope=all')).summary.games.total, 0)
+    assert.doesNotMatch(
+      JSON.stringify(await performance(bob, 'scope=all&includeCards=true')),
+      /golgari|League list|Rejected/,
+    )
+    const landing = await performance(alice, 'scope=all')
+    assert.deepEqual(
+      landing.groups.map((g) => [g.format, g.archetype, g.matches, g.games]),
+      [['Pioneer', 'Golgari Midrange', rec(1, 0), rec(2, 1)]],
+    )
+    assert.deepEqual(landing.groups[0].deckIds, ['golgari'])
+    // An identical saved copy makes the legacy source ambiguous. A declared
+    // starting list resolves it and shares only the opponent's matchup label.
+    await f.path(library + 'copy', json('PUT', alice, { expectedRevision: 0, data: { ...deck, name: 'League copy' } }))
+    assert.equal((await performance(alice, 'deckId=golgari&version=1')).summary.games.total, 0)
+    assert.equal((await performance(alice, 'scope=all')).summary.games.total, 3)
+    await withTestDatabase(f, async (db) => {
+      await db.query(
+        `INSERT INTO match_deck_registrations(table_id,engine_key,account_id,deck_id,list_version,list_signature,archetype,deck_name)
+      SELECT $1,'alice',account_id,deck_id,list_version,list_signature,archetype,name FROM deck_revisions
+      WHERE deck_id='golgari' AND revision=1`,
+        [match],
+      )
+      await db.query(
+        `INSERT INTO match_deck_registrations(table_id,engine_key,account_id,deck_id,list_version,list_signature,archetype,deck_name)
+      SELECT $1,'bob',id,'private-rival-deck',1,'private-rival-signature','Rakdos Midrange','Private rival title'
+      FROM accounts WHERE username_key='bob'`,
+        [match],
+      )
+    })
+    const registered = await performance(alice, 'deckId=golgari&version=1&opponentArchetype=Rakdos%20Midrange')
+    assert.deepEqual(registered.summary, data.summary)
+    assert.equal(registered.matchups[0].archetype, 'Rakdos Midrange')
+    assert.doesNotMatch(JSON.stringify(registered), /private-rival|Private rival title/)
+    assert.equal((await performance(alice, 'deckId=golgari&version=1&opponentArchetypeUnknown=true')).summary.games.total, 0)
+  },
+)
+
+test(
+  'history and performance can filter a noncompetitive format and keep a verified Bo1 distinct',
+  { skip: !databaseUrl },
+  async (t) => {
+    const f = await fixture(t)
+    const alice = await signIn(f, 'Alice')
+    const id = randomUUID(),
+      gameId = randomUUID()
+    const format = 'Constructed - Freeform'
+    await addReplay(f, id, gameId, ['Alice', 'Bob'])
+    const file = join(f.replayDirectory, gameId + '.json')
+    const snapshot = JSON.parse(await readFile(file, 'utf8'))
+    await writeFile(file, JSON.stringify({ ...snapshot, deckType: format, winsNeeded: 1 }))
+    await writeFile(
+      join(f.replayDirectory, id + '.match.json'),
+      JSON.stringify({ matchId: id, endedAt: Date.now(), winner: 'Alice' }),
+    )
+    await f.product.archiveGames()
+    const read = async (route) => {
+      const response = await f.path('/api/playtesting/' + route, { headers: alice })
+      assert.equal(response.status, 200)
+      return response.json()
+    }
+    const query = new URLSearchParams({ format }).toString()
+    const list = await read('matches?' + query)
+    assert.deepEqual(
+      list.matches.map((m) => [m.id, m.format, m.games[0].deckType]),
+      [[id, format, format]],
+    )
+    const detail = await read('performance?scope=all&bestOf=1&' + query)
+    assert.deepEqual(detail.observedBestOf, [1])
+    assert.deepEqual(detail.summary.matches, detail.summary.games)
+    assert.equal(detail.summary.games.wins, 1)
+    assert.equal((await read('performance?scope=all&bestOf=3&' + query)).summary.games.total, 0)
+  },
+)

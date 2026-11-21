@@ -134,6 +134,7 @@ export async function createProduct({
     await pool.query(await readFile(resolve(directory, 'history-retention.sql'), 'utf8'))
     await migrateDeckLists(pool)
     console.info('deck_archetype_coverage', JSON.stringify(await libraryArchetypeCoverage(pool)))
+    await pool.query(await readFile(resolve(directory, 'performance-schema.sql'), 'utf8'))
   } catch (error) {
     await pool.end()
     throw error
@@ -431,6 +432,11 @@ export async function createProduct({
     if (req.method === 'GET' && endpoint.startsWith('theory/studies/')) {
       requireScope(actor, 'history')
       return send(res, 200, await theory.read(actor, endpoint.slice('theory/studies/'.length)))
+    }
+    if (endpoint === 'performance' && req.method === 'GET') {
+      requireScope(actor, 'history')
+      requireScope(actor, 'library')
+      return send(res, 200, await archive.performance(actor, Object.fromEntries(url.searchParams)))
     }
     if (endpoint === 'stats' && req.method === 'GET') {
       requireScope(actor, 'history')
