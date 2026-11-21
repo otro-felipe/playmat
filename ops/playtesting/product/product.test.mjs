@@ -78,6 +78,9 @@ test('deck performance versions survive printings, name changes, sideboard edits
     const reopened = await createProduct({ databaseUrl, schema: f.schema, replayDirectory: f.replayDirectory, store: new Map() })
     await reopened.close()
   }
+  const { libraryArchetypeCoverage } = await import('./deck-list-migration.mjs')
+  const coverage = await withTestDatabase(f, db => libraryArchetypeCoverage(db))
+  assert.deepEqual(coverage, { currentDecks: 1, classifiedDecks: 1, otherDecks: 0, classifiedRevisions: 4 })
   for (const [revision, listVersion] of [[1, 1], [2, 1], [3, 2], [4, 1]]) {
     const historical = await (await f.path(route + '?revision=' + revision, { headers: owner })).json()
     assert.deepEqual([historical.listVersion, historical.archetype], [listVersion, 'Golgari Midrange'])
