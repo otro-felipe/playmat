@@ -52,6 +52,9 @@ export function createProductClient(baseUrl, publicUrl) {
         path = `${root}/invites`;
         config = { method: 'POST', body: args };
         break;
+      case 'list_deck_archetypes':
+        path = `${root}/deck-archetypes?format=${encode(args.format)}`;
+        break;
       case 'list_decks':
         path = `${root}/decks?library=agent`;
         break;
@@ -63,7 +66,7 @@ export function createProductClient(baseUrl, publicUrl) {
         path = `${root}/decks/${args.deckId ? encode(args.deckId) : randomUUID()}`;
         config = {
           method: 'PUT',
-          body: { name: args.name, format: args.format, data: args.deck, expectedRevision: args.expectedRevision ?? 0 },
+          body: { name: args.name, format: args.format, archetype: args.archetype, data: args.deck, expectedRevision: args.expectedRevision ?? 0 },
         };
         break;
       case 'list_matches': {

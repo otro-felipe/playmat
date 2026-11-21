@@ -38,6 +38,18 @@ describe('the deck shelf (#200)', () => {
     expect(useDecks.getState().shelfFilter).toEqual({ tag: 'Burn', hideDrafts: true });
   });
 
+  test('library archetype is a format-specific choice shared by saved decks and the builder', async () => {
+    const user = userEvent.setup();
+    const id = await deckStorage.saveDeck({ name: 'Golgari MIDRANGE', format: 'Constructed - Pioneer', cards: [], sideboard: [] });
+    await act(() => useDecks.getState().refresh());
+    wrap(<DeckOrganizer deck={useDecks.getState().saved[0]} />);
+    const picker = screen.getByRole('combobox', { name: 'Archetype' }) as HTMLSelectElement;
+    expect(picker.value).toBe('Golgari Midrange');
+    expect(screen.queryByRole('option', { name: 'Amulet Titan' })).toBeNull();
+    await user.selectOptions(picker, 'Izzet Phoenix');
+    await waitFor(async () => expect((await deckStorage.loadDeck(id))?.archetype).toBe('Izzet Phoenix'));
+  });
+
   test("a deck's panel adds and removes tags and marks it as a draft", async () => {
     const user = userEvent.setup();
     const id = await deckStorage.saveDeck({ name: 'Burn', cards: [], sideboard: [] }, { forceNew: true });

@@ -30,6 +30,7 @@ WORKDIR /source/ops/playtesting/product
 COPY ops/playtesting/product/package*.json ./
 RUN npm ci --omit=dev
 COPY ops/playtesting/product/ ./
+COPY Mage.Web.Client/src/core/decks/archetypes/ ./archetypes/
 WORKDIR /source/ops/playtesting/mcp
 COPY ops/playtesting/mcp/package*.json ./
 RUN npm ci

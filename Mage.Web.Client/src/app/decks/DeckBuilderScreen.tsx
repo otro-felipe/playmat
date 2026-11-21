@@ -6,6 +6,8 @@ import { createPortal } from 'react-dom';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { CardView } from '../../protocol/generated/views';
 import { BASIC_FOR, MANA_LETTERS, suggestLands, type ManaLetter } from '../../core/decks/analysis';
+import { archetypesFor } from '../../core/decks/archetypes/library.mjs';
+import { ArchetypeSelect } from './ArchetypeSelect';
 import { canCommand, commanderIdentity, formatMenu, formatRules, withinIdentity, type FormatRules } from '../../core/decks/formats';
 import { appendDeckCardLists } from '../../core/decks/merge';
 import { deckStorage } from '../../core/decks/DeckStorageService';
@@ -356,7 +358,7 @@ function DeckPanel({ deck, zone, view, onView, info, formats, rules, identity, s
           value={format}
           onChange={(event) => {
             const value = event.target.value;
-            onChange((current) => ({ ...current, format: value }));
+            onChange((current) => ({ ...current, format: value, archetype: current.archetype && archetypesFor(value).includes(current.archetype) ? current.archetype : undefined }));
           }}
           aria-label="Format"
         >
@@ -367,6 +369,7 @@ function DeckPanel({ deck, zone, view, onView, info, formats, rules, identity, s
             </optgroup>
           ))}
         </select>
+        {!fixedFormat && <ArchetypeSelect {...deck} onChange={archetype => onChange(current => ({ ...current, archetype }))} />}
       </header>
 
       <div className={styles.status}>

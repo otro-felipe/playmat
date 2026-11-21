@@ -47,6 +47,43 @@ test('MCP decks have a reusable opponent shelf; only the owner moves legacy deck
   assert.equal((await (await move(owner, 2, 'personal')).json()).library, 'personal')
 })
 
+test('deck performance versions survive printings, name changes, sideboard edits and returning to a saved list', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const owner = await signIn(f, 'VersionOwner')
+  const route = '/api/playtesting/decks/stable'
+  const options = await f.path('/api/playtesting/deck-archetypes?format=Pioneer', { headers: owner })
+  assert.equal(options.status, 200)
+  assert.ok((await options.json()).archetypes.includes('Golgari Midrange'))
+  const deck = { name: 'Golgari MIDRANGE', format: 'Pioneer', cards: [{ name: 'Forest', quantity: 3 }, { name: 'Duress', quantity: 1 }], sideboard: [{ name: 'Swamp', quantity: 1 }] }
+  const save = (revision, data) => f.path(route, json('PUT', owner, { expectedRevision: revision, data }))
+  const first = await (await save(0, deck)).json()
+  assert.equal(first.archetype, 'Golgari Midrange', 'old importers receive a catalog label')
+  assert.equal(first.listVersion, 1)
+  const changedArt = { ...deck, name: 'My list', cards: [{ name: 'Duress', quantity: 1 }, { name: 'Forest', quantity: 1 }, { name: 'Forest', quantity: 2, set: 'M21' }] }
+  assert.equal((await (await save(1, changedArt)).json()).listVersion, 1)
+  const changedSide = { ...changedArt, sideboard: [{ name: 'Swamp', quantity: 2 }] }
+  assert.equal((await (await save(2, changedSide)).json()).listVersion, 2)
+  const restored = await (await save(3, { ...deck, archetype: 'Mono-Green Devotion' })).json()
+  assert.deepEqual([restored.revision, restored.listVersion, restored.archetype, restored.listSignature], [4, 1, 'Mono-Green Devotion', first.listSignature])
+  assert.equal((await save(4, { ...deck, archetype: 'Unlisted name' })).status, 400)
+  const old = await (await f.path(route + '?revision=3', { headers: owner })).json()
+  assert.deepEqual([old.listVersion, old.archetype], [2, 'Golgari Midrange'])
+  const listed = await (await f.path('/api/playtesting/decks', { headers: owner })).json()
+  assert.deepEqual([listed.decks[0].archetype, listed.decks[0].listVersion], ['Mono-Green Devotion', 1])
+
+  // Simulate the schema from before list identities and run the deployment migration twice.
+  await withTestDatabase(f, db => db.query('ALTER TABLE deck_revisions DROP COLUMN list_signature, DROP COLUMN list_version, DROP COLUMN archetype'))
+  const { createProduct } = await import('./product.mjs')
+  for (let i = 0; i < 2; i++) {
+    const reopened = await createProduct({ databaseUrl, schema: f.schema, replayDirectory: f.replayDirectory, store: new Map() })
+    await reopened.close()
+  }
+  for (const [revision, listVersion] of [[1, 1], [2, 1], [3, 2], [4, 1]]) {
+    const historical = await (await f.path(route + '?revision=' + revision, { headers: owner })).json()
+    assert.deepEqual([historical.listVersion, historical.archetype], [listVersion, 'Golgari Midrange'])
+  }
+})
+
 async function fixture(t, store = new Map(), options = {}) {
   const { createProduct } = await import('./product.mjs')
   const replayDirectory = await mkdtemp(join(tmpdir(), 'playmat-replays-'))

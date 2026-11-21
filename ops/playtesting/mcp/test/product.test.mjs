@@ -20,10 +20,10 @@ test('MCP list and create operations reuse the account opponent library', async 
   await client.operation('library-fixture', 'list_decks', {});
   const deckId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
   const deck = { cards: [{ name: 'Forest', quantity: 60 }], sideboard: [] };
-  await client.operation('library-fixture', 'update_deck', { deckId, expectedRevision: 2, name: 'Rival', format: 'Pioneer', deck });
+  await client.operation('library-fixture', 'update_deck', { deckId, expectedRevision: 2, name: 'Rival', format: 'Pioneer', archetype: 'Ramp', deck });
   assert.deepEqual(calls, [
     { path: '/api/playtesting/decks?library=agent', method: 'GET', auth: 'Bearer library-fixture' },
-    { path: `/api/playtesting/decks/${deckId}`, method: 'PUT', auth: 'Bearer library-fixture', body: { name: 'Rival', format: 'Pioneer', data: deck, expectedRevision: 2 } },
+    { path: `/api/playtesting/decks/${deckId}`, method: 'PUT', auth: 'Bearer library-fixture', body: { name: 'Rival', format: 'Pioneer', archetype: 'Ramp', data: deck, expectedRevision: 2 } },
   ]);
 });
 

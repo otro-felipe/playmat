@@ -21,6 +21,8 @@ export interface StarterDeck {
 
 /** A deck in the roster: one the player saved, or a starter deck not saved yet. */
 export interface RosterDeck {
+  format?: string;
+  archetype?: string;
   library?: 'personal' | 'agent';
   id: string;
   name: string;
@@ -61,6 +63,8 @@ function summaryToRoster(deck: DeckSummary): RosterDeck {
   const size = `${deck.cardCount ?? 0} cards${deck.sideboardCount ? ` + ${deck.sideboardCount}` : ''}`;
   return {
     library: deck.library,
+    format: deck.format,
+    archetype: deck.archetype,
     id: deck.id,
     name: deck.name || 'Untitled deck',
     note: deck.format ? `${formatRules(deck.format).label} · ${size}` : size,

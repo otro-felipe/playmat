@@ -1,3 +1,5 @@
+import { archetypesFor, classifyArchetype, deckListSignature } from './deck-performance-identity.mjs'
+
 export class ProductError extends Error {
   constructor(status, message) {
     super(message)
@@ -42,22 +44,31 @@ export async function transaction(pool, work) {
   }
 }
 
+function deckHeader(row) {
+  return {
+    id: row.id, library: row.library, revision: row.revision,
+    name: row.name, format: row.format, archetype: row.archetype,
+    listVersion: row.list_version, listSignature: row.list_signature, updatedAt: Number(row.updated_at),
+  }
+}
+
 export async function listDecks(db, account, includeDeleted = false, library = null) {
   const { rows } = await db.query(
-    'SELECT d.id, d.head AS revision, d.library, r.name, r.format, d.updated_at, d.removed FROM decks d LEFT JOIN deck_revisions r ON (r.account_id, r.deck_id, r.revision) = (d.account_id, d.id, d.head) WHERE d.account_id=$1 AND ($2 OR NOT d.removed) AND ($3::text IS NULL OR d.library=$3) ORDER BY d.updated_at DESC, d.id',
+    'SELECT d.id, d.head AS revision, d.library, r.name, r.format, r.archetype, r.list_version, r.list_signature, d.updated_at, d.removed FROM decks d LEFT JOIN deck_revisions r ON (r.account_id, r.deck_id, r.revision) = (d.account_id, d.id, d.head) WHERE d.account_id=$1 AND ($2 OR NOT d.removed) AND ($3::text IS NULL OR d.library=$3) ORDER BY d.updated_at DESC, d.id',
     [account, includeDeleted, library],
   )
-  return rows.map(row => ({ id: row.id, name: row.name, format: row.format, library: row.library, revision: row.revision, updatedAt: Number(row.updated_at), deleted: row.removed }))
+  return rows.map(row => ({ ...deckHeader(row), deleted: row.removed }))
 }
 
 export async function getDeck(db, account, deckId, revision) {
   if (!isId(deckId)) return null
   const { rows: [row] } = await db.query(
-    'SELECT d.id, d.library, d.updated_at, d.removed, r.revision, r.name, r.format, r.metadata FROM decks d JOIN deck_revisions r ON (r.account_id, r.deck_id) = (d.account_id, d.id) WHERE d.account_id=$1 AND d.id=$2 AND r.revision=COALESCE($3, d.head) AND ($3 IS NOT NULL OR NOT d.removed)',
+    'SELECT d.id, d.library, d.updated_at, d.removed, r.revision, r.name, r.format, r.archetype, r.list_version, r.list_signature, r.metadata FROM decks d JOIN deck_revisions r ON (r.account_id, r.deck_id) = (d.account_id, d.id) WHERE d.account_id=$1 AND d.id=$2 AND r.revision=COALESCE($3, d.head) AND ($3 IS NOT NULL OR NOT d.removed)',
     [account, deckId, revision ?? null],
   )
   if (!row) return null
-  const data = { ...row.metadata, id: row.id, name: row.name, format: row.format, library: row.library, updatedAt: Number(row.updated_at), cards: [], sideboard: [] }
+  const header = deckHeader(row)
+  const data = { ...row.metadata, ...header, cards: [], sideboard: [] }
   const { rows: entries } = await db.query(
     'SELECT zone, card_name, set_code, card_number, amount FROM deck_revision_cards WHERE account_id=$1 AND deck_id=$2 AND revision=$3 ORDER BY position',
     [account, deckId, row.revision],
@@ -65,7 +76,7 @@ export async function getDeck(db, account, deckId, revision) {
   for (const entry of entries) data[entry.zone].push({
     cardName: entry.card_name, setCode: entry.set_code, cardNumber: entry.card_number, amount: entry.amount,
   })
-  return { id: deckId, name: row.name, format: row.format, library: row.library, revision: row.revision, updatedAt: data.updatedAt, data }
+  return { ...header, data }
 }
 
 function validateEntry(entry) {
@@ -89,7 +100,7 @@ function canonicalCards(entries) {
   }))
 }
 
-export async function putDeck(pool, account, deckId, { data, name, format, expectedRevision, updatedAt }, createdLibrary = 'personal') {
+export async function putDeck(pool, account, deckId, { data, name, format, archetype: suppliedLabel, expectedRevision, updatedAt }, createdLibrary = 'personal') {
   const headName = String(name ?? data?.name ?? '').trim()
   const headFormat = libraryFormat(format ?? data?.format)
   if (!isId(deckId) || !Number.isInteger(expectedRevision) || expectedRevision < 0) {
@@ -99,9 +110,13 @@ export async function putDeck(pool, account, deckId, { data, name, format, expec
     || data.cards.length + data.sideboard.length > 300 || ![...data.cards, ...data.sideboard].every(validateEntry)) {
     throw new ProductError(400, 'Provide a valid deck name, format and card list')
   }
-  const { cards: rawCards, sideboard: rawSideboard, id, name: ignoredName, format: ignoredFormat, library: ignoredLibrary, updatedAt: ignoredTime, ...metadata } = data
+  const requestedLabel = suppliedLabel ?? data.archetype
+  const allowed = archetypesFor(headFormat)
+  if (requestedLabel !== undefined && !allowed.includes(requestedLabel)) throw new ProductError(400, 'Choose a catalog archetype for this format')
+  const { revision: ignoredRevision, archetype: ignoredLabel, listVersion: ignoredVersion, listSignature: ignoredSignature, cards: rawCards, sideboard: rawSideboard, id, name: ignoredName, format: ignoredFormat, library: ignoredLibrary, updatedAt: ignoredTime, ...metadata } = data
   const cards = canonicalCards(rawCards)
   const sideboard = canonicalCards(rawSideboard)
+  const signature = deckListSignature({ cards, sideboard })
   return transaction(pool, async db => {
     if (expectedRevision === 0) {
       await db.query('INSERT INTO decks (account_id, id, library) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [account, deckId, createdLibrary])
@@ -111,8 +126,15 @@ export async function putDeck(pool, account, deckId, { data, name, format, expec
     if (entry.head !== expectedRevision || entry.removed) throw new ProductError(409, 'Deck revision has changed')
     const time = Math.max(Number(entry.updated_at) + 1, Number.isSafeInteger(updatedAt) ? updatedAt : Date.now())
     const revision = expectedRevision + 1
-    await db.query('INSERT INTO deck_revisions (account_id,deck_id,revision,name,format,metadata) VALUES ($1,$2,$3,$4,$5,$6)', [
-      account, deckId, revision, headName, headFormat, metadata,
+    const { rows: [identity] } = await db.query(`SELECT
+       COALESCE(MAX(list_version) FILTER (WHERE list_signature=$3), MAX(list_version)+1, 1) AS version,
+       MAX(archetype) FILTER (WHERE revision=$4 AND format=$5) AS previous
+       FROM deck_revisions WHERE account_id=$1 AND deck_id=$2`, [account, deckId, signature, expectedRevision, headFormat])
+    const archetype = requestedLabel ?? (allowed.includes(identity.previous) && identity.previous !== 'Other'
+      ? identity.previous : classifyArchetype(headFormat, headName, cards))
+    const listVersion = identity.version
+    await db.query('INSERT INTO deck_revisions (account_id,deck_id,revision,name,format,metadata,archetype,list_version,list_signature) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)', [
+      account, deckId, revision, headName, headFormat, metadata, archetype, listVersion, signature,
     ])
     for (const [zone, entries] of Object.entries({ cards, sideboard })) {
       await db.query(
@@ -123,7 +145,8 @@ export async function putDeck(pool, account, deckId, { data, name, format, expec
       )
     }
     await db.query('UPDATE decks SET head=$3, updated_at=$4 WHERE account_id=$1 AND id=$2', [account, deckId, revision, time])
-    return { id: deckId, name: headName, format: headFormat, library: entry.library, revision, updatedAt: time, data: { ...metadata, id: deckId, name: headName, format: headFormat, library: entry.library, updatedAt: time, cards, sideboard } }
+    const header = { id: deckId, name: headName, format: headFormat, archetype, listVersion, listSignature: signature, library: entry.library, revision, updatedAt: time }
+    return { ...header, data: { ...metadata, ...header, cards, sideboard } }
   })
 }
 
@@ -146,4 +169,21 @@ export async function deleteDeck(db, account, deckId, expectedRevision, updatedA
     [account, deckId, expectedRevision, updatedAt],
   )
   if (!rowCount) throw new ProductError(409, 'Deck revision has changed')
+}
+
+/** Own library metadata for historical attribution, including retired and restored lists. */
+export async function performanceCatalog(db, accountId) {
+  const { rows } = await db.query(`SELECT DISTINCT ON (d.id, r.list_signature, r.format)
+    d.id, d.removed, head.name, head.format, head.archetype, head.list_version AS "currentVersion",
+    r.revision, r.format AS "versionFormat", r.archetype AS "versionArchetype", r.list_version, r.list_signature
+    FROM decks d JOIN deck_revisions head ON (d.account_id,d.id,d.head)=(head.account_id,head.deck_id,head.revision)
+    JOIN deck_revisions r ON (d.account_id,d.id)=(r.account_id,r.deck_id)
+    WHERE d.account_id=$1 ORDER BY d.id, r.list_signature, r.format, r.revision DESC`, [accountId])
+  const families = new Map()
+  for (const row of rows.sort((a, b) => b.revision - a.revision)) {
+    const { id, name, format, archetype, currentVersion, removed } = row
+    if (!families.has(id)) families.set(id, { id, name, format, archetype, currentVersion, removed, versions: [] })
+    families.get(id).versions.push({ version: row.list_version, signature: row.list_signature, format: row.versionFormat, archetype: row.versionArchetype })
+  }
+  return [...families.values()]
 }

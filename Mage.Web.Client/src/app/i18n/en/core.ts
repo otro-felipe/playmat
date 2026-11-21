@@ -299,6 +299,8 @@ export default {
   'decks.tags.remove': 'Remove the tag {tag}',
   'decks.tags.full': 'Up to {count} tags',
   'decks.tags.failed': "Couldn't save the deck",
+  'decks.archetype': 'Archetype',
+  'decks.otherArchetype': 'Other',
   'decks.draft': 'Still building (draft)',
   'decks.draft.badge': 'Draft',
   'decks.filter.label': 'Show decks',
