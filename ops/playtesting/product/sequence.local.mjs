@@ -1,4 +1,5 @@
 // Opt-in real-Java fixture. Never run against a real account, database, game or public endpoint.
+import { fixtureMcpFetch } from './fixture-mcp-fetch.mjs'
 import assert from 'node:assert/strict'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { performance } from 'node:perf_hooks'
@@ -326,7 +327,7 @@ try {
   browser = new PlaymatEngineSeat({ engineUrl: 'ws://127.0.0.1:8080/ws', engineName: 'SequenceAlice', trustedHeader: 'X-Playmat-User', authenticationHeaders: { Cookie: browserCookie } })
   await browser.open()
   client = new Client({ name: 'isolated-real-sequence-fixture', version: '1.0.0' })
-  await client.connect(new StreamableHTTPClientTransport(new URL(base + '/mcp'), { requestInit: { headers: { Authorization: 'Bearer ' + token } } }))
+  await client.connect(new StreamableHTTPClientTransport(new URL(base + '/mcp'), { fetch: fixtureMcpFetch, requestInit: { headers: { Authorization: 'Bearer ' + token } } }))
   const discovered = await client.listTools()
   assert.ok(discovered.tools.some(tool => tool.name === 'advance_to_own_turn'))
   assert.ok(discovered.tools.some(tool => tool.name === 'play_line'))

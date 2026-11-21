@@ -1,3 +1,4 @@
+import { fixtureMcpFetch } from './fixture-mcp-fetch.mjs'
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -34,7 +35,7 @@ export async function verifyReplayReviewOverMcp({ capture, humanCapture, Client,
     const mcpUrl = await listen(mcp)
     client = new Client({ name: 'isolated-replay-review-fixture', version: '1.0.0' })
     await client.connect(new StreamableHTTPClientTransport(new URL('/mcp', mcpUrl), {
-      requestInit: { headers: { Authorization: 'Bearer ' + token } },
+      fetch: fixtureMcpFetch, requestInit: { headers: { Authorization: 'Bearer ' + token } },
     }))
     const { tools } = await client.listTools()
     for (const name of ['get_match_review', 'read_review_evidence', 'list_review_annotations', 'save_review_annotations']) {

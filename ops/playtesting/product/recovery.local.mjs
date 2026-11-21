@@ -1,4 +1,5 @@
 // Explicit fixture harness, never run by npm test. Requires the isolated container opt-in below.
+import { fixtureMcpFetch } from './fixture-mcp-fetch.mjs'
 import assert from 'node:assert/strict'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
@@ -45,7 +46,7 @@ async function clients(fixture) {
   browser = await login('RecoveryAlice')
   mcp = new Client({ name: 'isolated-recovery-fixture', version: '1.0.0' })
   await mcp.connect(new StreamableHTTPClientTransport(new URL(base + '/mcp'), {
-    requestInit: { headers: { Authorization: 'Bearer ' + fixture.token } },
+    fetch: fixtureMcpFetch, requestInit: { headers: { Authorization: 'Bearer ' + fixture.token } },
   }))
 }
 async function states() { return [browser.snapshot(), await call('get_game_state')] }
@@ -268,7 +269,7 @@ try {
     await assert.rejects(() => outsider.recoveryJoin({ matchId: fixture.matchId, revision: status.revision, agree: true }))
     assert.equal((await outsider.recoveryList()).length, 0)
     otherGrant = new Client({ name: 'same-owner-unseated-grant', version: '1.0.0' })
-    await otherGrant.connect(new StreamableHTTPClientTransport(new URL(base + '/mcp'), { requestInit: { headers: { Authorization: 'Bearer ' + otherToken } } }))
+    await otherGrant.connect(new StreamableHTTPClientTransport(new URL(base + '/mcp'), { fetch: fixtureMcpFetch, requestInit: { headers: { Authorization: 'Bearer ' + otherToken } } }))
     const forbidden = await otherGrant.callTool({ name: 'get_recovery_status', arguments: { matchId: fixture.matchId } })
     assert.equal(forbidden.isError, true, 'another grant owned by the same account cannot take the admitted MCP seat')
     const invite = await fetch(base + '/join/' + fixture.originalTableId, { redirect: 'manual' })
