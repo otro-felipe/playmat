@@ -107,9 +107,10 @@ test('[PM-LINE-MCP-2] the turn guide examples pass the published native MCP inpu
   const guide = await readFile(new URL('../guides/turn-planning.md', import.meta.url), 'utf8');
   const examples = [...guide.matchAll(/```json\n([\s\S]*?)\n```/g)].map(([, body]) => JSON.parse(body));
   const lines = examples.filter(({ actions }) => actions);
-  for (const id of ['rage-lethal-001', 'animate-and-attack-001', 'burn-and-land-001',
-    'order-triggers-001', 'land-cast-attack-001', 'burst-at-own-nemesis-001', 'rage-valiant-001', 'saga-entry-001']) {
-    assert.ok(lines.some((line) => line.commandId === id), `Missing guide example ${id}`);
+  const commandIds = new Set(lines.map(line => line.commandId));
+  for (const id of ['rage-lethal-001', 'animate-and-attack-001', 'burn-and-land-001', 'order-triggers-001',
+    'land-cast-attack-001', 'burst-at-own-nemesis-001', 'rage-valiant-001', 'saga-entry-001', 'opening-land-after-bottom']) {
+    assert.ok(commandIds.has(id), `Missing guide example ${id}`);
   }
   assert.equal(lines[0].actions[0].select.objectId, '<rage-object-id>', 'The lethal is the first copyable example');
   const f = await fixture(t);
@@ -126,6 +127,35 @@ test('[PM-LINE-MCP-2] the turn guide examples pass the published native MCP inpu
   const { result } = await f.call('wait_for_decision', recover);
   assert.equal(result.code, 'unknown_command');
   assert.deepEqual(f.applied, []);
+});
+
+test('the London guide answers each observed decision with the current cursor and choice', async (t) => {
+  const guide = await readFile(new URL('../guides/turn-planning.md', import.meta.url), 'utf8');
+  const examples = [...guide.matchAll(/```json\n([\s\S]*?)\n```/g)].map(([, body]) => JSON.parse(body))
+    .filter(({ commandId }) => ['london-redraw-001', 'london-bottom-002', 'london-keep-003'].includes(commandId));
+  const hand = Array.from({ length: 7 }, (_, index) => ({ id: 'card-' + index, name: 'Forest', types: ['LAND'] }));
+  const openingHand = hand.map(card => ({ ...card, id: 'opening-' + card.id }));
+  const prompts = [
+    { id: 'opening-decision', kind: 'mulligan', choices: [{ id: 'take-mulligan', label: 'Mulligan' }] },
+    { id: 'bottom-decision', kind: 'mulliganBottom', choices: [{ id: 'bottom-forest', card: hand[0] }] },
+    { id: 'redrawn-decision', kind: 'mulligan', choices: [{ id: 'keep-six', label: 'Keep' }] },
+  ];
+  assert.equal(examples.length, prompts.length, 'Show Mulligan, the bottom-card choice and Keep as separate calls');
+  const cursor = examples[0].cursor;
+  const f = await fixture(t, { first: prompts[0], initial: { cursor, turn: 0, ownHand: openingHand, step: null },
+    onResponse: ({ decisionId }, update) => {
+      const index = prompts.findIndex(prompt => prompt.id === decisionId);
+      update({ decision: prompts[index + 1] ?? choice('next'), ownHand: index === 0 ? hand : hand.slice(1) });
+    },
+  });
+  for (const [index, args] of examples.entries()) {
+    assert.equal(args.actions.length, 1, 'Leave the next decision to its observed prompt');
+    const { result } = await f.call('play_line', args);
+    assert.equal(result.appliedDecisions, 1, args.commandId);
+    assert.equal(result.state.decision.id, prompts[index + 1]?.id ?? 'next');
+  }
+  assert.deepEqual(f.applied.map(({ decisionId, choiceId }) => [decisionId, choiceId]),
+    prompts.map(({ id, choices }) => [id, choices[0].id]));
 });
 
 test('[PM-LINE-MCP-2] native tool discovery advertises both compact and full player views', async (t) => {

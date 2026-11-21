@@ -2,6 +2,7 @@ package mage.server.game;
 
 import com.google.gson.Gson;
 import mage.abilities.Ability;
+import mage.cards.Card;
 import mage.cards.CardSetInfo;
 import mage.cards.m.MonasterySwiftspear;
 import mage.constants.Rarity;
@@ -14,6 +15,7 @@ import mage.constants.MultiplayerAttackOption;
 import mage.constants.RangeOfInfluence;
 import mage.game.GameState;
 import mage.game.events.GameEvent;
+import mage.game.events.ZoneChangeEvent;
 import mage.game.events.DamagedPermanentEvent;
 import mage.game.events.DamagedPlayerEvent;
 import mage.game.permanent.Permanent;
@@ -232,6 +234,43 @@ public class GameEventRecorderEvidenceTest {
         assertEquals(4, evidence.getCombatDamage().get(0).getAmount());
         assertTrue(evidence.getCombatDamage().get(0).isTargetPermanent());
         assertTrue(evidence.getPublicActions().isEmpty());
+    }
+
+    @Test public void publicDeathReplacementAttestsOnlyTheExactRecentPermanentHit() {
+        UUID target = UUID.randomUUID();
+        Permanent creature = stub(Permanent.class, values("getId", target));
+        Card visibleCard = stub(Card.class, values("getId", target));
+        Game combatGame = stub(Game.class, values("getId", gameId, "getCard", visibleCard));
+        ZoneChangeEvent exile = new ZoneChangeEvent(creature, null, rival, Zone.BATTLEFIELD, Zone.GRAVEYARD);
+        exile.setToZone(Zone.EXILED);
+        recorder.watch(exile, combatGame);
+        assertTrue(feed.sequenceEvidence().getCombatExileReplacements().isEmpty());
+
+        feed.combatDamage(stackId, own, target, 3, true);
+        feed.combatDamage(stackId, own, rival, 2, false);
+        SequenceEvidenceView before = feed.sequenceEvidence();
+        recorder.watch(new ZoneChangeEvent(creature, null, rival, Zone.BATTLEFIELD, Zone.EXILED), combatGame);
+        assertTrue(feed.sequenceEvidence().getCombatExileReplacements().isEmpty());
+        // Leaving and returning creates a different permanent even if XMage reuses the UUID.
+        recorder.watch(exile, combatGame);
+        assertTrue(feed.sequenceEvidence().getCombatExileReplacements().isEmpty());
+        feed.combatDamage(stackId, own, target, 3, true);
+        Game hiddenCard = stub(Game.class, values("getId", gameId, "getCard", stub(Card.class, values("isFaceDown", true))));
+        recorder.watch(exile, hiddenCard);
+        assertTrue(feed.sequenceEvidence().getCombatExileReplacements().isEmpty());
+        feed.combatDamage(stackId, own, target, 3, true);
+        Permanent faceDown = stub(Permanent.class, values("getId", target, "isFaceDown", true));
+        ZoneChangeEvent hiddenDeath = new ZoneChangeEvent(faceDown, null, rival, Zone.BATTLEFIELD, Zone.GRAVEYARD);
+        hiddenDeath.setToZone(Zone.EXILED);
+        recorder.watch(hiddenDeath, combatGame);
+        assertTrue(feed.sequenceEvidence().getCombatExileReplacements().isEmpty());
+
+        feed.combatDamage(stackId, own, target, 3, true);
+        recorder.watch(exile, combatGame);
+        assertEquals(Long.valueOf(5), feed.sequenceEvidence().getCombatExileReplacements().get(target));
+        assertTrue(before.getCombatExileReplacements().isEmpty());
+        for (int i = 0; i < GameEventFeed.RESOLUTION_CAPACITY; i++) feed.combatDamage(stackId, own, rival, 1, false);
+        assertTrue(feed.sequenceEvidence().getCombatExileReplacements().isEmpty());
     }
 
     @Test public void nonCombatOrUnknownSourceCannotSupplyAnOwnCombatWitness() {

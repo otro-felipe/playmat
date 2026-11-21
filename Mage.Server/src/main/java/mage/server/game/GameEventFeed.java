@@ -35,6 +35,8 @@ public final class GameEventFeed {
     private long resolutionRevision;
     private long combatRevision;
     private final Deque<SequenceCombatDamageView> combatDamage = new ArrayDeque<>();
+    private final Map<UUID, Long> pendingPermanentHits = new LinkedHashMap<>();
+    private final Map<UUID, Long> combatExileReplacements = new LinkedHashMap<>();
     private final Map<UUID, Long> newInformation = new LinkedHashMap<>();
     private long publicInformationRevision;
     static final int RESOLUTION_CAPACITY = 32;
@@ -65,7 +67,19 @@ public final class GameEventFeed {
     public synchronized void combatDamage(UUID source, UUID controller, UUID target, int amount, boolean targetPermanent) {
         if (source == null || controller == null || target == null || amount <= 0) return;
         combatDamage.addLast(new SequenceCombatDamageView(++combatRevision, source, controller, target, amount, targetPermanent));
-        while (combatDamage.size() > RESOLUTION_CAPACITY) combatDamage.removeFirst();
+        if (targetPermanent) pendingPermanentHits.put(target, combatRevision);
+        if (combatDamage.size() > RESOLUTION_CAPACITY) {
+            SequenceCombatDamageView removed = combatDamage.removeFirst();
+            pendingPermanentHits.remove(removed.getTargetId(), removed.getRevision());
+            combatExileReplacements.remove(removed.getTargetId(), removed.getRevision());
+        }
+    }
+
+    /** Consume the hit on the first departure. A later incarnation may reuse the same ID. */
+    public synchronized void permanentLeftBattlefield(UUID target, boolean publicExileReplacement) {
+        Long hitRevision = pendingPermanentHits.remove(target);
+        combatExileReplacements.remove(target);
+        if (hitRevision != null && publicExileReplacement) combatExileReplacements.put(target, hitRevision);
     }
 
     /** The result remains in the owner's view; the witness reports only that new information arrived. */
@@ -81,7 +95,8 @@ public final class GameEventFeed {
     public synchronized SequenceEvidenceView sequenceEvidence(UUID viewerId) {
         if (!PublicActionObservations.isObserved(gameId)) return null;
         return new SequenceEvidenceView(evidenceEpoch, publicActions, resolutions, resolutionRevision,
-                new ArrayList<>(combatDamage), combatRevision, publicInformationRevision + (viewerId == null ? 0 : newInformation.getOrDefault(viewerId, 0L)));
+                new ArrayList<>(combatDamage), combatRevision, publicInformationRevision + (viewerId == null ? 0 : newInformation.getOrDefault(viewerId, 0L)),
+                combatExileReplacements);
     }
 
     private static final class Entry {

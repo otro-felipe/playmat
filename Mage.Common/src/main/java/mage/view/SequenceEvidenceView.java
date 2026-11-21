@@ -17,6 +17,7 @@ public final class SequenceEvidenceView implements Serializable {
     private final long resolutionRevision;
     private final long combatRevision, informationRevision;
     private final List<SequenceCombatDamageView> combatDamage;
+    private final Map<UUID, Long> combatExileReplacements;
 
     public SequenceEvidenceView(String epoch, Map<UUID, Long> publicActions,
             Map<UUID, Long> resolutions, long resolutionRevision) {
@@ -25,6 +26,13 @@ public final class SequenceEvidenceView implements Serializable {
 
     public SequenceEvidenceView(String epoch, Map<UUID, Long> publicActions, Map<UUID, Long> resolutions,
             long resolutionRevision, List<SequenceCombatDamageView> combatDamage, long combatRevision, long informationRevision) {
+        this(epoch, publicActions, resolutions, resolutionRevision, combatDamage, combatRevision, informationRevision, Collections.emptyMap());
+    }
+
+    public SequenceEvidenceView(String epoch, Map<UUID, Long> publicActions, Map<UUID, Long> resolutions,
+            long resolutionRevision, List<SequenceCombatDamageView> combatDamage, long combatRevision, long informationRevision,
+            Map<UUID, Long> combatExileReplacements) {
+        this.combatExileReplacements = new LinkedHashMap<>(combatExileReplacements);
         this.epoch = epoch;
         this.publicActions = new LinkedHashMap<>(publicActions);
         this.resolutions = new LinkedHashMap<>(resolutions);
@@ -39,5 +47,6 @@ public final class SequenceEvidenceView implements Serializable {
     public long getResolutionRevision() { return resolutionRevision; }
     public List<SequenceCombatDamageView> getCombatDamage() { return combatDamage; }
     public long getCombatRevision() { return combatRevision; }
+    public Map<UUID, Long> getCombatExileReplacements() { return combatExileReplacements; }
     public long getInformationRevision() { return informationRevision; }
 }
