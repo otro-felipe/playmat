@@ -497,6 +497,11 @@ public class WebClientApiContractTest {
                 array.add(ADMIN_PASSWORD);
                 continue;
             }
+            if ("chatJoin".equals(method.getName()) && "recentTalk".equals(param.getName())) {
+                // Test normal dispatch here. ChatSessionRecentTalkTest exercises the game-chat history opt-in.
+                array.add(false);
+                continue;
+            }
             if (param.isOptional() && "line".equals(param.getName())) {
                 // The browser has no MCP principal and never supplies replay-line metadata.
                 array.add(com.google.gson.JsonNull.INSTANCE);

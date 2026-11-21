@@ -14,7 +14,11 @@ for (const viewport of [{ width: 1512, height: 805 }, { width: 390, height: 844 
     test.use({ viewport });
     test('a public link opens the real board with two visible hands and no player connection', async ({ page }, info) => {
       const privateRequests: string[] = [];
-      page.on('websocket', socket => privateRequests.push(new URL(socket.url()).pathname));
+      page.on('websocket', socket => {
+        const path = new URL(socket.url()).pathname;
+        // Vite's development hot reload is separate from the game transport.
+        if (path !== '/' || process.env.MAGE_WEB_E2E_PREVIEW === '1') privateRequests.push(path);
+      });
       await page.route('**/api/playtesting/**', route => {
         const path = new URL(route.request().url()).pathname;
         if (path === '/api/playtesting/spectate/' + spectatorToken) return route.fulfill({ json: spectatorSnapshot });
