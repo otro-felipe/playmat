@@ -34,12 +34,20 @@ fi
 # exact built image. A slow setup in one match cannot consume the next family's
 # decision budget, and every family still passes through the real product limits.
 selection=${PLAYMAT_SEQUENCE_SCENARIOS:-all}
-if [[ $selection == all ]]; then
- for scenario in review mulligan casting order activation combat saga-entry exile ward turn-lines; do
+pioneer=(mulligan casting order activation combat saga-entry exile ward)
+case "$selection" in
+ all) families=(review "${pioneer[@]}" modal typed causal) ;;
+ pioneer) families=("${pioneer[@]}") ;;
+ turn-lines) families=(modal typed causal) ;;
+ review|mulligan|casting|order|activation|combat|saga-entry|exile|ward|modal|typed|causal) families=("$selection") ;;
+ *) echo 'Unknown isolated real-engine scenario' >&2; exit 2 ;;
+esac
+if (( ${#families[@]} > 1 )); then
+ for scenario in "${families[@]}"; do
   echo "Running isolated real-engine family: $scenario"
-  PLAYMAT_SEQUENCE_TEST_IMAGE="$image" PLAYMAT_SEQUENCE_SCENARIOS="$scenario" bash "$0"
+  PLAYMAT_SEQUENCE_TEST_IMAGE="$image" PLAYMAT_SEQUENCE_SCENARIOS="$scenario" bash ops/playtesting/test/verify-sequence-image.sh
  done
- echo 'Complete isolated real-engine causal sequence acceptance passed'
+ echo "All requested real-engine families passed: $selection"
  exit 0
 fi
 if [[ -n ${PLAYMAT_SEQUENCE_TEST_SUBNET:-} ]]; then
