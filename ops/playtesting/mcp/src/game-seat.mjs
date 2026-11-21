@@ -8,6 +8,7 @@ const RESPONSE_TIMEOUT_MS = 18_000;
 const SEQUENCE_TIMEOUT_MS = 60_000;
 const MAX_SEQUENCE_WALL_MS = 15 * 60_000;
 const MAX_OUTCOMES = 256;
+const PERMANENT_SPELL_TYPES = new Set(['ARTIFACT', 'BATTLE', 'CREATURE', 'ENCHANTMENT', 'PLANESWALKER']);
 
 export class ToolError extends Error {
   constructor(code, message, { actionIndex } = {}) {
@@ -71,6 +72,20 @@ function sameTriggerText(actual, declared) {
   // rule can preserve a lowercase keyword or introductory word.
   return actual === declared || typeof actual === 'string' && typeof declared === 'string'
     && actual[0]?.toLowerCase() === declared[0]?.toLowerCase() && actual.slice(1) === declared.slice(1);
+}
+
+// A transforming spell and its permanent can have different public object IDs.
+function observeCastEntry(entry, state, ownPlayerId) {
+  const own = state.players?.find((player) => player.id === ownPlayerId);
+  const copies = own?.battlefield?.filter((card) => card.cardId === entry.spell.cardId) ?? [];
+  if (!copies.length) {
+    const elsewhere = [...(state.ownHand ?? []), ...(own?.graveyard ?? []), ...(own?.exile ?? [])];
+    return entry.permanentId || elsewhere.some((card) => card.cardId === entry.spell.cardId) ? null : entry;
+  }
+  const [permanent] = copies;
+  if (copies.length !== 1 || !permanent.id || permanent.faceDown || (permanent.controllerId && permanent.controllerId !== ownPlayerId)
+    || permanent.name !== entry.spell.name || (entry.permanentId && permanent.id !== entry.permanentId)) return null;
+  return { spell: entry.spell, permanentId: permanent.id };
 }
 
 function lifeLossAwaitingOwnCombatDamage(state, previous, before, after, ownPlayerId, plannedAttackers) {
@@ -588,6 +603,16 @@ export class GameSeat {
     const observedSpellOptions = new Map();
     const handledSpellModes = new Set();
     let pendingTriggers = [];
+    const entryForSpell = (spell) => spell?.cardId && spell.controllerId === ownPlayerId && !spell.abilityType
+      && spell.types?.some((type) => PERMANENT_SPELL_TYPES.has(type)) ? { spell } : null;
+    // A fresh line may start inside resolution, e.g. at a read-ahead prompt.
+    let castEntry = entryForSpell(initial.stack.find(({ id }) => resolvingPlanned.has(id)
+      && initialEvidence.resolutions[id] === initialEvidence.resolutionRevision));
+    const closeCastEntry = () => {
+      if (!castEntry) return;
+      pendingTriggers = pendingTriggers.filter((trigger) => trigger.entrySpellId !== castEntry.spell.id);
+      castEntry = null;
+    };
     let orderedTriggers = [];
     const pendingIntention = () => pendingCast || awaitingOwnCombatWitness || awaitingCombatTerminal || orderedTriggers.length
       || pendingTriggers.some((entry) => entry.abilityType === 'ACTIVATED_NONMANA' && entry.remaining > 0);
@@ -665,6 +690,8 @@ export class GameSeat {
         }
         resolvingPlanned.add(id);
         const object = state.stack.find((card) => card.id === id) ?? expectedStackCards.find((card) => card.id === id);
+        closeCastEntry();
+        castEntry = entryForSpell(object);
         if (explicitInformationObjects.has(id) || needsStackReevaluation(object, ownPlayerId)) {
           resolvingInformation.set(id, object ?? { id });
         }
@@ -775,6 +802,11 @@ export class GameSeat {
       awaitingOwnCombatWitness = deferOwnCombatWitness;
       awaitingCombatTerminal = deferCombatTerminal;
       if (deferOwnCombatWitness || deferCombatTerminal) return;
+      if (castEntry) {
+        const observed = observeCastEntry(castEntry, state, ownPlayerId);
+        if (observed) castEntry = observed;
+        else closeCastEntry();
+      }
       const currentStack = stackIdentity(state.stack);
       if (currentStack === expectedStack) {
         // Mode, payment and targets can change while the stack identity stays put.
@@ -808,13 +840,18 @@ export class GameSeat {
       for (const item of added) {
         if (nextCast && item.cardId === nextCast.cardId && item.controllerId === nextCast.playerId
           && item.name === nextCast.name && item.id !== item.cardId && !item.abilityType) {
+          for (const trigger of nextTriggers) {
+            if (trigger.entryCastSource === nextCast.objectId && !trigger.entrySpellId) trigger.entrySpellId = item.id;
+          }
           if (nextCast.information) explicitInformationObjects.add(item.id);
           if (nextCast.actionIndex !== undefined) announcedCast = [nextCast.actionIndex, item.id];
           nextCast = null;
           continue;
         }
         const expected = nextTriggers.filter((trigger) => trigger.remaining > 0
-          && item.abilityType === (trigger.abilityType ?? 'TRIGGERED_NONMANA') && item.sourceId === trigger.sourceId
+          && item.abilityType === (trigger.abilityType ?? 'TRIGGERED_NONMANA')
+          && (castEntry && trigger.entrySpellId === castEntry.spell.id
+            ? !!castEntry.permanentId && item.sourceId === castEntry.permanentId : item.sourceId === trigger.sourceId)
           && (item.abilityType === 'TRIGGERED_NONMANA'
             ? sameTriggerText(item.abilityText, trigger.abilityText) : item.abilityText === trigger.abilityText)
           && item.controllerId === trigger.playerId
@@ -975,6 +1012,9 @@ export class GameSeat {
     const submit = async (args) => {
       requireSettledCombat();
       settlingResolution = false;
+      // The engine puts entry triggers on the stack before offering priority.
+      // A later blink or recast must not spend this cast's remaining budget.
+      if (castEntry && visibleDecision(this.snapshot())?.kind === 'priority') closeCastEntry();
       const submission = { stepIndex: sequence.completedSteps, actionIndex: sequence.actionIndex ?? null,
         dispatchedAtEpochMs: Date.now(), finishedAtEpochMs: null, acknowledged: false };
       sequence.lastSubmission = submission;
@@ -1204,10 +1244,10 @@ export class GameSeat {
             const sources = [...(state.ownHand ?? []), ...(own?.battlefield ?? [])];
             const additions = [];
             for (const trigger of step.expectTriggers) {
-              const source = sources.find((card) => card.id === trigger.sourceId)
-                ?? (step.expectCast && choice.card?.id === trigger.sourceId ? choice.card : null)
-                ?? state.stack.find((card) => card.controllerId === own?.id && plannedStackIds.has(card.id)
-                  && !card.abilityType && card.cardId === trigger.sourceId && card.rules?.includes(trigger.abilityText));
+              const adopted = state.stack.find((card) => card.controllerId === own?.id && plannedStackIds.has(card.id)
+                && !card.abilityType && card.cardId === trigger.sourceId && card.rules?.includes(trigger.abilityText));
+              const casting = step.expectCast && choice.card?.id === trigger.sourceId ? choice.card : null;
+              const source = sources.find((card) => card.id === trigger.sourceId) ?? casting ?? adopted;
               if (!own?.id || !source || source.faceDown || source.name === 'Face-down card') {
                 throw new ToolError('bad_trigger_expectation', 'Predeclare only a visible own source or an exact trigger of the own spell you are casting or have adopted.');
               }
@@ -1215,7 +1255,8 @@ export class GameSeat {
                 .some((item) => item.sourceId === trigger.sourceId && sameTriggerText(item.abilityText, trigger.abilityText))) {
                 throw new ToolError('ambiguous_trigger_expectation', 'Use one bounded count for each exact source and ability.');
               }
-              additions.push({ ...trigger, playerId: own.id, remaining: trigger.count ?? 1 });
+              additions.push({ ...trigger, playerId: own.id, remaining: trigger.count ?? 1,
+                entryCastSource: casting?.id, entrySpellId: adopted?.id });
             }
             pendingTriggers.push(...additions);
           }

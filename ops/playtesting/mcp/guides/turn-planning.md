@@ -174,6 +174,90 @@ You have an untapped Mountain on the battlefield and a land and Monastery Swifts
 }
 ```
 
+### After blocks, aim Burst Lightning at your own Screaming Nemesis
+
+You control an undamaged 3/3 Screaming Nemesis and a Soul-Scar Mage. The blockers are known, you have priority with an empty stack and one untapped red source, and the opponent can gain life on future turns. Two damage to your Nemesis triggers its ability. Choose the opponent for that ability to deal 2 and stop their life gain for the rest of the game. Casting Burst also triggers the Mage's prowess. The Mage replaces damage dealt to **opposing** creatures, so your Nemesis still takes the damage. Check whether that damage changes the outcome of combat for Nemesis before choosing this line.
+
+The XMage prompt order observed here was kicker, spell target, payment and then the Nemesis trigger target. The trigger source is the battlefield object for Nemesis. The spell's casting prompts refer to Burst. Supply the full visible ability text for both expected triggers.
+
+```json
+{
+  "gameId": "00000000-0000-4000-8000-000000000001",
+  "cursor": 3189,
+  "commandId": "burst-at-own-nemesis-001",
+  "view": "compact",
+  "actions": [
+    {
+      "kind": "play",
+      "select": {"objectId": "<burst-id>", "zone": "hand"},
+      "expectTriggers": [
+        {"sourceId": "<soul-scar-mage-id>", "abilityText": "<full-prowess-text>"},
+        {"sourceId": "<nemesis-id>", "abilityText": "<full-nemesis-damage-trigger-text>"}
+      ]
+    },
+    {"kind": "choose", "guard": {"kind": "question", "sourceObjectId": "<burst-id>", "instruction": "Pay Kicker {4} ?"}, "select": {"answer": false}},
+    {"kind": "choose", "guard": {"kind": "target", "targetSourceId": "<burst-id>", "targetRole": 0}, "select": {"objectId": "<nemesis-id>"}},
+    {"kind": "choose", "guard": {"kind": "payMana"}, "select": {"objectId": "<red-source-id>", "zone": "battlefield"}},
+    {"kind": "choose", "guard": {"kind": "target", "targetSourceId": "<nemesis-id>", "targetRole": 0}, "select": {"objectId": "<opponent-id>"}},
+    {"kind": "pass_until", "destination": "my_draw"}
+  ]
+}
+```
+
+### End the line at Emberheart Challenger's unknown exile
+
+Emberheart Challenger is on your battlefield. With priority in your main phase, cast Monstrous Rage on it for the first time this turn. Prowess is predictable. Valiant determines a new playable card, and that card can change your land drop, combat or next spell. Submit the target and payment together. Leave combat for the receipt that exposes the card. If XMage asks you to order the triggers, use the observed trigger-order choice as in the earlier example. Continue from the resulting state when the card becomes visible.
+
+```json
+{
+  "gameId": "00000000-0000-4000-8000-000000000001",
+  "cursor": 4187,
+  "commandId": "rage-valiant-001",
+  "view": "compact",
+  "actions": [
+    {
+      "kind": "play",
+      "select": {"objectId": "<rage-id>", "zone": "hand"},
+      "targets": [{"role": 0, "targetZone": "BATTLEFIELD", "select": {"objectId": "<challenger-id>"}}],
+      "payWith": ["<red-source-id>"],
+      "expectTriggers": [
+        {"sourceId": "<challenger-id>", "abilityText": "<full-prowess-text>"},
+        {"sourceId": "<challenger-id>", "abilityText": "<full-valiant-text>"}
+      ],
+      "reevaluateAfter": true
+    }
+  ]
+}
+```
+
+If the rest of the position includes a justified land drop and casting Challenger, put those before Rage in the same request when you can identify the target and payment from your seat. A preflight `reevaluation_required` with `appliedDecisions:0` allows a corrected line from the returned state. An execution interruption can include already accepted costs and plays.
+
+### Cast a Saga and resolve its first chapter
+
+With a Mountain available and no attackers, use Kumano's object ID from your hand in both places. Copy the complete chapter I rule from that copy's visible `rules`, including its chapter prefix. XMage identifies the front face separately once it enters. The executor follows the announced spell through its witnessed resolution to the visible permanent.
+
+```json
+{
+  "gameId": "00000000-0000-4000-8000-000000000001",
+  "cursor": 2457,
+  "commandId": "saga-entry-001",
+  "view": "compact",
+  "actions": [
+    {
+      "kind": "play",
+      "select": {"objectId": "<kumano-hand-id>", "zone": "hand"},
+      "payWith": [{"sourceId": "<mountain-id>", "color": "R"}],
+      "expectTriggers": [{"sourceId": "<kumano-hand-id>", "abilityText": "<full-visible-chapter-I-rule>"}]
+    },
+    {"kind": "pass_until", "destination": "end_step", "policy": "if_no_play"}
+  ]
+}
+```
+
+On a later turn, inspect the draw first. To announce chapter II or III before entering your first main phase, start the line with `{"kind":"choose","decisionId":"<observed-draw-priority>","choiceId":"<visible-pass-choice>","expectTriggers":[{"sourceId":"<saga-battlefield-id>","abilityText":"<exact-next-chapter-text>"}]}`, then include the land or other justified actions. A forecast attached to the land starts when that land is selected, after the implicit pass to the main phase. Each Saga needs its own source ID. An ordering prompt still needs its own choice.
+
+Kumano's chapter II creates a delayed trigger for the next creature spell. If chapter II resolved and Kumano is still on your battlefield, put a second forecast on the creature's `play`. Use Kumano's battlefield ID again. In XMage the delayed ability reads `When you next cast a creature spell this turn, that creature enters with an additional +1/+1 counter on it.` That is the public body of this specific chapter after its `II - ` prefix. Other cards can create delayed abilities whose exact text is unavailable until they trigger.
+
 ## Choose when to pass
 
 | Intention | Final action |
@@ -188,6 +272,8 @@ You have an untapped Mountain on the battlefield and a land and Monastery Swifts
 The default `if_no_play` policy checks the engine's choices. Tapped lands and zero mana can coexist with a legal land drop, free spell, alternate cost or activation, so those choices can bring you back into the line. The policy skips only ordinary priority and known mana-only choices before the destination. `decline_optional` is a strategic commitment to skip optional plays along the way, including land drops. Both policies return control for an unexpected opponent action, new information or a required choice. The terminal pass never queues a new turn's plays after the draw.
 
 For a bluff, hold your resources open and choose the single priority handoff or a deliberate pass to a specified stop. A brief `{"kind":"pace","delayMs":250}` before the pass is optional and capped by the current clocks. A delay does not establish what the opponent holds. Use `wait_for_decision` when you intend only to observe.
+
+When keeping every creature back, include `{"kind":"attack","attackers":[]}` before the terminal pass. Declaring attackers is a mandatory decision even when the declaration is empty.
 
 `my_draw` binds when the terminal pass begins, after any earlier actions in the line. From your own untap or upkeep it aims for this turn's draw. From later in your turn or during the opponent's turn, it aims for your next turn's draw. A normal draw occurs before the draw step's priority. A queued line stops at either player's upkeep with `before_draw_trigger` when a face-up permanent's public rules show a potential trigger on that player's upcoming draw or draw step. Review any conditions such as exceptions for the first card drawn. A new line starting at the returned upkeep can deliberately let the player draw unless it introduces a new draw-trigger source. `lastDestination` shows the actual boundary, including when `destination_skipped` reports a skipped window.
 

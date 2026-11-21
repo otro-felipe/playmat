@@ -356,6 +356,7 @@ try {
     ['order', './casting-and-order.local.mjs', 'verifyTriggerOrder'],
     ['activation', './creature-land-activation.local.mjs', 'verifyCreatureLandActivation'],
     ['combat', './combat-destinations.local.mjs', 'verifyPlaneswalkerCombat'],
+    ['saga-entry', './saga-entry.local.mjs', 'verifySagaEntry'],
     ['ward', './multi-target-ward.local.mjs', 'verifyMultiTargetWard'],
   ]
   for (const [name, modulePath, run] of pioneerScenarios) {
