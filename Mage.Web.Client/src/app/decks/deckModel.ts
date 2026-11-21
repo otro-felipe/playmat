@@ -215,11 +215,12 @@ function pickCover(entries: DeckCardInfo[], info: ReadonlyMap<string, CardView>)
   return best ? { setCode: best.entry.setCode!, cardNumber: best.entry.cardNumber!, name: best.entry.cardName } : null;
 }
 
-/** The deck as the server reads it (set and number always present, even if empty). */
+/** Only a seat submission carries the selected library identity. */
 export function selectedDeckForPlay(deck: DeckCardLists, libraryDeckId: string): WireDeck {
   return { ...toWire(deck), libraryDeckId };
 }
 
+/** The deck as the server reads it (set and number always present, even if empty). */
 export function toWire(deck: DeckCardLists): WireDeck {
   const wire = (entry: DeckCardInfo) => ({ cardName: entry.cardName, setCode: entry.setCode ?? '', cardNumber: entry.cardNumber ?? '', amount: entry.amount });
   return { name: deck.name, cards: deck.cards.map(wire), sideboard: deck.sideboard.map(wire) };
