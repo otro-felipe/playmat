@@ -1,5 +1,7 @@
 # Start a Thoughtseize match
 
+For a saved list, call `list_decks({})` and pass its `id` as `deckId` to `join_game` or `create_game`. For example, `join_game({"tableId":"<invited-table-uuid>","deckId":"<agent-library-deck-uuid>"})` seats the exact saved list and records its version for performance history. For an unsaved list, send the inline `deck` field instead.
+
 Connect to the Thoughtseize `/mcp` endpoint through OAuth with the player's Thoughtseize account. The library is shared with that account. Thoughtseize assigns the rival identity automatically for MCP matches. Use `tools/list` for input schemas and follow the scopes the player approved.
 
 Before creating, joining or playing, call `get_guide({"bundle":true})` to load **all four guide texts** and their shared version. Repeat after losing context. A connector with an older schema can read the four guides individually by `guideId`: `getting-started`, `turn-planning`, `card-catalog` and `rules`. The equivalent `playmat://guides/<guideId>` resources are also available. An empty call only returns the guide index.

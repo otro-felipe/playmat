@@ -323,15 +323,29 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
   };
   tool('list_joinable_games', 'List only tables with an available invitation for this account.', { limit: z.number().int().min(1).max(50).default(25) },
     'play', (args) => fromProduct('list_joinable_games', args), true);
+  const playDeck = {
+    deck: Deck.optional(),
+    deckId: Uuid.optional().describe('ID from list_decks. Supply this or an inline deck.'),
+  };
+  async function resolvePlayDeck(deck, deckId) {
+    if (Boolean(deck) === Boolean(deckId)) throw new ToolError('invalid_deck', 'Choose one library deck ID or supply an inline deck.');
+    if (!deckId) return deck;
+    const saved = await fromProduct('get_deck', { deckId });
+    if (saved?.id !== deckId || saved.library !== 'agent' || !saved.data) {
+      throw new ToolError('deck_unavailable', 'Choose a saved deck from your agent library.');
+    }
+    const { name, cards, sideboard } = saved.data;
+    return { name, cards, sideboard, libraryDeckId: deckId };
+  }
   tool('create_game', 'Create a private, unrated best-of-three table as this agent seat.', {
-    format: Format, name: z.string().trim().min(1).max(80), deck: Deck,
+    format: Format, name: z.string().trim().min(1).max(80), ...playDeck,
     guestEngineName: z.string().trim().min(1).max(36), ...agentRuntime,
-  }, 'play', async ({ guestEngineName, model, reasoningEffort, ...args }) => getSeat().engine.createGame(args,
+  }, 'play', async ({ guestEngineName, model, reasoningEffort, deck, deckId, ...args }) => getSeat().engine.createGame({ ...args, deck: await resolvePlayDeck(deck, deckId) },
     (record) => fromProduct('create_game_invite', { ...record, guestEngineName, model, reasoningEffort })));
   tool('join_game', 'Join a private table from its Thoughtseize invite link or table ID. Use a legal deck and an optional seat display name.', {
     tableId: Uuid.optional(), inviteLink: z.url().max(2048).optional(),
-    displayName: z.string().trim().min(1).max(24).optional(), deck: Deck, ...agentRuntime,
-  }, 'play', async ({ tableId, inviteLink, displayName, model, reasoningEffort, deck }) => {
+    displayName: z.string().trim().min(1).max(24).optional(), ...playDeck, ...agentRuntime,
+  }, 'play', async ({ tableId, inviteLink, displayName, model, reasoningEffort, deck, deckId }) => {
       if (Boolean(tableId) === Boolean(inviteLink)) throw new ToolError('invalid_invite', 'Provide either the invite link or the table ID.');
       if (inviteLink) {
         const url = new URL(inviteLink);
@@ -343,7 +357,7 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
         tableId = id;
       }
       const invitation = await fromProduct('inspect_game_invite', { tableId });
-      return getSeat().engine.joinGame({ tableId, deck }, invitation,
+      return getSeat().engine.joinGame({ tableId, deck: await resolvePlayDeck(deck, deckId) }, invitation,
         () => fromProduct('get_game_invite', { tableId, displayName, model, reasoningEffort }));
     });
   tool('start_match', 'Start your own private table when it is ready.', { tableId: Uuid }, 'play',

@@ -16,6 +16,9 @@ import java.util.List;
  */
 public class DeckCardLists implements Serializable, Copyable<DeckCardLists> {
 
+    private static final long serialVersionUID = -6156803895543885381L;
+
+    private String libraryDeckId;
     private String name = null;
     private String author = null;
     private List<DeckCardInfo> cards = new ArrayList<>();
@@ -29,6 +32,7 @@ public class DeckCardLists implements Serializable, Copyable<DeckCardLists> {
     }
 
     protected DeckCardLists(final DeckCardLists deck) {
+        this.libraryDeckId = deck.libraryDeckId;
         this.name = deck.name;
         this.author = deck.author;
         this.cards = CardUtil.deepCopyObject(deck.cards);
@@ -87,6 +91,14 @@ public class DeckCardLists implements Serializable, Copyable<DeckCardLists> {
      */
     public void setSideboard(List<DeckCardInfo> sideboard) {
         this.sideboard = sideboard;
+    }
+
+    public String getLibraryDeckId() {
+        return libraryDeckId;
+    }
+
+    public void setLibraryDeckId(String libraryDeckId) {
+        this.libraryDeckId = libraryDeckId;
     }
 
     public String getName() {

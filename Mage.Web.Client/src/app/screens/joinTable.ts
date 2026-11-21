@@ -1,5 +1,5 @@
 import { api } from '../connection';
-import { toWire } from '../decks/deckModel';
+import { selectedDeckForPlay } from '../decks/deckModel';
 import { refreshTables } from '../queries';
 import { useDecks } from '../stores/decks';
 import { useSession } from '../stores/session';
@@ -11,11 +11,11 @@ export async function joinTable(table: TableView, deckId: string, password = '',
   signal?.throwIfAborted();
   const { roomId, userName } = useSession.getState();
   if (!roomId || !table.tableId) throw new Error('Not connected to the server.');
-  const { deck } = await useDecks.getState().loadForPlay(deckId);
+  const { deck, id } = await useDecks.getState().loadForPlay(deckId);
   signal?.throwIfAborted();
   // the pictures download while the table fills, so the first hand lands with its art
   warmDeck(deck);
-  const joined = await api.roomJoinTable(roomId, table.tableId, userName, 'HUMAN', 1, toWire(deck), password);
+  const joined = await api.roomJoinTable(roomId, table.tableId, userName, 'HUMAN', 1, selectedDeckForPlay(deck, id), password);
   refreshTables();
   if (!joined) {
     throw new Error(table.passworded ? 'Wrong password, or the table did not accept your deck.' : 'The table did not accept your seat or deck.');

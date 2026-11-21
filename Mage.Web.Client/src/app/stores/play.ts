@@ -5,7 +5,7 @@ import { useEvents } from './events';
 import { warmDeck } from '../ui/imageCache';
 import { useSession } from './session';
 import { readJson, writeJson } from './persist';
-import { toWire } from '../decks/deckModel';
+import { selectedDeckForPlay, toWire } from '../decks/deckModel';
 import type { DeckCardLists as WireDeck, GameTypeView, ServerState } from '../../protocol/generated/views';
 import { queryClient } from '../queries';
 import { seatableAiType } from '../screens/aiSetup';
@@ -162,7 +162,7 @@ export const usePlay = create<PlayState>((set, get) => ({
     // a game outside any event: leaving it goes back to Play
     useEvents.setState({ currentTournamentId: null });
     try {
-      const { deck, meta } = await useDecks.getState().loadForPlay(deckId);
+      const { deck, id, meta } = await useDecks.getState().loadForPlay(deckId);
       if (meta && deckId.startsWith(RANDOM_META_PREFIX)) await loadCareerMessages();
       if (meta && deckId.startsWith(RANDOM_META_PREFIX)) notify(t('solo.metaDeck.dealt', { name: meta.name }), t('solo.metaDeck.dealtNote', { format: formatRules(meta.format).label }));
       // both decks' pictures download while the table is set up, before the first card is drawn: nothing either
@@ -183,7 +183,7 @@ export const usePlay = create<PlayState>((set, get) => ({
       const opponents = commander ? options.opponents : 1;
       const seats = opponents + 1;
       const gameType = gameTypeFor(deckType, seats, await api.getGameTypes());
-      const playerDeck = toWire(deck);
+      const playerDeck = selectedDeckForPlay(deck, id);
       const source: OpponentSource = practice ? { kind: 'roster', id: null } : opponentSource(options.opponentDeckId);
       const sourced = practice ? null : await sourceDeck(source, playerDeck, deck.name, commander);
       const format = options.rules === 'deck' ? deckType : null;

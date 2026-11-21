@@ -1758,3 +1758,29 @@ test('upgrading a random OAuth seat keeps existing credentials, history perspect
   const privacy = await (await f.path(reviewPrivacy + '/matches/' + legacy.id, { headers })).json()
   assert.equal(privacy.viewerSeatId, old)
 })
+
+test('a selected library copy registers once per seat from game one and cannot name another owner’s deck', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const alice = await signIn(f, 'Alice')
+  await signIn(f, 'Bob')
+  const cards = [{ cardName: 'Forest', amount: 20 }]
+  const make = async id => {
+    const saved = await f.path('/api/playtesting/decks/' + id, json('PUT', alice, {
+      expectedRevision: 0, data: { name: 'Golgari Midrange', format: 'Pioneer', archetype: 'Golgari Midrange', cards, sideboard: [] },
+    }))
+    assert.equal(saved.status, 200)
+  }
+  const firstCopy = randomUUID(), selectedCopy = randomUUID()
+  await make(firstCopy)
+  await make(selectedCopy)
+  const matchId = randomUUID()
+  const played = { name: 'Golgari Midrange', cards, sideboard: [], libraryDeckId: selectedCopy }
+  await addSideboardReplay(f, matchId, randomUUID(), 1, [played, played])
+  await addSideboardReplay(f, matchId, randomUUID(), 2, [{ ...played, libraryDeckId: firstCopy }, played])
+  await f.product.archiveGames()
+  await f.product.archiveGames()
+  await withTestDatabase(f, async db => {
+    const { rows } = await db.query('SELECT deck_id, engine_key, list_version, archetype FROM match_deck_registrations WHERE table_id=$1', [matchId])
+    assert.deepEqual(rows, [{ deck_id: selectedCopy, engine_key: 'alice', list_version: 1, archetype: 'Golgari Midrange' }])
+  })
+})

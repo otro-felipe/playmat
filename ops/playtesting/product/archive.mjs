@@ -6,6 +6,7 @@ import { constants, gunzip, gzip } from 'node:zlib'
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import { strToU8, zipSync } from 'fflate'
 import { isUuid, normalize, normalizeFormat, ProductError, transaction } from './decks.mjs'
+import { registerSelectedDeck } from './match-deck-registration.mjs'
 import { viewerNames } from './identity.mjs'
 import { evaluationPositions, scoreEvaluation } from './evaluation.mjs'
 import { deleteExpiredReplayObjects, pruneMatchHistory } from './history-retention.mjs'
@@ -118,6 +119,7 @@ async function recordMetadata(pool, info, status, recovering = false) {
       invitee_key, guest_model, guest_effort FROM invitations WHERE table_id=$1`, [info.tableId])
     for (const player of info.players) {
       const seat = normalize(player.name)
+      if (info.gameNumber === 1 && player.human) await registerSelectedDeck(db, info.tableId, seat, player.deck)
       const runtime = seat === invitation?.creator_key ? [invitation.creator_model, invitation.creator_effort]
         : seat === invitation?.invitee_key ? [invitation.guest_model, invitation.guest_effort] : [null, null]
       await db.query(

@@ -216,6 +216,10 @@ function pickCover(entries: DeckCardInfo[], info: ReadonlyMap<string, CardView>)
 }
 
 /** The deck as the server reads it (set and number always present, even if empty). */
+export function selectedDeckForPlay(deck: DeckCardLists, libraryDeckId: string): WireDeck {
+  return { ...toWire(deck), libraryDeckId };
+}
+
 export function toWire(deck: DeckCardLists): WireDeck {
   const wire = (entry: DeckCardInfo) => ({ cardName: entry.cardName, setCode: entry.setCode ?? '', cardNumber: entry.cardNumber ?? '', amount: entry.amount });
   return { name: deck.name, cards: deck.cards.map(wire), sideboard: deck.sideboard.map(wire) };

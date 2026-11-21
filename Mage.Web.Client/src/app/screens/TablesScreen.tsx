@@ -4,7 +4,7 @@ import { BookOpen, Bot, Eye, Link2, Lock, MessageSquare, Plus, UserRound } from 
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../connection';
-import { toWire } from '../decks/deckModel';
+import { selectedDeckForPlay, toWire } from '../decks/deckModel';
 import { refreshTables, useServerState, useTables } from '../queries';
 import { useDecks } from '../stores/decks';
 import { useDeckRoster } from '../stores/useDeckRoster';
@@ -366,7 +366,7 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
     setError(null);
     let createdTableId: string | undefined;
     try {
-      const { deck } = await loadForPlay(deckId);
+      const { deck, id } = await loadForPlay(deckId);
       // the pictures download while the table fills, so the first hand lands with its art
       warmDeck(deck);
       const playerTypes = Array.from({ length: seatCount }, (_, index) => (index > 0 && index <= aiCount ? 'COMPUTER_MAD' : 'HUMAN'));
@@ -385,7 +385,7 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
       }));
       if (!table?.tableId) throw new Error('The server did not create the table.');
       createdTableId = table.tableId;
-      const wire = toWire(deck);
+      const wire = selectedDeckForPlay(deck, id);
       if (!await api.roomJoinTable(roomId, table.tableId, userName, 'HUMAN', 1, wire, tablePassword)) {
         throw new Error(`Your deck is not legal in ${formatRules(deckType).label}.`);
       }

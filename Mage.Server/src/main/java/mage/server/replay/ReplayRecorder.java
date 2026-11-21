@@ -137,6 +137,9 @@ public final class ReplayRecorder {
                 MatchPlayer matchPlayer = match.getPlayer(player.getId());
                 if (matchPlayer != null && matchPlayer.getDeck() != null) {
                     seat.deck = matchPlayer.getDeck().prepareCardsOnlyDeck();
+                    if (info.gameNumber == 1 && player.isHuman()) {
+                        seat.deck.setLibraryDeckId(matchPlayer.getDeck().getLibraryDeckId());
+                    }
                 }
             }
             info.players.add(seat);

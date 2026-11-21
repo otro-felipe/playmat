@@ -1279,6 +1279,7 @@ export interface DeckCardLists extends Serializable, Copyable<DeckCardLists> {
     author?: string;
     cardLayout?: DeckCardLayout;
     cards?: DeckCardInfo[];
+    libraryDeckId?: string;
     name?: string;
     sideboard?: DeckCardInfo[];
     sideboardLayout?: DeckCardLayout;

@@ -22,6 +22,9 @@ import java.util.stream.Collectors;
  */
 public class Deck implements Serializable, Copyable<Deck> {
 
+    private static final long serialVersionUID = 7603560771746445647L;
+
+    private String libraryDeckId;
     static final int MAX_CARDS_PER_DECK = 2000;
 
     private String name; // TODO: must rework somehow - tiny leaders use deck name to find commander card and hide it for a user
@@ -35,6 +38,7 @@ public class Deck implements Serializable, Copyable<Deck> {
     }
 
     protected Deck(final Deck deck) {
+        this.libraryDeckId = deck.libraryDeckId;
         this.name = deck.name;
         this.cards.addAll(deck.cards.stream().map(Card::copy).collect(Collectors.toList()));
         this.sideboard.addAll(deck.sideboard.stream().map(Card::copy).collect(Collectors.toList()));
@@ -76,6 +80,7 @@ public class Deck implements Serializable, Copyable<Deck> {
      */
     public static Deck load(DeckCardLists deckCardLists, boolean ignoreErrors, boolean mockCards, Map<String, CardInfo> cardInfoCache) throws GameException {
         Deck deck = new Deck();
+        deck.libraryDeckId = deckCardLists.getLibraryDeckId();
         deck.setName(deckCardLists.getName());
         deck.cardsLayout = deckCardLists.getCardLayout() == null ? null : deckCardLists.getCardLayout().copy();
         deck.sideboardLayout = deckCardLists.getSideboardLayout() == null ? null : deckCardLists.getSideboardLayout().copy();
@@ -215,6 +220,10 @@ public class Deck implements Serializable, Copyable<Deck> {
             sets.add(card.getExpansionSetCode());
         }
         return sets;
+    }
+
+    public String getLibraryDeckId() {
+        return libraryDeckId;
     }
 
     public String getName() {
