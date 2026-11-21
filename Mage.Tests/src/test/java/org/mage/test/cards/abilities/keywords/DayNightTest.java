@@ -113,6 +113,86 @@ public class DayNightTest extends CardTestPlayerBase {
     }
 
     @Test
+    public void testTrespasserEntersDuringDayWithOneTarget() {
+        currentGame.setDaytime(true);
+        addCard(Zone.BATTLEFIELD, playerA, "Swamp", 3);
+        addCard(Zone.HAND, playerA, "Graveyard Trespasser");
+        addCard(Zone.GRAVEYARD, playerA, "Grizzly Bears");
+        addCard(Zone.GRAVEYARD, playerB, "Silvercoat Lion");
+
+        castSpell(1, PhaseStep.PRECOMBAT_MAIN, playerA, "Graveyard Trespasser");
+        addTarget(playerA, "Grizzly Bears");
+        setStrictChooseMode(true);
+        setStopAt(1, PhaseStep.END_TURN);
+        execute();
+
+        assertPowerToughness(playerA, "Graveyard Trespasser", 3, 3);
+        assertExileCount("Grizzly Bears", 1);
+        assertGraveyardCount(playerB, "Silvercoat Lion", 1);
+        assertLife(playerA, 21);
+        assertLife(playerB, 19);
+    }
+
+    @Test
+    public void testGluttonEntersAtNightWithTwoTargets() {
+        currentGame.setDaytime(false);
+        addCard(Zone.BATTLEFIELD, playerA, "Swamp", 3);
+        addCard(Zone.HAND, playerA, "Graveyard Trespasser");
+        addCard(Zone.GRAVEYARD, playerA, "Grizzly Bears");
+        addCard(Zone.GRAVEYARD, playerB, "Silvercoat Lion");
+
+        castSpell(1, PhaseStep.PRECOMBAT_MAIN, playerA, "Graveyard Trespasser");
+        addTarget(playerA, "Grizzly Bears^Silvercoat Lion");
+        setStrictChooseMode(true);
+        setStopAt(1, PhaseStep.END_TURN);
+        execute();
+
+        assertPowerToughness(playerA, "Graveyard Glutton", 4, 4);
+        assertExileCount("Grizzly Bears", 1);
+        assertExileCount("Silvercoat Lion", 1);
+        assertLife(playerA, 22);
+        assertLife(playerB, 18);
+    }
+
+    @Test
+    public void testReanimatedTrespasserUsesNightFaceOnEntry() {
+        currentGame.setDaytime(false);
+        addCard(Zone.BATTLEFIELD, playerA, "Swamp", 4);
+        addCard(Zone.HAND, playerA, "Zombify");
+        addCard(Zone.GRAVEYARD, playerA, "Graveyard Trespasser");
+        addCard(Zone.GRAVEYARD, playerB, "Grizzly Bears");
+        addCard(Zone.GRAVEYARD, playerB, "Silvercoat Lion");
+
+        castSpell(1, PhaseStep.PRECOMBAT_MAIN, playerA, "Zombify", "Graveyard Trespasser");
+        addTarget(playerA, "Grizzly Bears^Silvercoat Lion");
+        setStrictChooseMode(true);
+        setStopAt(1, PhaseStep.END_TURN);
+        execute();
+
+        assertPowerToughness(playerA, "Graveyard Glutton", 4, 4);
+        assertExileCount("Grizzly Bears", 1);
+        assertExileCount("Silvercoat Lion", 1);
+        assertLife(playerA, 22);
+        assertLife(playerB, 18);
+    }
+
+    @Test
+    public void testBrutalCatharEntersAtNightWithoutExiling() {
+        currentGame.setDaytime(false);
+        addCard(Zone.BATTLEFIELD, playerA, "Plains", 3);
+        addCard(Zone.HAND, playerA, "Brutal Cathar");
+        addCard(Zone.BATTLEFIELD, playerB, "Grizzly Bears");
+
+        castSpell(1, PhaseStep.PRECOMBAT_MAIN, playerA, "Brutal Cathar");
+        setStrictChooseMode(true);
+        setStopAt(1, PhaseStep.END_TURN);
+        execute();
+
+        assertPowerToughness(playerA, "Moonrage Brute", 3, 3);
+        assertPermanentCount(playerB, "Grizzly Bears", 1);
+    }
+
+    @Test
     public void testDayToNightTransform() {
         addCard(Zone.BATTLEFIELD, playerA, "Mountain", 4);
         addCard(Zone.HAND, playerA, ruffian);
@@ -292,6 +372,22 @@ public class DayNightTest extends CardTestPlayerBase {
         assertDayNight(false);
         assertPermanentCount(playerA, curse, 0);
         assertPermanentCount(playerA, lurker, 1);
+    }
+
+    @Test
+    public void testReturnCurseOfLeechesAtNightDoesNotChooseAnAttachment() {
+        currentGame.setDaytime(false);
+        addCard(Zone.BATTLEFIELD, playerA, "Plains", 4);
+        addCard(Zone.HAND, playerA, "Replenish");
+        addCard(Zone.GRAVEYARD, playerA, curse);
+
+        castSpell(1, PhaseStep.PRECOMBAT_MAIN, playerA, "Replenish");
+        setStrictChooseMode(true);
+        setStopAt(1, PhaseStep.END_TURN);
+        execute();
+
+        assertPowerToughness(playerA, lurker, 4, 4);
+        Assert.assertNull(getPermanent(lurker).getAttachedTo());
     }
 
     @Test

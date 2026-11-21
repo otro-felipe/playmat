@@ -221,26 +221,8 @@ public class ContinuousEffects implements Serializable {
         }
         List<ContinuousEffect> layerEffects = new ArrayList<>();
         for (ContinuousEffect effect : layeredEffects) {
-            switch (effect.getDuration()) {
-                case WhileOnBattlefield:
-                case WhileControlled:
-                case WhileOnStack:
-                case WhileInGraveyard:
-                    Set<Ability> abilities = layeredEffects.getAbility(effect.getId());
-                    if (!abilities.isEmpty()) {
-                        for (Ability ability : abilities) {
-                            // If e.g. triggerd abilities (non static) created the effect, the ability must not be in usable zone (e.g. Unearth giving Haste effect)
-                            if (!(ability instanceof StaticAbility) || ability.isInUseableZone(game, null, null)) {
-                                layerEffects.add(effect);
-                                break;
-                            }
-                        }
-                    } else {
-                        logger.error("No abilities for continuous effect: " + effect);
-                    }
-                    break;
-                default:
-                    layerEffects.add(effect);
+            if (isLayeredEffectActive(effect, game, null)) {
+                layerEffects.add(effect);
             }
         }
 
@@ -253,6 +235,43 @@ public class ContinuousEffects implements Serializable {
         //*/
 
         return layerEffects;
+    }
+
+    private boolean isLayeredEffectActive(ContinuousEffect effect, Game game, UUID enteringId) {
+        switch (effect.getDuration()) {
+            case WhileOnBattlefield:
+            case WhileControlled:
+            case WhileOnStack:
+            case WhileInGraveyard:
+                Set<Ability> abilities = layeredEffects.getAbility(effect.getId());
+                if (abilities.isEmpty()) {
+                    logger.error("No abilities for continuous effect: " + effect);
+                }
+                for (Ability ability : abilities) {
+                    // Effects created by resolving abilities can persist after the source leaves its zone.
+                    if (!(ability instanceof StaticAbility)
+                            || (enteringId != null && enteringId.equals(ability.getSourceId()))
+                            || ability.isInUseableZone(game, null, null)) {
+                        return true;
+                    }
+                }
+                return false;
+            default:
+                return true;
+        }
+    }
+
+    /** A conservative entry lookahead guard that does not assign effect timestamps. */
+    public synchronized boolean canModifyAbilitiesOnEntry(UUID enteringId, Game game) {
+        for (ContinuousEffect effect : layeredEffects) {
+            // Copy effects, basic land type changes, and grants/removals can change a printed ability.
+            if ((effect.hasLayer(Layer.CopyEffects_1) || effect.hasLayer(Layer.TypeChangingEffects_4)
+                    || effect.hasLayer(Layer.AbilityAddingRemovingEffects_6))
+                    && isLayeredEffectActive(effect, game, enteringId)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
