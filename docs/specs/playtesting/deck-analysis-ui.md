@@ -1,6 +1,6 @@
 # Private history and deck performance
 
-A signed-in player sees all practice matches in History and can filter the match list by Magic format. Each format and own-archetype card shows match wins and the number of completed matches. Selecting a card opens a separate analysis page. With a single saved deck the initial selection is its current version, including a version with no recorded matches. Multiple saved decks in an archetype initially show the whole archetype.
+A signed-in player sees all practice matches in History and can filter the match list by Magic format. Each format and own-archetype card shows match wins and the number of completed matches. Selecting a card opens a separate analysis page. The initial detail always shows the same aggregate as the card. Choosing a saved deck selects its current version, including lists with no recorded matches. If a family has since changed format or archetype, its historical group starts with all its versions in that group.
 
 The player can select a deck and version, all versions of a deck, or the whole archetype. Navigation, reload and sharing a link within the same account preserve that selection. Bo1/Bo3 and opposing archetype further constrain the same data. In Bo3, the Overview prioritizes match win rate and provides game win rate, preboard/postboard and play/draw. Bo1 has a single win-rate headline. A zero sample displays a dash. Every rate identifies its sample.
 
