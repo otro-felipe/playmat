@@ -137,6 +137,7 @@ try {
         ?? state.decision.choices.find(c=>c.type==='pass') ?? state.decision.choices[0]
       if (!choice) continue
       const args = { ...(i===0?{humanTableId:tableId}:{}), gameId, cursor:state.cursor, commandId:randomUUID(),
+        reasoning:'Accept the current opening choice to begin the duel.',
         actions:[{kind:'choose',decisionId:state.decision.id,choiceId:choice.id}] }
       const result = await (i===0?host:rival)('play_line',args)
       assert.equal(result.appliedDecisions,1,'Each agent completes its own guarded line: '+result.status+' '+(result.reason??''))
