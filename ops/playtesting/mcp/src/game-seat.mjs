@@ -377,15 +377,12 @@ export class GameSeat {
             activationSourceId: activating ? action.sourceId : undefined });
         }
       } else if (action.kind === 'choose') {
-        const allowOpeningTransition = actionIndex === 0 && !initial.step
-          && (initial.turn == null || initial.turn === 0 || initial.turn === 1)
-          && initial.decision?.kind === 'mulligan' && action.decisionId === initial.decision.id;
         const payPrompt = action.guard?.kind === 'payMana'
           || action.decisionId === initial.decision?.id && initial.decision?.kind === 'payMana';
         const select = action.select;
         const payment = payPrompt && select?.objectId && (select.abilityId || select.manaColor)
           ? { sourceId: select.objectId, abilityId: select.abilityId, color: select.manaColor } : undefined;
-        steps.push({ ...action, kind: 'answer', payment, resumeCastId: resumingCast ? initial.stack[0].id : undefined, allowOpeningTransition });
+        steps.push({ ...action, kind: 'answer', payment, resumeCastId: resumingCast ? initial.stack[0].id : undefined });
       } else if (action.kind === 'attack') {
         if (action.assignments) {
           for (const attackAssignment of action.assignments) {
@@ -641,6 +638,10 @@ export class GameSeat {
             if (!Number.isSafeInteger(hit.amount) || hit.amount <= 0
               || !permanentCombat.record(previousPublicFrame, state, hit, ownPlayerId, plannedAttackers)) {
               throw new ToolError('opponent_state_changed', 'Combat damage to a permanent did not match the observed attackers, blockers or defender.');
+            }
+            // A blocked creature trade cannot by itself explain a change to this defender's life.
+            if (state.activePlayerId !== ownPlayerId && !defenderCombat.observeDefender(previousPublicFrame, ownPlayerId)) {
+              throw new ToolError('opponent_state_changed', 'The defending seat has no verified life total before combat damage.');
             }
             continue;
           }
@@ -1259,7 +1260,9 @@ export class GameSeat {
             throw new ToolError('illegal_choice', 'The declared mana ability or color is unavailable from this source.');
           }
           if (decision.kind === 'declareAttackers') attackDeclarationPending = true;
-          if (step.allowOpeningTransition && choice.type === 'button' && choice.label === 'Keep') {
+          // A planned Keep can be reached after bottoming already-visible cards.
+          if (step.actionIndex !== undefined && !state.step && (state.turn == null || state.turn === 0 || state.turn === 1)
+            && decision.kind === 'mulligan' && choice.type === 'button' && choice.label === 'Keep') {
             waitingForOpeningTurn = true;
           }
           const optionalAnswer = optionalEffectAnswer(state, step);

@@ -1,6 +1,6 @@
 # Play a line
 
-Play to win from your seat's view. Compare credible lines using your hand, available mana on both sides, combat math, likely interaction and the cost of committing first. During a London mulligan, prioritize castable early plays, usable colors and a plan for the matchup. In a small hand, keep a functional line over chasing the ideal draw. When you keep after a mulligan, answer the engine's separate bottom-card prompt with the cards it asks for.
+Play to win from your seat's view. Compare credible lines using your hand, available mana on both sides, combat math, likely interaction and the cost of committing first. During a London mulligan, prioritize castable early plays, usable colors and a plan for the matchup. In a small hand, keep a functional line over chasing the ideal draw. See [London mulligan](#london-mulligan) for the opening decision order.
 
 ## Submit the longest justified line
 
@@ -191,9 +191,63 @@ For a bluff, hold your resources open and choose the single priority handoff or 
 
 `my_draw` binds when the terminal pass begins, after any earlier actions in the line. From your own untap or upkeep it aims for this turn's draw. From later in your turn or during the opponent's turn, it aims for your next turn's draw. A normal draw occurs before the draw step's priority. A queued line stops at either player's upkeep with `before_draw_trigger` when a face-up permanent's public rules show a potential trigger on that player's upcoming draw or draw step. Review any conditions such as exceptions for the first card drawn. A new line starting at the returned upkeep can deliberately let the player draw unless it introduces a new draw-trigger source. `lastDestination` shows the actual boundary, including when `destination_skipped` reports a skipped window.
 
-At the opening, you can submit an exact Keep with the first land and a terminal pass. Include a guarded London bottom choice if you already know your selection. The executor returns control at an unplanned bottom prompt or when the opponent starts. When you play first and skip the draw, a terminal `my_draw` after the land aims for your next turn. Use `pass_priority` if you intend to cede just once after the land. Replan after any actual draw.
+When the current mulligan decision offers Keep and you know your opening line, you can submit that exact Keep with the first land and a terminal pass. The executor returns control at an unplanned bottom prompt or when the opponent starts. When you play first and skip the draw, a terminal `my_draw` after the land aims for your next turn. Use `pass_priority` if you intend to cede just once after the land. Replan after any actual draw.
 
 `current_turn` requires at least one exact `phase`, `step` or `priority` condition. Multiple conditions must all match. `priority:"self"` alone means any position where you currently have it, which may already be true. Use `pass_priority` for an actual handoff.
+
+## London mulligan
+
+In this XMage version, taking a London mulligan draws a fresh seven. In a two-player Pioneer game, XMage asks you to put one card on the bottom **before** it offers Keep or Mulligan again. If you mulligan a second time, inspect the new seven and answer two successive bottom-card prompts. You then decide whether to keep five.
+
+Here are three separate `play_line` calls for one mulligan. At each prompt, read the current `state.cursor`, `decision.kind`, `decision.id` and legal `choices`. Copy the selected **choice ID**, including when several copies of a card have the same name. The cursors and IDs below are examples.
+
+1. The opening decision has kind `mulligan`. To redraw this hand, choose its Mulligan button.
+
+```json
+{
+  "gameId": "00000000-0000-4000-8000-000000000001",
+  "cursor": 250,
+  "commandId": "london-redraw-001",
+  "actions": [{"kind": "choose", "decisionId": "opening-decision", "choiceId": "take-mulligan"}]
+}
+```
+
+2. Read the new seven. At the `mulliganBottom` prompt, select the card you want to put on the bottom. In this hand it is a surplus Forest.
+
+```json
+{
+  "gameId": "00000000-0000-4000-8000-000000000001",
+  "cursor": 251,
+  "commandId": "london-bottom-002",
+  "actions": [{"kind": "choose", "decisionId": "bottom-decision", "choiceId": "bottom-forest"}]
+}
+```
+
+3. Once the current kind is `mulligan` again, evaluate the remaining six. To keep them, use the Keep choice from this decision. If a different prompt appears, follow that prompt and its legal choices.
+
+```json
+{
+  "gameId": "00000000-0000-4000-8000-000000000001",
+  "cursor": 252,
+  "commandId": "london-keep-003",
+  "actions": [{"kind": "choose", "decisionId": "redrawn-decision", "choiceId": "keep-six"}]
+}
+```
+
+Once you have inspected the redrawn seven, you may already know which card to bottom, which six to keep and which land to play. On the play, submit those three intentions from the final `mulliganBottom` prompt. Match the next Keep button by its exact prompt text for that hand size. Select a land that remains in your hand. The first player's skipped draw allows the line to continue through upkeep. An opponent's first turn, a new draw or a different prompt returns control.
+
+```json
+{
+  "gameId": "00000000-0000-4000-8000-000000000001",
+  "cursor": 251,
+  "commandId": "opening-land-after-bottom",
+  "actions": [
+    {"kind": "choose", "decisionId": "bottom-decision", "choiceId": "bottom-forest"},
+    {"kind": "choose", "guard": {"kind": "mulligan", "instruction": "Mulligan down to 5 cards?"}, "select": {"label": "Keep"}},
+    {"kind": "play", "playAs": "land", "select": {"objectId": "<remaining-land-id>", "zone": "hand"}}
+  ]
+}
+```
 
 ## Express every visible engine choice
 

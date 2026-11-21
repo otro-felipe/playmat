@@ -55,6 +55,7 @@ function sequenceEvidence(view: GameSessionState['view'] | undefined) {
     resolutions: evidence.resolutions ? { ...evidence.resolutions } : undefined,
     resolutionRevision: evidence.resolutionRevision,
     combatRevision: evidence.combatRevision,
+    combatExileReplacements: evidence.combatExileReplacements ? { ...evidence.combatExileReplacements } : undefined,
     combatDamage: evidence.combatDamage?.map(({ revision, sourceId, controllerId, targetId, amount, targetPermanent }) =>
       ({ revision, sourceId, controllerId, targetId, amount, ...(targetPermanent ? { targetPermanent } : {}) })),
     informationRevision: evidence.informationRevision,

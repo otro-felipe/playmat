@@ -1,6 +1,7 @@
 package mage.server.game;
 
 import mage.MageObject;
+import mage.cards.Card;
 import mage.constants.WatcherScope;
 import mage.constants.Zone;
 import mage.game.Game;
@@ -133,6 +134,12 @@ public class GameEventRecorder extends Watcher {
         UUID owner = game.getOwnerId(event.getTargetId());
         Permanent permanent = event.getTarget();
         boolean faceDown = permanent != null && permanent.isFaceDown(game);
+        if (from == Zone.BATTLEFIELD && permanent != null) {
+            boolean stateBasedExile = !faceDown && event.getOriginalToZone() == Zone.GRAVEYARD
+                    && to == Zone.EXILED && event.getSource() == null;
+            Card card = stateBasedExile ? game.getCard(event.getTargetId()) : null;
+            feed.permanentLeftBattlefield(permanent.getId(), card != null && !card.isFaceDown(game));
+        }
         // a card only the owner saw on both sides of the move (library to hand, hand to library) stays theirs
         boolean seen = !faceDown && (PUBLIC_ZONES.contains(from) || PUBLIC_ZONES.contains(to));
         GameEventView view = view(feed, GameEventKind.ZONE, game, event)

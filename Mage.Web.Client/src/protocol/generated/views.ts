@@ -2607,6 +2607,7 @@ export interface SequenceEvidenceView extends Serializable {
     resolutionRevision?: number;
     combatRevision?: number;
     combatDamage?: SequenceCombatDamageView[];
+    combatExileReplacements?: { [index: string]: number };
     informationRevision?: number;
 }
 

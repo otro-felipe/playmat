@@ -45,11 +45,44 @@ function combatPartners({ combat, activePlayerId }, hit, ownId, declaredAttacker
     })));
 }
 
-function graveyardEntry(players, cardId) {
-  if (!cardId) return null;
-  const matches = players.flatMap(({ graveyard = [] }) => graveyard).filter((card) =>
-    !card.faceDown && (card.id === cardId || card.cardId === cardId));
-  return matches.length === 1 ? matches[0] : null;
+// Use the physical card ID across zones. A transforming card can change its name on the way.
+function combatDestinations(players, cardId) {
+  if (!cardId) return [];
+  const matches = [];
+  for (const player of players ?? []) {
+    for (const zone of ['graveyard', 'exile']) {
+      for (const card of player[zone] ?? []) {
+        if (card.id === cardId || card.cardId === cardId) matches.push({ ownerId: player.id, zone, card });
+      }
+    }
+  }
+  return matches;
+}
+
+function reconcileRemoval(previous, state, expected, actual, effect) {
+  const { target, counter, before, after, hitRevision } = effect;
+  const toughness = Number(target.toughness);
+  const lethal = counter ? after === 0 : Number.isSafeInteger(toughness) && toughness > before && after >= toughness;
+  if (!lethal || !target.cardId || combatDestinations(previous.players, target.cardId).length) return false;
+  const matches = combatDestinations(state.players, target.cardId);
+  if (matches.length !== 1) return false;
+  const { ownerId, zone, card } = matches[0];
+  const replacement = state.sequenceEvidence?.combatExileReplacements?.[target.id] === hitRevision;
+  if (card.faceDown || ownerId !== target.controllerId || zone !== (replacement ? 'exile' : 'graveyard')) return false;
+
+  const opponent = expected.players.find(({ id }) => id === ownerId);
+  if (opponent) {
+    if (!opponent.battlefield?.some(({ id }) => id === target.id)) return false;
+    opponent.battlefield = opponent.battlefield.filter(({ id }) => id !== target.id);
+    const actualZone = actual.players.find(({ id }) => id === ownerId)[zone];
+    const index = actualZone.findIndex(({ id }) => id === card.id);
+    opponent[zone] ??= [];
+    // Other simultaneous deaths may not have been reconciled yet.
+    const present = new Set(opponent[zone].map(({ id }) => id));
+    const position = actualZone.slice(0, index).filter(({ id }) => present.has(id)).length;
+    opponent[zone].splice(position, 0, actualZone[index]);
+  }
+  return true;
 }
 
 /** Only exact combat effects among already observed and declared combatants. */
@@ -82,7 +115,7 @@ export class PlannedPermanentCombat {
     const after = counter ? Math.max(0, from - hit.amount) : from + hit.amount;
     if (!Number.isSafeInteger(after)) return false;
     this.#turn = state.turn;
-    this.#hits.set(target.id, { target, counter, before, after, settled: false, dead: false });
+    this.#hits.set(target.id, { target, counter, before, after, hitRevision: hit.revision, settled: false, dead: false });
     return true;
   }
 
@@ -105,22 +138,9 @@ export class PlannedPermanentCombat {
           else expectedCard.damage = card.damage;
         }
       } else if (!effect.dead) {
-        const toughness = Number(target.toughness);
-        const lethal = counter ? after === 0 : Number.isSafeInteger(toughness) && toughness > before && after >= toughness;
-        const grave = graveyardEntry(state.players ?? [], target.cardId);
-        if (!lethal || !grave || graveyardEntry(previous.players ?? [], target.cardId)) return false;
+        if (!reconcileRemoval(previous, state, expected, actual, effect)) return false;
         effect.settled = true;
         effect.dead = true;
-        const opponent = expected.players.find(({ id }) => id === target.controllerId);
-        if (opponent) {
-          const owner = actual.players.find((player) => player.graveyard?.some(({ id }) => id === grave.id));
-          // Changes of controller or an unusual destination require a new plan.
-          if (owner?.id !== opponent.id || !opponent.battlefield?.some(({ id }) => id === target.id)) return false;
-          const graveIndex = owner.graveyard.findIndex(({ id }) => id === grave.id);
-          opponent.battlefield = opponent.battlefield.filter(({ id }) => id !== target.id);
-          opponent.graveyard ??= [];
-          opponent.graveyard.splice(graveIndex, 0, owner.graveyard[graveIndex]);
-        }
       }
     }
     if (afterCombatSteps.has(state.step) && state.combat?.length === 0) {
@@ -164,22 +184,25 @@ export class PlannedDefenderCombat {
   get active() { return this.#turn !== undefined && !this.#combatFinished; }
   get pending() { return this.#lifeAfterHits.length > 0; }
 
-  record(previous, state, hit, ownId) {
+  observeDefender(previous, ownId) {
+    if (this.#turn === previous.turn) return this.active;
     const defender = previous.players?.find(({ id }) => id === ownId);
-    if (!defender || !Number.isSafeInteger(defender.life) || previous.turn !== state.turn
+    if (!defender || !Number.isSafeInteger(defender.life) || this.pending) return false;
+    this.#turn = previous.turn;
+    this.#life = defender.life;
+    this.#counters = defenderCounters(defender);
+    this.#combatFinished = false;
+    return true;
+  }
+
+  record(previous, state, hit, ownId) {
+    if (previous.turn !== state.turn
       || !damageSteps.has(previous.step) || previous.activePlayerId !== hit.controllerId
       || previous.activePlayerId !== state.activePlayerId || hit.controllerId === ownId || hit.targetId !== ownId
       || !previous.combat?.some(({ defenderId, isBlocked, attackers = [], blockers = [] }) =>
         defenderId === ownId && isBlocked === false && blockers.length === 0
-        && attackers.some(({ id, controllerId }) => id === hit.sourceId && controllerId === hit.controllerId))) return false;
-
-    if (this.#turn !== state.turn) {
-      if (this.pending) return false;
-      this.#turn = state.turn;
-      this.#life = defender.life;
-      this.#counters = defenderCounters(defender);
-      this.#combatFinished = false;
-    } else if (!this.active) return false;
+        && attackers.some(({ id, controllerId }) => id === hit.sourceId && controllerId === hit.controllerId))
+      || !this.observeDefender(previous, ownId)) return false;
 
     const afterDamage = (this.#lifeAfterHits.at(-1) ?? this.#life) - hit.amount;
     if (!Number.isSafeInteger(afterDamage)) return false;

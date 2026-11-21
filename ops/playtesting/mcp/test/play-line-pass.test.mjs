@@ -109,6 +109,51 @@ test('[PM-LINE-01] an exact London bottom stays in the opening line through publ
   ]);
 });
 
+const forest = { id: 'forest', cardId: 'forest', name: 'Forest', types: ['LAND'] };
+const londonBottom = { id: 'bottom', kind: 'mulliganBottom', choices: [{ id: 'bottom-forest', card: forest }] };
+const bottomForest = { kind: 'choose', decisionId: londonBottom.id, choiceId: 'bottom-forest' };
+const keepSix = { ...keep, instruction: 'Mulligan down to 5 cards?' };
+const guardedKeep = { kind: 'choose', guard: { kind: 'mulligan', instruction: keepSix.instruction }, select: { label: 'Keep' } };
+const bottomState = { ...pregame, decision: londonBottom, ownHand: [forest, urborg] };
+
+for (const [start, firstPriority, reason] of [
+  ['own upkeep', openingUpkeep, undefined],
+  ['opponent upkeep', { ...openingUpkeep, activePlayerId: 'opponent', activePlayer: 'Opponent' }, 'turn_changed'],
+  ['a revealed card', { ...openingUpkeep, sequenceEvidence: { ...evidence, informationRevision: 1 } }, 'new_information'],
+  ['an opponent response', { ...openingUpkeep,
+    sequenceEvidence: { ...evidence, publicActions: { me: 0, opponent: 1 } } }, 'opponent_action'],
+]) {
+  test('London bottom and guarded Keep followed by the first land at ' + start, async (t) => {
+    const table = game(t, {
+      bottom: { decision: keepSix, ownHand: [urborg] },
+      'keep-prompt': firstPriority, upkeep: openingMain, main: landPlayed,
+    }, bottomState);
+    const receipt = await table.submit([bottomForest, guardedKeep, playUrborg]);
+    const expected = [['bottom', 'bottom-forest'], ['keep-prompt', 'keep']];
+    if (reason) assert.equal(receipt.reason, reason);
+    else {
+      assert.equal(receipt.status, 'completed', receipt.reason);
+      expected.push(['upkeep', 'pass'], ['main', 'play-urborg']);
+    }
+    assert.deepEqual(table.applied.map(([id, choice]) => [id, choice]), expected);
+  });
+}
+
+test('London bottom and guarded Keep return a different mulligan instruction to the pilot', async (t) => {
+  const table = game(t, { bottom: { decision: { ...keepSix, instruction: 'Mulligan for free?' }, ownHand: [urborg] } }, bottomState);
+  const receipt = await table.submit([bottomForest, guardedKeep, playUrborg]);
+  assert.equal(receipt.reason, 'response_available');
+  assert.deepEqual(table.applied, [['bottom', 'bottom-forest', undefined]]);
+});
+
+test('London bottom and guarded Keep stop before choosing from a second unseen hand', async (t) => {
+  const table = game(t, { bottom: { decision: keepSix, ownHand: [urborg, drawnCard],
+    sequenceEvidence: { ...evidence, informationRevision: 1 } } }, bottomState);
+  const receipt = await table.submit([bottomForest, guardedKeep, playUrborg]);
+  assert.equal(receipt.reason, 'new_information');
+  assert.deepEqual(table.applied, [['bottom', 'bottom-forest', undefined]]);
+});
+
 test('[PM-LINE-01] a keep cannot carry a queued land through the opponent’s first turn', async (t) => {
   const table = game(t, { 'keep-prompt': { ...openingUpkeep, activePlayerId: 'opponent', activePlayer: 'Opponent' } }, pregame);
   const receipt = await table.submit([keepHand, playUrborg]);

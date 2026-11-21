@@ -352,10 +352,12 @@ try {
   const fixture = { startFixture, ownPlayer, rivalPlayer, answer, waitNextOwn,
     playLineWithPeer, call, totalDeadline, setRivalSetup }
   const pioneerScenarios = [
+    ['mulligan', './london-mulligan.local.mjs', 'verifyLondonMulligan'],
     ['casting', './casting-and-order.local.mjs', 'verifyCastingCosts'],
     ['order', './casting-and-order.local.mjs', 'verifyTriggerOrder'],
     ['activation', './creature-land-activation.local.mjs', 'verifyCreatureLandActivation'],
     ['combat', './combat-destinations.local.mjs', 'verifyPlaneswalkerCombat'],
+    ['exile', './combat-exile.local.mjs', 'verifyCombatExile'],
     ['ward', './multi-target-ward.local.mjs', 'verifyMultiTargetWard'],
   ]
   for (const [name, modulePath, run] of pioneerScenarios) {
