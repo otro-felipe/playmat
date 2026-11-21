@@ -48,7 +48,8 @@ function Analysis({ account }: { account: string }) {
       if (value) next.set(name, value);
       else next.delete(name);
     }
-    setSearch(next, { state: { historySearch }, preventScrollReset: true });
+    // Commit this filter before another control composes its update from the URL.
+    setSearch(next, { state: { historySearch }, preventScrollReset: true, flushSync: true });
   }
 
   return <div className={page.page}>
