@@ -1786,10 +1786,11 @@ test(
     const match = randomUUID(),
       own = randomUUID(),
       rival = randomUUID()
+    const gameIds = [randomUUID(), randomUUID(), randomUUID()]
     const winner = ['Alice', 'Bob', 'Alice']
     const card = (name, ownerId, extra) => ({ name, ownerId, ...extra })
     for (let n = 0; n < 3; n++) {
-      const id = randomUUID()
+      const id = gameIds[n]
       const metadata = {
         gameId: id,
         matchId: match,
@@ -1834,7 +1835,7 @@ test(
                 kind: 'action',
                 action: 'keep',
                 actorPlayerId: own,
-                decision: { cards: [{ name: 'Forest' }, { name: 'Forest' }] },
+                decision: { cards: [{ name: 'Forest' }, { name: 'Forest' }, ...(n === 2 ? [{ name: 'Duress' }] : [])] },
               },
             ]),
         {
@@ -1882,8 +1883,13 @@ test(
     const data = await performance(alice, 'deckId=golgari&version=1&bestOf=3')
     assert.deepEqual(data.summary, { matches: rec(1, 0), games: rec(2, 1) })
     assert.deepEqual(data.splits, { preboard: rec(1, 0), postboard: rec(1, 1), play: rec(2, 0), draw: rec(0, 1) })
-    assert.deepEqual(data.openingCards, [{ card: 'Forest', games: rec(2, 0) }])
-    assert.deepEqual(data.opponentCards, [{ card: 'Monastery Swiftspear', games: rec(2, 1) }])
+    assert.deepEqual(data.openingCards, [
+      { card: 'Forest', games: rec(2, 0), without: rec(0, 0) },
+      { card: 'Duress', games: rec(1, 0), without: rec(1, 0) },
+    ], 'the loss with an unknown keep cannot enter either cohort')
+    assert.deepEqual(data.opponentCards, [
+      { card: 'Monastery Swiftspear', games: rec(2, 1), gameIds: [gameIds[1], gameIds[0], gameIds[2]] },
+    ])
     assert.deepEqual(data.coverage, { keptHands: 2, opponentCards: 3, games: 3 })
     assert.deepEqual(data.matchIds, [match])
     assert.deepEqual(data.matchups[0].mulligans, { known: 3, taken: 2, opponentKnown: 3, opponentTaken: 1 })
