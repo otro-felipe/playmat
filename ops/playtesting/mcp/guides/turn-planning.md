@@ -232,6 +232,32 @@ Emberheart Challenger is on your battlefield. With priority in your main phase, 
 
 If the rest of the position includes a justified land drop and casting Challenger, put those before Rage in the same request when you can identify the target and payment from your seat. A preflight `reevaluation_required` with `appliedDecisions:0` allows a corrected line from the returned state. An execution interruption can include already accepted costs and plays.
 
+### Cast a Saga and resolve its first chapter
+
+With a Mountain available and no attackers, use Kumano's object ID from your hand in both places. Copy the complete chapter I rule from that copy's visible `rules`, including its chapter prefix. XMage identifies the front face separately once it enters. The executor follows the announced spell through its witnessed resolution to the visible permanent.
+
+```json
+{
+  "gameId": "00000000-0000-4000-8000-000000000001",
+  "cursor": 2457,
+  "commandId": "saga-entry-001",
+  "view": "compact",
+  "actions": [
+    {
+      "kind": "play",
+      "select": {"objectId": "<kumano-hand-id>", "zone": "hand"},
+      "payWith": [{"sourceId": "<mountain-id>", "color": "R"}],
+      "expectTriggers": [{"sourceId": "<kumano-hand-id>", "abilityText": "<full-visible-chapter-I-rule>"}]
+    },
+    {"kind": "pass_until", "destination": "end_step", "policy": "if_no_play"}
+  ]
+}
+```
+
+On a later turn, inspect the draw first. To announce chapter II or III before entering your first main phase, start the line with `{"kind":"choose","decisionId":"<observed-draw-priority>","choiceId":"<visible-pass-choice>","expectTriggers":[{"sourceId":"<saga-battlefield-id>","abilityText":"<exact-next-chapter-text>"}]}`, then include the land or other justified actions. A forecast attached to the land starts when that land is selected, after the implicit pass to the main phase. Each Saga needs its own source ID. An ordering prompt still needs its own choice.
+
+Kumano's chapter II creates a delayed trigger for the next creature spell. If chapter II resolved and Kumano is still on your battlefield, put a second forecast on the creature's `play`. Use Kumano's battlefield ID again. In XMage the delayed ability reads `When you next cast a creature spell this turn, that creature enters with an additional +1/+1 counter on it.` That is the public body of this specific chapter after its `II - ` prefix. Other cards can create delayed abilities whose exact text is unavailable until they trigger.
+
 ## Choose when to pass
 
 | Intention | Final action |
