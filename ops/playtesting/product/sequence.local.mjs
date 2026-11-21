@@ -108,15 +108,19 @@ async function rivalPass(boundary) {
   try { await browser.respond(decision.id, choice.id); if (choice === mana) rivalManaAccepted = true; return true }
   catch (error) { if (['stale_decision', 'engine_rejected', 'illegal_choice'].includes(error.code)) return false; throw error }
 }
-async function playLineWithPeer(command, boundary) {
+async function drivePeerDuring(work, boundary) {
   let done = false
   const peer = (async () => {
     while (!done && Date.now() < totalDeadline) {
       await rivalPass(boundary)
-      await sleep(15)
+      await sleep(25)
     }
   })()
-  try {
+  try { return await Promise.race([work(), peer.then(() => new Promise(() => {}))]) }
+  finally { done = true; await peer }
+}
+async function playLineWithPeer(command, boundary) {
+  return drivePeerDuring(async () => {
     let receipt = await call('play_line', command)
     while (receipt.planOwnsExecution && Date.now() < totalDeadline) {
       receipt = await call('wait_for_decision', { gameId: command.gameId, commandId: command.commandId, view: command.view, timeoutMs: 5_000 })
@@ -124,20 +128,23 @@ async function playLineWithPeer(command, boundary) {
     }
     assert.equal(receipt.planOwnsExecution, false, 'The isolated line must reach a terminal receipt')
     return receipt
-  } finally {
-    done = true
-    await peer
-  }
+  }, boundary)
 }
 async function waitNextOwn(oldId, priorGameId) {
-  while (Date.now() < totalDeadline) {
-    await rivalPass()
-    const state = await ownState()
-    if (state.status === 'active' && state.gameId !== priorGameId
-      && state.decision && state.decision.id !== oldId && state.decision.kind !== 'waiting') return state
-    await sleep(15)
+  const end = Math.min(totalDeadline, Date.now() + 35_000)
+  let last
+  while (Date.now() < end) {
+    const receipt = await drivePeerDuring(() => call('wait_for_decision', { afterDecisionId: oldId, timeoutMs: 1500 }))
+    const state = receipt.state ?? await ownState()
+    last = [state, browser.snapshot()].map(seat => ({ status: seat.status, step: seat.step, turn: seat.turn,
+      priority: seat.priority, decision: seat.decision?.kind, sameDecision: seat.decision?.id === oldId }))
+    if (state.gameId !== priorGameId) {
+      if (state.status === 'active' && state.decision && state.decision.id !== oldId && state.decision.kind !== 'waiting') return state
+      if (['game_over', 'match_over', 'sideboarding', 'disconnected'].includes(state.status)) break
+    }
+    if (state.gameId === priorGameId) await sleep(100)
   }
-  throw Error('No next own fixture decision before the bounded deadline')
+  throw Error('No next own fixture decision: ' + JSON.stringify(last))
 }
 async function startFixture(name, deck, seed, opponentDeck = rivalDeck, format = 'Modern') {
   const priorGameId = (await ownState()).gameId
