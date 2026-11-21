@@ -60,7 +60,7 @@ for (const [device, viewport] of Object.entries({ desktop: { width: 1440, height
         const url = new URL(route.request().url());
         let data: unknown = {};
         if (url.pathname.endsWith('/me')) data = { engineName: 'Alice', agent: false };
-        if (url.pathname.endsWith('/stats')) data = { groups: [] };
+        if (url.pathname.endsWith('/performance')) data = { groups: [], decks: [] };
         if (url.pathname.endsWith('/matches')) data = { cursor: null, matches: [{
           id: matchId, name: 'Pioneer', format: 'Pioneer', status: 'completed', analysis: review,
           games: [{ gameId, gameNumber: 3, replayAvailable: true, archiveState: 'ready', players: [{ name: 'Alice' }, { name: 'Bob' }], analysis: review }],
