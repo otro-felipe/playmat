@@ -56,6 +56,9 @@ export async function pruneMatchHistory(pool, protectedMatches) {
     await db.query('DELETE FROM replay_review_captures WHERE match_id=ANY($1::uuid[])', [matches])
     await db.query('DELETE FROM game_players WHERE game_id IN (SELECT id FROM games WHERE match_id=ANY($1::uuid[]))', [matches])
     await db.query('DELETE FROM games WHERE match_id=ANY($1::uuid[])', [matches])
+    await db.query(`DELETE FROM match_deck_registrations r
+      WHERE r.table_id IN (SELECT table_id FROM matches WHERE id=ANY($1::uuid[]))
+        AND NOT EXISTS (SELECT 1 FROM matches m WHERE m.table_id=r.table_id AND m.id<>ALL($1::uuid[]))`, [matches])
     await db.query('DELETE FROM matches WHERE id=ANY($1::uuid[])', [matches])
   })
 }

@@ -1,3 +1,4 @@
+import { canonicalRows, legacyKeptHand, plainReplayText as plainText } from './replay-opening.mjs'
 import { createHash } from 'node:crypto'
 import { projectReplayEvent } from './archive.mjs'
 import { isUuid, normalize, ProductError } from './decks.mjs'
@@ -14,10 +15,6 @@ const cardActions = new Map([
   ['pays', 'pay'], ['discards', 'discard'], ['chooses', 'select'],
 ])
 const manaSymbols = ['W', 'U', 'B', 'R', 'G', 'C']
-
-function plainText(value) {
-  return typeof value === 'string' ? value.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim() : ''
-}
 
 function immutableRevision(game) {
   return game.checksum ? createHash('sha256').update(JSON.stringify([game.id, game.checksum])).digest('hex') : null
@@ -53,25 +50,6 @@ function checkArchiveRevision(expected, revision) {
 
 function requireReady(game) {
   if (!gameReady(game)) throw new ProductError(409, 'Wait for the completed match and its replay archive')
-}
-
-function canonicalRows(raw) {
-  const rows = []
-  let turn = null
-  let frameCursor = null
-  for (const [cursor, event] of raw.entries()) {
-    if (event.kind === 'rollback' && Number.isSafeInteger(event.turn)) {
-      while (rows.length && rows.at(-1).turn >= event.turn) rows.pop()
-      turn = event.turn
-      frameCursor = rows.at(-1)?.frameCursor ?? null
-    }
-    if (event.view && Number.isSafeInteger(event.view.turn)) {
-      turn = event.view.turn
-      frameCursor = cursor
-    }
-    rows.push({ cursor, frameCursor, turn: Number.isSafeInteger(event.turn) ? event.turn : turn, event })
-  }
-  return rows
 }
 
 function gamePerspectives(game, access, rows) {
@@ -350,22 +328,10 @@ function decisionContextFor(data) {
   function legacyKeep(position, actor) {
     if (position.actual.kind !== 'keep' || position.evidence.basis !== 'engine_log' || !actor) return undefined
     const index = indexes.get(position.cursor)
-    for (const { event } of data.rows.slice(index + 1, index + 65)) {
-      if (event.view?.turn >= 1) {
-        if (event.view.turn !== 1 || !['UNTAP', 'UPKEEP'].includes(event.view.step)) return undefined
-        const hand = gameHand(event, actor, data.typed)
-        const cards = Object.entries(hand ?? {}).map(([id, card]) => cardReference({ id, name: card.name,
-          setCode: card.expansionSetCode, cardNumber: card.cardNumber })).filter(Boolean)
-        return cards.length && cards.length === Object.keys(hand).length ? { cards, handKind: 'kept_hand' } : undefined
-      }
-      if (event.kind === 'draw' && event.actorPlayerId === actor.playerId) return undefined
-      if (event.kind === 'action' && !['mulligan', 'keep'].includes(event.action)) return undefined
-      if (event.log?.messageType === 'GAME') {
-        const message = plainText(event.log.message)
-        const sameActor = message.toLowerCase().startsWith(actor.name.toLowerCase() + ' ')
-        if (sameActor && /^\s*(?:draws|discards|casts|plays|activates|puts)\b/i.test(message.slice(actor.name.length))) return undefined
-      }
-    }
+    const hand = legacyKeptHand(data.rows, index, actor, event => gameHand(event, actor, data.typed))
+    const cards = Object.entries(hand ?? {}).map(([id, card]) => cardReference({ id, name: card.name,
+      setCode: card.expansionSetCode, cardNumber: card.cardNumber })).filter(Boolean)
+    return cards.length && cards.length === Object.keys(hand).length ? { cards, handKind: 'kept_hand' } : undefined
   }
   function decisionContext(position, displayed, seat, scope) {
     const actor = data.perspectives.find(player => player.seatId === (displayed.decisionSeatId ?? position.seatId))
