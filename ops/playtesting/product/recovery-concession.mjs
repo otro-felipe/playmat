@@ -16,3 +16,9 @@ export function waitForConcession(expectedStatus, gameId, advancePeer) {
     return false
   }
 }
+
+/** Submitting a sideboard does not synchronously replace the old game views. */
+export function bothJoinedNextGame([human, peer], previousGameIds) {
+  return human.status === 'active' && peer.status === 'active' && !!human.gameId
+    && human.gameId === peer.gameId && !previousGameIds.has(human.gameId)
+}

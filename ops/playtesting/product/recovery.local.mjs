@@ -1,7 +1,7 @@
 // Explicit fixture harness, never run by npm test. Requires the isolated container opt-in below.
 import { fixtureMcpFetch } from './fixture-mcp-fetch.mjs'
 import assert from 'node:assert/strict'
-import { waitForConcession } from './recovery-concession.mjs'
+import { bothJoinedNextGame, waitForConcession } from './recovery-concession.mjs'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -302,12 +302,14 @@ try {
     assert.ok(repeat.every(r => r.tableId === restored.tableId && r.generation === restored.generation))
     if (status.phase === 'sideboard') {
       assert.equal(restored.gameId, undefined, 'no fabricated active game during recovered sideboarding')
-      await until(s => s.every(x => x.status === 'sideboarding'), 'both real sideboard prompts')
+      const previousSeats = await until(s => s.every(x => x.status === 'sideboarding'), 'both real sideboard prompts')
+      const previousGameIds = new Set([fixture.originalGameId, fixture.restoredGameId, ...previousSeats.map(seat => seat.gameId)])
       const sideboards = [browser.sideboardState(), await call('get_sideboard_state')]
       assert.ok(sideboards.every(s => s.deck.cards.length > 0))
       assert.equal(deckSignature(sideboards[0].deck), fixture.savedSideboardDeckSignature, 'the changed submitted main/sideboard allocation survives the process restart')
       await browser.submitSideboard({ decisionId: sideboards[0].decisionId, deck: sideboards[0].deck })
       await call('submit_sideboard', { decisionId: sideboards[1].decisionId, deck: sideboards[1].deck })
+      await until(seats => bothJoinedNextGame(seats, previousGameIds), 'both seats join game two after recovered sideboarding')
       await playTo(2)
       const next = await browser.recoveryStatus(fixture.matchId)
       assert.equal(next.gameNumber, 2)
