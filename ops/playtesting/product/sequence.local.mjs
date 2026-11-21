@@ -322,12 +322,13 @@ async function verifyPreparedModeLine(mode, verifyArchive = false) {
   await call('concede', { gameId: state.gameId, entireMatch: true })
   if (verifyArchive) await verifyModeAndUseCapture(state.gameId, totalDeadline)
 }
+const scenarios = process.env.PLAYMAT_SEQUENCE_SCENARIOS
 try {
   const product = await createProduct({ databaseUrl: process.env.DATABASE_URL })
   try {
     await product.provisionHuman('SequenceAlice', password)
     await product.provisionHuman('SequenceBob', password)
-    const withReview = process.env.PLAYMAT_SEQUENCE_SCENARIOS === 'review'
+    const withReview = ['review', 'review-prepared'].includes(scenarios)
     await product.provisionAgent('SequenceBob', engineName, withReview ? ['play', 'history'] : ['play'], token)
   } finally { await product.close() }
   browserCookie = await browserLogin('SequenceAlice')
@@ -349,15 +350,6 @@ try {
   assert.ok(guideBundle.guides.every(guide => guide.text?.length > 0))
   assert.ok(JSON.stringify(discovered.tools.find(tool => tool.name === 'play_sequence').inputSchema).includes('allowPlannedResolutions'))
   await warmDeckValidation()
-  const scenarios = process.env.PLAYMAT_SEQUENCE_SCENARIOS
-  if (scenarios === 'review') {
-    const capture = await verifyReplayCapture({ startFixture, call, ownPlayer, rivalPlayer, answer, waitNextOwn, totalDeadline })
-    const humanCapture = await verifyHumanReplayCapture({ startHumanReviewFixture, totalDeadline })
-    await verifyReplayReviewOverMcp({ capture, humanCapture, Client, StreamableHTTPClientTransport, token })
-    await verifyDiscardChoiceCapture({ startFixture, ownPlayer, rivalPlayer, call, answer, waitNextOwn, totalDeadline })
-    // This line also verifies mode/use evidence in the archived replay using the history grant.
-    await verifyPreparedModeLine('Patrol Night', true)
-  }
   const fixture = { startFixture, ownPlayer, rivalPlayer, answer, waitNextOwn,
     playLineWithPeer, call, totalDeadline, setRivalSetup }
   const pioneerScenarios = [
@@ -371,18 +363,29 @@ try {
     ['ward', './multi-target-ward.local.mjs', 'verifyMultiTargetWard'],
   ]
   const pioneer = pioneerScenarios.find(([name]) => name === scenarios)
-  if (pioneer) {
+  if (scenarios === 'review') {
+    const capture = await verifyReplayCapture({ startFixture, call, ownPlayer, rivalPlayer, answer, waitNextOwn, totalDeadline })
+    const humanCapture = await verifyHumanReplayCapture({ startHumanReviewFixture, totalDeadline })
+    await verifyReplayReviewOverMcp({ capture, humanCapture, Client, StreamableHTTPClientTransport, token })
+  } else if (scenarios === 'discard-capture') {
+    await verifyDiscardChoiceCapture({ startFixture, ownPlayer, rivalPlayer, call, answer, waitNextOwn, totalDeadline })
+  } else if (scenarios === 'review-prepared') {
+    // This line also verifies mode/use evidence in the archived replay using the history grant.
+    await verifyPreparedModeLine('Patrol Night', true)
+  } else if (pioneer) {
     const [, modulePath, run] = pioneer
     await (await import(modulePath))[run](fixture)
-  } else if (scenarios === 'modal') {
+  } else if (scenarios === 'date-night') {
     await verifyPreparedModeLine('Date Night')
+  } else if (scenarios === 'improvised-yes') {
     await verifyPreparedModeLine('Improvised Act Yes')
+  } else if (scenarios === 'low-level-control') {
     await verifyPreparedModeLine('Low-level control')
   } else if (scenarios === 'typed') {
     await verifyTypedManaTalent({ startFixture, ownPlayer, answer, waitNextOwn, playLineWithPeer, call, totalDeadline })
   } else if (scenarios === 'causal') {
     await verifyCausalBurn()
-  } else if (scenarios !== 'review') throw Error('Select a real-engine family using verify-sequence-image.sh')
+  } else throw Error('Select a real-engine family using verify-sequence-image.sh')
 
 } finally { browser?.close(); await client?.close() }
 

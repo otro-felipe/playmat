@@ -81,6 +81,10 @@ jobs:
           PY
 
   real-engine:
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [capture-group, priority-group, combat-group]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -91,4 +95,5 @@ jobs:
         if: hashFiles('ops/playtesting/test/verify-sequence-image.sh') != ''
         env:
           PLAYMAT_SEQUENCE_IMAGE_TEST: "yes"
+          PLAYMAT_SEQUENCE_SCENARIOS: ${{ matrix.group }}
         run: bash ops/playtesting/test/verify-sequence-image.sh

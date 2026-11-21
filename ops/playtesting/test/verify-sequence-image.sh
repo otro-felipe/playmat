@@ -34,12 +34,24 @@ fi
 # exact built image. A slow setup in one match cannot consume the next family's
 # decision budget, and every family still passes through the real product limits.
 selection=${PLAYMAT_SEQUENCE_SCENARIOS:-all}
-pioneer=(mulligan casting order activation combat saga-entry exile ward)
+review=(review discard-capture review-prepared)
+pioneer_costs=(mulligan casting order activation)
+pioneer_combat=(combat saga-entry exile ward)
+modal=(date-night improvised-yes low-level-control)
+# Three independent CI workers build this revision. The default local run uses
+# exactly the same families, and the groupings keep partial retries bounded.
+capture_group=("${review[@]}" date-night typed)
+priority_group=("${pioneer_costs[@]}" improvised-yes)
+combat_group=("${pioneer_combat[@]}" low-level-control causal)
 case "$selection" in
- all) families=(review "${pioneer[@]}" modal typed causal) ;;
- pioneer) families=("${pioneer[@]}") ;;
- turn-lines) families=(modal typed causal) ;;
- review|mulligan|casting|order|activation|combat|saga-entry|exile|ward|modal|typed|causal) families=("$selection") ;;
+ all) families=("${capture_group[@]}" "${priority_group[@]}" "${combat_group[@]}") ;;
+ capture-group) families=("${capture_group[@]}") ;;
+ priority-group) families=("${priority_group[@]}") ;;
+ combat-group) families=("${combat_group[@]}") ;;
+ pioneer) families=("${pioneer_costs[@]}" "${pioneer_combat[@]}") ;;
+ turn-lines) families=("${modal[@]}" typed causal) ;;
+ modal) families=("${modal[@]}") ;;
+ review|discard-capture|review-prepared|mulligan|casting|order|activation|combat|saga-entry|exile|ward|date-night|improvised-yes|low-level-control|typed|causal) families=("$selection") ;;
  *) echo 'Unknown isolated real-engine scenario' >&2; exit 2 ;;
 esac
 if (( ${#families[@]} > 1 )); then
