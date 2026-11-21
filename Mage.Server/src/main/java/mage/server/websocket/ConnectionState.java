@@ -1,6 +1,7 @@
 package mage.server.websocket;
 
 import mage.server.websocket.rpc.RpcConnection;
+import mage.server.websocket.rpc.RpcException;
 import org.java_websocket.WebSocket;
 import mage.server.ClientChannel;
 
@@ -232,16 +233,10 @@ final class ConnectionState implements RpcConnection {
     }
 
     @Override
-    public boolean takeCurrentPrompt(UUID gameId) {
-        if (humanChannel != null) return humanChannel.takeCurrentPrompt(gameId);
-        return RpcConnection.super.takeCurrentPrompt(gameId);
-    }
-
-    @Override
-    public boolean takePrompt(UUID gameId, int messageId) {
-        if (humanChannel != null) return humanChannel.takePrompt(gameId, messageId);
+    public boolean takePrompt(UUID gameId, Integer messageId, PromptCommit commit) throws RpcException {
+        if (humanChannel != null) return humanChannel.takePrompt(gameId, messageId, commit);
         WebSocketCallbackHandler handler = callbackHandler;
-        return handler != null && handler.takePrompt(gameId, messageId);
+        return handler == null ? RpcConnection.super.takePrompt(gameId, messageId, commit) : handler.takePrompt(gameId, messageId, commit);
     }
 
     @Override

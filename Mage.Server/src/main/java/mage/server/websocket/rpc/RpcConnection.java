@@ -63,15 +63,18 @@ public interface RpcConnection {
     /** Reopen an already joined shared game on this socket without disturbing the other transport. */
     default boolean rejoinSharedGame(UUID gameId) { return false; }
 
-    /** Existing browser clients answer the most recently delivered prompt without a message ID. */
-    default boolean takeCurrentPrompt(UUID gameId) {
-        promptAnswered(gameId);
-        return true;
+    @FunctionalInterface
+    interface PromptCommit {
+        PromptCommit NONE = () -> {};
+        void run() throws RpcException;
     }
 
-    /** Atomically takes an open question if its message ID still matches. */
-    default boolean takePrompt(UUID gameId, int messageId) {
-        return false;
+    /** Claims the current question only after its metadata is accepted. Legacy browsers omit the message ID. */
+    default boolean takePrompt(UUID gameId, Integer messageId, PromptCommit commit) throws RpcException {
+        if (messageId != null) return false;
+        commit.run();
+        promptAnswered(gameId);
+        return true;
     }
 
     /**

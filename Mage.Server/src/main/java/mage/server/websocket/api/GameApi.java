@@ -280,14 +280,10 @@ final class GameApi {
     }
 
     private static void answerPrompt(ApiContext ctx, RpcCall call, int promptIndex) throws RpcException {
-        if (call.has(promptIndex)) {
-            if (!call.getConnection().takePrompt(call.uuid(0), call.integer(promptIndex))) {
-                throw RpcException.invalidParams("The expected decision is no longer pending");
-            }
-        } else if (!call.getConnection().takeCurrentPrompt(call.uuid(0))) {
-            throw RpcException.invalidParams("The decision has already been answered");
+        Integer expected = call.has(promptIndex) ? call.integer(promptIndex) : null;
+        if (!call.getConnection().takePrompt(call.uuid(0), expected, () -> recordLine(ctx, call, 0, promptIndex + 1))) {
+            throw RpcException.invalidParams(expected == null ? "The decision has already been answered" : "The expected decision is no longer pending");
         }
-        recordLine(ctx, call, 0, promptIndex + 1);
     }
 
     /** A protected replay entry belongs to the authenticated seat submitting the first answer of the line. */

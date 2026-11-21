@@ -194,6 +194,30 @@ public class WebClientApiContractTest {
     }
 
     @Test
+    void rejectedReplayMetadataPreservesThePendingBrowserDecision() throws Exception {
+        FakeConnection connection = new FakeConnection();
+        login(connection);
+        UUID game = UUID.randomUUID();
+        connection.pendingGame = game;
+        connection.pendingPrompt = 42;
+        JsonArray answer = new JsonArray();
+        answer.add(game.toString());
+        answer.add("client-chosen-session");
+        answer.add(true);
+        answer.add(42);
+        JsonArray annotated = answer.deepCopy();
+        JsonObject line = new JsonObject();
+        line.addProperty("commandId", "line-1");
+        line.addProperty("reasoning", "Keep both lands.");
+        annotated.add(line);
+        assertThatThrownBy(() -> dispatcher.dispatch("sendPlayerBoolean", annotated, connection))
+                .isInstanceOfSatisfying(RpcException.class, e -> assertThat(e.getCode()).isEqualTo(RpcException.NOT_AUTHORIZED));
+        assertThat(serverCalls).isEmpty();
+        dispatcher.dispatch("sendPlayerBoolean", answer, connection);
+        assertThat(serverCalls).containsExactly("sendPlayerBoolean");
+    }
+
+    @Test
     void adminCallsOfPlayersFailAndNeverReachTheServer() throws Exception {
         everyoneIsStaff = false;
         for (RpcMethod method : dispatcher.getMethods()) {
@@ -473,6 +497,11 @@ public class WebClientApiContractTest {
                 array.add(ADMIN_PASSWORD);
                 continue;
             }
+            if (param.isOptional() && "line".equals(param.getName())) {
+                // The browser has no MCP principal and never supplies replay-line metadata.
+                array.add(com.google.gson.JsonNull.INSTANCE);
+                continue;
+            }
             switch (param.getTsType()) {
                 case "PlayerAction":
                     array.add("PASS_PRIORITY_UNTIL_NEXT_TURN");
@@ -565,8 +594,10 @@ public class WebClientApiContractTest {
         }
 
         @Override
-        public boolean takePrompt(UUID gameId, int messageId) {
-            if (!gameId.equals(pendingGame) || pendingPrompt == null || pendingPrompt != messageId) return false;
+        public boolean takePrompt(UUID gameId, Integer messageId, PromptCommit commit) throws RpcException {
+            if (messageId == null) return RpcConnection.super.takePrompt(gameId, null, commit);
+            if (!gameId.equals(pendingGame) || pendingPrompt == null || !pendingPrompt.equals(messageId)) return false;
+            commit.run();
             pendingGame = null;
             pendingPrompt = null;
             return true;

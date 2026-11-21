@@ -1,5 +1,8 @@
 package mage.server.websocket;
 
+import mage.server.websocket.rpc.RpcConnection.PromptCommit;
+import mage.server.websocket.rpc.RpcException;
+
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import mage.interfaces.callback.ClientCallback;
@@ -110,16 +113,19 @@ public class WebSocketCallbackHandler implements ClientChannel {
     /**
      * The player answered (or passed): the question is no longer open.
      */
-    void promptAnswered(UUID gameId) {
+    synchronized void promptAnswered(UUID gameId) {
         if (gameId != null) {
             pendingPrompts.remove(gameId);
         }
     }
 
     /** Claims the specified open question once without clearing a newer question on a stale answer. */
-    boolean takePrompt(UUID gameId, int messageId) {
+    synchronized boolean takePrompt(UUID gameId, Integer messageId, PromptCommit commit) throws RpcException {
         Prompt prompt = gameId == null ? null : pendingPrompts.get(gameId);
-        return prompt != null && prompt.messageId == messageId && pendingPrompts.remove(gameId, prompt);
+        if (messageId != null && (prompt == null || prompt.messageId != messageId)) return false;
+        commit.run();
+        promptAnswered(gameId);
+        return true;
     }
 
     /**
@@ -238,7 +244,7 @@ public class WebSocketCallbackHandler implements ClientChannel {
         WebSocketServerImpl.sendText(conn, json);
     }
 
-    private void remember(ClientCallbackMethod method, UUID gameId, Prompt json) {
+    private synchronized void remember(ClientCallbackMethod method, UUID gameId, Prompt json) {
         if (gameId == null) {
             return;
         }

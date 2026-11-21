@@ -132,9 +132,10 @@ import { gzipSync } from 'node:zlib';
 const BUDGET_KB = {
   entry: 86,
   initial: 221,
-  // The deck analysis screens, bilingual labels and on-demand archetype catalog measure
-  // 872.9 kB for the private app and 864.5 kB for the public app (2026-11-21).
-  app: 874,
+  // Private app measured 873.1 KiB before match-scoped MCP control, card previews in
+  // analyses, replay explanations, and the expanded archetype catalog. Together these
+  // measure 879.6 KiB (2026-11-21), including all lazy screens.
+  app: 881,
 };
 
 const dist = new URL('../dist/', import.meta.url).pathname;

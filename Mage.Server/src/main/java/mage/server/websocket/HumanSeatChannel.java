@@ -1,5 +1,8 @@
 package mage.server.websocket;
 
+import mage.server.websocket.rpc.RpcConnection.PromptCommit;
+import mage.server.websocket.rpc.RpcException;
+
 import mage.interfaces.callback.ClientCallback;
 import mage.interfaces.callback.ClientCallbackMethod;
 import mage.server.ClientChannel;
@@ -87,15 +90,11 @@ final class HumanSeatChannel implements ClientChannel {
         catch (Closed ignored) { return false; }
     }
 
-    synchronized boolean takePrompt(UUID game, int id) {
+    synchronized boolean takePrompt(UUID game, Integer id, PromptCommit commit) throws RpcException {
         ClientCallback current = prompts.get(game);
-        if (current == null || current.getMessageId() != id) return false;
-        answered(game);
-        return true;
-    }
-
-    synchronized boolean takeCurrentPrompt(UUID game) {
-        if (hasDelegate() && !prompts.containsKey(game)) return false;
+        if (current == null && (id != null || hasDelegate())) return false;
+        if (id != null && current.getMessageId() != id) return false;
+        commit.run();
         answered(game);
         return true;
     }

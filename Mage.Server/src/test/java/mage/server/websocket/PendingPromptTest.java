@@ -14,6 +14,9 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static mage.server.websocket.rpc.RpcConnection.PromptCommit.NONE;
+import mage.server.websocket.rpc.RpcException;
 
 /**
  * Web client bridge: a lost question can be sent again ({@code gameResync}) until the player answers it.
@@ -86,11 +89,13 @@ public class PendingPromptTest {
         handler.send(old);
         handler.send(current);
 
-        assertThat(handler.takePrompt(gameId, 41)).isFalse();
-        assertThat(handler.takePrompt(UUID.randomUUID(), 42)).isFalse();
+        assertThat(handler.takePrompt(gameId, 41, () -> { throw new AssertionError("Stale response recorded"); })).isFalse();
+        assertThat(handler.takePrompt(UUID.randomUUID(), 42, NONE)).isFalse();
         assertThat(handler.resendPrompt(gameId)).isTrue();
-        assertThat(handler.takePrompt(gameId, 42)).isTrue();
-        assertThat(handler.takePrompt(gameId, 42)).isFalse();
+        assertThatThrownBy(() -> handler.takePrompt(gameId, 42, () -> { throw RpcException.invalidParams("Replay write failed"); }))
+                .isInstanceOf(RpcException.class);
+        assertThat(handler.takePrompt(gameId, 42, NONE)).isTrue();
+        assertThat(handler.takePrompt(gameId, 42, NONE)).isFalse();
         assertThat(handler.resendPrompt(gameId)).isFalse();
     }
 }

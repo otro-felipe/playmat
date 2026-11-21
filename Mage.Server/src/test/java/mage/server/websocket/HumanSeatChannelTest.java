@@ -12,6 +12,9 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static mage.server.websocket.rpc.RpcConnection.PromptCommit.NONE;
+import mage.server.websocket.rpc.RpcException;
 
 class HumanSeatChannelTest {
     private ConnectionState endpoint(List<String> frames) {
@@ -101,8 +104,10 @@ class HumanSeatChannelTest {
         assertThat(browser.rejoinSharedGame(UUID.randomUUID())).isFalse();
         assertThat(browserFrames).hasSize(6);
         assertThat(agentFrames).hasSize(3);
-        assertThat(agent.takePrompt(game, 73)).isTrue();
-        assertThat(agent.takePrompt(game, 73)).isFalse();
+        assertThatThrownBy(() -> agent.takePrompt(game, 73, () -> { throw RpcException.invalidParams("Replay write failed"); }))
+                .isInstanceOf(RpcException.class);
+        assertThat(agent.takePrompt(game, 73, NONE)).isTrue();
+        assertThat(agent.takePrompt(game, 73, NONE)).isFalse();
     }
 
     @Test void aSecondTransportReattachesToItsGameAndSharesOnePromptReceipt() throws Exception {
@@ -121,17 +126,17 @@ class HumanSeatChannelTest {
         channel.replay(agent);
         assertThat(delegatedFrames).hasSize(2).noneMatch(frame -> frame.contains(unrelated.toString()));
         assertThat(browserFrames).hasSize(3);
-        assertThat(agent.takePrompt(game, 41)).isFalse();
-        assertThat(browser.takeCurrentPrompt(game)).isTrue();
-        assertThat(agent.takePrompt(game, 42)).isFalse();
+        assertThat(agent.takePrompt(game, 41, () -> { throw new AssertionError("Stale response recorded"); })).isFalse();
+        assertThat(browser.takePrompt(game, null, NONE)).isTrue();
+        assertThat(agent.takePrompt(game, 42, NONE)).isFalse();
         assertThat(agent.resendPrompt(game)).isFalse();
         choice.setMessageId(43);
         channel.send(choice);
-        assertThat(agent.takePrompt(game, 43)).isTrue();
-        assertThat(browser.takeCurrentPrompt(game)).isFalse();
+        assertThat(agent.takePrompt(game, 43, NONE)).isTrue();
+        assertThat(browser.takePrompt(game, null, NONE)).isFalse();
         assertThat(channel.detach(browser)).isFalse();
         channel.send(choice);
-        assertThat(agent.takePrompt(game, 43)).isTrue();
+        assertThat(agent.takePrompt(game, 43, NONE)).isTrue();
         assertThat(channel.detach(agent)).isTrue();
     }
 }
