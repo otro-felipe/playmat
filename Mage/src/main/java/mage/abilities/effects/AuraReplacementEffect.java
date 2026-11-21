@@ -189,7 +189,7 @@ public class AuraReplacementEffect extends ReplacementEffectImpl {
                 && card.getSecondCardFace() != null) {
             card = card.getSecondCardFace();
         } else {
-            card = NightboundAbility.getEnteringFace(card, card.isFaceDown(game), game);
+            card = NightboundAbility.getEnteringFaceForAuraCheck(card, card.isFaceDown(game), event.getPlayerId(), game);
         }
         return card.isEnchantment(game) && card.hasSubtype(SubType.AURA, game);
     }

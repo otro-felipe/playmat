@@ -422,7 +422,7 @@ public final class ZonesHandler {
                     throw new IllegalStateException("Unexpected trying of move permanent to battlefield instead card");
                 } else {
                     // 702.145b: register the abilities of the entering face, preserving the moved card's identity.
-                    boolean enterOnNightFace = !info.faceDown && NightboundAbility.checkCard(card.getMainCard(), game);
+                    boolean enterOnNightFace = NightboundAbility.entersOnNightFace(card, info.faceDown, event.getPlayerId(), game);
                     permanent = new PermanentCard(card, event.getPlayerId(), game, enterOnNightFace);
                 }
 
