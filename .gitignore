@@ -2,6 +2,8 @@ syntax: glob
 
 # global files
 **/db
+# Keep the Java database package in source deployments.
+!Mage.Common/src/main/java/mage/db/
 **/saved
 **/target
 #un-ignore target implementations
