@@ -6,6 +6,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { createProduct } from './product.mjs'
 import { fixtureMcpFetch } from './fixture-mcp-fetch.mjs'
 import { PlaymatEngineSeat } from '../mcp/src/engine-seat.mjs'
+import { createProductClient } from '../mcp/src/product.mjs'
 
 const issuer = 'https://127.0.0.1:8080'
 const base = 'http://127.0.0.1:8080'
@@ -158,7 +159,11 @@ try {
     const publicStatus=JSON.stringify(states.map(({status,score})=>({status,score})))
     if (publicStatus!==terminalProgress) console.log('Duel termination '+publicStatus)
     terminalProgress=publicStatus
-    return states.every(s=>s.status==='match_over')
+    if (!states.every(s=>s.status==='match_over')) return false
+    assert.ok(states.every(s=>s.score?.winsNeeded===2 && s.score.wins+s.score.losses===1),'Quitting ends the best-of-three at one played game')
+    assert.equal(states[0].score.wins,states[1].score.losses)
+    assert.deepEqual(states[2].score,states[0].score)
+    return true
   },'the completed duel')
   await until(async () => !(await host('list_human_matches')).matches.some(row=>row.tableId===tableId),'completed duel to leave discovery')
   // A browser-hosted table is read-only before an agent has ever attached to its human seat.
@@ -171,6 +176,18 @@ try {
   assert.ok(await browser.api.roomJoinTable(room,webTable,'Goldfish','COMPUTER_MAD',2,deck('Plains'),invitationPassword))
   assert.ok(await browser.api.matchStart(room,webTable))
   const fresh = await until(()=>{const s=browser.snapshot();return s.tableId===webTable && s.status==='active' && s.gameId && s},'browser-only table display')
+  await assert.rejects(()=>browser.api.matchQuit(fresh.gameId),error=>error.code===-32001)
+  // Open and close the same engine transport used by the MCP service, then verify the ordinary browser
+  // stays connected and cannot take over even before a replacement controller has attached.
+  const actor=await createProductClient('http://127.0.0.1:8790',issuer).authorize(token)
+  const temporaryController=new PlaymatEngineSeat({engineUrl:'ws://127.0.0.1:17172/ws',engineName:humanName,
+    trustedHeader:'X-Playmat-User',accountId:actor.accountId,connectionId:actor.connectionId,
+    recoverySeatId:'human:'+actor.accountId,humanTableId:webTable})
+  try {
+    await temporaryController.open()
+    await until(()=>temporaryController.snapshot().gameId===fresh.gameId,'the temporary controller to see the game')
+  } finally { temporaryController.close() }
+  assert.equal(browser.snapshot().gameId,fresh.gameId)
   await assert.rejects(()=>browser.api.matchQuit(fresh.gameId),error=>error.code===-32001)
   assert.ok((await host('list_human_matches')).matches.some(row=>row.tableId===webTable))
   await until(async()=>{const s=await host('get_game_state',{humanTableId:webTable});return s.gameId===fresh.gameId && s.status==='active'},'agent attach to browser-created game')

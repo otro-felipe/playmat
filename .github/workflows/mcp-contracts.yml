@@ -14,6 +14,8 @@ on:
       - "ops/playtesting/product/schema.sql"
       - "ops/playtesting/Caddyfile"
       - "Mage.Server/src/main/java/mage/server/Health.java"
+      - "Mage.Server/src/main/java/mage/server/TableController.java"
+      - "Mage.Server/src/main/java/mage/server/websocket/api/GameApi.java"
       - "Mage.Server/src/main/java/mage/server/User.java"
       - "Mage.Server/src/main/java/mage/server/RustHost.java"
       - "Mage.Server/src/main/java/mage/server/websocket/Human*.java"
