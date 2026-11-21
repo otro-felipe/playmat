@@ -2,6 +2,7 @@ import catalog from './catalog.json' with { type: 'json' }
 
 const generic = ['Aggro', 'Combo', 'Control', 'Midrange', 'Ramp', 'Tempo']
 const cache = new Map()
+const nameIndex = new Map()
 const key = text => String(text ?? '').normalize('NFKC').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 
 function catalogFormat(format) {
@@ -26,8 +27,17 @@ export function archetypesFor(format) {
 export function classifyArchetype(format, name, cards = []) {
   const labels = archetypesFor(format)
   const title = ' ' + key(name) + ' '
-  const named = labels.filter(label => title.includes(' ' + key(label) + ' '))
-  if (named.length) return named.sort((a, b) => b.length - a.length)[0]
+  if (!nameIndex.has(labels)) {
+    // Tournament indexes use nicknames and color codes. Keep aliases only when
+    // their destination is an available archetype in this format.
+    const aliases = Object.entries(catalog.aliases).filter(([, label]) => labels.includes(label))
+    const index = [...labels.map(label => [label, label]), ...aliases]
+      .map(([name, label]) => ({ pattern: ' ' + key(name) + ' ', label }))
+      .sort((a, b) => b.pattern.length - a.pattern.length)
+    nameIndex.set(labels, index)
+  }
+  const named = nameIndex.get(labels).find(entry => title.includes(entry.pattern))
+  if (named) return named.label
   const names = new Set(cards.map(card => key(typeof card === 'string' ? card : card.cardName ?? card.name)))
   const signatures = [
     ['Izzet Phoenix', 'Arclight Phoenix', 'Treasure Cruise'],
