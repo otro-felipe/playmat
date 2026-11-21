@@ -393,10 +393,12 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
     (args) => getSeat().engine.validateDeck(args), true);
   tool('list_decks', 'List the reusable MCP opponent decks in your private account library. These appear in the web library under MCP opponent decks.', {}, 'decks', () => fromProduct('list_decks', {}), true);
   tool('get_deck', 'Read one deck in your library.', { deckId: Uuid }, 'decks', (args) => fromProduct('get_deck', args), true);
-  tool('create_deck', 'Save a reusable MCP opponent deck in your private library. It remains available in later sessions and appears under MCP opponent decks on the web.', { name: z.string().min(1).max(120), format: Format, deck: Deck },
+  tool('list_deck_archetypes', 'List all predefined library archetypes for the format. Use one label in create_deck and update_deck.', { format: Format },
+    'decks', args => fromProduct('list_deck_archetypes', args), true);
+  tool('create_deck', 'Save a reusable MCP opponent deck in your private library. It remains available in later sessions and appears under MCP opponent decks on the web.', { name: z.string().min(1).max(120), format: Format, archetype: z.string().min(1).max(150), deck: Deck },
     'decks', (args) => fromProduct('create_deck', args));
   tool('update_deck', 'Save a revision if your current deck revision still matches.', {
-    deckId: Uuid, expectedRevision: z.number().int().positive(), name: z.string().min(1).max(120), format: Format, deck: Deck,
+    deckId: Uuid, expectedRevision: z.number().int().positive(), name: z.string().min(1).max(120), format: Format, archetype: z.string().min(1).max(150), deck: Deck,
   }, 'decks', (args) => fromProduct('update_deck', args));
   tool('list_matches', 'List your finished and interrupted matches, filtered by format.', {
     format: Format.optional(), cursor: z.string().max(160).optional(), limit: z.number().int().min(1).max(50).default(25),

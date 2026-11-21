@@ -11,6 +11,7 @@ import { copySharedDeck, useShareDeck, useSharedDecks, useSharingOn } from '../s
 import { notify } from '../stores/toasts';
 import { Button } from '../ui/Button';
 import { Dialog } from '../ui/Dialog';
+import { ArchetypeSelect } from './ArchetypeSelect';
 import { CoverDialog } from './CoverDialog';
 import styles from './DeckShelf.module.css';
 
@@ -65,6 +66,10 @@ export function DeckOrganizer({ deck }: { deck: RosterDeck }) {
 
   return (
     <div className={styles.organizer}>
+      <ArchetypeSelect {...deck} onChange={archetype => void run(
+        () => store().updateSaved(deck.id, current => ({ ...current, archetype })),
+        t('decks.tags.failed'),
+      )} />
       <TagEditor deck={deck} onChange={(tags) => void run(() => store().setTags(deck.id, tags), t('decks.tags.failed'))} />
       <label className={styles.check}>
         <input type="checkbox" checked={deck.draft} onChange={(event) => void run(() => store().setDraft(deck.id, event.target.checked), t('decks.tags.failed'))} />

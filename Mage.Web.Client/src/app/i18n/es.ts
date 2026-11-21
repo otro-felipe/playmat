@@ -494,6 +494,8 @@ const es: Catalog = {
   'decks.tags.remove': 'Quitar la etiqueta {tag}',
   'decks.tags.full': 'Hasta {count} etiquetas',
   'decks.tags.failed': 'No se pudo guardar el mazo',
+  'decks.archetype': 'Arquetipo',
+  'decks.otherArchetype': 'Otro',
   'decks.draft': 'Aún en construcción (borrador)',
   'decks.draft.badge': 'Borrador',
   'decks.filter.label': 'Mostrar mazos',

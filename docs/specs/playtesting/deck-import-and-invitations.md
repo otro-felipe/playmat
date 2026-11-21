@@ -28,3 +28,9 @@ With no friend selected, Playmat creates an unlisted match. Waiting matches stay
 | PM-SETUP-AC-02 | `Mage.Web.Client/src/app/screens/TablesScreen.test.tsx`, `[PM-SETUP-AC-02] the host selects a saved friend for the invitation` |
 | PM-SETUP-AC-03 | `Mage.Web.Client/src/app/screens/TablesScreen.test.tsx`, `[PM-SETUP-AC-03] the host can create a link-only invitation with an empty friends list`; `Mage.Web.Client/src/app/screens/JoinScreen.webmcp.test.tsx`, `[PM-SETUP-AC-03] an unlisted table opens from its link while absent from the lobby`; `ops/playtesting/product/product.test.mjs`, `[PM-SETUP-AC-03] an unlisted link is undiscoverable and reserves a single human guest seat`; `Mage.Web.Client/e2e/app-private-bo3.spec.ts`, `[PM-SETUP-AC-01, PM-SETUP-AC-03] a saved deck stays in the library and an unlisted match opens only by link` |
 | PM-SETUP-AC-04 | `Mage.Web.Client/src/app/stores/social.test.ts`, `[PM-SETUP-AC-04] private lists follow the authenticated account and server`, `[PM-SETUP-AC-04] only the recorded private login inherits the old list`, `[PM-SETUP-AC-04] an old list with no recorded owner stays outside all accounts` |
+
+## Library archetypes and list versions
+
+Each saved library deck has a predefined archetype for its format. The browser and MCP share the same choices. A legacy list gets a label from its existing name or recognizable signature cards, with Other for unidentified brews. An explicitly invalid label is rejected. Changing the label or display metadata preserves the list version.
+
+Each deck has immutable edit revisions for concurrent saves and a distinct performance version for each composition. Counts in the main deck and sideboard define composition. Reordered entries, alternate printings, split duplicates and renamed decks retain their performance version. Restoring a previous composition restores its original version. The deployment migration reconstructs these versions in save order and preserves archived revisions.

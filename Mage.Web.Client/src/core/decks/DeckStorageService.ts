@@ -1,3 +1,4 @@
+import { archetypesFor, classifyArchetype } from "./archetypes/library.mjs";
 import type { DeckCardLists, DeckImportSource } from "./types.js";
 import { DeckSerializer } from "./DeckSerializer.js";
 import { newId } from "../util/uuid.js";
@@ -8,6 +9,7 @@ export interface DeckSummary {
     name: string;
     description?: string;
     format?: string;
+    archetype?: string;
     updatedAt: number;
     cardCount?: number;
     sideboardCount?: number;
@@ -58,6 +60,7 @@ interface DeckMeta {
     name: string;
     description?: string;
     format?: string;
+    archetype?: string;
     updatedAt: number;
     cardCount?: number;
     sideboardCount?: number;
@@ -124,6 +127,8 @@ export class LocalDeckStorage implements IDeckStorage {
         const now = Date.now();
         const deckData = {
             ...deck,
+            archetype: deck.archetype && archetypesFor(deck.format).includes(deck.archetype)
+                ? deck.archetype : classifyArchetype(deck.format, deck.name, deck.cards),
             id,
             updatedAt: now,
             createdAt: deck.createdAt || now,
@@ -142,6 +147,7 @@ export class LocalDeckStorage implements IDeckStorage {
             name: deck.name || "Untitled Deck",
             description: deck.description,
             format: deck.format,
+            archetype: deck.archetype,
             updatedAt: deck.updatedAt,
             cardCount: deck.cards.reduce((sum, c) => sum + c.amount, 0),
             sideboardCount: deck.sideboard.reduce((sum, c) => sum + c.amount, 0),
@@ -244,6 +250,7 @@ export class LocalDeckStorage implements IDeckStorage {
             name: m.name,
             description: m.description,
             format: m.format,
+            archetype: m.archetype,
             updatedAt: m.updatedAt,
             cardCount: m.cardCount,
             sideboardCount: m.sideboardCount,

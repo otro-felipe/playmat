@@ -6,6 +6,8 @@ import { readFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import pg from 'pg'
+import { archetypesFor } from './deck-performance-identity.mjs'
+import { migrateDeckLists } from './deck-list-migration.mjs'
 import { createArchive } from './archive.mjs'
 import { resetMatchHistory, setUnlimitedMatchHistory } from './history-retention.mjs'
 import { createTheoryStore, evaluateTheoryTactics } from './theory-store.mjs'
@@ -130,6 +132,8 @@ export async function createProduct({
     await pool.query(await readFile(resolve(directory, 'review-permissions.sql'), 'utf8'))
     await pool.query(await readFile(resolve(directory, 'theory-schema.sql'), 'utf8'))
     await pool.query(await readFile(resolve(directory, 'history-retention.sql'), 'utf8'))
+    const migrated = await migrateDeckLists(pool)
+    if (migrated?.decks) console.info('Playmat library archetype backfill complete', migrated)
   } catch (error) {
     await pool.end()
     throw error
@@ -362,6 +366,10 @@ export async function createProduct({
     if (endpoint === 'decks' || endpoint.startsWith('decks/')) {
       const expectedOwner = req.headers['x-playmat-deck-owner']
       if (expectedOwner && normalize(expectedOwner) !== normalize(actor.username)) throw new ProductError(403, 'The browser session has changed')
+    }
+    if (endpoint === 'deck-archetypes' && req.method === 'GET') {
+      requireScope(actor, 'library')
+      return send(res, 200, { archetypes: archetypesFor(url.searchParams.get('format')) })
     }
     if (endpoint === 'decks' && req.method === 'GET') {
       requireScope(actor, 'library')
