@@ -22,8 +22,11 @@ const { StreamableHTTPClientTransport } = await import(require.resolve('@modelco
 const password = 'isolated-sequence-fixture-only'
 const token = randomBytes(32).toString('base64url')
 const engineName = 'seq_' + randomBytes(3).toString('hex')
+// Each spell costs {R}, targets any target and needs no other choice on this all-Mountain battlefield.
+const fixtureBurnDamage = new Map([['Lightning Bolt', 3], ['Shock', 2], ['Tarfire', 2], ['Galvanic Blast', 2], ['Wild Slash', 2]])
 const burnDeck = { name: 'Isolated causal burn fixture', cards: [
-  { cardName: 'Mountain', amount: 52 }, { cardName: 'Lightning Bolt', amount: 4 }, { cardName: 'Shock', amount: 4 },
+  { cardName: 'Mountain', amount: 40 },
+  ...Array.from(fixtureBurnDamage.keys(), cardName => ({ cardName, amount: 4 })),
 ], sideboard: [] }
 const rivalDeck = { name: 'Isolated pass-only fixture', cards: [{ cardName: 'Mountain', setCode: 'DMU', cardNumber: '271', amount: 60 }], sideboard: [] }
 const prepareDeck = { name: 'Isolated mode and prepare fixture', cards: [
@@ -77,7 +80,7 @@ async function comparePlayerViews(scenario, tool, args) {
 }
 const ownPlayer = state => state.players.find(player => player.yourSeat)
 const rivalPlayer = state => state.players.find(player => !player.yourSeat)
-const burnCards = state => state.ownHand.filter(card => /^(Lightning Bolt|Shock)$/.test(card.name))
+const burnCards = state => state.ownHand.filter(card => fixtureBurnDamage.has(card.name))
 const freeLands = state => ownPlayer(state).battlefield.filter(card => card.name === 'Mountain' && !card.tapped)
 async function answer(state, choice) {
   await call('submit_decision', { gameId: state.gameId, cursor: state.cursor, decisionId: state.decision.id,
@@ -507,7 +510,7 @@ async function verifyCausalBurn() {
   assert.equal(result.lastDestination.step, 'END_TURN', 'The receipt must prove the actual observed destination before any later engine-only auto-advance')
   const after = result.state
   assert.ok(after.turn === boundary.turn || after.turn === boundary.turn + 1, 'An empty end step can advance automatically under engine preferences; the MCP must not submit another choice')
-  assert.equal(rivalPlayer(after).life, before.life - [warmup, ...cards].reduce((sum, card) => sum + (card.name === 'Lightning Bolt' ? 3 : 2), 0))
+  assert.equal(rivalPlayer(after).life, before.life - [warmup, ...cards].reduce((sum, card) => sum + fixtureBurnDamage.get(card.name), 0))
   assert.equal(after.sequenceEvidence.epoch, before.epoch)
   assert.equal(after.sequenceEvidence.publicActions[rival.id] ?? 0, before.actions, 'Open rival mana without public action does not interrupt')
   assert.equal(after.sequenceEvidence.resolutionRevision, before.revision + 3)
@@ -564,7 +567,7 @@ async function verifyCausalBurn() {
     if (choice) { await answer(state, choice); state = await waitNextOwn(state.decision.id) } else await sleep(15)
   }
   assert.equal(state.stack.length, 0)
-  assert.equal(rivalPlayer(state).life, reactionLife - (reactionCard.name === 'Lightning Bolt' ? 3 : 2))
+  assert.equal(rivalPlayer(state).life, reactionLife - fixtureBurnDamage.get(reactionCard.name))
   assert.equal(state.sequenceEvidence.publicActions[reactingRival.id], reactionActions + 1)
   assert.equal(ownPlayer(state).id, reactingOwn.id)
   console.log(JSON.stringify({ phase: 'real-java-rival-mana-interrupted-before-next-answer', manaActionObserved: true, ownBurnSubsequentlyResolved: true }))
