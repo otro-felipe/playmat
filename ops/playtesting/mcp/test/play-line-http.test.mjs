@@ -107,7 +107,10 @@ test('[PM-LINE-MCP-2] the turn guide examples pass the published native MCP inpu
   const guide = await readFile(new URL('../guides/turn-planning.md', import.meta.url), 'utf8');
   const examples = [...guide.matchAll(/```json\n([\s\S]*?)\n```/g)].map(([, body]) => JSON.parse(body));
   const lines = examples.filter(({ actions }) => actions);
-  assert.equal(lines.length, 5);
+  for (const id of ['rage-lethal-001', 'animate-and-attack-001', 'burn-and-land-001',
+    'order-triggers-001', 'land-cast-attack-001', 'burst-at-own-nemesis-001', 'rage-valiant-001']) {
+    assert.ok(lines.some((line) => line.commandId === id), `Missing guide example ${id}`);
+  }
   assert.equal(lines[0].actions[0].select.objectId, '<rage-object-id>', 'The lethal is the first copyable example');
   const f = await fixture(t);
   for (const args of lines) {
