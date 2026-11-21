@@ -160,7 +160,7 @@ try {
     }
     return false
   },'both real seats to accept decisions with distinct private hands')
-  const greetings=['Watch fixture host greeting','Watch fixture rival reply']
+  const greetings=['¡Sí! «hola» & literal &amp;','Watch fixture rival reply']
   assert.equal((await own()).chatMode,'chatty')
   assert.equal((await peer()).chatMode,'chatty')
   const [heardHost] = await Promise.all([

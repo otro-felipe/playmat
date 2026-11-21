@@ -18,13 +18,15 @@ class SpectatorTableTest {
         broadcast.frame(new JsonObject(), hands, players);
         broadcast.line(alice, "same-command", "Play a land.", 2, 42);
         broadcast.line(bob, "same-command", "Keep priority.", 2, 43);
-        broadcast.chat(new ChatMessage("Alice","Hello",new Date(42),null,ChatMessage.MessageColor.BLACK,ChatMessage.MessageType.TALK,null));
+        broadcast.chat(new ChatMessage("Alice","&iexcl;S&iacute;! &laquo;hola&raquo; &amp; literal &amp;amp;",new Date(42),null,ChatMessage.MessageColor.BLACK,ChatMessage.MessageType.TALK,null));
         broadcast.chat(new ChatMessage("Bob","Private",new Date(43),null,ChatMessage.MessageColor.BLACK,ChatMessage.MessageType.WHISPER_FROM,null));
         JsonObject snap=broadcast.snapshot();
         assertThat(snap.getAsJsonObject("hands").size()).isEqualTo(2);
         assertThat(snap.getAsJsonArray("lines").size()).isEqualTo(2);
         assertThat(snap.getAsJsonArray("lines").get(0).getAsJsonObject().get("lineId")).isNotEqualTo(snap.getAsJsonArray("lines").get(1).getAsJsonObject().get("lineId"));
         assertThat(snap.getAsJsonArray("chat").size()).isEqualTo(1);
+        assertThat(snap.getAsJsonArray("chat").get(0).getAsJsonObject().get("message").getAsString())
+                .isEqualTo("¡Sí! «hola» & literal &amp;");
         assertThat(snap.toString()).doesNotContain("Private");
     }
 }

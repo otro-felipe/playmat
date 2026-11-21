@@ -78,7 +78,7 @@ async function verifyRageLethal({ startFixture, ownPlayer, rivalPlayer, answer, 
       || state.decision.choices.find(choice => state.decision.kind === 'target' && /^Done$/i.test(choice.label))
   })
 
-  let state = await startFixture('Isolated Rage and Ward lethal', pilotDeck, 77, rivalDeck, 'Pioneer')
+  let state = await startFixture('Isolated Rage and Ward lethal', pilotDeck, 77, rivalDeck, 'Pioneer', 1)
   let ready
   while (gameClock.hasTime()) {
     const { decision } = state
@@ -168,7 +168,7 @@ async function verifyFight({ startFixture, ownPlayer, rivalPlayer, answer, waitN
   const rivalDeck = list('Isolated public fight targets', [[darkLand, 44], [rat, 16]])
   setRivalSetup(state => develop(state, ownPlayer(state), darkLand, [rat], 2, 2)
     || discardForCleanup(state, darkLand))
-  let state = await startFixture('Isolated public fight targets', ownDeck, 77, rivalDeck, 'Pioneer')
+  let state = await startFixture('Isolated public fight targets', ownDeck, 77, rivalDeck, 'Pioneer', 1)
   let ready
   while (gameClock.hasTime()) {
     const { decision } = state

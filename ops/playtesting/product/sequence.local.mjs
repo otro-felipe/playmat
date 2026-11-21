@@ -133,7 +133,7 @@ async function playLineWithPeer(command, boundary) {
     return receipt
   }, boundary)
 }
-async function waitNextOwn(oldId, priorGameId) {
+async function waitNextOwn(oldId, priorGameId, expectedTableId) {
   const end = gameClock.deadlineWithin(35_000)
   let last
   while (Date.now() < end) {
@@ -141,24 +141,24 @@ async function waitNextOwn(oldId, priorGameId) {
     const state = receipt.state ?? await ownState()
     last = [state, browser.snapshot()].map(seat => ({ status: seat.status, step: seat.step, turn: seat.turn,
       priority: seat.priority, decision: seat.decision?.kind, sameDecision: seat.decision?.id === oldId }))
-    if (state.gameId !== priorGameId) {
+    if (state.gameId !== priorGameId && (!expectedTableId || state.tableId === expectedTableId)) {
       if (state.status === 'active' && state.decision && state.decision.id !== oldId && state.decision.kind !== 'waiting') return state
       if (['game_over', 'match_over', 'sideboarding', 'disconnected'].includes(state.status)) break
     }
-    if (state.gameId === priorGameId) await sleep(100)
+    if (state.gameId === priorGameId || expectedTableId && state.tableId !== expectedTableId) await sleep(100)
   }
   throw Error('No next own fixture decision: ' + JSON.stringify(last))
 }
-async function createFixture(name, deck, seed, opponentDeck = rivalDeck, format = 'Modern') {
+async function createFixture(name, deck, seed, opponentDeck = rivalDeck, format = 'Modern', winsNeeded = 2) {
   const priorGameId = (await ownState()).gameId
-  const created = await browser.createGame({ name, format, deck: opponentDeck, matchTimeLimit: 'MIN__15', seed }, async record => {
+  const created = await browser.createGame({ name, format, winsNeeded, deck: opponentDeck, matchTimeLimit: 'MIN__15', seed }, async record => {
     const response = await fetch(base + '/api/playtesting/invites', { method: 'POST', headers: { 'content-type': 'application/json', Cookie: browserCookie }, body: JSON.stringify({ ...record, guestEngineName: engineName }) })
     assert.equal(response.status, 201)
     return response.json()
   })
   await call('join_game', { tableId: created.tableId, deck })
   await browser.startMatch(created.tableId)
-  return waitNextOwn(undefined, priorGameId)
+  return waitNextOwn(undefined, priorGameId, created.tableId)
 }
 async function warmDeckValidation() {
   // Bridge health can precede the first fully initialized Java deck validation.

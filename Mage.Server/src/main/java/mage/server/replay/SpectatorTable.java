@@ -62,7 +62,7 @@ public final class SpectatorTable {
         JsonObject item = new JsonObject();
         item.addProperty("messageId", gameId + ":" + (source.getChatSequence() == null ? "event-" + (revision + 1) : source.getChatSequence()));
         item.addProperty("playerName", source.getUsername());
-        item.addProperty("message", source.getMessage());
+        item.addProperty("message", org.unbescape.html.HtmlEscape.unescapeHtml(source.getMessage()));
         item.addProperty("at", source.getTime() == null ? System.currentTimeMillis() : source.getTime().getTime());
         append(chat, item);
         return item;
