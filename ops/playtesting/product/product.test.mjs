@@ -103,7 +103,10 @@ test('the refinement only changes evidenced migrated defaults and reports disjoi
     ['starter', [{ name: 'Forest', quantity: 56 }, { name: 'Ajani, Valiant Protector', quantity: 1 }, { name: 'Armorcraft Judge', quantity: 3 }],
       { format: 'Constructed - Freeform', name: 'Ajani, Valiant Protector' }],
   ]) assert.equal((await put(id, cards, extra)).status, 200)
-  const publicText = await readFile(new URL('../../../Mage.Web.Client/public/meta-decks/pioneer-izzet-prowess.dck', import.meta.url), 'utf8')
+  const { publicDeckDirectory } = await import('./deck-performance-identity.mjs')
+  const publicShelf = publicDeckDirectory('meta-decks')
+  assert.ok(publicShelf, 'The packaged metagame shelf must be present')
+  const publicText = await readFile(new URL('pioneer-izzet-prowess.dck', publicShelf), 'utf8')
   const example = { cards: [], sideboard: [] }
   for (const line of publicText.trim().split(/\r?\n/).slice(1)) {
     const entry = line.match(/^(SB:\s*)?(\d+) \[[^\]]+\] (.+)$/)
@@ -155,7 +158,19 @@ test('refinement preserves Other after a freeze erases the safe v1 provenance bo
     await db.query("UPDATE deck_revisions SET archetype='Other'")
     await db.query('ALTER TABLE deck_revisions ALTER list_version SET NOT NULL, ALTER list_signature SET NOT NULL, ALTER archetype SET NOT NULL')
     await db.query('COMMIT')
-    await db.query('VACUUM FREEZE deck_revisions')
+    // PostgreSQL cannot advance this relation's freeze horizon past an older
+    // transaction in another test schema. Observe the boundary before testing
+    // the migration instead of assuming VACUUM has already crossed the writer.
+    const deadline = Date.now() + 60_000
+    for (;;) {
+      await db.query('VACUUM (FREEZE, DISABLE_PAGE_SKIPPING) deck_revisions')
+      const { rows: [state] } = await db.query(`SELECT age(t.relfrozenxid)<age(a.xmin) AS frozen
+        FROM pg_class t JOIN pg_attribute a ON a.attrelid=t.oid
+        WHERE t.oid='deck_revisions'::regclass AND a.attname='archetype'`)
+      if (state.frozen) break
+      assert.ok(Date.now() < deadline, 'PostgreSQL must advance the actual table freeze horizon past the legacy writer')
+      await new Promise(resolve => setTimeout(resolve, 250))
+    }
   })
   const { createProduct } = await import('./product.mjs')
   const app = await createProduct({ databaseUrl, schema: f.schema, replayDirectory: f.replayDirectory, store: new Map() })
