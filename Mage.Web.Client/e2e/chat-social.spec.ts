@@ -24,7 +24,9 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
       await expect(lines).toContainText('Unicode directo: ÁÉÍÓÚ ü ñ 🦝');
       await expect(lines).toContainText('Literal: &iacute; [abc] {G}');
       await expect(lines).toContainText('<img src=x onerror=window.hostileExecuted=true>');
-      await expect(lines).toContainText('Rakún:');
+      const firstMessage = lines.getByRole('listitem').first();
+      await expect(firstMessage.getByText('Rakún', { exact: true })).toBeVisible();
+      await expect(firstMessage.getByText('MCP', { exact: true })).toBeVisible();
       await expect(page.locator('[data-object-id="rival"]')).toHaveAttribute('aria-label', /Rakún/);
       await expect(page.locator('body')).not.toContainText('mcp_1234567890');
       await expect(lines.locator('[onerror], img[src="x"], script')).toHaveCount(0);
