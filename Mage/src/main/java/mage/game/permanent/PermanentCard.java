@@ -41,6 +41,10 @@ public class PermanentCard extends PermanentImpl {
     protected ObjectColor originalFrameColor;
 
     public PermanentCard(Card card, UUID controllerId, Game game) {
+        this(card, controllerId, game, false);
+    }
+
+    public PermanentCard(Card card, UUID controllerId, Game game, boolean enterOnNightFace) {
         super(card.getId(), card.getOwnerId(), controllerId, card.getName()); // card id
         // TODO: wtf, must research - is it possible to have diff ids for same card id?!
         //  ETB with counters depends on card id, not permanent id
@@ -84,7 +88,8 @@ public class PermanentCard extends PermanentImpl {
             } else {
                 secondSideCard = ((DoubleFacedCardHalf) card).getOtherSide().copy();
                 this.card = card;
-                init(card, game);
+                this.transformed = enterOnNightFace;
+                init(enterOnNightFace ? secondSideCard : card, game);
             }
         } else {
             this.card = card;

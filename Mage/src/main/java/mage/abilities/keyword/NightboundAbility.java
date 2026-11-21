@@ -32,6 +32,11 @@ public class NightboundAbility extends StaticAbility {
         return new NightboundAbility(this);
     }
 
+    public static Card getEnteringFace(Card card, boolean faceDown, Game game) {
+        Card main = card.getMainCard();
+        return !faceDown && checkCard(main, game) ? main.getSecondCardFace() : card;
+    }
+
     public static boolean checkCard(Card card, Game game) {
         return game.checkDayNight(false)
                 && card.getSecondCardFace() != null

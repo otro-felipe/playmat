@@ -3,6 +3,7 @@ package mage.abilities.effects;
 import mage.abilities.Ability;
 import mage.abilities.SpellAbility;
 import mage.abilities.effects.common.AttachEffect;
+import mage.abilities.keyword.NightboundAbility;
 import mage.cards.Card;
 import mage.cards.TransformingDoubleFacedCard;
 import mage.constants.*;
@@ -187,6 +188,8 @@ public class AuraReplacementEffect extends ReplacementEffectImpl {
         if (Boolean.TRUE.equals(game.getState().getValue(TransformingDoubleFacedCard.VALUE_KEY_ENTER_TRANSFORMED + card.getId() + card.getZoneChangeCounter(game)))
                 && card.getSecondCardFace() != null) {
             card = card.getSecondCardFace();
+        } else {
+            card = NightboundAbility.getEnteringFace(card, card.isFaceDown(game), game);
         }
         return card.isEnchantment(game) && card.hasSubtype(SubType.AURA, game);
     }

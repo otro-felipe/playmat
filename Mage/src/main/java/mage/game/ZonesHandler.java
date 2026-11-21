@@ -1,6 +1,7 @@
 package mage.game;
 
 import mage.abilities.Ability;
+import mage.abilities.keyword.NightboundAbility;
 import mage.cards.*;
 import mage.constants.Outcome;
 import mage.constants.Zone;
@@ -375,7 +376,6 @@ public final class ZonesHandler {
             isGoodToMove = true;
         } else if (event.getToZone().equals(Zone.BATTLEFIELD)) {
             // non-permanents can't move to battlefield
-            // TODO: possible bug with Nightbound, search all usage of getValue(TransformingDoubleFacedCard.VALUE_KEY_ENTER_TRANSFORMED and insert additional check Ability.checkCard
             /*
              * 712.14a. If a spell or ability puts a double-faced card onto the battlefield "transformed" or "converted,"
              * it enters the battlefield with its back face up. If a player is instructed to put a card that isn't a double-faced card
@@ -421,7 +421,9 @@ public final class ZonesHandler {
                 } else if (card instanceof Permanent) {
                     throw new IllegalStateException("Unexpected trying of move permanent to battlefield instead card");
                 } else {
-                    permanent = new PermanentCard(card, event.getPlayerId(), game);
+                    // 702.145b: register the abilities of the entering face, preserving the moved card's identity.
+                    boolean enterOnNightFace = !info.faceDown && NightboundAbility.checkCard(card.getMainCard(), game);
+                    permanent = new PermanentCard(card, event.getPlayerId(), game, enterOnNightFace);
                 }
 
                 // put onto battlefield with possible counters
