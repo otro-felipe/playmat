@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { waitForConcession } from './recovery-concession.mjs'
+import { bothJoinedNextGame, waitForConcession } from './recovery-concession.mjs'
 
 const seat = (status, id, gameId = 'recovered-game') => ({ status, gameId, decision: id ? { id } : null })
 
@@ -25,4 +25,17 @@ test('a concession requires the expected status from both seats and propagates u
   assert.equal(await settle([own, seat('sideboarding')]), false)
   assert.equal(await settle([own, seat('active', 'new', 'other-game')]), false)
   await assert.rejects(settle([own, seat('active', 'current')]), /Transport unavailable/)
+})
+
+
+test('sideboard submissions can be acknowledged before both seats join the next game', () => {
+  const previous = new Set(['first-game'])
+  const boarding = seat('sideboarding', null, 'first-game')
+  const old = seat('active', null, 'first-game')
+  const next = seat('active', 'mulligan', 'second-game')
+  for (const pair of [[boarding, boarding], [boarding, next], [old, old], [old, next],
+    [next, seat('active', null, null)], [next, seat('active', null, 'unrelated-game')]]) {
+    assert.equal(bothJoinedNextGame(pair, previous), false)
+  }
+  assert.equal(bothJoinedNextGame([next, next], previous), true)
 })
