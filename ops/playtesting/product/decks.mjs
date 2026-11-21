@@ -1,4 +1,4 @@
-import { archetypesFor, classifyArchetype, deckListSignature } from './deck-performance-identity.mjs'
+import { archetypesFor, classifyArchetype, deckListSignature, publicListArchetype, verifiedListArchetype } from './deck-performance-identity.mjs'
 
 export class ProductError extends Error {
   constructor(status, message) {
@@ -128,13 +128,17 @@ export async function putDeck(pool, account, deckId, { data, name, format, arche
     const revision = expectedRevision + 1
     const { rows: [identity] } = await db.query(`SELECT
        COALESCE(MAX(list_version) FILTER (WHERE list_signature=$3), MAX(list_version)+1, 1) AS version,
-       MAX(archetype) FILTER (WHERE revision=$4 AND format=$5) AS previous
+       MAX(archetype) FILTER (WHERE revision=$4 AND format=$5) AS previous,
+       BOOL_OR(archetype_inferred) FILTER (WHERE revision=$4 AND format=$5) AS previously_inferred
        FROM deck_revisions WHERE account_id=$1 AND deck_id=$2`, [account, deckId, signature, expectedRevision, headFormat])
-    const archetype = requestedLabel ?? (allowed.includes(identity.previous) && identity.previous !== 'Other'
-      ? identity.previous : classifyArchetype(headFormat, headName, cards))
+    const keepPrevious = allowed.includes(identity.previous) && (identity.previous !== 'Other' || !identity.previously_inferred)
+    const archetype = requestedLabel ?? (keepPrevious ? identity.previous
+      : publicListArchetype(headFormat, signature) ?? verifiedListArchetype(headFormat, headName, cards, sideboard)
+        ?? classifyArchetype(headFormat, headName, cards))
+    const inferred = requestedLabel === undefined && (!keepPrevious || identity.previously_inferred)
     const listVersion = identity.version
-    await db.query('INSERT INTO deck_revisions (account_id,deck_id,revision,name,format,metadata,archetype,list_version,list_signature) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)', [
-      account, deckId, revision, headName, headFormat, metadata, archetype, listVersion, signature,
+    await db.query('INSERT INTO deck_revisions (account_id,deck_id,revision,name,format,metadata,archetype,list_version,list_signature,archetype_inferred) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)', [
+      account, deckId, revision, headName, headFormat, metadata, archetype, listVersion, signature, inferred,
     ])
     for (const [zone, entries] of Object.entries({ cards, sideboard })) {
       await db.query(

@@ -777,6 +777,7 @@
       "Extra Turns",
       "Ghalta, Primal Hunger",
       "Ghoulcaller Gisa",
+      "Goblin Tokens",
       "Graveyard",
       "Group Hug",
       "Group Slug",
@@ -1065,6 +1066,17 @@
       "Simic",
       "Domain",
       "Five-Color"
+    ],
+    "Freeform": [
+      "Boros Aggro",
+      "Boros Dinosaurs",
+      "Boros Vehicles",
+      "Dimir Artifacts",
+      "Golgari Counters",
+      "Gruul Ramp",
+      "Selesnya Counters",
+      "Simic Energy",
+      "Simic Ramp"
     ]
   },
   "aliases": {

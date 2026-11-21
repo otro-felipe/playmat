@@ -1,0 +1,62 @@
+{
+  "Ajani, Valiant Protector": [
+    "Freeform",
+    "Selesnya Counters",
+    "Ajani, Valiant Protector"
+  ],
+  "Chandra, Bold Pyromancer": [
+    "Freeform",
+    "Gruul Ramp",
+    "Chandra, Bold Pyromancer"
+  ],
+  "Chandra, Pyrogenius": [
+    "Freeform",
+    "Boros Vehicles",
+    "Chandra, Pyrogenius"
+  ],
+  "Gideon, Martial Paragon": [
+    "Freeform",
+    "Boros Aggro",
+    "Gideon, Martial Paragon"
+  ],
+  "Huatli, Dinosaur Knight": [
+    "Freeform",
+    "Boros Dinosaurs",
+    "Huatli, Dinosaur Knight"
+  ],
+  "Liliana, Death Wielder": [
+    "Freeform",
+    "Golgari Counters",
+    "Liliana, Death Wielder"
+  ],
+  "Nissa, Genesis Mage": [
+    "Freeform",
+    "Simic Ramp",
+    "Nissa, Genesis Mage"
+  ],
+  "Nissa, Nature's Artisan": [
+    "Freeform",
+    "Simic Energy",
+    "Nissa, Nature's Artisan"
+  ],
+  "Tezzeret, Master of Metal": [
+    "Freeform",
+    "Dimir Artifacts",
+    "Tezzeret, Master of Metal"
+  ],
+  "Krenko's Goblin Horde": [
+    "Commander",
+    "Goblin Tokens",
+    "Krenko, Mob Boss"
+  ],
+  "Talrand's Spellstorm": [
+    "Commander",
+    "Spellslinger",
+    "Talrand, Sky Summoner"
+  ],
+  "Trostani's Selesnya Swarm": [
+    "Commander",
+    "Tokens",
+    "Trostani, Selesnya's Voice"
+  ]
+}

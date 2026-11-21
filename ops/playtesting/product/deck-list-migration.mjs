@@ -1,4 +1,4 @@
-import { archetypesFor, classifyArchetype, deckListSignature } from './deck-performance-identity.mjs'
+import { archetypesFor, basicLandNames, classifyArchetype, deckListSignature, publicListArchetype, verifiedListArchetype } from './deck-performance-identity.mjs'
 import { transaction } from './decks.mjs'
 
 // Run atomically with the library locked. Other replicas either see the old storage
@@ -27,7 +27,7 @@ export async function migrateDeckLists(pool) {
         const signature = deckListSignature(deck)
         if (!versions.has(signature)) versions.set(signature, versions.size + 1)
         const labels = archetypesFor(row.format)
-        let archetype = classifyArchetype(row.format, row.name, deck.cards)
+        let archetype = classifyArchetype(row.format, row.name, deck.cards, deck.sideboard)
         if (labels.includes(row.prior_label)) archetype = row.prior_label
         else if (archetype === 'Other' && labels.includes(lastLabel)) archetype = lastLabel
         lastLabel = archetype
@@ -43,14 +43,70 @@ export async function migrateDeckLists(pool) {
   })
 }
 
+/** v1 issued its column DDL and rewrote every migrated revision in one transaction.
+ * An explicit save made afterward has a different xmin. A restore, freeze, or
+ * unknown provenance must leave Other intact.
+ */
+export async function refineMigratedDeckLists(pool) {
+  return transaction(pool, async db => {
+    await db.query("SELECT pg_advisory_xact_lock(hashtext(current_schema()), hashtext('deck-list-refinement-v2'))")
+    const { rowCount } = await db.query(`SELECT 1 FROM pg_attribute WHERE attrelid='deck_revisions'::regclass
+      AND attname='archetype_inferred' AND NOT attisdropped`)
+    if (rowCount) return
+    await db.query('LOCK TABLE decks, deck_revisions IN ACCESS EXCLUSIVE MODE')
+    await db.query('ALTER TABLE deck_revisions ADD COLUMN archetype_inferred boolean NOT NULL DEFAULT FALSE')
+    const { rows } = await db.query(`WITH original_migration AS (
+      SELECT a.xmin AS writer FROM pg_attribute a JOIN pg_class t ON t.oid=a.attrelid
+      WHERE t.oid='deck_revisions'::regclass AND a.attname='archetype'
+        AND age(a.xmin) BETWEEN 1 AND least(age(t.relfrozenxid), age((SELECT datfrozenxid FROM pg_database WHERE datname=current_database())))
+        AND EXISTS (SELECT 1 FROM pg_attribute old WHERE old.attrelid=t.oid AND old.attname='name' AND old.xmin<>a.xmin)
+        AND (SELECT count(*) FROM pg_attribute sibling WHERE sibling.attrelid=t.oid
+          AND sibling.attname IN ('list_signature','list_version') AND sibling.xmin=a.xmin)=2
+    )
+    UPDATE deck_revisions r SET archetype_inferred=TRUE FROM original_migration m
+    WHERE r.xmin=m.writer AND r.archetype='Other'
+      AND NOT EXISTS (SELECT 1 FROM deck_revisions earlier WHERE earlier.account_id=r.account_id
+        AND earlier.deck_id=r.deck_id AND earlier.revision<=r.revision AND earlier.metadata->>'archetype'='Other')
+    RETURNING r.account_id,r.deck_id,r.revision,r.format,r.name,r.list_signature`)
+    for (const row of rows) {
+      const key = [row.account_id, row.deck_id, row.revision]
+      let label = publicListArchetype(row.format, row.list_signature)
+      if (!label) {
+        const { rows: entries } = await db.query(`SELECT zone,card_name AS "cardName",amount FROM deck_revision_cards
+          WHERE account_id=$1 AND deck_id=$2 AND revision=$3`, key)
+        const deck = { cards: [], sideboard: [] }
+        for (const entry of entries) deck[entry.zone].push(entry)
+        label = verifiedListArchetype(row.format, row.name, deck.cards, deck.sideboard)
+      }
+      if (!label) continue
+      await db.query('UPDATE deck_revisions SET archetype=$4 WHERE account_id=$1 AND deck_id=$2 AND revision=$3', [...key, label])
+      await db.query('UPDATE decks SET updated_at=updated_at+1 WHERE account_id=$1 AND id=$2 AND head=$3', key)
+    }
+  })
+}
+
 /** Deployment evidence contains counts alone, across both library shelves. */
 export async function libraryArchetypeCoverage(db) {
-  const { rows: [counts] } = await db.query(`SELECT COUNT(*)::integer AS "currentDecks",
-    COUNT(*) FILTER (WHERE r.archetype <> '')::integer AS "classifiedDecks",
-    COUNT(*) FILTER (WHERE r.archetype = 'Other')::integer AS "otherDecks",
-    (SELECT COUNT(*)::integer FROM deck_revisions WHERE archetype <> '') AS "classifiedRevisions"
-    FROM decks d LEFT JOIN deck_revisions r
-      ON (d.account_id,d.id,d.head) = (r.account_id,r.deck_id,r.revision)
-    WHERE NOT d.removed`)
+  const { rows: [counts] } = await db.query(`WITH heads AS (
+    SELECT r.archetype, CASE
+      WHEN r.archetype IS DISTINCT FROM 'Other' THEN NULL
+      WHEN c.total=0 THEN 'empty'
+      WHEN c.main_count<40 THEN 'incomplete'
+      WHEN c.basic_only THEN 'basicOnly'
+      ELSE 'complete' END AS shape
+    FROM decks d LEFT JOIN deck_revisions r ON (d.account_id,d.id,d.head) = (r.account_id,r.deck_id,r.revision)
+    LEFT JOIN LATERAL (SELECT coalesce(sum(amount),0) AS total,
+      coalesce(sum(amount) FILTER (WHERE zone='cards'),0) AS main_count,
+      bool_and(lower(trim(card_name))=ANY($1::text[])) AS basic_only
+      FROM deck_revision_cards WHERE account_id=d.account_id AND deck_id=d.id AND revision=d.head) c ON r.archetype='Other'
+    WHERE NOT d.removed
+  ) SELECT COUNT(*)::integer AS "currentDecks",
+    COUNT(*) FILTER (WHERE archetype <> '')::integer AS "classifiedDecks",
+    COUNT(*) FILTER (WHERE archetype='Other')::integer AS "otherDecks",
+    (SELECT COUNT(*)::integer FROM deck_revisions WHERE archetype <> '') AS "classifiedRevisions",
+    json_build_object(
+      'empty', count(*) FILTER (WHERE shape='empty'), 'basicOnly', count(*) FILTER (WHERE shape='basicOnly'),
+      'incomplete', count(*) FILTER (WHERE shape='incomplete'), 'complete', count(*) FILTER (WHERE shape='complete')
+    ) AS "otherBreakdown" FROM heads`, [basicLandNames])
   return counts
 }

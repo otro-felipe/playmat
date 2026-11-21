@@ -80,11 +80,91 @@ test('deck performance versions survive printings, name changes, sideboard edits
   }
   const { libraryArchetypeCoverage } = await import('./deck-list-migration.mjs')
   const coverage = await withTestDatabase(f, db => libraryArchetypeCoverage(db))
-  assert.deepEqual(coverage, { currentDecks: 1, classifiedDecks: 1, otherDecks: 0, classifiedRevisions: 4 })
+  assert.deepEqual(coverage, { currentDecks: 1, classifiedDecks: 1, otherDecks: 0, classifiedRevisions: 4, otherBreakdown: { empty: 0, basicOnly: 0, incomplete: 0, complete: 0 } })
   for (const [revision, listVersion] of [[1, 1], [2, 1], [3, 2], [4, 1]]) {
     const historical = await (await f.path(route + '?revision=' + revision, { headers: owner })).json()
     assert.deepEqual([historical.listVersion, historical.archetype], [listVersion, 'Golgari Midrange'])
   }
+})
+
+test('the refinement only changes evidenced migrated defaults and reports disjoint remaining Other deck shapes', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const owner = await signIn(f, 'RefinementOwner')
+  const base = '/api/playtesting/decks/'
+  const put = (id, cards, extra = {}) => f.path(base + id, json('PUT', owner, {
+    expectedRevision: 0, data: { name: id, format: 'Pioneer', cards, sideboard: [], ...extra },
+  }))
+  const basic = [{ name: 'Mountain', quantity: 58 }, { name: 'Snow-Covered Mountain', quantity: 2 }]
+  const spell = { name: 'Lightning Strike', quantity: 4 }
+  const unknown = [{ name: 'Forest', quantity: 56 }, spell]
+  for (const [id, cards, extra] of [
+    ['practice', basic], ['draft', [spell]], ['empty', []], ['unknown', unknown],
+    ['side', basic, { sideboard: [spell] }], ['selected', basic],
+    ['starter', [{ name: 'Forest', quantity: 56 }, { name: 'Ajani, Valiant Protector', quantity: 1 }, { name: 'Armorcraft Judge', quantity: 3 }],
+      { format: 'Constructed - Freeform', name: 'Ajani, Valiant Protector' }],
+  ]) assert.equal((await put(id, cards, extra)).status, 200)
+  const publicText = await readFile(new URL('../../../Mage.Web.Client/public/meta-decks/pioneer-izzet-prowess.dck', import.meta.url), 'utf8')
+  const example = { cards: [], sideboard: [] }
+  for (const line of publicText.trim().split(/\r?\n/).slice(1)) {
+    const entry = line.match(/^(SB:\s*)?(\d+) \[[^\]]+\] (.+)$/)
+    assert.ok(entry)
+    example[entry[1] ? 'sideboard' : 'cards'].push({ name: entry[3], quantity: Number(entry[2]) })
+  }
+  assert.equal((await put('renamed-example', example.cards, { sideboard: example.sideboard })).status, 200)
+  const read = async id => (await f.path(base + id, { headers: owner })).json()
+  const before = await read('practice')
+  await withTestDatabase(f, async db => {
+    // Recreate the v1 deployment: its DDL and backfill committed in one transaction.
+    await db.query('ALTER TABLE deck_revisions DROP COLUMN archetype_inferred')
+    await db.query('BEGIN')
+    await db.query(`ALTER TABLE deck_revisions ALTER list_version DROP NOT NULL, ALTER list_signature DROP NOT NULL, ALTER archetype DROP NOT NULL`)
+    await db.query(`UPDATE deck_revisions SET archetype='Other'`)
+    await db.query(`ALTER TABLE deck_revisions ALTER list_version SET NOT NULL, ALTER list_signature SET NOT NULL, ALTER archetype SET NOT NULL`)
+    await db.query('COMMIT')
+    // A later saved explicit Other has no metadata provenance in v1 but a different writing transaction.
+    await db.query("UPDATE deck_revisions SET archetype='Other' WHERE deck_id='selected'")
+  })
+  const { createProduct } = await import('./product.mjs')
+  for (let n = 0; n < 2; n++) {
+    const app = await createProduct({ databaseUrl, schema: f.schema, replayDirectory: f.replayDirectory, store: new Map() })
+    await app.close()
+    const after = await read('practice')
+    assert.equal(after.archetype, 'Basic Lands Practice')
+    assert.deepEqual([after.id, after.listVersion, after.listSignature, after.revision], [before.id, before.listVersion, before.listSignature, before.revision])
+    assert.equal((await read('starter')).archetype, 'Selesnya Counters')
+    assert.equal((await read('renamed-example')).archetype, 'Izzet Prowess')
+    for (const id of ['selected','draft','empty','unknown','side']) assert.equal((await read(id)).archetype, 'Other')
+  }
+  const { libraryArchetypeCoverage } = await import('./deck-list-migration.mjs')
+  const coverage = await withTestDatabase(f, libraryArchetypeCoverage)
+  assert.deepEqual(coverage.otherBreakdown, { empty: 1, basicOnly: 1, incomplete: 1, complete: 2 })
+  assert.equal(coverage.otherDecks, 5)
+})
+
+test('refinement preserves Other after a freeze erases the safe v1 provenance boundary', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const owner = await signIn(f, 'FreezeOwner')
+  const path = '/api/playtesting/decks/explicit'
+  const deck = { name: 'Ambiguous', archetype: 'Other', format: 'Pioneer', cards: [{ name: 'Forest', quantity: 60 }], sideboard: [] }
+  assert.equal((await f.path(path, json('PUT', owner, { expectedRevision: 0, data: deck }))).status, 200)
+  await withTestDatabase(f, async db => {
+    await db.query('ALTER TABLE deck_revisions DROP COLUMN archetype_inferred')
+    // Even a row sharing the v1 writer is insufficient after the relation freezes.
+    await db.query('BEGIN')
+    await db.query('ALTER TABLE deck_revisions ALTER list_version DROP NOT NULL, ALTER list_signature DROP NOT NULL, ALTER archetype DROP NOT NULL')
+    await db.query("UPDATE deck_revisions SET archetype='Other'")
+    await db.query('ALTER TABLE deck_revisions ALTER list_version SET NOT NULL, ALTER list_signature SET NOT NULL, ALTER archetype SET NOT NULL')
+    await db.query('COMMIT')
+    await db.query('VACUUM FREEZE deck_revisions')
+  })
+  const { createProduct } = await import('./product.mjs')
+  const app = await createProduct({ databaseUrl, schema: f.schema, replayDirectory: f.replayDirectory, store: new Map() })
+  await app.close()
+  // An old client omitting the field must also preserve the explicit Other.
+  const { archetype, ...legacyEdit } = deck
+  const edited = await f.path(path, json('PUT', owner, { expectedRevision: 1, data: legacyEdit }))
+  const result = await edited.json()
+  assert.deepEqual([result.archetype, result.listVersion, result.revision], ['Other', 1, 2])
 })
 
 async function fixture(t, store = new Map(), options = {}) {
