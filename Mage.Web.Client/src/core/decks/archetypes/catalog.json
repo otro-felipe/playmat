@@ -186,6 +186,7 @@
       "Mono-Green Devotion",
       "Mono-Green Landfall",
       "Mono-Red Aggro",
+      "Mono-Red Prowess",
       "Mono-Red Dragons",
       "Mono-White Aggro",
       "Mono-White Control",
@@ -1199,7 +1200,6 @@
       "4c Lessons": "Four-Color Lessons",
       "4 Color Lessons": "Four-Color Lessons",
       "Rona Helix Combo": "Retraction Helix",
-      "Mono-Red Prowess": "Mono-Red Aggro",
       "Mono-Red Burn": "Mono-Red Aggro"
     }
   }

@@ -106,3 +106,31 @@ test('the October Pioneer Challenge exile engine identifies Orzhov Ketramose, an
   assert.notEqual(verifiedListArchetype('Pioneer', 'Orzhov Midrange', [cards[0], { ...mana, amount: 57 }], cards.slice(1)), 'Orzhov Ketramose')
   assert.ok(archetypesFor('Constructed - Legacy').includes('Beanstalk Control'))
 })
+
+test('archived Dimir Control and mono-red prowess are identified by their registered main decks', () => {
+  const red = ['Monastery Swiftspear', 'Soul-Scar Mage', 'Slickshot Show-Off', 'Play with Fire', 'Lightning Strike', 'Monstrous Rage', 'Emberheart Challenger', 'Light Up the Stage']
+  const asDeck = (names, land) => [...names.map(cardName => ({ cardName, amount: 3 })), { cardName: land, amount: 60 - names.length * 3 }]
+  const ub = asDeck(['Anthropological Mission', 'Drown in the Loch', 'Fatal Push', 'Spell Snare', 'Thoughtseize', 'Consider'], 'Island')
+  const variants = [['Burst Lightning', "Wizard's Lightning", 'Rending Volley', 'Unlicensed Hearse'], ['Abrade', 'Den of the Bugbear', 'Reckless Impulse', 'Skewer the Critics', 'Roiling Vortex']]
+  for (const format of ['Pioneer', null, 'Constructed - Freeform']) {
+    assert.equal(verifiedListArchetype(format, 'UB', ub), 'Dimir Control')
+    for (const variant of variants) {
+      const cards = asDeck([...red, ...variant], 'Mountain')
+      assert.equal(verifiedListArchetype(format, null, cards, [{ cardName: 'Negate', amount: 1 }]), 'Mono-Red Prowess')
+      assert.notEqual(verifiedListArchetype(format, 'Mono-Red Prowess', asDeck([...red, ...variant, 'Spirebluff Canal'], 'Mountain')), 'Mono-Red Prowess')
+    }
+  }
+  assert.ok(archetypesFor('Pioneer').includes('Mono-Red Prowess'))
+})
+
+test('only the exact registered sixty-card creature practice configurations receive the practice label', () => {
+  const card = (name, amount) => ({ cardName: name, amount })
+  const green = [card('Forest',44),...['Elvish Mystic','Elvish Reclaimer','Gilded Goose','Llanowar Elves'].map(name => card(name,4))]
+  const red = [card('Mountain',52), card('Mountain',4), card('Monastery Swiftspear',4)]
+  for (const format of ['Pioneer','Freeform',null]) {
+    for (const cards of [red,green]) assert.equal(verifiedListArchetype(format, 'Unrelated title', cards), 'Creature Practice')
+    assert.notEqual(verifiedListArchetype(format, 'Fixture', [card('Mountain',55),card('Lightning Bolt',1),card('Monastery Swiftspear',4)]), 'Creature Practice')
+    assert.notEqual(verifiedListArchetype(format, 'Fixture', [card('Forest',44), ...green.slice(1,4), card('Elvish Visionary',4)]), 'Creature Practice')
+  }
+  assert.ok(archetypesFor('Freeform').includes('Creature Practice'))
+})

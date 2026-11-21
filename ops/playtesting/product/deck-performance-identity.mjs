@@ -5,7 +5,7 @@ import starters from './starter-archetypes.json' with { type: 'json' }
 // The Docker product service carries the same catalog the offline web builder uses.
 const packaged = new URL('./archetypes/library.mjs', import.meta.url)
 const source = new URL('../../../Mage.Web.Client/src/core/decks/archetypes/library.mjs', import.meta.url)
-export const { archetypesFor, classifyArchetype, tournamentArchetype } = await import(existsSync(packaged) ? packaged : source)
+export const { archetypesFor, classifyArchetype, tournamentArchetype, isCreaturePracticeMain } = await import(existsSync(packaged) ? packaged : source)
 
 export function deckListSignature(deck) {
   if (!Array.isArray(deck?.cards) || (deck.sideboard != null && !Array.isArray(deck.sideboard))) return null
@@ -87,6 +87,7 @@ export function verifiedListArchetype(format, name, cards, sideboard = []) {
   if (!/momir|commander|brawl|oathbreaker|tiny leaders/i.test(family) && registered.every(name => basicLandNames.includes(name))) {
     return 'Basic Lands Practice'
   }
+  if (isCreaturePracticeMain(cards)) return 'Creature Practice'
   const published = publicListArchetype(format, deckListSignature({ cards }))
   if (published) return published
   const fromCards = family === 'Freeform' ? tournamentArchetype(format, cards) ?? 'Other' : classifyArchetype(format, '', cards)

@@ -309,6 +309,7 @@ export default {
   'decks.tags.failed': "Couldn't save the deck",
   'decks.archetype': 'Archetype',
   'decks.emptyArchetype': 'Empty deck',
+  'decks.creaturePracticeArchetype': 'Creature Practice',
   'decks.basicLandsArchetype': 'Basic Lands Practice',
   'decks.otherArchetype': 'Other',
   'decks.draft': 'Still building (draft)',

@@ -8,6 +8,8 @@ export function displayArchetype(t: Translate, label?: string | null): string {
       return t('perf.unclassified');
     case 'Empty deck':
       return t('decks.emptyArchetype');
+    case 'Creature Practice':
+      return t('decks.creaturePracticeArchetype');
     case 'Basic Lands Practice':
       return t('decks.basicLandsArchetype');
     case 'Other':

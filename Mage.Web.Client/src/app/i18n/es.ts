@@ -551,6 +551,7 @@ const es: Catalog = {
   'decks.tags.failed': 'No se pudo guardar el mazo',
   'decks.archetype': 'Arquetipo',
   'decks.emptyArchetype': 'Mazo vacío',
+  'decks.creaturePracticeArchetype': 'Práctica con criaturas',
   'decks.basicLandsArchetype': 'Práctica con tierras básicas',
   'decks.otherArchetype': 'Otro',
   'decks.draft': 'Aún en construcción (borrador)',

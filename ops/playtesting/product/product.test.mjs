@@ -2203,6 +2203,9 @@ test('historical and newly archived human and MCP seats receive only evidenced a
   const extra = JSON.parse(await readFile(extraPath))
   extra.gameNumber = 2
   extra.players.forEach(player => { delete player.deck })
+  // G2 boards out a signature card, so its registered list fails the opening-package test by itself.
+  extra.players[1].deck = { ...deck, cards: deck.cards.map(card => card.cardName === 'Faerie Miscreant' ? { cardName: 'Spell Pierce', amount: card.amount } : card),
+    sideboard: [{ cardName: 'Faerie Miscreant', amount: 4 }] }
   await writeFile(extraPath, JSON.stringify(extra))
   const infoPath = join(f.replayDirectory, id + '.json')
   const info = JSON.parse(await readFile(infoPath))

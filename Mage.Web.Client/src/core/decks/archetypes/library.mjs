@@ -1,6 +1,6 @@
 import catalog from './catalog.json' with { type: 'json' }
 
-const generic = ['Empty deck', 'Basic Lands Practice', 'Aggro', 'Combo', 'Control', 'Midrange', 'Ramp', 'Tempo']
+const generic = ['Empty deck', 'Basic Lands Practice', 'Creature Practice', 'Aggro', 'Combo', 'Control', 'Midrange', 'Ramp', 'Tempo']
 const cache = new Map()
 const nameIndex = new Map()
 const key = text => String(text ?? '').normalize('NFKC').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
@@ -33,7 +33,9 @@ const tournamentPackages = [
   ['Izzet Prowess', "Stormchaser's Talent", 'Academic Dispute', 'Pompous Battlemage', 'Spirebluff Canal'],
   ['Retraction Helix', 'Retraction Helix', 'Mox Amber', 'Rona, Herald of Invasion'],
   ['Mono-Green Creature Toolbox', 'Fiend Artisan', 'Enduring Vitality', "Nature's Rhythm", 'Craterhoof Behemoth'],
+  ['Dimir Control', 'Anthropological Mission', 'Drown in the Loch', 'Fatal Push', 'Spell Snare', 'Thoughtseize'],
   ['Dimir Control', 'Drown in the Loch', 'Fatal Push', 'Spell Snare', 'Jace Beleren', 'Thoughtseize'],
+  ['Mono-Red Prowess', 'Mountain', 'Monastery Swiftspear', 'Soul-Scar Mage', 'Slickshot Show-Off', 'Monstrous Rage', 'Play with Fire'],
   ['Mono-Red Aggro', 'Kumano Faces Kakkazan', 'Soul-Scar Mage', 'Sunspine Lynx', 'Screaming Nemesis'],
   ['Orzhov Ketramose', 'Ketramose, the New Dawn', 'Rest in Peace', 'Eldrazi Displacer', 'Wasteland Strangler'],
   ['Dimir Ninjas', 'Kaito, Bane of Nightmares', 'Moon-Circuit Hacker', 'Faerie Miscreant'],
@@ -51,6 +53,30 @@ const tournamentPackages = [
   ['Azorius Control', 'Supreme Verdict', 'Teferi, Hero of Dominaria', "Dovin's Veto"],
 ]
 
+// Every card in these registered mono-red lists is known. Leave unrecognized splashes unresolved.
+const monoRedProwessCards = new Set([
+  'Mountain', 'Den of the Bugbear', 'Monastery Swiftspear', 'Soul-Scar Mage', 'Slickshot Show-Off', 'Monstrous Rage',
+  'Play with Fire', 'Lightning Strike', 'Emberheart Challenger', 'Light Up the Stage', "Wizard's Lightning",
+  'Burst Lightning', 'Rending Volley', 'Unlicensed Hearse', 'Abrade', 'Reckless Impulse', 'Roiling Vortex', 'Skewer the Critics',
+].map(key))
+
+const creaturePracticeLists = [
+  { forest: 44, 'elvish mystic': 4, 'elvish reclaimer': 4, 'gilded goose': 4, 'llanowar elves': 4 },
+  { mountain: 56, 'monastery swiftspear': 4 },
+]
+
+export function isCreaturePracticeMain(cards) {
+  const counts = new Map()
+  for (const card of cards) {
+    const name = key(typeof card === 'string' ? card : card.cardName ?? card.name)
+    const amount = card.amount ?? card.quantity ?? card.count ?? 1
+    if (!Number.isSafeInteger(amount) || amount < 1) return false
+    counts.set(name, (counts.get(name) ?? 0) + amount)
+  }
+  return creaturePracticeLists.some(list => Object.keys(list).length === counts.size
+    && Object.entries(list).every(([name, amount]) => counts.get(name) === amount))
+}
+
 export function tournamentArchetype(format, cards) {
   const family = catalogFormat(format)
   const legacyPackages = [
@@ -61,7 +87,8 @@ export function tournamentArchetype(format, cards) {
   const packages = !format || family === 'Freeform' ? [...tournamentPackages, ...legacyPackages]
     : family === 'Pioneer' ? tournamentPackages : family === 'Legacy' ? legacyPackages : []
   const names = new Set(cards.map(card => key(String(typeof card === 'string' ? card : card.cardName ?? card.name).split(/\s+\/\/?\s+/)[0])))
-  const matches = packages.filter(([, ...signature]) => signature.every(name => names.has(key(name))))
+  const matches = packages.filter(([label, ...signature]) => signature.every(name => names.has(key(name)))
+    && (label !== 'Mono-Red Prowess' || [...names].every(name => monoRedProwessCards.has(name))))
   // A narrow splash can contain the entire core of its parent archetype. Hybrid
   // packages without a subset relationship remain ambiguous.
   const specific = matches.filter(([label, ...subset]) => !matches.some(([other, ...superset]) =>
@@ -73,6 +100,7 @@ export function tournamentArchetype(format, cards) {
 // Older clients and imported decks may supply only a display name. Prefer complete
 // word sequences to partial text ("Land" is not a match for "Landfall").
 export function classifyArchetype(format, name, cards = []) {
+  if (isCreaturePracticeMain(cards)) return 'Creature Practice'
   const labels = archetypesFor(format)
   if (/^other(?: (?:aggro|control|combo))?$/.test(key(name))) return 'Other'
   const title = ' ' + key(name) + ' '
