@@ -7,7 +7,7 @@ import { createApi } from '../../protocol/generated/api';
 import type { CardView, GameView } from '../../protocol/generated/views';
 import { useT } from '../i18n';
 import { MatchStage } from '../match/MatchStage';
-import { spectatorFeed, type SpectatorLine, type SpectatorChatMessage } from '../match/SpectatorCommentary';
+import { spectatorFeed, type SpectatorLine, type SpectatorChatMessage } from '../match/spectatorFeed';
 import { Button } from '../ui/Button';
 import { MatchHumanSeat } from '../ui/humanSeat';
 import type { SeatDisplayNames } from '../match/seatDisplayNames';

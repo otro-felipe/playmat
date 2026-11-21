@@ -1,5 +1,5 @@
 import { Brain, MessageSquare, X } from 'lucide-react';
-import { createContext, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import type { PlayerView } from '../../protocol/generated/views';
 import { useT } from '../i18n';
 import './matchMessages';
@@ -7,40 +7,7 @@ import { CardMarkdown } from '../ui/CardMarkdown';
 import { seatAlias, type SeatDisplayNames } from './seatDisplayNames';
 import logStyles from './GameLog.module.css';
 import styles from './SpectatorCommentary.module.css';
-
-export interface SpectatorLine {
-  lineId: string;
-  playerId: string;
-  playerName: string;
-  reasoning: string;
-  at: number;
-  turn?: number;
-}
-export interface SpectatorChatMessage {
-  messageId: string;
-  playerName: string;
-  message: string;
-  at: number;
-}
-export type SpectatorFeedEvent = { gameId: string; key: string; at: number; playerName: string; text: string } & (
-  { kind: 'line'; playerId: string } | { kind: 'chat' }
-);
-
-/** Reconnect snapshots can repeat events. Command IDs are unique within an acting seat. */
-export function spectatorFeed(gameId: string, lines: readonly SpectatorLine[] = [], chat: readonly SpectatorChatMessage[] = []) {
-  const rows = new Map<string, SpectatorFeedEvent>();
-  for (const line of lines) {
-    if (!line.lineId || !line.playerId || !line.reasoning?.trim() || !Number.isFinite(line.at)) continue;
-    const key = JSON.stringify([gameId, 'line', line.playerId, line.lineId]);
-    rows.set(key, { key, gameId, kind: 'line', playerId: line.playerId, playerName: line.playerName, text: line.reasoning, at: line.at });
-  }
-  for (const item of chat) {
-    if (!item.messageId || !item.message?.trim() || !Number.isFinite(item.at)) continue;
-    const key = JSON.stringify([gameId, 'chat', item.messageId]);
-    rows.set(key, { key, gameId, kind: 'chat', playerName: item.playerName, text: item.message, at: item.at });
-  }
-  return [...rows.values()].sort((a, b) => a.at - b.at || a.key.localeCompare(b.key));
-}
+import type { SpectatorFeedEvent } from './spectatorFeed';
 
 const audience = createContext<{
   feed: readonly SpectatorFeedEvent[];
@@ -60,17 +27,19 @@ export function SpectatorLineBubble({ playerId, side }: { playerId?: string; sid
   const context = useContext(audience);
   const t = useT();
   const line = context?.feed.filter(event => event.kind === 'line' && event.playerId === playerId).at(-1);
-  const [expired, setExpired] = useState<string | null>(null);
-  const [focused, setFocused] = useState(false);
-  const expires = (line?.at ?? 0) + 12_000;
-  useEffect(() => {
-    if (!line) return;
-    const timer = setTimeout(() => setExpired(line.key), Math.max(0, expires - Date.now()));
+  const [focusedKey, setFocusedKey] = useState<string | null>(null);
+  const expires = line ? line.at + 12_000 : 0;
+  const subscribe = useCallback((notify: () => void) => {
+    const remaining = expires - Date.now();
+    if (remaining <= 0) return () => {};
+    const timer = setTimeout(notify, remaining);
     return () => clearTimeout(timer);
-  }, [line?.key, expires]);
-  if (!line || !focused && (expired === line.key || Date.now() >= expires)) return null;
+  }, [expires]);
+  const beforeDeadline = useCallback(() => Date.now() < expires, [expires]);
+  const visible = useSyncExternalStore(subscribe, beforeDeadline, () => false);
+  if (!line || !visible && focusedKey !== line.key) return null;
   return <div className={styles.bubble} data-side={side} role="status" aria-label={t('spectate.audienceNote')}
-    onFocus={() => setFocused(true)} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false); }}>
+    onFocus={() => setFocusedKey(line.key)} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setFocusedKey(null); }}>
     <Brain size={16} aria-hidden="true" /><span className={styles.excerpt}><CardMarkdown text={line.text} /></span>
   </div>;
 }

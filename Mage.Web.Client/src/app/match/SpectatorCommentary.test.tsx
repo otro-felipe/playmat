@@ -1,6 +1,7 @@
 import { act, fireEvent, render, within } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
-import { SpectatorCommentary, SpectatorCommentaryProvider, SpectatorLineBubble, spectatorFeed } from './SpectatorCommentary';
+import { SpectatorCommentary, SpectatorCommentaryProvider, SpectatorLineBubble } from './SpectatorCommentary';
+import { spectatorFeed } from './spectatorFeed';
 
 afterEach(() => { vi.useRealTimers(); });
 const players = [{ playerId: 'one', name: 'Agente' }, { playerId: 'two', name: 'Agente2' }];
@@ -34,4 +35,24 @@ test('a private player, replay or different game cannot mount a public audience 
     gameId="game" players={players} events={feed}><SpectatorLineBubble playerId="two" side="lower" /><SpectatorCommentary /></SpectatorCommentaryProvider></>);
   fireEvent.click(page.getByRole('button', { name: 'Chat' }));
   expect(page.queryByText(/Guardo|Buen ataque/)).toBeNull();
+});
+
+test('a reconnected seat uses the note’s original twelve-second deadline and never revives expired notes', () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(13_000);
+  const snapshot = (at: number) => <SpectatorCommentaryProvider gameId="game" players={players}
+    events={spectatorFeed('game', [{ ...note, at }], [])}>
+    <SpectatorLineBubble playerId="two" side="upper" />
+  </SpectatorCommentaryProvider>;
+  const page = render(snapshot(1000));
+  expect(page.queryByRole('status')).toBeNull();
+  page.rerender(snapshot(2000));
+  expect(page.getByRole('status')).toBeTruthy();
+  act(() => { vi.advanceTimersByTime(999); });
+  page.rerender(snapshot(2000));
+  expect(page.getByRole('status')).toBeTruthy();
+  act(() => { vi.advanceTimersByTime(1); });
+  expect(page.queryByRole('status')).toBeNull();
+  page.rerender(snapshot(2000));
+  expect(page.queryByRole('status')).toBeNull();
 });

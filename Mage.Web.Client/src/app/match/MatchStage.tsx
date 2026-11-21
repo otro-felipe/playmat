@@ -1,5 +1,5 @@
 import { SpectatorFrame } from '../spectator/SpectatorFrame';
-import type { SpectatorFeedEvent } from './SpectatorCommentary';
+import type { SpectatorFeedEvent } from './spectatorFeed';
 import { PlayerNames, usePlayerNames, useRosterNames } from '../ui/usePlayerIdentity';
 import { PlayerLabel } from '../ui/PlayerLabel';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
