@@ -282,8 +282,11 @@ public final class Main {
 
             // WebSocket Server
             int websocketPort = config.getWebsocketPort();
+            java.net.InetSocketAddress websocketAddress = Boolean.parseBoolean(System.getenv("PLAYMAT_ENGINE_LOOPBACK"))
+                    ? new java.net.InetSocketAddress("127.0.0.1", websocketPort)
+                    : new java.net.InetSocketAddress(websocketPort);
             mage.server.websocket.WebSocketServerImpl webSocketServer = new mage.server.websocket.WebSocketServerImpl(
-                    new java.net.InetSocketAddress(websocketPort), mageServerImpl, managerFactory, config.getWebsocketAllowedOrigins(),
+                    websocketAddress, mageServerImpl, managerFactory, config.getWebsocketAllowedOrigins(),
                     adminPassword);
             webSocketServer.start();
             webSocketServer.awaitStartup(10, java.util.concurrent.TimeUnit.SECONDS);

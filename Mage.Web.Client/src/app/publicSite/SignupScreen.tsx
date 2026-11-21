@@ -1,8 +1,9 @@
 import { ArrowLeft, ArrowRight, Mail } from 'lucide-react';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { APP_NAME } from '../brand';
 import { useT, type MessageKey } from '../i18n';
+import { TurnstileWidget } from '../screens/TurnstileWidget';
 import { Field } from '../ui/Field';
 import { Mark } from '../ui/Mark';
 import hero from './tabletop-hero.jpg';
@@ -11,6 +12,7 @@ import styles from './PublicSite.module.css';
 
 const SIGNUP_API = '/api/playtesting/signup';
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const SIGNUP_CHALLENGE_ACTION = 'turnstile-spin-v2';
 
 async function submitSignup(action: 'request' | 'complete', body: Record<string, string>): Promise<number> {
   try {
@@ -58,17 +60,45 @@ function RequestSignup() {
   const [sent, setSent] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<MessageKey | null>(null);
+  const [siteKey, setSiteKey] = useState<string | null>();
+  const [challengeUnavailable, setChallengeUnavailable] = useState(false);
+  const [challengeToken, setChallengeToken] = useState('');
+  const [challengeAttempt, setChallengeAttempt] = useState(0);
+  const ready = siteKey !== undefined && (!siteKey || !!challengeToken);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(`${SIGNUP_API}/config`, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Signup configuration unavailable');
+        const config = await response.json();
+        if (config?.turnstileSiteKey !== null && (typeof config?.turnstileSiteKey !== 'string' || !config.turnstileSiteKey)) {
+          throw new Error('Invalid signup configuration');
+        }
+        if (!controller.signal.aborted) setSiteKey(config.turnstileSiteKey);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setChallengeUnavailable(true);
+      });
+    return () => controller.abort();
+  }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (pending) return;
+    if (pending || !ready) return;
     setPending(true);
     setError(null);
-    const status = await submitSignup('request', { email: email.trim() });
+    const status = await submitSignup('request', {
+      email: email.trim(),
+      ...(siteKey ? { turnstileToken: challengeToken } : {}),
+    });
+    setChallengeToken('');
+    setChallengeAttempt((previous) => previous + 1);
     if (status === 202) {
       rememberSignupReturn(new URLSearchParams(search).get('next'));
       setSent(true);
-    } else setError(status === 400 ? 'public.emailInvalid' : status === 429 ? 'public.tryLater' : 'public.requestFailed');
+    } else setError(status === 400 ? 'public.emailInvalid' : status === 403 ? 'public.challengeInvalid'
+      : status === 429 ? 'public.tryLater' : 'public.requestFailed');
     setPending(false);
   }
 
@@ -87,8 +117,14 @@ function RequestSignup() {
       <form className={styles.form} onSubmit={submit}>
         <Field className={styles.field} label={t('public.email')} type="email" name="email" value={email} autoComplete="email" maxLength={254} required
           onChange={(event) => setEmail(event.target.value)} />
-        {error && <p role="alert" className={styles.error}>{t(error)}</p>}
-        <button className={styles.primary} disabled={pending}>{t(pending ? 'public.sending' : 'public.sendLink')} <ArrowRight size={18} aria-hidden="true" /></button>
+        {siteKey && <TurnstileWidget key={challengeAttempt} siteKey={siteKey} action={SIGNUP_CHALLENGE_ACTION}
+          onToken={(token) => {
+            setChallengeToken(token);
+            if (token) setChallengeUnavailable(false);
+          }} onUnavailable={() => setChallengeUnavailable(true)} />}
+        {challengeUnavailable ? <p role="alert" className={styles.error}>{t('login.turnstile.unavailable')}</p>
+          : error && <p role="alert" className={styles.error}>{t(error)}</p>}
+        <button className={styles.primary} disabled={pending || !ready}>{t(pending ? 'public.sending' : 'public.sendLink')} <ArrowRight size={18} aria-hidden="true" /></button>
       </form>
     </>
   );
@@ -132,7 +168,7 @@ function CompleteSignup({ token }: { token: string }) {
       <div className={styles.formIntro}><h1>{t('public.chooseName')}</h1><p>{t('public.chooseNameHint', { app: APP_NAME })}</p></div>
       <form className={styles.form} onSubmit={submit}>
         <Field className={styles.field} label={t('public.username')} name="username" value={username} autoComplete="username" autoCapitalize="none" spellCheck={false}
-          minLength={3} maxLength={14} pattern="[A-Za-z0-9_\-]{3,14}" required hint={t('public.usernameHint')} aria-invalid={error === 'public.usernameTaken' ? true : undefined}
+          minLength={3} maxLength={14} pattern="[A-Za-z0-9_]{3,14}" required hint={t('public.usernameHint')} aria-invalid={error === 'public.usernameTaken' ? true : undefined}
           onChange={(event) => setUsername(event.target.value)} />
         <Field className={styles.field} label={t('public.password')} type="password" name="password" value={password} autoComplete="new-password"
           minLength={12} maxLength={128} required hint={t('public.passwordHint')} onChange={(event) => setPassword(event.target.value)} />

@@ -38,7 +38,7 @@ COPY Mage.Web.Client/src /source/Mage.Web.Client/src
 COPY Mage.Web.Client/public/meta-decks ./meta-decks
 RUN npm run build && npm prune --omit=dev
 
-FROM caddy:2.11-alpine AS caddy
+FROM caddy:2.11.9-alpine AS caddy
 FROM eclipse-temurin:17-jre
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates xmlstarlet python3 \
@@ -60,7 +60,7 @@ ARG PLAYMAT_COMMIT
 RUN chmod +x /usr/local/bin/playtesting /usr/local/bin/xmage-server \
     && printf '%s\n' "${PLAYMAT_COMMIT:-unknown}" > /opt/xmage/.commit \
     && chown -R xmage /opt/xmage
-ENV PORT=8080 PLAYMAT_PRIVATE_BETA=true XMAGE_AUTH=true XMAGE_PASSWORD_SIGNIN=false \
+ENV PORT=8080 PLAYMAT_PRIVATE_BETA=true PLAYMAT_ENGINE_LOOPBACK=true XMAGE_AUTH=true XMAGE_PASSWORD_SIGNIN=false \
     XMAGE_AUTH_TRUSTED_HEADER=X-Playmat-User XMAGE_TRUSTED_PROXIES=127.0.0.1,::1 \
     PLAYMAT_REPLAY_DIR=/opt/xmage/saved/replays PLAYMAT_ENGINE_URL=ws://127.0.0.1:17172/ws \
     PLAYMAT_PRODUCT_URL=http://127.0.0.1:8790 AUTH_TRUSTED_HEADER=X-Playmat-User \

@@ -58,7 +58,8 @@ export function createReviewPermissions(pool) {
   async function reviewAccess(actor, matchId, db = pool) {
     if (!isUuid(matchId)) throw new ProductError(404, 'Match not found')
     const { rows: [match] } = await db.query(`SELECT m.status, c.match_id AS capture_match_id FROM matches m
-      LEFT JOIN replay_review_captures c ON c.match_id=m.id AND c.table_id=m.table_id WHERE m.id=$1`, [matchId])
+      JOIN retained_match_history h ON h.match_id=m.id AND h.account_id=$2
+      LEFT JOIN replay_review_captures c ON c.match_id=m.id AND c.table_id=m.table_id WHERE m.id=$1`, [matchId, actor.accountId])
     if (!match) throw new ProductError(404, 'Match not found')
     const { rows: players } = await db.query(`SELECT p.engine_key, min(p.engine_name) AS name, bool_or(p.human) AS human
       FROM games g JOIN game_players p ON p.game_id=g.id WHERE g.match_id=$1

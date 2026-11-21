@@ -3,11 +3,12 @@ import { readdir, readFile, rename, stat, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { constants, gunzip, gzip } from 'node:zlib'
-import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
+import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import { strToU8, zipSync } from 'fflate'
 import { isUuid, normalize, normalizeFormat, ProductError, transaction } from './decks.mjs'
 import { viewerNames } from './identity.mjs'
 import { evaluationPositions, scoreEvaluation } from './evaluation.mjs'
+import { deleteExpiredReplayObjects, pruneMatchHistory } from './history-retention.mjs'
 
 const unzip = promisify(gunzip)
 const compress = promisify(gzip)
@@ -42,11 +43,16 @@ export function s3Store({ bucket, endpoint, region, forcePathStyle = false }) {
       if (!result.Body || !(result.ContentLength <= compressedLimit)) throw new Error('Replay object is unavailable')
       return Buffer.from(await result.Body.transformToByteArray())
     },
+    async delete(key) {
+      await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }), { abortSignal: AbortSignal.timeout(5000) })
+    },
   }
 }
 
 function fromLocal(store) {
-  return store instanceof Map ? { put: async (key, body) => store.set(key, body), get: async key => store.get(key) } : store
+  return store instanceof Map ? {
+    put: async (key, body) => store.set(key, body), get: async key => store.get(key), delete: async key => store.delete(key),
+  } : store
 }
 
 function replayMetadata(raw, gameId) {
@@ -83,7 +89,11 @@ function deckSignature(deck) {
 
 async function recordMetadata(pool, info, status, recovering = false) {
   const interrupted = recovering || status === 'interrupted' || status === 'abandoned'
-  await transaction(pool, async db => {
+  return transaction(pool, async db => {
+    // Lock an existing match before checking the tombstone, so maintenance cannot
+    // remove the row between deciding to archive it and recording game metadata.
+    await db.query('SELECT 1 FROM matches WHERE id=$1 FOR UPDATE', [info.matchId])
+    if (await wasPurged(db, info.matchId)) return false
     await db.query(
       `INSERT INTO matches(id,table_id,name,format,wins_needed,started_at,status,engine_format) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
        ON CONFLICT(id) DO UPDATE SET started_at=LEAST(matches.started_at,EXCLUDED.started_at),
@@ -115,7 +125,13 @@ async function recordMetadata(pool, info, status, recovering = false) {
         [info.gameId, normalize(player.name), player.name, player.human, player.deck, player.mulligans, deckSignature(player.deck), player.playerId],
       )
     }
+    return true
   })
+}
+
+async function wasPurged(db, matchId) {
+  const { rowCount } = await db.query('SELECT 1 FROM purged_match_history WHERE match_id=$1', [matchId])
+  return rowCount > 0
 }
 
 export function projectReplayEvent(event, viewer) {
@@ -195,11 +211,13 @@ function parseCursor(cursor) {
   }
 }
 
-export function createArchive(pool, stage, backend) {
+export function createArchive(pool, stage, backend, { purgeExpiredHistory = false } = {}) {
   const store = fromLocal(backend)
+  if (purgeExpiredHistory && typeof store?.delete !== 'function') throw Error('Match history purge requires a replay store with deletion support')
   let activeScan
+  let nextHistoryMaintenance = 0
 
-  async function scan({ markInterrupted = false } = {}) {
+  async function scan({ markInterrupted = false, maintainHistory = Date.now() >= nextHistoryMaintenance } = {}) {
     if (markInterrupted) {
       // The single application replica starts with ingress closed. Its previous engine process
       // cannot still be playing. Sideboarding may leave no active game file to recover.
@@ -212,10 +230,11 @@ export function createArchive(pool, stage, backend) {
     try {
       files = await readdir(stage)
     } catch (error) {
-      if (error.code === 'ENOENT') return
-      throw error
+      if (error.code !== 'ENOENT') throw error
+      files = []
     }
     const knownFiles = new Set(files)
+    const pendingMatches = new Set()
     // Ingest the game records first so a match's final marker can finalize even a match that
     // never made it to PostgreSQL before process exit.
     files.sort((left, right) => Number(left.endsWith('.match.json')) - Number(right.endsWith('.match.json')))
@@ -223,12 +242,13 @@ export function createArchive(pool, stage, backend) {
       const match = /^([\da-f-]+)(\.active|\.interrupted|\.match)?\.json$/i.exec(file)
       if (!match || !isUuid(match[1])) continue
       const [, id, variant] = match
+      let pendingMatchId = variant === '.match' ? id : null
       try {
         const raw = JSON.parse(await readFile(join(stage, file), 'utf8'))
         if (variant === '.match') {
           if (raw.matchId === id && Number.isSafeInteger(raw.endedAt)) {
             const saved = await pool.query('UPDATE matches SET status=\'completed\', ended_at=$2, winner=$3 WHERE id=$1', [id, raw.endedAt, raw.winner ?? null])
-            if (saved.rowCount) await unlink(join(stage, file))
+            if (saved.rowCount || await wasPurged(pool, id)) await unlink(join(stage, file))
           }
           continue
         }
@@ -238,19 +258,24 @@ export function createArchive(pool, stage, backend) {
           continue
         }
         const info = replayMetadata(raw, id)
+        pendingMatchId = info.matchId
         if (variant === '.active') {
           if (markInterrupted) {
             await rename(join(stage, file), join(stage, id + '.interrupted.json'))
             await recordMetadata(pool, info, 'interrupted')
           } else {
-            await recordMetadata(pool, info, 'active')
+            if (await recordMetadata(pool, info, 'active')) pendingMatches.add(info.matchId)
+            else await removeStaging(join(stage, file), join(stage, id + '.ndjson.gz.part'))
           }
           continue
         }
         const interrupted = variant === '.interrupted'
         const status = interrupted ? 'interrupted' : (info.result || info.winner ? 'completed' : 'abandoned')
         const eventPath = join(stage, id + '.ndjson.gz' + (interrupted ? '.part' : ''))
-        await recordMetadata(pool, info, status, markInterrupted)
+        if (!await recordMetadata(pool, info, status, markInterrupted)) {
+          await removeStaging(join(stage, file), eventPath)
+          continue
+        }
         if (markInterrupted) continue
         const previous = (await pool.query('SELECT checksum FROM games WHERE id=$1', [id])).rows[0]
         if (previous?.checksum) {
@@ -279,8 +304,14 @@ export function createArchive(pool, stage, backend) {
         ])
         await removeStaging(join(stage, file), eventPath)
       } catch (error) {
+        if (pendingMatchId) pendingMatches.add(pendingMatchId)
         if (error.code !== 'ENOENT') console.warn('Playmat replay archive retry scheduled', { gameId: id })
       }
+    }
+    if (purgeExpiredHistory && !markInterrupted && maintainHistory) {
+      nextHistoryMaintenance = Date.now() + 60_000
+      await pruneMatchHistory(pool, pendingMatches)
+      await deleteExpiredReplayObjects(pool, store)
     }
   }
 
@@ -313,8 +344,9 @@ export function createArchive(pool, stage, backend) {
   async function authorizedGame(actor, id) {
     if (!isUuid(id)) throw new ProductError(404, 'Replay not found')
     const { rows: [game] } = await pool.query(
-      `${selectGame} WHERE g.id=$2 AND EXISTS(SELECT 1 FROM game_players p WHERE p.game_id=g.id AND p.engine_key=ANY($1::text[]))`,
-      [viewerNames(actor), id],
+      `${selectGame} JOIN retained_match_history h ON h.match_id=m.id AND h.account_id=$3
+       WHERE g.id=$2 AND EXISTS(SELECT 1 FROM game_players p WHERE p.game_id=g.id AND p.engine_key=ANY($1::text[]))`,
+      [viewerNames(actor), id, actor.accountId],
     )
     if (!game) throw new ProductError(404, 'Replay not found')
     return game
@@ -364,13 +396,13 @@ export function createArchive(pool, stage, backend) {
     const limit = Math.max(1, Math.min(100, Number.parseInt(opts.limit ?? '25', 10) || 25))
     const matchId = opts.id ?? null
     const { rows } = await pool.query(
-      `SELECT m.* FROM matches m
+      `SELECT m.* FROM matches m JOIN retained_match_history h ON h.match_id=m.id AND h.account_id=$7
        WHERE ($2::text IS NULL OR m.format=$2)
          AND ($3::bigint IS NULL OR (m.started_at,m.id)<($3,$4::uuid))
          AND ($6::uuid IS NULL OR m.id=$6)
          AND EXISTS(SELECT 1 FROM games g JOIN game_players p ON p.game_id=g.id WHERE g.match_id=m.id AND p.engine_key=ANY($1::text[]))
        ORDER BY m.started_at DESC,m.id DESC LIMIT $5`,
-      [viewerNames(actor), format, older, earlierMatch, limit + 1, matchId],
+      [viewerNames(actor), format, older, earlierMatch, limit + 1, matchId, actor.accountId],
     )
     const page = rows.slice(0, limit)
     const { rows: games } = await pool.query(
@@ -423,6 +455,7 @@ export function createArchive(pool, stage, backend) {
          SELECT m.format, g.winner, g.start_player, g.turns, p.engine_key, p.mulligans,
            p.deck_snapshot->>'name' AS deck_name, COALESCE(p.deck_signature, md5(p.deck_snapshot::text)) AS signature
          FROM games g JOIN matches m ON m.id=g.match_id
+         JOIN retained_match_history h ON h.match_id=m.id AND h.account_id=$3
          JOIN LATERAL (
            SELECT * FROM game_players seat WHERE seat.game_id=g.id AND seat.engine_key=ANY($1::text[])
            ORDER BY array_position($1::text[],seat.engine_key) LIMIT 1
@@ -435,7 +468,7 @@ export function createArchive(pool, stage, backend) {
          COUNT(*) FILTER (WHERE lower(start_player)<>engine_key)::integer AS "onDraw",
          AVG(mulligans)::float AS "averageMulligans", AVG(turns)::float AS "averageTurns"
        FROM eligible GROUP BY format, signature ORDER BY games DESC, format, signature LIMIT 100`,
-      [viewerNames(actor), format],
+      [viewerNames(actor), format, actor.accountId],
     )
     return { groups: rows }
   }

@@ -70,6 +70,7 @@ public class WebSocketServerImpl extends WebSocketServer {
     private final Set<String> allowedOrigins;
     private final WebSocketLimits limits;
     private final ConnectionLimiter connectionLimiter;
+    private final WebSocketTrafficLimit expensiveRequests = new WebSocketTrafficLimit(System::nanoTime, 24, 180);
     private final TrustedHeaderAuth signOn;
     private final ThreadPoolExecutor workers;
     private final CountDownLatch startupLatch = new CountDownLatch(1);
@@ -242,7 +243,7 @@ public class WebSocketServerImpl extends WebSocketServer {
             connectionLimiter.release(state.getRemoteHost());
         }
         // same as a dropped desktop connection: the user keeps tables for a while and can reconnect
-        state.submit(() -> {
+        state.submitCleanup(() -> {
             String sessionId = state.getSessionId();
             if (sessionId != null && sessions.exists(sessionId)) {
                 sessions.disconnect(sessionId, DisconnectReason.LostConnection);
@@ -259,6 +260,15 @@ public class WebSocketServerImpl extends WebSocketServer {
         }
         BridgeMetrics.get().request();
 
+        if (!state.tryAcquire()) {
+            sendError(conn, null, new RpcException(RpcException.RATE_LIMITED, "Too many requests, slow down"));
+            if (state.recordRateLimitStrike() > MAX_RATE_LIMIT_STRIKES) {
+                logger.warn("Closing WebSocket connection over request rate limit: " + describe(conn));
+                conn.close(CloseFrame.POLICY_VALIDATION, "Request rate limit exceeded");
+            }
+            return;
+        }
+
         JsonObject request;
         try {
             request = JsonParser.parseString(message).getAsJsonObject();
@@ -267,15 +277,6 @@ public class WebSocketServerImpl extends WebSocketServer {
             return;
         }
         JsonElement id = request.get("id");
-
-        if (!state.tryAcquire()) {
-            sendError(conn, id, new RpcException(RpcException.RATE_LIMITED, "Too many requests, slow down"));
-            if (state.recordRateLimitStrike() > MAX_RATE_LIMIT_STRIKES) {
-                logger.warn("Closing WebSocket connection over request rate limit: " + describe(conn));
-                conn.close(CloseFrame.POLICY_VALIDATION, "Request rate limit exceeded");
-            }
-            return;
-        }
 
         if (!request.has("method") || !request.get("method").isJsonPrimitive()) {
             sendError(conn, id, new RpcException(RpcException.INVALID_REQUEST, "Request has no method"));
@@ -298,6 +299,13 @@ public class WebSocketServerImpl extends WebSocketServer {
 
     private void execute(WebSocket conn, ConnectionState state, JsonElement id, String method, JsonArray params) {
         try {
+            if (mage.server.playtesting.ProductGateway.enabled()) {
+                mage.server.recovery.RecoveryPrincipal principal = state.getRecoveryPrincipal();
+                String key = principal == null ? state.getRemoteHost() : principal.accountId.toString();
+                if (!expensiveRequests.allow(key, method)) {
+                    throw new RpcException(RpcException.RATE_LIMITED, "Too many expensive requests, try again shortly");
+                }
+            }
             Object result = dispatcher.dispatch(method, params, state);
             if ("connectUser".equals(method) && Boolean.TRUE.equals(result) && state.getUserName() != null) {
                 closeReplaced(state);

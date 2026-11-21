@@ -20,6 +20,7 @@ test('[PUB-AC-01] public home offers signup and password sign-in', async ({ page
 });
 
 test('[PUB-AC-02] retries a failed verification email request with the address intact', async ({ page }) => {
+  await page.route(`**${signupApi}/config`, (route) => route.fulfill({ json: { turnstileSiteKey: null } }));
   const accepted = { status: 202, json: {} };
   let requests = 0;
   await page.route(`**${signupApi}/request`, async (route) => {
@@ -33,6 +34,47 @@ test('[PUB-AC-02] retries a failed verification email request with the address i
   await expect(page.getByLabel('Email address')).toHaveValue('player@example.test');
   await page.getByRole('button', { name: 'Send verification link' }).click();
   await expect(page.getByRole('heading', { name: 'Check your email' })).toBeVisible();
+});
+
+test('[PUB-AC-04] requires a fresh Turnstile token for each verification-email request', async ({ page }) => {
+  await page.route(`**${signupApi}/config`, (route) => route.fulfill({ json: { turnstileSiteKey: 'fixture-public-key' } }));
+  await page.route('https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit', (route) => route.fulfill({
+    contentType: 'application/javascript',
+    body: `let attempt = 0;
+      window.turnstile = {
+        render(container, options) {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.textContent = 'Solve fixture challenge';
+          button.onclick = () => options.callback('fixture-challenge-' + ++attempt);
+          container.append(button);
+          return 'fixture';
+        },
+        remove() {}
+      };`,
+  }));
+  const payloads: unknown[] = [];
+  await page.route(`**${signupApi}/request`, (route) => {
+    payloads.push(route.request().postDataJSON());
+    return route.fulfill({ status: payloads.length === 1 ? 403 : 202, json: {} });
+  });
+  await page.goto('/register');
+  await page.getByLabel('Email address').fill('player@example.test');
+  const submit = page.getByRole('button', { name: 'Send verification link' });
+  const challenge = page.getByRole('button', { name: 'Solve fixture challenge' });
+  await expect(submit).toBeDisabled();
+  await challenge.click();
+  await submit.click();
+  await expect(page.getByRole('alert')).toBeVisible();
+  await expect(submit).toBeDisabled();
+  await expect(page.getByLabel('Email address')).toHaveValue('player@example.test');
+  await challenge.click();
+  await submit.click();
+  await expect(page.getByRole('heading', { name: 'Check your email' })).toBeVisible();
+  expect(payloads).toEqual([
+    { email: 'player@example.test', turnstileToken: 'fixture-challenge-1' },
+    { email: 'player@example.test', turnstileToken: 'fixture-challenge-2' },
+  ]);
 });
 
 test('[PUB-AC-03] submits a fragment token only when the player sets a password', async ({ page }) => {
@@ -71,6 +113,7 @@ test('[PUB-AC-03] missing or expired links can be replaced', async ({ page }) =>
 
 test('[PUB-AC-03] signup from a match invitation preserves the match across tabs', async ({ page, context }) => {
   const match = '/join/1f4d5e7e-f669-4b0a-944f-eab1a563ce3e';
+  await context.route(`**${signupApi}/config`, (route) => route.fulfill({ json: { turnstileSiteKey: null } }));
   await context.route(`**${signupApi}/request`, (route) => route.fulfill({ status: 202, json: {} }));
   await context.route(`**${signupApi}/complete`, (route) => route.fulfill({ status: 201, json: {} }));
   // Keep the auth transition observable without a live engine.

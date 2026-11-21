@@ -35,10 +35,14 @@ function loadTurnstile(): Promise<TurnstileApi> {
 }
 
 /**
- * Cloudflare Turnstile's check that the player is a person, for registering and asking for access on servers that
- * turn it on. Hands the token up, and '' when it expires or fails; a new mount starts a fresh check.
+ * Hands the verification token up, and '' when it expires or fails. A new mount starts a fresh check.
  */
-export function TurnstileWidget({ siteKey, onToken, onUnavailable }: { siteKey: string; onToken(token: string): void; onUnavailable?(): void }) {
+export function TurnstileWidget({ siteKey, action, onToken, onUnavailable }: {
+  siteKey: string;
+  action?: string;
+  onToken(token: string): void;
+  onUnavailable?(): void;
+}) {
   const box = useRef<HTMLDivElement>(null);
   const locale = useI18n((state) => state.locale);
   // the latest handlers, without rendering the widget again when they change
@@ -57,6 +61,7 @@ export function TurnstileWidget({ siteKey, onToken, onUnavailable }: { siteKey: 
           sitekey: siteKey,
           theme: 'dark',
           language: locale,
+          ...(action ? { action, appearance: 'interaction-only', size: 'compact', 'response-field': false } : {}),
           callback: (token: string) => handlers.current.onToken(token),
           'expired-callback': () => handlers.current.onToken(''),
           'error-callback': () => handlers.current.onToken(''),
@@ -67,7 +72,7 @@ export function TurnstileWidget({ siteKey, onToken, onUnavailable }: { siteKey: 
       cancelled = true;
       if (widgetId !== null) window.turnstile?.remove(widgetId);
     };
-  }, [siteKey, locale]);
+  }, [siteKey, locale, action]);
 
   return <div ref={box} />;
 }

@@ -6,6 +6,7 @@ const derive = promisify(scrypt)
 const saltPattern = /^[a-z0-9_-]{22}$/i
 const digestPattern = /^[a-z0-9_-]{43}$/i
 const usernamePattern = /^[a-z0-9_-]{3,24}$/i
+const publicUsernamePattern = /^[a-z0-9_]{3,14}$/i
 const allScopes = ['play', 'library', 'history', 'chat']
 const browserDuration = 1000 * 60 * 60 * 24 * 7
 const dummyHash = 'AAAAAAAAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
@@ -215,7 +216,10 @@ export function createIdentity(pool, insecureCookie, resolveOAuth = async () => 
   }
 
   async function completeSignup(tokenDigest, username, password) {
-    if (!validName(username) || username.length > 14) throw new ProductError(400, 'El usuario debe tener entre 3 y 14 letras, números, guiones o guiones bajos.')
+    if (typeof username !== 'string' || !publicUsernamePattern.test(username)) {
+      throw new ProductError(400, 'El usuario debe tener entre 3 y 14 letras, números o guiones bajos.')
+    }
+    if (normalize(username) === 'admin') throw new ProductError(409, 'Ese usuario ya está ocupado.')
     if (typeof password !== 'string' || password.length < 12 || password.length > 128) {
       throw new ProductError(400, 'La contraseña debe tener entre 12 y 128 caracteres.')
     }

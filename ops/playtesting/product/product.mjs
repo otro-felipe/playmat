@@ -1,3 +1,4 @@
+import { accountLimits, clientKey, createConcurrencyLimit, createLimits, productLimitGroup, productLimits } from './limits.mjs'
 import { createServer } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
@@ -5,9 +6,11 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import pg from 'pg'
 import { createArchive } from './archive.mjs'
+import { setUnlimitedMatchHistory } from './history-retention.mjs'
 import { createTheoryStore, evaluateTheoryTactics } from './theory-store.mjs'
 import { createIdentity, identityView } from './identity.mjs'
 import { createSignup } from './signup.mjs'
+import { createTurnstile, loginChallengeAction } from './turnstile.mjs'
 import { createInvitations } from './invitations.mjs'
 import { createMcpEvents } from './mcp-events.mjs'
 import { createOAuth } from './oauth.mjs'
@@ -35,7 +38,8 @@ function requireScope(actor, capability) {
 function safeNext(value) {
   if (!value || !value.startsWith('/') || value.startsWith('//') || value.includes('\\') || /[\u0000-\u0020]/.test(value)) return '/'
   const target = new URL(value, 'https://playmat.local')
-  if (target.origin !== 'https://playmat.local' || target.pathname === '/login' || target.pathname === '/logout') return '/'
+  if (target.origin !== 'https://playmat.local' || target.pathname.startsWith('//')
+    || target.pathname === '/login' || target.pathname === '/logout') return '/'
   return target.pathname + target.search + target.hash
 }
 
@@ -43,13 +47,18 @@ function escapeHtml(value) {
   return String(value).replace(/[<>&"']/g, char => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' })[char])
 }
 
-function loginPage(res, next, wrong = false) {
+function loginPage(res, next, { siteKey, status = 200, error } = {}) {
   const joinTable = /^\/join\/([a-f0-9-]+)$/i.exec(next)
   const signupHref = '/register' + (joinTable && isUuid(joinTable[1]) ? '?next=' + encodeURIComponent(next) : '')
-  res.writeHead(wrong ? 401 : 200, { 'Content-Type': 'text/html; charset=utf-8' })
+  const challenge = siteKey ? ' https://challenges.cloudflare.com' : ''
+  res.writeHead(status, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Security-Policy': `default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'${challenge ? `; script-src${challenge}; frame-src${challenge}` : ''}`,
+  })
   res.end(`<!doctype html><html lang="es"><head>
     <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Thoughtseize · Entrar</title>
+    ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>' : ''}
     <style>
     :root{color-scheme:dark;font:16px system-ui;background:#171c18;color:#f5f3ed}
     body{margin:0;min-height:100dvh;display:grid;place-items:center}
@@ -58,10 +67,12 @@ function loginPage(res, next, wrong = false) {
     input,button{border:1px solid #687568;border-radius:.5rem;padding:.8rem;color:inherit;font:inherit;background:#18201a}
     a{color:#c6dfaf}button{cursor:pointer;background:#c6dfaf;color:#182018;font-weight:650}p{color:#ffc4a8}
     </style></head><body><main><h1>Thoughtseize</h1>
-    ${wrong ? '<p role="alert">Revisa tu usuario y contraseña.</p>' : ''}
+    ${error ? `<p role="alert">${escapeHtml(error)}</p>` : ''}
     <form action="/login" method="post"><input type="hidden" name="next" value="${escapeHtml(next)}">
     <label>Usuario<input name="username" autocomplete="username" maxlength="24" required autofocus></label>
     <label>Contraseña<input name="password" type="password" autocomplete="current-password" maxlength="128" required></label>
+    ${siteKey ? `<div class="cf-turnstile" data-sitekey="${escapeHtml(siteKey)}" data-action="${loginChallengeAction}" data-theme="dark" data-size="compact" data-appearance="interaction-only"></div>
+    <noscript><p>Activa JavaScript para completar la verificación.</p></noscript>` : ''}
     <button type="submit">Entrar</button></form><p><a href="${signupHref}">Crear cuenta</a></p></main></body></html>`)
 }
 
@@ -103,9 +114,11 @@ function rejectMissing(value, message) {
 
 export async function createProduct({
   databaseUrl, schema = 'playmat_product', replayDirectory, store, insecureCookie = false, enableInternal = true,
-  publicUrl, oauthClients = [], oauthClientOptions, eventOptions, signup,
+  purgeExpiredHistory = false,
+  publicUrl, oauthClients = [], oauthClientOptions, eventOptions, signup, turnstile,
 }) {
   if (!databaseUrl || !/^[a-z_][a-z0-9_]{0,60}$/.test(schema)) throw Error('A valid product database configuration is required')
+  const challenge = createTurnstile(publicUrl, turnstile)
   const pool = new pg.Pool({
     connectionString: databaseUrl, options: '-c search_path=' + schema, max: 10, connectionTimeoutMillis: 5000,
   })
@@ -116,6 +129,7 @@ export async function createProduct({
     await pool.query(await readFile(resolve(directory, 'review-schema.sql'), 'utf8'))
     await pool.query(await readFile(resolve(directory, 'review-permissions.sql'), 'utf8'))
     await pool.query(await readFile(resolve(directory, 'theory-schema.sql'), 'utf8'))
+    await pool.query(await readFile(resolve(directory, 'history-retention.sql'), 'utf8'))
   } catch (error) {
     await pool.end()
     throw error
@@ -123,13 +137,31 @@ export async function createProduct({
   const oauth = createOAuth(pool, publicUrl, { body, clients: oauthClients, clientOptions: oauthClientOptions })
   const permissions = createReviewPermissions(pool)
   const id = createIdentity(pool, insecureCookie, oauth.resolve)
-  const registration = createSignup(pool, id, publicUrl, signup)
-  const archive = createArchive(pool, replayDirectory, store)
+  const registration = createSignup(pool, id, publicUrl, signup, challenge)
+  const archive = createArchive(pool, replayDirectory, store, { purgeExpiredHistory })
   const review = createPostMatchReview(pool, archive, permissions)
   const theory = createTheoryStore(pool, review)
   const events = createMcpEvents(pool, eventOptions)
   const invitations = createInvitations(pool, id, events)
+  const checkSource = createLimits(productLimits)
+  const checkAccount = createLimits(accountLimits)
+  const heavyWork = createConcurrencyLimit(12, 3)
+  const archiveExports = createConcurrencyLimit(4, 1)
   const attempts = new Map()
+
+  function throttleRequest(res, seconds) {
+    if (!seconds) return
+    res.setHeader('Retry-After', String(seconds))
+    throw new ProductError(429, 'Too many requests. Try again shortly.')
+  }
+
+  function gateAccount(res, group, actor, releases) {
+    throttleRequest(res, checkAccount(group, actor.accountId))
+    if (!['archive', 'export', 'theory'].includes(group)) return
+    const release = (group === 'export' ? archiveExports : heavyWork)(actor.accountId)
+    if (!release) throttleRequest(res, 2)
+    releases.push(release)
+  }
 
   function throttle(key) {
     const now = Date.now()
@@ -141,9 +173,10 @@ export async function createProduct({
     attempts.set(key, count)
   }
 
-  async function legacy(req, res) {
+  async function legacy(req, res, releases) {
     const actor = await id.fromEngine(req.headers['x-playmat-engine-user'])
     if (!actor) throw new ProductError(401, 'Authentication required')
+    gateAccount(res, 'archive', actor, releases)
     const params = await body(req)
     switch (params.method) {
       case 'replayList': {
@@ -167,7 +200,8 @@ export async function createProduct({
   const server = createServer({ requestTimeout: 30_000, headersTimeout: 10_000 }, (req, res) => {
     res.setHeader('Cache-Control', 'no-store')
     res.setHeader('X-Content-Type-Options', 'nosniff')
-    void route(req, res).catch(error => {
+    const releases = []
+    void route(req, res, releases).catch(error => {
       if (res.headersSent) {
         res.destroy()
         return
@@ -178,20 +212,34 @@ export async function createProduct({
         error: status === 500 ? 'Product service unavailable' : error.message,
         ...(error?.rpcCode === -32015 ? { rpcCode: -32015, reason: error.reason } : {}),
       })
+    }).finally(() => {
+      for (const release of releases) release()
     })
   })
 
-  async function route(req, res) {
+  async function route(req, res, releases) {
     const url = new URL(req.url, 'http://localhost')
     const path = url.pathname
+    const proxied = Boolean(req.headers['x-playmat-client-ip'])
+    // The only public path into this namespace is a Caddy-generated forward_auth check.
+    if (proxied && path.startsWith('/internal/') && path !== '/internal/verify') throw new ProductError(404, 'Not found')
+    const group = productLimitGroup(path, req.method, proxied, url.searchParams.get('scope'))
+    throttleRequest(res, checkSource(group, clientKey(req)))
+    if (group === 'socket' && req.headers.origin) {
+      const allowed = publicUrl ? new URL(publicUrl).origin : null
+      if (allowed && req.headers.origin !== allowed) throw new ProductError(403, 'Origin not allowed')
+    }
     if (path === '/healthz' && req.method === 'GET') {
       await pool.query('SELECT 1')
       return send(res, 200, { status: 'ok' })
     }
     if (await oauth.route(req, res, url, id.resolve)) return
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !sameOrigin(req, insecureCookie)) throw new ProductError(403, 'Cross-origin request')
+    if (path === '/api/playtesting/signup/config' && req.method === 'GET') {
+      return send(res, 200, { turnstileSiteKey: challenge?.siteKey ?? null })
+    }
     if (path === '/api/playtesting/signup/request' && req.method === 'POST') {
-      await registration.request(req, await body(req, 'json', 1024))
+      await registration.request(req, await body(req, 'json', 4096))
       return send(res, 202, {})
     }
     if (path === '/api/playtesting/signup/complete' && req.method === 'POST') {
@@ -202,21 +250,27 @@ export async function createProduct({
     if (path === '/login' && req.method === 'GET') {
       const next = safeNext(url.searchParams.get('next'))
       if (await id.resolve(req)) return res.writeHead(303, { Location: next }).end()
-      return loginPage(res, next)
+      return loginPage(res, next, { siteKey: challenge?.siteKey })
     }
     if (path === '/login' && req.method === 'POST') {
-      const form = await body(req, 'form', 4096)
+      const form = await body(req, 'form', 8192)
       const next = safeNext(form.get('next'))
       const username = form.get('username')
+      try {
+        await challenge?.verify(form.get('cf-turnstile-response'), loginChallengeAction)
+      } catch (error) {
+        if (!(error instanceof ProductError)) throw error
+        return loginPage(res, next, { siteKey: challenge.siteKey, status: error.status, error: error.message })
+      }
       throttle(normalize(username).slice(0, 24))
       const cookie = await id.signIn(username, form.get('password'))
       if (cookie) return res.writeHead(303, { 'Set-Cookie': cookie, Location: next }).end()
-      return loginPage(res, next, true)
+      return loginPage(res, next, { siteKey: challenge?.siteKey, status: 401, error: 'Revisa tu usuario y contraseña.' })
     }
     if (path === '/logout' && req.method === 'POST') {
       return res.writeHead(303, { 'Set-Cookie': await id.signOut(req), Location: '/login' }).end()
     }
-    if (enableInternal && path === '/internal/legacy' && req.method === 'POST') return legacy(req, res)
+    if (enableInternal && path === '/internal/legacy' && req.method === 'POST') return legacy(req, res, releases)
     if (enableInternal && path === '/internal/review-capture' && req.method === 'POST') {
       return send(res, 200, await permissions.sealCapture(await body(req, 'json', 8192)))
     }
@@ -288,6 +342,7 @@ export async function createProduct({
       if (principal?.connectionId) res.setHeader('X-Playmat-Connection', principal.connectionId)
       return send(res, 200, { ...identityView(actor), ...(principal ? { recoverySeatId: principal.seatId } : {}) })
     }
+    gateAccount(res, group, actor, releases)
     const endpoint = path.slice('/api/playtesting/'.length)
     if (endpoint === 'me' && req.method === 'GET') return send(res, 200, identityView(actor))
     const reviewAccess = /^review\/privacy\/matches\/([^/]+)$/.exec(endpoint)
@@ -436,6 +491,7 @@ export async function createProduct({
   return {
     server, provisionHuman: id.provisionHuman, provisionAgent: id.provisionAgent, revokeAgent: id.revokeAgent,
     importProvisionBundle: id.importProvisionBundle,
+    setUnlimitedMatchHistory: (usernames, unlimited) => setUnlimitedMatchHistory(pool, usernames, unlimited),
     archiveGames: archive.archiveGames,
     startMcpEvents: events.start,
     async dropTestSchema() {

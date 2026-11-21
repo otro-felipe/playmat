@@ -14,6 +14,11 @@ if [[ "$(id -u)" == 0 ]]; then
     exec runuser -u xmage -- "$0"
 fi
 
+# Railway's edge sets X-Real-IP on the public ingress. In local/self-hosted
+# mode the socket peer remains the source unless the operator opts in.
+export PLAYMAT_RAILWAY_INGRESS=${PLAYMAT_RAILWAY_INGRESS:-${RAILWAY_ENVIRONMENT_ID:+true}}
+export PLAYMAT_RAILWAY_INGRESS=${PLAYMAT_RAILWAY_INGRESS:-false}
+
 children=()
 stop_children() {
     trap - TERM INT EXIT
@@ -23,7 +28,7 @@ stop_children() {
 trap stop_children TERM INT EXIT
 
 node /opt/playtesting/product/main.mjs & children+=("$!")
-unset PLAYMAT_PROVISION_ONCE DATABASE_URL AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN PLAYMAT_POSTMARK_TOKEN
+unset PLAYMAT_PROVISION_ONCE DATABASE_URL AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN PLAYMAT_POSTMARK_TOKEN PLAYMAT_TURNSTILE_SECRET
 if [[ "${PLAYMAT_PVP_RECOVERY:-}" == on ]]; then
     python3 /opt/playtesting/recovery-backup.py daemon & children+=("$!")
 fi

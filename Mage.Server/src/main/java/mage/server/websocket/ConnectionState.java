@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Queue;
 import java.util.UUID;
 import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -23,6 +24,7 @@ final class ConnectionState implements RpcConnection {
     // token bucket: sustained requests per second and burst size
     private static final double RATE_PER_SECOND = 40.0;
     private static final double BURST = 120.0;
+    private static final int MAX_PENDING_REQUESTS = 128;
 
     private final WebSocket conn;
     private final String remoteHost;
@@ -220,21 +222,30 @@ final class ConnectionState implements RpcConnection {
      * @throws java.util.concurrent.RejectedExecutionException when the worker pool is saturated
      */
     void submit(Runnable task) {
+        enqueue(task, false);
+    }
+
+    void submitCleanup(Runnable task) {
+        enqueue(task, true);
+    }
+
+    private void enqueue(Runnable task, boolean cleanup) {
         synchronized (queue) {
+            if (!cleanup && queue.size() >= MAX_PENDING_REQUESTS) {
+                throw new RejectedExecutionException("Too many pending WebSocket requests");
+            }
             queue.add(task);
             if (running) {
                 return;
             }
             running = true;
-        }
-        try {
-            workers.execute(this::drain);
-        } catch (RuntimeException e) {
-            synchronized (queue) {
+            try {
+                workers.execute(this::drain);
+            } catch (RuntimeException e) {
                 queue.remove(task);
                 running = false;
+                throw e;
             }
-            throw e;
         }
     }
 

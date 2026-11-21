@@ -28,6 +28,14 @@ Bind `DATABASE_URL` by reference to the private Postgres service. Set `PLAYMAT_P
 
 Public registration uses `PLAYMAT_PUBLIC_URL` for email links. Set `PLAYMAT_POSTMARK_FROM` to the verified sender and `PLAYMAT_POSTMARK_TOKEN` as a secret runtime variable. Password sign-in for existing accounts works without Postmark configuration. Registration mail requires the transactional `outbound` stream. For a delivery-free provider contract check, use Postmark's public `POSTMARK_API_TEST` token in an isolated environment.
 
+For public deployments, configure a managed Cloudflare Turnstile widget for the hostname in `PLAYMAT_PUBLIC_URL`. Set its public key as `PLAYMAT_TURNSTILE_SITE_KEY` and its secret as `PLAYMAT_TURNSTILE_SECRET` in the app service. Together they enable server-side challenge verification on email link requests and password sign-in. Set both together. Leaving both unset keeps the local and existing unconfigured environments usable.
+
+
+## Public request budgets
+
+The Railway ingress sets the visitor address using its edge-provided `X-Real-IP`. Caddy replaces the app's forwarding header, and a standalone container uses the TCP peer by default. Only publish Caddy's port. If another proxy is placed before Railway, verify the resulting source grouping before enabling public traffic.
+
+Product endpoints group requests by source and operations with shared backing resources also enforce a per-account budget. Export, replay, and theory endpoints limit concurrent work. MCP limits authorization and RPC requests by source and account. WebSocket upgrades use the source budget and verify browser origins. The engine constrains pending frames, applies its connection quota before decoding requests, and shares a 24-call-per-minute budget for expensive RPCs across seats belonging to one account. Instance-wide budgets apply even when traffic has multiple sources. HTTP throttling returns `429` with `Retry-After`.
 
 ## Provisioning
 
@@ -41,6 +49,19 @@ railway ssh --service playmat -- node /opt/playtesting/product/provision.mjs age
 ```
 
 Without SSH, pass the output of `node ops/playtesting/product/prepare-provision.mjs < restricted-provisioning-input.json` directly to a write-only assignment of `PLAYMAT_PROVISION_ONCE`. Remove the variable after verifying provisioning. To deactivate a prior grant during the same deployment, include `revocations` in the restricted input with one `token` field per entry. The helper passes SHA-256 digests to the service. Account and grant creation use distinct engine names. Repeating the startup import leaves the same grants revoked and preserves existing passwords and scopes.
+
+### Match history retention
+
+Each account can access its 20 most recent closed matches, ordered by match start time. All games in a match share one slot, and active matches remain available outside the quota. The account's human and agent seats share that quota. Replay, exports, reviews, and statistics use the same retained set and the existing seat permissions.
+
+Set `PLAYMAT_UNLIMITED_HISTORY_USERS` to a comma-separated list of verified account usernames to persist unlimited retention at startup. An unknown username stops startup before history maintenance. Remove the variable after the exemptions have been applied so a later CLI change is durable. Operators can also change an individual account through the existing provisioning command.
+
+```sh
+node /opt/playtesting/product/provision.mjs history USERNAME unlimited
+node /opt/playtesting/product/provision.mjs history USERNAME default
+```
+
+Enable `PLAYMAT_PURGE_EXPIRED_MATCH_HISTORY=true` after configuring the exemptions, verifying a restorable database and object-store backup, and confirming the application's bucket credential can delete objects. The archive worker then removes closed matches when every participant account is outside its retention window. It deletes dependent review data and replay-linked studies, queues object deletion with a short grace period for reads already in progress, and retries bucket errors. Any participant who retains the match keeps its underlying archive available. Verify bucket versioning and lifecycle settings when measuring reclaimed storage.
 
 Open the site, log in and import a deck. In **Tables**, choose a friend, an MCP rival or native XMage AI. Enter the provisioned engine name for a friend. For an MCP rival, copy the link to a play-scoped agent session with its own decklist. Use a separate `CodexLab` session for library and match history. Start when the table shows both seats are ready.
 

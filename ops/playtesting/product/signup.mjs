@@ -1,6 +1,7 @@
 import { isIP } from 'node:net'
 import { ProductError } from './decks.mjs'
 import { digest, newToken } from './identity.mjs'
+import { signupChallengeAction } from './turnstile.mjs'
 
 const tokenPattern = /^[A-Za-z0-9_-]{43}$/
 const emailPattern = /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/
@@ -23,7 +24,7 @@ function createLimits() {
   }
 }
 
-export function createSignup(pool, identity, publicUrl, mailer) {
+export function createSignup(pool, identity, publicUrl, mailer, challenge) {
   const setupPage = publicUrl && new URL('/register/complete', publicUrl)
   const limit = createLimits()
   const unavailable = 'El registro no está disponible por ahora. Inténtalo de nuevo en unos minutos.'
@@ -42,6 +43,7 @@ export function createSignup(pool, identity, publicUrl, mailer) {
     }
     limit('request:' + source(req), 20)
     limit('requests', 120)
+    await challenge?.verify(input?.turnstileToken, signupChallengeAction)
     const token = newToken()
     const tokenDigest = digest(token)
     await pool.query('DELETE FROM signup_links WHERE expires_at<=now()')

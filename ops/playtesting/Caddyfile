@@ -5,12 +5,21 @@
 
 :{$PORT:8080} {
 	encode zstd gzip
+	@railwayClient expression `"{$PLAYMAT_RAILWAY_INGRESS:false}" == "true" && {http.request.header.X-Real-IP} != ""`
+	@railway expression `"{$PLAYMAT_RAILWAY_INGRESS:false}" == "true"`
+	header @railway Strict-Transport-Security "max-age=31536000"
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+	}
 
 	route {
 		request_header -X-Playmat-User
 		request_header -X-Playmat-Account
 		request_header -X-Playmat-Seat
 		request_header -X-Playmat-Connection
+		request_header X-Playmat-Client-IP {remote_host}
+		request_header @railwayClient X-Playmat-Client-IP {http.request.header.X-Real-IP}
 
 		handle /healthz {
 			forward_auth 127.0.0.1:8790 {
@@ -25,23 +34,24 @@
 				copy_headers X-Playmat-User X-Playmat-Account X-Playmat-Seat X-Playmat-Connection
 			}
 			reverse_proxy 127.0.0.1:17172 {
+				header_up X-Forwarded-For {http.request.header.X-Playmat-Client-IP}
+				header_up X-Real-IP {http.request.header.X-Playmat-Client-IP}
 				stream_timeout 15m
 			}
 		}
 
 		handle /mcp {
-			reverse_proxy 127.0.0.1:8791
-		}
-
-		@signup path /api/playtesting/signup/request /api/playtesting/signup/complete
-		handle @signup {
-			reverse_proxy 127.0.0.1:8790 {
-				header_up X-Playmat-Client-IP {remote_host}
+			request_body {
+				max_size 1MB
 			}
+			reverse_proxy 127.0.0.1:8791
 		}
 
 		@product path /login /logout /api/playtesting/* /oauth/authorize /oauth/token /oauth/register /oauth/revoke /oauth/connections /.well-known/oauth-authorization-server /.well-known/oauth-protected-resource /.well-known/oauth-protected-resource/mcp
 		handle @product {
+			request_body {
+				max_size 320KB
+			}
 			reverse_proxy 127.0.0.1:8790
 		}
 

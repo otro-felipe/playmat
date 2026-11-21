@@ -65,6 +65,22 @@ async function fixture(t, store = new Map(), options = {}) {
   return { product, replayDirectory, schema, endpoint, path: (route, init) => fetch(endpoint + route, init) }
 }
 
+test('limits public socket upgrades by visitor and leaves authenticated pages available', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t, new Map(), { publicUrl: 'https://playmat.example' })
+  const owner = await signIn(f, 'SocketBudget')
+  const source = '198.51.100.5'
+  const socket = '/internal/verify?scope=play'
+  const headers = { ...owner, 'X-Playmat-Client-IP': source, Origin: 'https://playmat.example' }
+  const rejected = await f.path(socket, { headers: { ...headers, Origin: 'https://other.example' } })
+  assert.equal(rejected.status, 403)
+  for (let i = 0; i < 35; i++) assert.equal((await f.path(socket, { headers })).status, 200)
+  const throttled = await f.path(socket, { headers })
+  assert.equal(throttled.status, 429)
+  assert.match(throttled.headers.get('retry-after'), /^\d+$/)
+  assert.equal((await f.path(socket, { headers: { ...headers, 'X-Playmat-Client-IP': '198.51.100.6' } })).status, 200)
+  assert.equal((await f.path('/api/playtesting/me', { headers })).status, 200)
+})
+
 async function signIn(f, name) {
   await f.product.provisionHuman(name, password)
   const response = await f.path('/login', {
@@ -639,8 +655,7 @@ test('[PM-AC-05] startup upgrades existing deck storage without changing its sav
   assert.equal(previous.data.library, 'personal')
 })
 
-async function addReplay(f, matchId, gameId, names, events) {
-  const now = Date.now()
+async function addReplay(f, matchId, gameId, names, events, now = Date.now()) {
   const info = {
     gameId, matchId, tableId: matchId, startedAt: now - 1000, endedAt: now,
     result: 'Game finished', winner: names[0], turns: 4, events: 2, deckType: 'Constructed - Pioneer',
@@ -653,6 +668,121 @@ async function addReplay(f, matchId, gameId, names, events) {
   ]
   await writeFile(join(f.replayDirectory, gameId + '.ndjson.gz'), gzipSync(data.map(row => JSON.stringify(row)).join('\n')))
 }
+
+async function historyMatch(f, names, time, { active = false, gameCount = 1 } = {}) {
+  const id = randomUUID()
+  const games = Array.from({ length: gameCount }, () => randomUUID())
+  for (const game of games) await addReplay(f, id, game, names, undefined, time)
+  if (!active) await writeFile(join(f.replayDirectory, id + '.match.json'), JSON.stringify({ matchId: id, endedAt: time }))
+  return { id, games }
+}
+
+test('[PM-AC-21] history retains twenty completed matches per account across its seats and blocks old direct reads', { skip: !databaseUrl }, async t => {
+  const objects = new Map()
+  const f = await fixture(t, objects)
+  const regular = await signIn(f, 'Regular')
+  const exempt = await signIn(f, 'Exempt')
+  const token = await f.product.provisionAgent('Regular', 'RegularAgent', ['history'])
+  const agent = { Authorization: 'Bearer ' + token }
+  await assert.rejects(f.product.setUnlimitedMatchHistory(['Exempt', 'Missing'], true), { status: 404 })
+  await f.product.setUnlimitedMatchHistory(['EXEMPT'], true)
+
+  const started = Date.now() - 10000
+  const root = '/api/playtesting/'
+  const oldest = await historyMatch(f, ['Regular', 'Exempt'], started)
+  await f.product.archiveGames()
+  const exportHandle = await f.path(root + 'exports', json('POST', regular, { gameIds: oldest.games, mode: 'handle' }))
+  assert.equal(exportHandle.status, 201)
+  const { path: exportPath } = await exportHandle.json()
+
+  const retained = []
+  for (let index = 0; index < 20; index += 1) {
+    const seat = index === 0 ? 'RegularAgent' : 'Regular'
+    retained.push(await historyMatch(f, [seat, 'Exempt'], started + index + 1,
+      { gameCount: index === 0 ? 2 : 1 }))
+  }
+  const active = await historyMatch(f, ['Regular', 'Exempt'], started - 2, { active: true })
+  await f.product.archiveGames()
+
+  const list = async (headers, query = '') => {
+    const response = await f.path(root + 'matches' + query, { headers })
+    assert.equal(response.status, 200)
+    return response.json()
+  }
+  const { matches } = await list(agent)
+  assert.deepEqual(matches.map(match => match.id), [...retained].reverse().map(match => match.id).concat(active.id))
+  assert.equal(matches.at(-2).games.length, 2, 'sideboard games occupy one history slot')
+  assert.equal(matches.at(-1).status, 'active')
+  assert.equal((await list(regular)).matches.length, 20, 'the browser has its established seat scope')
+  assert.equal((await list(exempt)).matches.length, 22)
+  const firstPage = await list(agent, '?format=Pioneer&limit=5')
+  const secondPage = await list(agent, '?format=Pioneer&cursor=' + firstPage.cursor)
+  assert.deepEqual(secondPage.matches.map(match => match.id), matches.slice(5).map(match => match.id))
+  await withTestDatabase(f, db => db.query("UPDATE matches SET format='Modern' WHERE id=$1", [retained.at(-1).id]))
+  assert.deepEqual((await list(agent, '?format=Pioneer')).matches.map(match => match.id), matches.slice(1).map(match => match.id))
+  const stats = async headers => (await (await f.path(root + 'stats', { headers })).json()).groups
+  assert.equal((await stats(agent)).reduce((total, group) => total + group.games, 0), 21)
+  assert.equal((await stats(exempt)).reduce((total, group) => total + group.games, 0), 22)
+
+  const [game] = oldest.games
+  for (const path of ['matches/' + oldest.id, 'replays/' + game, 'evaluations/' + game,
+    'review/games/' + game, 'review/matches/' + oldest.id, 'review/privacy/matches/' + oldest.id]) {
+    assert.equal((await f.path(root + path, { headers: regular })).status, 404, path)
+  }
+  assert.equal((await f.path(exportPath, { headers: regular })).status, 404)
+  assert.equal((await f.path(root + 'exports', json('POST', agent, { gameIds: [game] }))).status, 404)
+  assert.equal((await f.path(root + 'replays/' + game, { headers: exempt })).status, 200)
+  assert.equal(objects.size, 23, 'access retention leaves stored replay objects available for the exempt participant')
+  await f.product.setUnlimitedMatchHistory(['Exempt'], false)
+  assert.equal((await list(exempt)).matches.length, 21)
+})
+
+test('[PM-AC-21] opt-in purge removes only unretained closed matches and retries replay deletion safely', { skip: !databaseUrl }, async t => {
+  const objects = new Map()
+  const deletionAttempts = []
+  let deleteUnavailable = true
+  const f = await fixture(t, {
+    async put(key, body) { objects.set(key, body) },
+    async get(key) { return objects.get(key) },
+    async delete(key) {
+      deletionAttempts.push(key)
+      if (deleteUnavailable) throw Error('synthetic deletion outage')
+      objects.delete(key)
+    },
+  }, { purgeExpiredHistory: true })
+  await signIn(f, 'Regular')
+  const exempt = await signIn(f, 'Exempt')
+  await f.product.setUnlimitedMatchHistory(['Exempt'], true)
+
+  const started = Date.now() - 10000
+  const expired = await historyMatch(f, ['Regular', 'Guest'], started - 2)
+  const active = await historyMatch(f, ['Regular', 'Guest'], started - 1, { active: true })
+  const shared = await historyMatch(f, ['Regular', 'Exempt'], started)
+  for (let index = 0; index < 20; index += 1) await historyMatch(f, ['Regular', 'Guest'], started + index + 1)
+  await f.product.archiveGames({ maintainHistory: true })
+  await withTestDatabase(f, async db => {
+    assert.deepEqual((await db.query('SELECT id FROM matches WHERE id=ANY($1::uuid[]) ORDER BY id',
+      [[expired.id, active.id, shared.id]])).rows.map(row => row.id).sort(), [active.id, shared.id].sort())
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM replay_object_deletions')).rows[0].n, 1)
+    await db.query('UPDATE replay_object_deletions SET available_at=now()')
+  })
+  await f.product.archiveGames({ maintainHistory: true })
+  assert.equal(deletionAttempts.length, 1)
+  assert.ok(objects.has(deletionAttempts[0]))
+  deleteUnavailable = false
+  await withTestDatabase(f, db => db.query('UPDATE replay_object_deletions SET available_at=now()'))
+  await addReplay(f, expired.id, expired.games[0], ['Regular', 'Guest'], undefined, started - 2)
+  await writeFile(join(f.replayDirectory, expired.id + '.match.json'), JSON.stringify({ matchId: expired.id, endedAt: started }))
+  await f.product.archiveGames({ maintainHistory: true })
+  assert.equal(deletionAttempts.length, 2)
+  assert.equal(objects.has(deletionAttempts[0]), false)
+  assert.equal((await f.path('/api/playtesting/replays/' + shared.games[0], { headers: exempt })).status, 200)
+  await withTestDatabase(f, async db => {
+    assert.equal((await db.query('SELECT id FROM matches WHERE id=$1', [expired.id])).rowCount, 0)
+    assert.equal((await db.query('SELECT * FROM replay_object_deletions')).rowCount, 0)
+  })
+  await assert.rejects(readFile(join(f.replayDirectory, expired.games[0] + '.json')), { code: 'ENOENT' })
+})
 
 async function addSideboardReplay(f, matchId, gameId, number, decks) {
   const names = ['Alice', 'Bob']
@@ -1346,6 +1476,67 @@ test('social discovery classifies real delegated identities without guessing fro
 })
 
 const signupPath = '/api/playtesting/signup'
+
+test('[PM-SIGNUP-AC-04] browser auth verifies a fresh challenge for the correct action and hostname', { skip: !databaseUrl }, async t => {
+  const mails = []
+  const verifications = []
+  const f = await fixture(t, new Map(), {
+    publicUrl: 'https://playmat.example.test',
+    signup: { async send(mail) { mails.push(mail) } },
+    turnstile: {
+      siteKey: 'fixture-public-key',
+      secret: 'synthetic-fixture-value',
+      async fetch(url, options) {
+        assert.equal(url, 'https://challenges.cloudflare.com/turnstile/v0/siteverify')
+        assert.equal(options.method, 'POST')
+        assert.equal(options.redirect, 'error')
+        assert.equal(options.body.get('secret'), 'synthetic-fixture-value')
+        const token = options.body.get('response')
+        verifications.push(token)
+        if (token === 'provider-error') throw Error('synthetic provider timeout')
+        return Response.json({
+          success: token !== 'rejected',
+          hostname: token === 'wrong-host' ? 'foreign.example.test' : 'playmat.example.test',
+          action: token.startsWith('login-') ? 'password-login' : 'turnstile-spin-v2',
+        })
+      },
+    },
+  })
+  const request = turnstileToken => f.path(signupPath + '/request',
+    json('POST', {}, { email: 'signup@example.test', turnstileToken }))
+  const config = await f.path(signupPath + '/config')
+  assert.deepEqual(await config.json(), { turnstileSiteKey: 'fixture-public-key' })
+  for (const token of [undefined, 'a'.repeat(2049)]) assert.equal((await request(token)).status, 403)
+  assert.deepEqual(verifications, [])
+  for (const token of ['rejected', 'wrong-host', 'login-other-action']) assert.equal((await request(token)).status, 403)
+  assert.equal((await request('provider-error')).status, 503)
+  assert.equal(mails.length, 0)
+  const signed = await Promise.all([request('registration-token'), request('registration-token')])
+  assert.deepEqual(signed.map(r => r.status).sort(), [202, 403])
+  assert.equal(mails.length, 1)
+  assert.equal(verifications.filter(token => token === 'registration-token').length, 1)
+
+  await f.product.provisionHuman('ProtectedPlayer', password)
+  const page = await f.path('/login')
+  const html = await page.text()
+  assert.match(html, /data-sitekey="fixture-public-key"/)
+  assert.match(html, /data-action="password-login"/)
+  assert.match(page.headers.get('content-security-policy'), /frame-src https:\/\/challenges.cloudflare.com/)
+  const login = (token = '', givenPassword = password) => f.path('/login', {
+    method: 'POST', redirect: 'manual',
+    body: new URLSearchParams({ username: 'ProtectedPlayer', password: givenPassword, 'cf-turnstile-response': token }),
+  })
+  assert.equal((await login()).status, 403)
+  assert.equal((await login('signup-action')).status, 403)
+  const invalid = await login('login-wrong-password', 'incorrect')
+  assert.equal(invalid.status, 401)
+  assert.match(await invalid.text(), /data-sitekey="fixture-public-key"/)
+  assert.equal((await login('login-wrong-password')).status, 403)
+  const signedIn = await login('login-fresh-token')
+  assert.equal(signedIn.status, 303)
+  assert.match(signedIn.headers.get('set-cookie'), /HttpOnly/)
+})
+
 function signupFixture(t, send = async () => {}) {
   const messages = []
   const signup = { async send(message) {

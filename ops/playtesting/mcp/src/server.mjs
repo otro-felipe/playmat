@@ -1,3 +1,4 @@
+import { clientKey, createConcurrencyLimit, createLimits } from '../../product/limits.mjs';
 import { createServer } from 'node:http';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -417,7 +418,13 @@ export function createMcpServer({
 }) {
   const seats = new Map();
   const seatWatchers = new Map();
-  const server = createServer(async (req, res) => {
+  const rate = createLimits({
+    ingress: { client: 240, total: 2400, window: 60_000 },
+    account: { client: 150, total: 2000, window: 60_000 },
+  });
+  const authSlots = createConcurrencyLimit(32, 8);
+  const requestSlots = createConcurrencyLimit(48, 8);
+  const server = createServer({ requestTimeout: 30_000, headersTimeout: 10_000 }, async (req, res) => {
     const pathname = req.url?.split('?')[0];
     if (pathname === '/healthz' && req.method === 'GET') {
       res.writeHead(200, { 'content-type': 'text/plain', 'cache-control': 'no-store' });
@@ -425,6 +432,13 @@ export function createMcpServer({
       return;
     }
     if (pathname !== '/mcp') return reply(res, 404, -32601, 'Not found');
+    function limited(seconds) {
+      res.setHeader('Retry-After', String(seconds));
+      return reply(res, 429, -32029, 'Too many MCP requests. Try again shortly.');
+    }
+    const source = clientKey(req);
+    const ingressWait = rate('ingress', source);
+    if (ingressWait) return limited(ingressWait);
     const token = readToken(req);
     if (req.headers.origin && !allowedOrigins.includes(req.headers.origin)) return reply(res, 403, -32600, 'Origin not allowed');
     function unauthorized() {
@@ -433,11 +447,19 @@ export function createMcpServer({
     }
     if (!token) return unauthorized();
 
+    const releaseAuth = authSlots(source);
+    if (!releaseAuth) return limited(2);
     let actor;
     try { actor = await authorize(token); }
     catch { return reply(res, 503, -32000, 'Authorization service unavailable'); }
+    finally { releaseAuth(); }
     if (!actor || !actor.accountId || !actor.engineName || !Array.isArray(actor.scopes)) return unauthorized();
 
+    const accountWait = rate('account', actor.accountId);
+    if (accountWait) return limited(accountWait);
+    const release = requestSlots(actor.accountId);
+    if (!release) return limited(2);
+    res.once('close', release);
     const seatKey = JSON.stringify([actor.accountId, actor.engineName]);
     function getSeat() {
       if (!seats.has(seatKey)) {
