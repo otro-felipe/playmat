@@ -108,15 +108,19 @@ async function rivalPass(boundary) {
   try { await browser.respond(decision.id, choice.id); if (choice === mana) rivalManaAccepted = true; return true }
   catch (error) { if (['stale_decision', 'engine_rejected', 'illegal_choice'].includes(error.code)) return false; throw error }
 }
-async function playLineWithPeer(command, boundary) {
+async function drivePeerDuring(work, boundary) {
   let done = false
   const peer = (async () => {
     while (!done && Date.now() < totalDeadline) {
       await rivalPass(boundary)
-      await sleep(15)
+      await sleep(25)
     }
   })()
-  try {
+  try { return await Promise.race([work(), peer.then(() => new Promise(() => {}))]) }
+  finally { done = true; await peer }
+}
+async function playLineWithPeer(command, boundary) {
+  return drivePeerDuring(async () => {
     let receipt = await call('play_line', command)
     while (receipt.planOwnsExecution && Date.now() < totalDeadline) {
       receipt = await call('wait_for_decision', { gameId: command.gameId, commandId: command.commandId, view: command.view, timeoutMs: 5_000 })
@@ -124,20 +128,23 @@ async function playLineWithPeer(command, boundary) {
     }
     assert.equal(receipt.planOwnsExecution, false, 'The isolated line must reach a terminal receipt')
     return receipt
-  } finally {
-    done = true
-    await peer
-  }
+  }, boundary)
 }
 async function waitNextOwn(oldId, priorGameId) {
-  while (Date.now() < totalDeadline) {
-    await rivalPass()
-    const state = await ownState()
-    if (state.status === 'active' && state.gameId !== priorGameId
-      && state.decision && state.decision.id !== oldId && state.decision.kind !== 'waiting') return state
-    await sleep(15)
+  const end = Math.min(totalDeadline, Date.now() + 35_000)
+  let last
+  while (Date.now() < end) {
+    const receipt = await drivePeerDuring(() => call('wait_for_decision', { afterDecisionId: oldId, timeoutMs: 1500 }))
+    const state = receipt.state ?? await ownState()
+    last = [state, browser.snapshot()].map(seat => ({ status: seat.status, step: seat.step, turn: seat.turn,
+      priority: seat.priority, decision: seat.decision?.kind, sameDecision: seat.decision?.id === oldId }))
+    if (state.gameId !== priorGameId) {
+      if (state.status === 'active' && state.decision && state.decision.id !== oldId && state.decision.kind !== 'waiting') return state
+      if (['game_over', 'match_over', 'sideboarding', 'disconnected'].includes(state.status)) break
+    }
+    if (state.gameId === priorGameId) await sleep(100)
   }
-  throw Error('No next own fixture decision before the bounded deadline')
+  throw Error('No next own fixture decision: ' + JSON.stringify(last))
 }
 async function startFixture(name, deck, seed, opponentDeck = rivalDeck, format = 'Modern') {
   const priorGameId = (await ownState()).gameId
@@ -320,7 +327,7 @@ try {
   try {
     await product.provisionHuman('SequenceAlice', password)
     await product.provisionHuman('SequenceBob', password)
-    const withReview = ['review', 'all'].includes(process.env.PLAYMAT_SEQUENCE_SCENARIOS)
+    const withReview = process.env.PLAYMAT_SEQUENCE_SCENARIOS === 'review'
     await product.provisionAgent('SequenceBob', engineName, withReview ? ['play', 'history'] : ['play'], token)
   } finally { await product.close() }
   browserCookie = await browserLogin('SequenceAlice')
@@ -343,12 +350,13 @@ try {
   assert.ok(JSON.stringify(discovered.tools.find(tool => tool.name === 'play_sequence').inputSchema).includes('allowPlannedResolutions'))
   await warmDeckValidation()
   const scenarios = process.env.PLAYMAT_SEQUENCE_SCENARIOS
-  if (scenarios === 'review' || scenarios === 'all') {
+  if (scenarios === 'review') {
     const capture = await verifyReplayCapture({ startFixture, call, ownPlayer, rivalPlayer, answer, waitNextOwn, totalDeadline })
     const humanCapture = await verifyHumanReplayCapture({ startHumanReviewFixture, totalDeadline })
     await verifyReplayReviewOverMcp({ capture, humanCapture, Client, StreamableHTTPClientTransport, token })
     await verifyDiscardChoiceCapture({ startFixture, ownPlayer, rivalPlayer, call, answer, waitNextOwn, totalDeadline })
-    if (scenarios === 'review') await verifyPreparedModeLine('Patrol Night', true)
+    // This line also verifies mode/use evidence in the archived replay using the history grant.
+    await verifyPreparedModeLine('Patrol Night', true)
   }
   const fixture = { startFixture, ownPlayer, rivalPlayer, answer, waitNextOwn,
     playLineWithPeer, call, totalDeadline, setRivalSetup }
@@ -362,20 +370,20 @@ try {
     ['exile', './combat-exile.local.mjs', 'verifyCombatExile'],
     ['ward', './multi-target-ward.local.mjs', 'verifyMultiTargetWard'],
   ]
-  for (const [name, modulePath, run] of pioneerScenarios) {
-    if (['all', 'pioneer', name].includes(scenarios)) await (await import(modulePath))[run](fixture)
-  }
-  const pioneerOnly = scenarios === 'pioneer' || pioneerScenarios.some(([name]) => name === scenarios)
-  if (scenarios !== 'review' && !pioneerOnly) {
-    await verifyPreparedModeLine('Patrol Night', scenarios === 'all')
+  const pioneer = pioneerScenarios.find(([name]) => name === scenarios)
+  if (pioneer) {
+    const [, modulePath, run] = pioneer
+    await (await import(modulePath))[run](fixture)
+  } else if (scenarios === 'modal') {
     await verifyPreparedModeLine('Date Night')
     await verifyPreparedModeLine('Improvised Act Yes')
     await verifyPreparedModeLine('Low-level control')
-  }
-  if (!['modal', 'review'].includes(scenarios) && !pioneerOnly) {
+  } else if (scenarios === 'typed') {
     await verifyTypedManaTalent({ startFixture, ownPlayer, answer, waitNextOwn, playLineWithPeer, call, totalDeadline })
+  } else if (scenarios === 'causal') {
     await verifyCausalBurn()
-  }
+  } else if (scenarios !== 'review') throw Error('Select a real-engine family using verify-sequence-image.sh')
+
 } finally { browser?.close(); await client?.close() }
 
 async function verifyCausalBurn() {

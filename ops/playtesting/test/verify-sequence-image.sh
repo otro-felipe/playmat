@@ -29,6 +29,27 @@ if [[ -n ${PLAYMAT_SEQUENCE_TEST_IMAGE:-} ]]; then
 else
  docker build --build-arg PLAYMAT_COMMIT="$stamp" -t "$image" .
 fi
+
+# Each family owns its accounts, request budgets, engine and deadline. Reuse the
+# exact built image. A slow setup in one match cannot consume the next family's
+# decision budget, and every family still passes through the real product limits.
+selection=${PLAYMAT_SEQUENCE_SCENARIOS:-all}
+pioneer=(mulligan casting order activation combat saga-entry exile ward)
+case "$selection" in
+ all) families=(review "${pioneer[@]}" modal typed causal) ;;
+ pioneer) families=("${pioneer[@]}") ;;
+ turn-lines) families=(modal typed causal) ;;
+ review|mulligan|casting|order|activation|combat|saga-entry|exile|ward|modal|typed|causal) families=("$selection") ;;
+ *) echo 'Unknown isolated real-engine scenario' >&2; exit 2 ;;
+esac
+if (( ${#families[@]} > 1 )); then
+ for scenario in "${families[@]}"; do
+  echo "Running isolated real-engine family: $scenario"
+  PLAYMAT_SEQUENCE_TEST_IMAGE="$image" PLAYMAT_SEQUENCE_SCENARIOS="$scenario" bash ops/playtesting/test/verify-sequence-image.sh
+ done
+ echo "All requested real-engine families passed: $selection"
+ exit 0
+fi
 if [[ -n ${PLAYMAT_SEQUENCE_TEST_SUBNET:-} ]]; then
  docker network create --subnet "$PLAYMAT_SEQUENCE_TEST_SUBNET" "$network" >/dev/null
 else
@@ -54,4 +75,4 @@ const end=Date.now()+150000;
 while(Date.now()<end){try{const r=await fetch("http://127.0.0.1:8080/healthz");if(r.ok){const h=await r.json();if(h.status==="ok")process.exit(0)}}catch{}await new Promise(r=>setTimeout(r,500));}console.error("Isolated XMage health did not become ready");process.exit(1);'
 docker exec --user xmage -w /opt/xmage -e PLAYMAT_SEQUENCE_SCENARIOS="${PLAYMAT_SEQUENCE_SCENARIOS:-all}" \
  "$app" node /opt/playtesting/product/sequence.local.mjs
-echo 'Complete isolated real-engine causal sequence acceptance passed'
+echo "Isolated real-engine family passed: $selection"
