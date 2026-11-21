@@ -1,12 +1,12 @@
 import catalog from './catalog.json' with { type: 'json' }
 
-const generic = ['Aggro', 'Combo', 'Control', 'Midrange', 'Ramp', 'Tempo']
+const generic = ['Basic Lands Practice', 'Aggro', 'Combo', 'Control', 'Midrange', 'Ramp', 'Tempo']
 const cache = new Map()
 const nameIndex = new Map()
 const key = text => String(text ?? '').normalize('NFKC').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 
 function catalogFormat(format) {
-  const label = String(format ?? '').replace(/^(?:(?:Block )?Constructed(?: Custom)?|Variant Magic) - /i, '')
+  const label = String(format || 'Freeform').replace(/^(?:(?:Block )?Constructed(?: Custom)?|Variant Magic) - /i, '')
   if (Object.hasOwn(catalog.formats, label)) return label
   if (/commander|oathbreaker|tiny leaders|brawl/i.test(label)) return 'Commander'
   if (/highlander/i.test(label)) return 'Highlander'

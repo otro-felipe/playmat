@@ -7,7 +7,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import pg from 'pg'
 import { archetypesFor } from './deck-performance-identity.mjs'
-import { libraryArchetypeCoverage, migrateDeckLists } from './deck-list-migration.mjs'
+import { libraryArchetypeCoverage, migrateDeckLists, refineMigratedDeckLists } from './deck-list-migration.mjs'
 import { createArchive } from './archive.mjs'
 import { resetMatchHistory, setUnlimitedMatchHistory } from './history-retention.mjs'
 import { createTheoryStore, evaluateTheoryTactics } from './theory-store.mjs'
@@ -133,6 +133,7 @@ export async function createProduct({
     await pool.query(await readFile(resolve(directory, 'theory-schema.sql'), 'utf8'))
     await pool.query(await readFile(resolve(directory, 'history-retention.sql'), 'utf8'))
     await migrateDeckLists(pool)
+    await refineMigratedDeckLists(pool)
     console.info('deck_archetype_coverage', JSON.stringify(await libraryArchetypeCoverage(pool)))
     await pool.query(await readFile(resolve(directory, 'performance-schema.sql'), 'utf8'))
   } catch (error) {
