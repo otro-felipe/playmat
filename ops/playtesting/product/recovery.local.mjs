@@ -1,4 +1,5 @@
 // Explicit fixture harness, never run by npm test. Requires the isolated container opt-in below.
+import { fixtureMcpFetch } from './fixture-mcp-fetch.mjs'
 import assert from 'node:assert/strict'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
@@ -45,7 +46,7 @@ async function clients(fixture) {
   browser = await login('RecoveryAlice')
   mcp = new Client({ name: 'isolated-recovery-fixture', version: '1.0.0' })
   await mcp.connect(new StreamableHTTPClientTransport(new URL(base + '/mcp'), {
-    requestInit: { headers: { Authorization: 'Bearer ' + fixture.token } },
+    fetch: fixtureMcpFetch, requestInit: { headers: { Authorization: 'Bearer ' + fixture.token } },
   }))
 }
 async function states() { return [browser.snapshot(), await call('get_game_state')] }
@@ -101,20 +102,33 @@ async function choose(index, state, cast = true) {
     throw e
   }
 }
-async function playTo(turn) {
-  const end = Date.now() + 120_000
+async function playTo(targetTurn) {
+  const started = Date.now()
+  let progressDeadline = started + 60_000
+  let furthestTurn = 0
   let last
-  while (Date.now() < end) {
-    const state = await states()
-    const records = await browser.recoveryList()
-    const row = records.find(r => r.status === 'live' && r.phase === 'turn')
-    last = { durableTurn: row?.turn ?? null, seats: state.map(s => ({ turn: s.turn, step: s.step, decision: s.decision?.kind })) }
-    if (row?.turn >= turn && state[1].decision?.kind === 'priority') return { state, row }
-    let acted = false
-    for (let i = 0; i < 2; i++) acted = await choose(i, state[i]) || acted
-    if (!acted) await sleep(60)
+  while (Date.now() < progressDeadline && Date.now() - started < 300_000) {
+    const human = browser.snapshot()
+    if (human.turn > furthestTurn) {
+      furthestTurn = human.turn
+      progressDeadline = Date.now() + 60_000
+    }
+    // A pending browser decision can be answered over its existing socket.
+    // Reading an unchanged MCP state and checkpoint here wastes the request budget.
+    if (human.turn < targetTurn && await choose(0, human)) continue
+    const agent = await call('get_game_state')
+    const state = [human, agent]
+    last = state.map(seat => ({ status: seat.status, turn: seat.turn, step: seat.step, decision: seat.decision?.kind }))
+    if (agent.turn >= targetTurn && agent.decision?.kind === 'priority') {
+      const records = await browser.recoveryList()
+      const row = records.find(record => record.status === 'live' && record.phase === 'turn' && record.turn >= targetTurn)
+      if (row) return { state, row }
+    }
+    if (await choose(1, agent) || await choose(0, human)) continue
+    if (state.some(seat => ['sideboarding', 'match_over'].includes(seat.status))) break
+    await sleep(400)
   }
-  throw Error('No durable turn reached: ' + JSON.stringify(last))
+  throw Error('No durable turn reached: ' + JSON.stringify({ targetTurn, furthestTurn, seats: last }))
 }
 async function concedeAndWaitFor(status, description) {
   await browser.concede(browser.snapshot().gameId, false)
@@ -268,7 +282,7 @@ try {
     await assert.rejects(() => outsider.recoveryJoin({ matchId: fixture.matchId, revision: status.revision, agree: true }))
     assert.equal((await outsider.recoveryList()).length, 0)
     otherGrant = new Client({ name: 'same-owner-unseated-grant', version: '1.0.0' })
-    await otherGrant.connect(new StreamableHTTPClientTransport(new URL(base + '/mcp'), { requestInit: { headers: { Authorization: 'Bearer ' + otherToken } } }))
+    await otherGrant.connect(new StreamableHTTPClientTransport(new URL(base + '/mcp'), { fetch: fixtureMcpFetch, requestInit: { headers: { Authorization: 'Bearer ' + otherToken } } }))
     const forbidden = await otherGrant.callTool({ name: 'get_recovery_status', arguments: { matchId: fixture.matchId } })
     assert.equal(forbidden.isError, true, 'another grant owned by the same account cannot take the admitted MCP seat')
     const invite = await fetch(base + '/join/' + fixture.originalTableId, { redirect: 'manual' })
