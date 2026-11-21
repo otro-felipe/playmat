@@ -1,5 +1,6 @@
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useT, formatNumber } from '../i18n';
 import { sample, rate, type Outcome, type Performance } from './performance';
 import styles from './DeckAnalysis.module.css';
@@ -12,8 +13,29 @@ function Headline({ label, outcome, primary }: { label: string; outcome: Outcome
   </section>;
 }
 
+function SortHeader({ label, description, active, ascending, onSort }: {
+  label: string; description?: string; active: boolean; ascending: boolean; onSort: () => void;
+}) {
+  const Icon = active ? (ascending ? ArrowUp : ArrowDown) : ArrowUpDown;
+  return <th scope="col" aria-sort={active ? (ascending ? 'ascending' : 'descending') : 'none'}>
+    <button type="button" className={styles.sort} title={description} onClick={onSort}>
+      {label}<Icon size={12} aria-hidden="true" />
+    </button>
+  </th>;
+}
+
+function CardReplays({ card, ids }: { card: string; ids: string[] }) {
+  const t = useT();
+  return <span className={styles.replays}>
+    {ids.map((id, index) => <Link key={id} to={'/replay/' + encodeURIComponent(id)}
+      aria-label={t('perf.replayForCard', { card, number: index + 1 })}>
+      {t('history.replay')} {index + 1}
+    </Link>)}
+  </span>;
+}
+
 function ResultsTable({ title, caption, dimension, rows, losses = false, sortable = false }: {
-  title: string; caption?: string; dimension: string; losses?: boolean; sortable?: boolean; rows: { label: string; games: Outcome }[];
+  title: string; caption?: string; dimension: string; losses?: boolean; sortable?: boolean; rows: { label: string; games: Outcome; gameIds?: string[] }[];
 }) {
   const t = useT();
   type SortKey = 'sample' | 'rate';
@@ -25,12 +47,9 @@ function ResultsTable({ title, caption, dimension, rows, losses = false, sortabl
   function column(key: SortKey, label: string) {
     if (!sortable) return <th scope="col">{label}</th>;
     const active = sort.key === key;
-    const Icon = active ? (sort.ascending ? ArrowUp : ArrowDown) : ArrowUpDown;
-    return <th scope="col" aria-sort={active ? (sort.ascending ? 'ascending' : 'descending') : 'none'}>
-      <button type="button" className={styles.sort} title={key === 'sample' ? t('perf.sortSample') : undefined} onClick={() => setSort({ key, ascending: active && !sort.ascending })}>
-        {label}<Icon size={12} aria-hidden="true" />
-      </button>
-    </th>;
+    return <SortHeader label={label} active={active} ascending={sort.ascending}
+      description={key === 'sample' ? t('perf.sortSample') : undefined}
+      onSort={() => setSort({ key, ascending: active && !sort.ascending })} />;
   }
   return <section className={styles.results}>
     <h2>{title}</h2>
@@ -40,9 +59,11 @@ function ResultsTable({ title, caption, dimension, rows, losses = false, sortabl
         <th scope="col">{dimension}</th>{column('sample', t(losses ? 'perf.gamesLost' : 'perf.gamesWon'))}
         {column('rate', t(losses ? 'perf.lossRate' : 'history.winRate'))}
       </tr></thead><tbody>
-        {ordered.map(({ label, games }) => {
+        {ordered.map(({ label, games, gameIds }) => {
           const count = numerator(games);
-          return <tr key={label}><th scope="row">{label}</th><td>{sample(count, games.total)}</td><td>{rate(count, games.total)}</td></tr>;
+          return <tr key={label}><th scope="row">
+            {label}{!!gameIds?.length && <CardReplays card={label} ids={gameIds} />}
+          </th><td>{sample(count, games.total)}</td><td>{rate(count, games.total)}</td></tr>;
         })}
       </tbody></table>}
   </section>;
@@ -67,12 +88,35 @@ export function AnalysisOverview({ data, bo1 }: { data: Performance; bo1: boolea
   </>;
 }
 
+function OpeningHands({ data }: { data: Performance }) {
+  const t = useT();
+  const [sort, setSort] = useState<{ key: 'games' | 'without'; ascending: boolean } | null>(null);
+  const title = t('perf.openingCards');
+  const cards = data.openingCards.slice();
+  if (sort) cards.sort((a, b) => {
+    const left = a[sort.key];
+    const right = b[sort.key];
+    if (!left.total || !right.total) return right.total - left.total;
+    const difference = left.wins / left.total - right.wins / right.total;
+    return (sort.ascending ? difference : -difference) || right.total - left.total || a.card.localeCompare(b.card);
+  });
+  return <section className={styles.results}>
+    <h2>{title}</h2><p className={styles.hint}>{t('perf.keptCoverage', { known: data.coverage.keptHands, total: data.coverage.games })}</p>
+    {!cards.length ? <p className={styles.empty}>{t('perf.noData')}</p> :
+      <table aria-label={title}><thead><tr><th scope="col">{t('perf.card')}</th>
+        {(['games', 'without'] as const).map((key) => <SortHeader key={key} label={t(key === 'games' ? 'perf.withCard' : 'perf.withoutCard')}
+          active={sort?.key === key} ascending={!!sort?.ascending}
+          onSort={() => setSort({ key, ascending: sort?.key === key && !sort.ascending })} />)}
+      </tr></thead><tbody>{cards.map(({ card, games, without }) => <tr key={card}>
+        <th scope="row">{card}</th><td><Fraction outcome={games} /></td><td><Fraction outcome={without} /></td>
+      </tr>)}</tbody></table>}
+  </section>;
+}
+
 export function MulliganResults({ data }: { data: Performance }) {
   const t = useT();
   return <div className={styles.sections}>
-    <ResultsTable sortable title={t('perf.openingCards')} dimension={t('perf.card')}
-      caption={t('perf.keptCoverage', { known: data.coverage.keptHands, total: data.coverage.games })}
-      rows={data.openingCards.map(({ card, games }) => ({ label: card, games }))} />
+    <OpeningHands data={data} />
     <ResultsTable title={t('perf.byMulligans')} dimension={t('perf.mulligan')}
       rows={data.mulligans.map(({ count, games }) => ({ label: formatNumber(count), games }))} />
   </div>;
@@ -108,6 +152,6 @@ export function MatchupResults({ data, bo1 }: { data: Performance; bo1: boolean 
     </section>
     <ResultsTable sortable losses title={t('perf.opponentCards')} dimension={t('perf.card')}
       caption={t('perf.cardCoverage', { known: data.coverage.opponentCards, total: data.coverage.games })}
-      rows={data.opponentCards.map(({ card, games }) => ({ label: card, games }))} />
+      rows={data.opponentCards.map(({ card, games, gameIds }) => ({ label: card, games, gameIds }))} />
   </div>;
 }
