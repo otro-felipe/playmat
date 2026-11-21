@@ -12,7 +12,7 @@ function performance(params: URLSearchParams) {
   const otherDecks = shared.deckIds.map((id) => ({ ...deck, id, name: 'Boros ' + id, archetype: shared.archetype, format: shared.format,
     versions: [{ version: 2, format: shared.format, archetype: shared.archetype }] }));
   const isEmptyGroup = params.get('format') === 'Modern';
-  const summary = params.get('scope') === 'all' ? group : isEmptyGroup ? shared
+  const summary = isEmptyGroup ? shared : ['all', 'archetype'].includes(params.get('scope') || '') ? group
     : params.get('version') === '1' ? { matches: record(0, 1), games: record(1, 2) } : { matches: record(1, 0), games: record(2, 1) };
   return {
     decks: [deck, ...otherDecks], groups: params.get('format') === 'Standard' ? [] : [group, shared], selected: { deckId: 'family', version: 2 },
@@ -76,6 +76,11 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
       await expect(card).toContainText(/60\s?%/);
       await card.click();
       await expect(page.getByRole('heading', { name: 'Golgari Midrange' })).toBeVisible();
+      await expect(page.getByRole('combobox', { name: 'Mazo', exact: true })).toHaveValue('');
+      await expect(page.getByRole('region', { name: 'Partidas ganadas' })).toContainText('6/10');
+      await expect(page.getByRole('region', { name: 'Partidas ganadas' })).toContainText(/60\s?%/);
+      await expect(page.getByRole('combobox', { name: 'Versión' })).toHaveCount(0);
+      await page.getByRole('combobox', { name: 'Mazo', exact: true }).selectOption('family');
       await expect(page.getByRole('combobox', { name: 'Versión' })).toHaveValue('2');
       await page.getByRole('combobox', { name: 'Modalidad' }).selectOption('3');
       await expect(page.getByRole('region', { name: 'Partidas ganadas' })).toContainText(/100\s?%/);

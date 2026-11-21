@@ -23,7 +23,7 @@ export function HistoryOverview({ data, format }: { data: Performance; format: s
     <div id="history-archetype-cards" className={styles.cards}>
       {shown.map((group) => <Link key={JSON.stringify([group.format, group.archetype])}
         className={styles.card} state={{ historySearch: location.search }}
-        to={'/history/analysis?' + analysisSearch(group, data.decks).toString()}>
+        to={'/history/analysis?' + analysisSearch(group).toString()}>
         <span className={styles.eyebrow}>{group.format === 'Unknown' ? t('history.unreported') : group.format}</span>
         <strong className={styles.cardTitle}>{group.archetype || t('perf.unclassified')}</strong>
         <span className={styles.cardRate}>{rate(group.matches.wins, group.matches.total)}</span>

@@ -53,17 +53,10 @@ export function sample(numerator: number, total: number) {
   return formatNumber(numerator) + '/' + formatNumber(total);
 }
 
-export function analysisSearch(group: PerformanceGroup, decks: DeckFamily[]) {
-  const query = new URLSearchParams({ format: group.format });
+export function analysisSearch(group: PerformanceGroup) {
+  const query = new URLSearchParams({ scope: 'archetype', format: group.format });
   if (group.archetype) query.set('ownArchetype', group.archetype);
   else query.set('ownArchetypeUnknown', 'true');
-  const families = decks.filter((deck) => group.deckIds.includes(deck.id));
-  if (families.length === 1) {
-    const deck = families[0];
-    query.set('deckId', deck.id);
-    if (deck.format === group.format && deck.archetype === group.archetype) query.set('version', String(deck.currentVersion));
-    else query.set('scope', 'deck');
-  } else query.set('scope', 'archetype');
   return query;
 }
 
