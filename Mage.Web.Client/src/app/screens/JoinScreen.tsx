@@ -1,3 +1,4 @@
+import { PlayerLabel } from '../ui/PlayerLabel';
 import { useQuery } from '@tanstack/react-query';
 import { Bot, Lock, UserRound } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -213,13 +214,13 @@ export function JoinScreen() {
           {table.tableName}
         </h2>
         <p className={styles.meta}>
-          {formatRules(table.deckType ?? '').label} · {table.gameType} · hosted by {(table.controllerName ?? '').split(', ')[0]}
+          {formatRules(table.deckType ?? '').label} · {table.gameType} · hosted by <PlayerLabel name={(table.controllerName ?? '').split(', ')[0]} />
         </p>
         <ul className={styles.seats} aria-label="Seats">
           {(table.seats ?? []).map((seat, index) => (
             <li key={index} className={seat.playerName ? styles.taken : styles.free}>
               {seat.playerType && seat.playerType !== 'HUMAN' ? <Bot size={14} aria-hidden="true" /> : <UserRound size={14} aria-hidden="true" />}
-              {seat.playerName || 'Open seat'}
+              {seat.playerName ? <PlayerLabel name={seat.playerName} /> : 'Open seat'}
             </li>
           ))}
         </ul>

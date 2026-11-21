@@ -58,8 +58,8 @@ function ConnectedStage({ gameId, leaveLabel, onLeave }: { gameId: string; leave
   const session = useGames((state) => state.sessions[gameId])!;
   const tableId = useGames((state) => state.tables[gameId]?.tableId);
   const { data: invite } = usePlaytestingInvitation(tableId);
-  const seatDisplayNames = useMemo(() => invite?.mode === 'mcp' && invite.guestEngineName && invite.guestDisplayName
-    ? { [invite.guestEngineName]: invite.guestDisplayName } : undefined, [invite]);
+  const seatDisplayNames = useMemo(() => invite?.mode === 'mcp' && invite.guestEngineName && invite.guestOwnerName
+    ? { [invite.guestEngineName]: invite.guestOwnerName } : undefined, [invite]);
   const state = useStore(session.store);
   const connection = useSession((session) => session.connection);
   const phase = useSession((session) => session.phase);

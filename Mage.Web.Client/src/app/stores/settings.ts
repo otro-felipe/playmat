@@ -192,7 +192,7 @@ export const DEFAULT_SETTINGS: PlaySettings = {
   avatarId: 10,
   flag: 'world',
   locale: 'auto',
-  matCloth: 'green',
+  matCloth: 'charcoal',
   matArt: 'deck',
   matCard: null,
   broadcastDelay: 0,

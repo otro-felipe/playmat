@@ -1,0 +1,12 @@
+.seat { display: inline-flex; min-width: 0; max-width: 100%; gap: .38em; align-items: baseline; vertical-align: baseline; }
+.name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.badge {
+  flex: none;
+  padding: 1px 4px;
+  border: 1px solid rgb(var(--decision-rgb) / .35);
+  border-radius: 3px;
+  background: rgb(var(--decision-rgb) / .07);
+  color: var(--decision-strong);
+  font: 600 10px/1.2 var(--font-ui);
+  letter-spacing: .06em;
+}

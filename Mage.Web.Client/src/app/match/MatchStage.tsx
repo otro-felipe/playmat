@@ -1,3 +1,5 @@
+import { PlayerNames, usePlayerNames, useRosterNames } from '../ui/usePlayerIdentity';
+import { PlayerLabel } from '../ui/PlayerLabel';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { Menu } from 'lucide-react';
 import { PRIVATE_PLAYTESTING } from '../playtesting';
@@ -65,7 +67,7 @@ import { setCardMotion, useFlipOrigin } from './flip';
 import { GameLog } from './GameLog';
 import { RecentActions } from './RecentActions';
 import { stackTargetConnections } from './stackTargetArrows';
-import { seatDisplayName, type SeatDisplayNames } from './seatDisplayNames';
+import { seatAlias, type SeatDisplayNames } from './seatDisplayNames';
 import { useMatchZoomKeys } from './matchZoomKeys';
 import { Hand } from './Hand';
 import './matchMessages';
@@ -183,7 +185,13 @@ export interface MatchStageProps {
   seatDisplayNames?: SeatDisplayNames;
 }
 
-export function MatchStage({ session, state, replayLog, replayHands, reviewLayout, onLeave, seatDisplayNames }: MatchStageProps) {
+export function MatchStage(props: MatchStageProps) {
+  const formatName = useRosterNames((props.state.view?.players ?? []).map((player) => player.name));
+  return <PlayerNames.Provider value={formatName}><MatchBoard {...props} /></PlayerNames.Provider>;
+}
+
+function MatchBoard({ session, state, replayLog, replayHands, reviewLayout, onLeave, seatDisplayNames }: MatchStageProps) {
+  const formatName = usePlayerNames();
   const { view, interaction, playerId, mode, awaitingServer, prediction } = state;
   const revealedHands = useRevealedHands(view, mode === 'replay' ? null : `${state.gameId}:${state.rollbackRevision ?? 0}`);
   const reveals = useReveals(view, mode !== 'replay');
@@ -522,7 +530,7 @@ export function MatchStage({ session, state, replayLog, replayHands, reviewLayou
   // a concession takes effect when the player holding priority passes: name them while it is pending
   const enginePriorityName = (view?.players ?? []).find((player) => player.hasPriority && player.playerId !== myId)?.name
     ?? (view?.priorityPlayerName !== board.me?.player.name ? view?.priorityPlayerName ?? null : null);
-  const displayName = (engineName?: string | null) => engineName == null ? undefined : seatDisplayName(engineName, seatDisplayNames);
+  const displayName = (engineName?: string | null) => engineName == null ? undefined : formatName(engineName, seatAlias(engineName, seatDisplayNames));
   const graveyards = new Map<string, { id: string; label: string }>();
   if (pickerCards) {
     for (const player of view?.players ?? []) {
@@ -668,7 +676,7 @@ export function MatchStage({ session, state, replayLog, replayHands, reviewLayou
                 index={index}
                 count={board.opponents.length}
                 sleeve={theirSleeves.get(opponent.player.playerId!) ?? sleeves.theirs}
-                displayName={displayName(opponent.player.name)}
+                displayName={seatAlias(opponent.player.name ?? '', seatDisplayNames)}
                 look={lookOf(opponent.player)}
                 handCount={opponent.player.handCount ?? 0}
                 replayHand={mode === 'replay' ? replayHands?.[opponent.player.playerId ?? ''] : undefined}
@@ -694,7 +702,7 @@ export function MatchStage({ session, state, replayLog, replayHands, reviewLayou
                 <div ref={plateRef} className={styles.myPlate} style={layout.myPlate}>
                   <PlayerPlate
                     player={board.me.player}
-                    displayName={displayName(board.me.player.name)}
+                    displayName={seatAlias(board.me.player.name ?? '', seatDisplayNames)}
                     isMe={board.me.isMe}
                     sleeve={sleeves.mine}
                     look={lookOf(board.me.player)}
@@ -709,7 +717,7 @@ export function MatchStage({ session, state, replayLog, replayHands, reviewLayou
                   />
                   {lookOf(board.me.player)?.pet && (
                     <div className={styles.myPet}>
-                      <PetSpot pet={lookOf(board.me.player)?.pet} owner={board.me.player.name ?? ''} isMe={board.me.isMe} />
+                      <PetSpot pet={lookOf(board.me.player)?.pet} owner={displayName(board.me.player.name) ?? ''} isMe={board.me.isMe} />
                     </div>
                   )}
                   {emotes && <EmoteButton gameId={state.gameId} />}
@@ -735,7 +743,7 @@ export function MatchStage({ session, state, replayLog, replayHands, reviewLayou
               <Hand
                 cards={seatHand.cards}
                 faceDown={seatHand.faceDown}
-                label={`${board.me.player.name ?? 'Player'}'s hand`}
+                label={`${displayName(board.me.player.name) ?? 'Player'}'s hand`}
                 clickable={EMPTY}
                 selected={EMPTY}
                 sleeve={sleeves.mine}
@@ -838,8 +846,8 @@ export function MatchStage({ session, state, replayLog, replayHands, reviewLayou
             )}
             {choosingStarter && board.me && !awaitingServer && (
               <StartingPlayerOverlay
-                me={{ id: board.me.player.playerId!, name: board.me.player.name ?? 'You' }}
-                opponents={board.opponents.map((opponent) => ({ id: opponent.player.playerId!, name: opponent.player.name ?? 'Opponent' }))}
+                me={{ id: board.me.player.playerId!, name: displayName(board.me.player.name) ?? 'You' }}
+                opponents={board.opponents.map((opponent) => ({ id: opponent.player.playerId!, name: displayName(opponent.player.name) ?? 'Opponent' }))}
                 onChoose={onClick}
               />
             )}
@@ -1001,6 +1009,7 @@ function OpponentSide({ board, index, count, sleeve, handCount, replayHand, reve
   commanderDamage: readonly { name: string; amount: number }[];
   outOfRange: boolean;
 }) {
+  const formatName = usePlayerNames();
   const place = layout.them(index, count);
   const player = board.player;
   return (
@@ -1022,7 +1031,7 @@ function OpponentSide({ board, index, count, sleeve, handCount, replayHand, reve
         />
         {look?.pet && count === 1 && (
           <div className={styles.theirPet}>
-            <PetSpot pet={look.pet} owner={player.name ?? ''} isMe={false} />
+            <PetSpot pet={look.pet} owner={formatName(player.name ?? '', displayName)} isMe={false} />
           </div>
         )}
         {count > 1 && (
@@ -1036,9 +1045,9 @@ function OpponentSide({ board, index, count, sleeve, handCount, replayHand, reve
           <Piles player={player} sleeve={sleeve} isMe={false} commanders={commanders} />
         </div>
       )}
-      {count > 1 && !layout.tall && <span className={styles.seatName} style={{ left: place.left + 16 }} aria-hidden="true">{displayName ?? player.name}</span>}
+      {count > 1 && !layout.tall && <span className={styles.seatName} style={{ left: place.left + 16 }} aria-hidden="true"><PlayerLabel name={player.name ?? ''} displayName={displayName} /></span>}
       {replayHand ? (
-        <RecordedHand cards={replayHand} name={displayName ?? player.name ?? ''} sleeve={sleeve} left={layout.hiddenHandX(index, count)} />
+        <RecordedHand cards={replayHand} name={formatName(player.name ?? '', displayName)} sleeve={sleeve} left={layout.hiddenHandX(index, count)} />
       ) : <HiddenHand playerId={player.playerId!} count={handCount} revealed={revealed} sleeve={sleeve} left={layout.hiddenHandX(index, count)} />}
     </>
   );

@@ -18,6 +18,7 @@ export interface PlaytestingInvitationView {
   unlisted?: true;
   guestEngineName: string | null;
   guestDisplayName: string | null;
+  guestOwnerName?: string | null;
   chatMode?: McpChatMode;
 }
 

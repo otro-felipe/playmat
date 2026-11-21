@@ -23,7 +23,7 @@ describe('one catalog (B293)', () => {
     expect(CAREER_PLAYMATS).toContain('sand');
     expect(clothOf('sand').career).toBe(true);
     // free cloths first, the supporters' last
-    expect(MAT_CLOTHS[0].id).toBe('green');
+    expect(MAT_CLOTHS[0].id).toBe('charcoal');
     expect(MAT_CLOTHS.at(-1)?.id).toBe('patron');
   });
 

@@ -361,7 +361,7 @@ export default {
   'public.chooseName': 'Choose your player name',
   'public.chooseNameHint': 'Set a password to sign in to {app} on any device.',
   'public.username': 'Username',
-  'public.usernameHint': '3–14 characters. Use letters A–Z, numbers, or underscores.',
+  'public.usernameHint': '3–14 letters, numbers, or underscores. The MCP prefix is reserved for agents.',
   'public.password': 'Password',
   'public.passwordHint': 'Use at least 12 characters.',
   'public.creating': 'Creating account…',

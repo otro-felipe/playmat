@@ -4,9 +4,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: 64px minmax(0, 1fr);
-  background:
-    radial-gradient(140% 120% at 70% 30%, var(--mat-700), var(--mat-900) 75%),
-    var(--mat-800);
+  background: var(--mat-900);
   overflow: hidden;
 }
 
@@ -31,7 +29,8 @@
   align-items: center;
   gap: var(--space-6);
   padding: 0 calc(var(--stitch-inset) + var(--space-5));
-  padding-top: var(--stitch-inset);
+  background-color: var(--mat-800);
+  border-bottom: 1px solid var(--ink-ghost);
 }
 
 .brand {
@@ -79,7 +78,7 @@
   bottom: 2px;
   height: 3px;
   border-radius: 2px;
-  background: var(--ink);
+  background: var(--decision);
   transform: scaleX(0);
   transform-origin: left;
   transition: transform var(--dur-place) var(--ease-place);
@@ -279,7 +278,7 @@
   .rail {
     grid-template-columns: auto minmax(0, 1fr);
     gap: var(--space-3);
-    padding-top: calc(var(--stitch-inset) + env(safe-area-inset-top));
+    padding-top: env(safe-area-inset-top);
     padding-right: calc(var(--stitch-inset) + var(--space-3) + env(safe-area-inset-right));
     padding-left: calc(var(--stitch-inset) + var(--space-3) + env(safe-area-inset-left));
   }

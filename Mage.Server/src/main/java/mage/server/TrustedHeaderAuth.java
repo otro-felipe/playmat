@@ -33,6 +33,12 @@ public final class TrustedHeaderAuth {
     static final int MAX_VALUE_LENGTH = 254;
     /** names of new accounts, like registration and GitHub sign-in */
     private static final Pattern NEW_NAME = Pattern.compile("[A-Za-z0-9_]{3,14}");
+    private static final Pattern MCP_SEAT = Pattern.compile("mcp_[A-Za-z0-9_-]{3,24}");
+
+    static boolean isMcpSeat(String name) {
+        return name != null && MCP_SEAT.matcher(name).matches();
+    }
+
     public static final String PASSWORDS_OFF = "This server signs in through its single sign-on. Open it through the sign-on page.";
 
     private static final TrustedHeaderAuth OFF = new TrustedHeaderAuth("", true, false);
@@ -119,7 +125,7 @@ public final class TrustedHeaderAuth {
             if (existing != null) {
                 return existing.getName();
             }
-            if (!NEW_NAME.matcher(name).matches() || name.equalsIgnoreCase(User.ADMIN_NAME)) {
+            if ((!NEW_NAME.matcher(name).matches() && !isMcpSeat(name)) || name.equalsIgnoreCase(User.ADMIN_NAME)) {
                 throw new IllegalArgumentException("Your sign-on name \"" + name + "\" can't be a player name here (3 to 14 "
                         + "letters, digits or underscores). Ask whoever runs the sign-on to change it.");
             }

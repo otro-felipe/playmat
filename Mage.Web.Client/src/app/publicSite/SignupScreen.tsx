@@ -168,7 +168,7 @@ function CompleteSignup({ token }: { token: string }) {
       <div className={styles.formIntro}><h1>{t('public.chooseName')}</h1><p>{t('public.chooseNameHint', { app: APP_NAME })}</p></div>
       <form className={styles.form} onSubmit={submit}>
         <Field className={styles.field} label={t('public.username')} name="username" value={username} autoComplete="username" autoCapitalize="none" spellCheck={false}
-          minLength={3} maxLength={14} pattern="[A-Za-z0-9_]{3,14}" required hint={t('public.usernameHint')} aria-invalid={error === 'public.usernameTaken' ? true : undefined}
+          minLength={3} maxLength={14} pattern="(?![mM][cC][pP])[A-Za-z0-9_]{3,14}" required hint={t('public.usernameHint')} aria-invalid={error === 'public.usernameTaken' ? true : undefined}
           onChange={(event) => setUsername(event.target.value)} />
         <Field className={styles.field} label={t('public.password')} type="password" name="password" value={password} autoComplete="new-password"
           minLength={12} maxLength={128} required hint={t('public.passwordHint')} onChange={(event) => setPassword(event.target.value)} />

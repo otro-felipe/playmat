@@ -19,6 +19,17 @@ test('[PUB-AC-01] public home offers signup and password sign-in', async ({ page
   await expect(page.getByRole('heading', { name: 'Create your account' })).toBeVisible();
 });
 
+test('the tabletop moves on arrival and remains still for reduced motion', async ({ page }) => {
+  await page.route('**/api/playtesting/me', (route) => route.fulfill(anonymous));
+  await page.goto('/');
+  const art = page.locator('main section img').first();
+  await expect(page.getByRole('link', { name: 'Create account', exact: true })).toBeVisible();
+  expect(await art.evaluate((node) => getComputedStyle(node).animationName)).not.toBe('none');
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await expect(art).toHaveCSS('animation-name', 'none');
+  await expect(art).toHaveCSS('transform', 'none');
+});
+
 test('[PUB-AC-02] retries a failed verification email request with the address intact', async ({ page }) => {
   await page.route(`**${signupApi}/config`, (route) => route.fulfill({ json: { turnstileSiteKey: null } }));
   const accepted = { status: 202, json: {} };
@@ -89,6 +100,11 @@ test('[PUB-AC-03] submits a fragment token only when the player sets a password'
   });
   await page.goto(`/register/complete#token=${token}`);
   await expect(page.getByRole('heading', { name: 'Choose your player name' })).toBeVisible();
+  expect(usernames).toHaveLength(0);
+  await page.getByLabel('Username').fill('McPilot');
+  await page.getByLabel('Password').fill('Fixture password 412');
+  await page.getByRole('button', { name: 'Create account' }).click();
+  expect(await page.getByLabel('Username').evaluate((node: HTMLInputElement) => node.validity.patternMismatch)).toBe(true);
   expect(usernames).toHaveLength(0);
   await page.getByLabel('Username').fill('TakenName');
   await page.getByLabel('Password').fill('Fixture password 412');

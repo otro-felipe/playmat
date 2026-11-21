@@ -1,3 +1,5 @@
+import { formatEngineText } from './playerIdentity';
+import { usePlayerNames } from './usePlayerIdentity';
 import { Fragment } from 'react';
 import { manaClass } from './mana';
 import { cleanText } from './text';
@@ -7,7 +9,8 @@ import { cleanText } from './text';
  * Expects text already stripped of markup.
  */
 export function PromptText({ text }: { text: string }) {
-  const clean = cleanText(text);
+  const format = usePlayerNames();
+  const clean = cleanText(formatEngineText(text, format));
   const parts = clean.split(/(\{[^}]+\})/g).filter(Boolean);
   return (
     <>

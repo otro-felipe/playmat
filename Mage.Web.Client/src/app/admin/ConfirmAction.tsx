@@ -1,3 +1,4 @@
+import { PlayerLabel } from '../ui/PlayerLabel';
 import { useQuery } from '@tanstack/react-query';
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { Button } from '../ui/Button';
@@ -52,7 +53,7 @@ export function ConfirmAction({ title, what, preview, previewKey, confirmLabel, 
               : (
                 <div>
                   <p className={styles.alarm}>Signs out {affected.data!.length === 1 ? 'one player' : `${affected.data!.length} players`} now:</p>
-                  <ul className={styles.names}>{affected.data!.map((name) => <li key={name}>{name}</li>)}</ul>
+                  <ul className={styles.names}>{affected.data!.map((name) => <li key={name}><PlayerLabel name={name} /></li>)}</ul>
                 </div>
               )
       )}

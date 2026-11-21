@@ -1,3 +1,4 @@
+import { PlayerNames, useRosterNames } from '../ui/usePlayerIdentity';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { ChevronFirst, ChevronLast, GitBranch, Pause, Play, StepBack, StepForward } from 'lucide-react';
 import { useEffect, useEffectEvent, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
@@ -115,6 +116,7 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
   const manifest = manifestQuery.data;
   const privacy = manifest?.privacy;
   const perspectives = useMemo(() => perspectivesFor(manifest), [manifest]);
+  const formatName = useRosterNames([...perspectives.map((seat) => seat.name), ...(info?.players ?? []).map((seat) => seat.name)]);
   const viewerSeat = privacy?.viewerSeatId ?? manifest?.viewerSeatId;
   const perspective = perspectives.find((seat) => seat.seatId === requestedSeat)
     ?? perspectives.find((seat) => seat.seatId === viewerSeat)
@@ -397,7 +399,7 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
     onPrevious={previousMoment ? () => jump(previousMoment) : undefined} onNext={nextMoment ? () => jump(nextMoment) : undefined}
     loading={fetchingPlays || fetchingAnnotations || selectedAnnotation.isFetching} />;
   return (
-    <MatchErrorBoundary gameId={gameId} backLabel="Back to History" onBack={leave}>
+    <PlayerNames.Provider value={formatName}><MatchErrorBoundary gameId={gameId} backLabel="Back to History" onBack={leave}>
       <div className={styles.review} data-panel={manifest && analysisOpen && !mobilePanel ? 'open' : undefined} data-replay-cursor={currentCursor}>
         <div className={styles.table}>
           {manifest && (
@@ -411,7 +413,7 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
                   <label className={styles.perspective}>
                     {t('replay.perspective')}
                     <select value={perspective?.seatId ?? ''} onChange={(event) => { setPlaying(false); setRequestedSeat(event.target.value); }}>
-                      {perspectives.map((seat) => <option key={seat.seatId} value={seat.seatId}>{replayName(seat.name, t)}</option>)}
+                      {perspectives.map((seat) => <option key={seat.seatId} value={seat.seatId}>{replayName(seat.name, t, formatName)}</option>)}
                     </select>
                   </label>
                 )}
@@ -428,7 +430,7 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
               <ul className={styles.recordedDraws} aria-label={t('replay.draws')}>
                 {draws.flatMap(({ actorPlayerId, card, cursor }) => {
                   const name = frame.view.players?.find((player) => player.playerId === actorPlayerId)?.name;
-                  return name && card?.name ? [<li key={cursor}>{t('replay.drawn', { name: replayName(name, t), cards: card.name })}</li>] : [];
+                  return name && card?.name ? [<li key={cursor}>{t('replay.drawn', { name: replayName(name, t, formatName), cards: card.name })}</li>] : [];
                 })}
               </ul>
             )}
@@ -447,7 +449,7 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
                 aria-keyshortcuts="ArrowRight" aria-disabled={!canStepForward} data-replay-step-focus onClick={() => step(1)} />
               <IconButton label="Next turn" icon={<ChevronLast size={18} />} aria-keyshortcuts="Shift+ArrowRight" data-replay-step-focus onClick={() => go(turnJump(timeline, index, 1))} />
               <span className={styles.where}>
-                Turn {turn}{frame.view.activePlayerName ? ` · ${replayName(frame.view.activePlayerName, t)}` : ''}
+                Turn {turn}{frame.view.activePlayerName ? ` · ${replayName(frame.view.activePlayerName, t, formatName)}` : ''}
                 {!loaded && total ? <span className={styles.loading}> · loading {Math.round((timeline.read / total) * 100)}%</span> : null}
               </span>
               <label className={styles.speed}>
@@ -477,6 +479,6 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
             {panel}
           </aside>)}
       </div>
-    </MatchErrorBoundary>
+    </MatchErrorBoundary></PlayerNames.Provider>
   );
 }

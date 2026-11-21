@@ -26,11 +26,14 @@ test('[PM-REVIEW-UI-3] the history shows persisted analysis and separates seat a
     }], cursor: null }))));
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   render(<QueryClientProvider client={client}><MemoryRouter><HistoryScreen /></MemoryRouter></QueryClientProvider>);
+  const toggle = await screen.findByRole('button', { name: /Bob/ });
+  expect(toggle.getAttribute('aria-expanded')).toBe('false');
+  fireEvent.click(toggle);
   const heading = await screen.findByText('Partial analysis');
   expect(heading).toBeTruthy();
   expect(screen.getByText('3 of 8 plays reviewed')).toBeTruthy();
   fireEvent.click(screen.getByText('Ratings by player and game'));
-  const game = screen.getByRole('group', { name: 'Juego 3' });
+  const game = screen.getByRole('group', { name: 'Game 3' });
   expect(within(game).getByText('Alice')).toBeTruthy();
   expect(within(game).getByText('Bob')).toBeTruthy();
   expect(within(game).getByText('Normal')).toBeTruthy();

@@ -11,6 +11,7 @@ function invitationView(row) {
     tableId: row.table_id, roomId: row.room_id, format: row.format, mode: row.mode,
     ...(row.unlisted ? { unlisted: true } : {}),
     ...(row.mode === 'mcp' ? { chatMode: row.chat_mode } : {}),
+    ...(row.guest_owner_name ? { guestOwnerName: row.guest_owner_name } : {}),
     guestEngineName: row.invitee_name, guestDisplayName: row.guest_display_name, expiresAt: row.expires_at,
   }
 }
@@ -24,11 +25,25 @@ function displayName(value) {
   return name
 }
 
+// Runtime details are declared by the participating client, never inferred from an OAuth client name.
+function agentRuntime(actor, input) {
+  const { model, reasoningEffort } = input ?? {}
+  if ((model !== undefined || reasoningEffort !== undefined) && !actor.agent
+      || model !== undefined && (typeof model !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9.:/_+-]{0,95}$/.test(model))
+      || reasoningEffort !== undefined && (typeof reasoningEffort !== 'string' || !/^[a-z][a-z0-9_-]{0,23}$/.test(reasoningEffort))) {
+    throw new ProductError(400, 'Invalid agent model or reasoning effort')
+  }
+  return [model ?? null, reasoningEffort ?? null]
+}
+
+const guestOwner = `(SELECT a.username FROM agent_grants g JOIN accounts a ON a.id=g.account_id
+  WHERE g.engine_key=invitations.invitee_key) AS guest_owner_name`
+
 export function createInvitations(pool, identity, events) {
   async function list(actor, requestedLimit) {
     const limit = Math.max(1, Math.min(50, Number.parseInt(requestedLimit, 10) || 25))
     const { rows } = await pool.query(
-      `SELECT * FROM invitations WHERE expires_at>now() AND NOT unlisted AND (
+      `SELECT *, ${guestOwner} FROM invitations WHERE expires_at>now() AND NOT unlisted AND (
         (owner_account_id IS NULL AND invitee_key=$1)
         OR (owner_account_id=$2 AND (invitee_key IS NULL OR invitee_key=$1))
       ) ORDER BY expires_at DESC,table_id LIMIT $3`,
@@ -38,6 +53,7 @@ export function createInvitations(pool, identity, events) {
   }
 
   async function create(actor, data) {
+    const runtime = agentRuntime(actor, data)
     const format = normalizeFormat(data?.format)
     if (!isUuid(data?.tableId) || !isUuid(data.roomId) || !format || typeof data.password !== 'string'
       || data.password.length < 12 || data.password.length > 100) throw new ProductError(400, 'Provide a valid protected table')
@@ -67,10 +83,10 @@ export function createInvitations(pool, identity, events) {
     return transaction(pool, async db => {
       const invitee = friend?.engineName ?? null
       const { rows: [invite] } = await db.query(`INSERT INTO invitations(
-        table_id,room_id,format,creator_key,invitee_key,invitee_name,table_password,expires_at,mode,chat_mode,owner_account_id,unlisted
-      ) VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '48 hours',$8,$9,$10,$11) ON CONFLICT (table_id) DO NOTHING RETURNING *`,
+        table_id,room_id,format,creator_key,invitee_key,invitee_name,table_password,expires_at,mode,chat_mode,owner_account_id,unlisted,creator_model,creator_effort
+      ) VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '48 hours',$8,$9,$10,$11,$12,$13) ON CONFLICT (table_id) DO NOTHING RETURNING *, ${guestOwner}`,
       [data.tableId, data.roomId, format, normalize(actor.engineName), invitee ? normalize(invitee) : null,
-        invitee, data.password, mode, chatMode, ownerAccountId, unlisted])
+        invitee, data.password, mode, chatMode, ownerAccountId, unlisted, ...runtime])
       if (!invite) throw new ProductError(409, 'This table already has an invitation')
       if (ownerAccountId) {
         const { rows: [agent] } = await db.query(`SELECT engine_name FROM agent_grants
@@ -85,7 +101,7 @@ export function createInvitations(pool, identity, events) {
   }
 
   async function inspect(actor, tableId) {
-    const { rows: [invite] } = await pool.query(`SELECT * FROM invitations WHERE table_id=$1 AND expires_at>now()
+    const { rows: [invite] } = await pool.query(`SELECT *, ${guestOwner} FROM invitations WHERE table_id=$1 AND expires_at>now()
       AND (creator_key=$2
         OR (owner_account_id IS NULL AND (invitee_key=$2 OR (invitee_key IS NULL AND (
           (unlisted AND NOT $3) OR (mode='mcp' AND $3)))))
@@ -95,18 +111,21 @@ export function createInvitations(pool, identity, events) {
   }
 
   async function claim(actor, tableId, data) {
+    const runtime = agentRuntime(actor, data)
     const alias = displayName(data?.displayName)
     const key = normalize(actor.engineName)
     const fallback = actor.accountAgent === true ? 'Rival MCP' : actor.engineName
     // The claim chooses the authenticated engine identity once. Retries by that identity keep the same alias.
     const { rows: [invite] } = await pool.query(`UPDATE invitations SET
+      guest_model=CASE WHEN claimed_at IS NULL THEN $8 ELSE guest_model END,
+      guest_effort=CASE WHEN claimed_at IS NULL THEN $9 ELSE guest_effort END,
       claimed_at=COALESCE(claimed_at,now()), invitee_key=COALESCE(invitee_key,$2), invitee_name=COALESCE(invitee_name,$3),
       guest_display_name=CASE WHEN mode='mcp' THEN COALESCE(guest_display_name,$4,$7) ELSE guest_display_name END
       WHERE table_id=$1 AND creator_key<>$2 AND expires_at>now()
         AND (owner_account_id IS NULL OR owner_account_id=$6) AND (
         (mode='friend' AND (invitee_key=$2 OR (unlisted AND invitee_key IS NULL AND NOT $5)))
         OR (mode='mcp' AND $5 AND (invitee_key IS NULL OR invitee_key=$2))
-      ) RETURNING *`, [tableId, key, actor.engineName, alias, actor.agent, rivalAccount(actor), fallback])
+      ) RETURNING *, ${guestOwner}`, [tableId, key, actor.engineName, alias, actor.agent, rivalAccount(actor), fallback, ...runtime])
     return { ...invitationView(invite), password: invite.table_password }
   }
 

@@ -1,3 +1,4 @@
+import { authStyles } from './auth-styles.mjs'
 import { accountLimits, clientKey, createConcurrencyLimit, createLimits, productLimitGroup, productLimits } from './limits.mjs'
 import { createServer } from 'node:http'
 import { randomUUID } from 'node:crypto'
@@ -6,7 +7,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import pg from 'pg'
 import { createArchive } from './archive.mjs'
-import { setUnlimitedMatchHistory } from './history-retention.mjs'
+import { resetMatchHistory, setUnlimitedMatchHistory } from './history-retention.mjs'
 import { createTheoryStore, evaluateTheoryTactics } from './theory-store.mjs'
 import { createIdentity, identityView } from './identity.mjs'
 import { createSignup } from './signup.mjs'
@@ -60,12 +61,10 @@ function loginPage(res, next, { siteKey, status = 200, error } = {}) {
     <title>Thoughtseize · Entrar</title>
     ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>' : ''}
     <style>
-    :root{color-scheme:dark;font:16px system-ui;background:#171c18;color:#f5f3ed}
+    ${authStyles}
     body{margin:0;min-height:100dvh;display:grid;place-items:center}
-    main{box-sizing:border-box;width:min(92vw,25rem);padding:2rem;background:#222b24;border:1px solid #405043;border-radius:1rem}
+    main{width:min(92vw,25rem)}
     h1{margin-top:0}form,label{display:grid;gap:.65rem}form{gap:1rem}
-    input,button{border:1px solid #687568;border-radius:.5rem;padding:.8rem;color:inherit;font:inherit;background:#18201a}
-    a{color:#c6dfaf}button{cursor:pointer;background:#c6dfaf;color:#182018;font-weight:650}p{color:#ffc4a8}
     </style></head><body><main><h1>Thoughtseize</h1>
     ${error ? `<p role="alert">${escapeHtml(error)}</p>` : ''}
     <form action="/login" method="post"><input type="hidden" name="next" value="${escapeHtml(next)}">
@@ -126,6 +125,7 @@ export async function createProduct({
     await pool.query('CREATE SCHEMA IF NOT EXISTS ' + schema)
     await pool.query(await readFile(resolve(directory, 'schema.sql'), 'utf8'))
     await pool.query(await readFile(resolve(directory, 'oauth-schema.sql'), 'utf8'))
+    await pool.query(await readFile(resolve(directory, 'player-identities.sql'), 'utf8'))
     await pool.query(await readFile(resolve(directory, 'review-schema.sql'), 'utf8'))
     await pool.query(await readFile(resolve(directory, 'review-permissions.sql'), 'utf8'))
     await pool.query(await readFile(resolve(directory, 'theory-schema.sql'), 'utf8'))
@@ -307,7 +307,7 @@ export async function createProduct({
       if (method === 'seat') {
         const input = await body(req, 'json', 4096)
         const { operation, accountId, engineName, key, data, expiresAt } = input ?? {}
-        if (!isUuid(accountId) || typeof engineName !== 'string' || !/^[a-z0-9_-]{3,24}$/i.test(engineName)
+        if (!isUuid(accountId) || typeof engineName !== 'string' || !/^(?:mcp_)?[a-z0-9_-]{3,24}$/i.test(engineName)
           || typeof key !== 'string' || key.length > 200) throw new ProductError(400, 'Invalid game decision event')
         const notice = { accountId, engineName, key, name: 'game.decision.required' }
         if (operation === 'invalidate') await events.invalidate(pool, notice)
@@ -345,6 +345,10 @@ export async function createProduct({
     gateAccount(res, group, actor, releases)
     const endpoint = path.slice('/api/playtesting/'.length)
     if (endpoint === 'me' && req.method === 'GET') return send(res, 200, identityView(actor))
+    if (endpoint === 'player-identities' && req.method === 'GET') {
+      requireScope(actor, 'play')
+      return send(res, 200, await id.publicPlayers(url.searchParams.get('names')))
+    }
     const reviewAccess = /^review\/privacy\/matches\/([^/]+)$/.exec(endpoint)
     if (reviewAccess) {
       requireScope(actor, 'history')
@@ -491,6 +495,7 @@ export async function createProduct({
   return {
     server, provisionHuman: id.provisionHuman, provisionAgent: id.provisionAgent, revokeAgent: id.revokeAgent,
     importProvisionBundle: id.importProvisionBundle,
+    resetMatchHistory: (username, throughMs) => resetMatchHistory(pool, username, throughMs),
     setUnlimitedMatchHistory: (usernames, unlimited) => setUnlimitedMatchHistory(pool, usernames, unlimited),
     archiveGames: archive.archiveGames,
     startMcpEvents: events.start,

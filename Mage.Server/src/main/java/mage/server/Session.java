@@ -318,7 +318,9 @@ public class Session {
 
     public String connectUser(String userName, String password, String restoreSessionId) throws MageException {
         // check username
-        String errorMessage = validateUserNameLength(userName);
+        // A product-managed agent prefixes the owner's complete name. Ordinary player limits still apply.
+        boolean namedAgent = userName != null && userName.equals(signedOnUserName) && TrustedHeaderAuth.isMcpSeat(userName);
+        String errorMessage = namedAgent ? null : validateUserNameLength(userName);
         if (errorMessage != null) {
             return errorMessage;
         }

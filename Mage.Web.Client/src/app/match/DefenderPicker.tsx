@@ -1,3 +1,4 @@
+import { PlayerLabel } from '../ui/PlayerLabel';
 import { Shield, Swords, UserRound } from 'lucide-react';
 import type { DefenderOption } from '../../core/game/multiplayer';
 import { useT } from '../i18n';
@@ -24,8 +25,8 @@ export function DefenderPicker({ attacker, options, onPick }: {
             <button type="button" className={styles.option} onClick={() => onPick(option.id)} data-defender-id={option.id}>
               {option.kind === 'player' ? <UserRound size={18} aria-hidden="true" /> : <Shield size={18} aria-hidden="true" />}
               <span className={styles.name}>
-                {option.name}
-                {option.controllerName && <small>{option.controllerName}’s {option.kind}</small>}
+                {option.kind === 'player' ? <PlayerLabel name={option.name} /> : option.name}
+                {option.controllerName && <small><PlayerLabel name={option.controllerName} />’s {option.kind}</small>}
               </span>
               {option.value !== null && (
                 <span className={styles.value} aria-label={option.kind === 'player' ? `${option.value} life` : `${option.value} ${option.kind === 'battle' ? 'defense' : 'loyalty'}`}>

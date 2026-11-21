@@ -157,7 +157,7 @@ test('[PM-AC-18] a Playmat account connects its library and rival without a prec
     return f.request('/internal/verify', { Authorization: 'Bearer ' + accessToken })
   }
   const identity = await (await authenticate(tokens.access_token)).json()
-  assert.match(identity.engineName, /^mcp_[a-f0-9]{10}$/)
+  assert.equal(identity.engineName, 'mcp_Alice')
   assert.equal(identity.agent, true)
   assert.equal(identity.accountAgent, true)
   assert.deepEqual(identity.scopes, ['play', 'library', 'chat'])

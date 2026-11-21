@@ -1,41 +1,41 @@
 /*
  * Playmat world: the app is the player's own mat.
  * Dyed neoprene ground, screen-printed ivory ink for zones and labels, a stitched edge,
- * and one amber reserved for "your decision now".
+ * and warm orange for decisions and identity.
  */
 :root {
   color-scheme: dark;
 
   /* neoprene, darkest to lightest */
-  --mat-950: #070c0a;
-  --mat-900: #0b120f;
-  --mat-800: #0f1714;
-  --mat-700: #142019;
-  --mat-600: #1c2d27;
-  --mat-500: #27403a;
-  --mat-400: #3a5a51;
+  --mat-950: #101012;
+  --mat-900: #171719;
+  --mat-800: #1b1b1d;
+  --mat-700: #242426;
+  --mat-600: #303033;
+  --mat-500: #404044;
+  --mat-400: #535358;
 
   /* screen-print ink (ivory) and its printed densities */
-  --ink: #e9e4d6;
-  --ink-strong: #f6f2e8;
-  --ink-soft: rgb(233 228 214 / 0.78);
-  --ink-dim: rgb(233 228 214 / 0.62);
-  --ink-faint: rgb(233 228 214 / 0.3);
-  --ink-ghost: rgb(233 228 214 / 0.12);
-  --thread: #d4ccb6;
+  --ink: #e9e6e3;
+  --ink-strong: #faf7f4;
+  --ink-soft: rgb(233 230 227 / 0.78);
+  --ink-dim: rgb(233 230 227 / 0.62);
+  --ink-faint: rgb(233 230 227 / 0.3);
+  --ink-ghost: rgb(233 230 227 / 0.12);
+  --thread: #999493;
 
   /* the only highlight: your decision now */
-  --decision: #f0b13d;
-  --decision-strong: #ffc65a;
-  --decision-ink: #1d1406;
-  --decision-glow: rgb(240 177 61 / 0.35);
+  --decision: #ff794d;
+  --decision-strong: #ff9b78;
+  --decision-ink: #21120e;
+  --decision-glow: rgb(255 121 77 / 0.35);
 
   /* damage, destructive actions, errors */
-  --oxblood: #8a2f2a;
-  --oxblood-ink: #f0b3a9;
+  --oxblood: #933734;
+  --oxblood-ink: #ffb9ae;
   /* oxblood lit for strokes drawn over the dark mat (attack arrows) */
-  --oxblood-lit: #c9473b;
-  --danger-text: #e5877c;
+  --oxblood-lit: #e65e53;
+  --danger-text: #ff938a;
 
   /* positive outcomes (victory, legal) */
   --sage: #8fc19a;
@@ -49,15 +49,15 @@
   --copper-rgb: 224 116 63;
 
   /* colour channels, for tints: rgb(var(--ink-rgb) / 0.1) */
-  --ink-rgb: 233 228 214;
-  --ink-strong-rgb: 246 242 232;
-  --mat-rgb: 7 12 10;
-  --void-rgb: 4 7 6;
+  --ink-rgb: 233 230 227;
+  --ink-strong-rgb: 250 247 244;
+  --mat-rgb: 16 16 18;
+  --void-rgb: 10 10 11;
   --shade-rgb: 0 0 0;
   --gloss-rgb: 255 255 255;
-  --decision-rgb: 240 177 61;
-  --oxblood-rgb: 138 47 42;
-  --danger-rgb: 229 135 124;
+  --decision-rgb: 255 121 77;
+  --oxblood-rgb: 147 55 52;
+  --danger-rgb: 255 147 138;
 
   /* physical objects on the mat: card paper and backs, the default sleeve, a print's dye */
   --paper: #e9e4d6;
@@ -67,8 +67,8 @@
   --card-void: #111;
   --card-blank-top: #2b2a26;
   --card-blank-bottom: #1c1b18;
-  --sleeve-default: #20302b;
-  --print-dye: #2f6b58;
+  --sleeve-default: #302d2d;
+  --print-dye: #65534d;
 
   /* mana pips */
   --mana-w: #f3ecd0;
@@ -149,5 +149,5 @@
   --dur-print: 620ms;
 
   /* printed grain of the mat (authored SVG noise) */
-  --mat-grain: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.9  0 0 0 0 0.95  0 0 0 0 0.9  0 0 0 0.09 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  --mat-grain: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.9  0 0 0 0 0.9  0 0 0 0 0.9  0 0 0 0.033 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
 }

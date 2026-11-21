@@ -30,6 +30,13 @@ async function start() {
   const unlimitedHistoryUsers = process.env.PLAYMAT_UNLIMITED_HISTORY_USERS?.trim()
   if (unlimitedHistoryUsers) await product.setUnlimitedMatchHistory(unlimitedHistoryUsers.split(','), true)
   await product.archiveGames({ markInterrupted: true })
+  const reset = process.env.PLAYMAT_HISTORY_RESET?.trim()
+  if (reset) {
+    const [username, timestamp, ...extra] = reset.split('@')
+    if (extra.length || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(timestamp)) throw Error('Invalid history cutoff')
+    const { hidden, remainingClosed } = await product.resetMatchHistory(username, Date.parse(timestamp))
+    console.log(`Playmat history reset applied: ${hidden} hidden, ${remainingClosed} newer closed matches`)
+  }
   product.server.listen(Number(process.env.PRODUCT_PORT ?? '8790'), '127.0.0.1')
   product.startMcpEvents()
   const archive = setInterval(() => product.archiveGames().catch(() => console.warn('Playmat archive scan delayed')), 5000)

@@ -1,3 +1,5 @@
+import { PlayerLabel } from '../ui/PlayerLabel';
+import { playerLabelText } from '../ui/playerIdentity';
 import { BookOpen, Bot, Eye, Link2, Lock, MessageSquare, Plus, UserRound } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -208,18 +210,21 @@ function TableRow({ table, mcpInvite, children }: {
           {table.tableName}
         </h3>
         <p className={styles.tableMeta}>
-          {table.gameType} · {(table.deckType ?? '').replace(/^Constructed - /, '')} · {mcpInvite ? table.controllerName?.split(', ')[0] : table.controllerName}
+          {table.gameType} · {(table.deckType ?? '').replace(/^Constructed - /, '')} · {(mcpInvite ? (table.controllerName ?? '').split(', ').slice(0, 1) : (table.controllerName ?? '').split(', ')).map((name, index) => (
+            <span key={index}>{index > 0 && ', '}<PlayerLabel name={name} /></span>
+          ))}
         </p>
       </div>
       <ul className={styles.seats} aria-label="Seats">
         {(table.seats ?? []).map((seat, index) => {
           const mcpSeat = mcpInvite && (!seat.playerName || seat.playerName === mcpInvite.guestEngineName);
-          const label = (mcpSeat && seat.playerName ? mcpInvite.guestDisplayName : seat.playerName) || (mcpSeat ? 'Rival MCP' : 'Open');
+          const owner = mcpSeat ? mcpInvite.guestOwnerName : undefined;
+          const label = seat.playerName ? playerLabelText(seat.playerName, owner, mcpSeat || undefined) : (mcpSeat ? 'Rival MCP' : 'Open');
           return (
             <li key={index} className={seat.playerName ? styles.seatTaken : styles.seatOpen} title={seat.playerName ? label : 'Open seat'}>
-              {mcpSeat || (seat.playerType && seat.playerType !== 'HUMAN') ? <Bot size={14} aria-hidden="true" /> : <UserRound size={14} aria-hidden="true" />}
-              <span className={styles.seatName}>{label}</span>
-              {mcpSeat && seat.playerName && <span className={styles.mcpSeatLabel}>MCP</span>}
+              {mcpSeat || /^mcp_/i.test(seat.playerName ?? '') || (seat.playerType && seat.playerType !== 'HUMAN') ? <Bot size={14} aria-hidden="true" /> : <UserRound size={14} aria-hidden="true" />}
+              <span className={styles.seatName}>{seat.playerName
+                ? <PlayerLabel name={seat.playerName} displayName={owner} isMcp={mcpSeat || undefined} /> : label}</span>
               {!mcpSeat && seat.playerName && (!seat.playerType || seat.playerType === 'HUMAN') && <NameLevel name={seat.playerName} className={styles.seatLevel} />}
             </li>
           );

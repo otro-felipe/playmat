@@ -43,6 +43,14 @@ function validName(name) {
   return typeof name === 'string' && usernamePattern.test(name)
 }
 
+function validHumanName(name) {
+  return validName(name) && !/^mcp/i.test(name)
+}
+
+function validEngineName(name) {
+  return validName(name) || typeof name === 'string' && /^mcp_[a-z0-9_-]{3,24}$/i.test(name)
+}
+
 function validScopes(scopes) {
   return Array.isArray(scopes) && scopes.length > 0 && scopes.length <= allScopes.length
     && scopes.every(scope => allScopes.includes(scope))
@@ -52,13 +60,13 @@ export async function prepareProvisionBundle(bundle) {
   const { accounts, agents, revocations } = validateProvisionList(bundle)
   const users = []
   for (const user of accounts) {
-    if (!validName(user?.username) || typeof user.password !== 'string' || user.password.length < 12 || user.password.length > 128) {
+    if (!validHumanName(user?.username) || typeof user.password !== 'string' || user.password.length < 12 || user.password.length > 128) {
       throw new ProductError(400, 'Invalid credential for a manual account')
     }
     users.push({ username: user.username, passwordHash: await hashPassword(user.password) })
   }
   const verified = agents.map(agent => {
-    if (!validName(agent?.owner) || !validName(agent.engineName) || typeof agent.token !== 'string'
+    if (!validName(agent?.owner) || !validName(agent.engineName) || /^mcp_/i.test(agent.engineName) || typeof agent.token !== 'string'
       || !digestPattern.test(agent.token) || !validScopes(agent.scopes)) {
       throw new ProductError(400, 'Invalid manual agent credential')
     }
@@ -87,21 +95,18 @@ async function nameExists(db, name) {
 
 export async function ensureOAuthAgent(db, accountId) {
   await db.query('SELECT pg_advisory_xact_lock(hashtext($1), 0)', [accountId])
-  const account = await db.query('SELECT 1 FROM accounts WHERE id=$1 AND enabled FOR SHARE', [accountId])
-  if (!account.rowCount) throw new ProductError(401, 'Inicia sesión en Thoughtseize')
+  const { rows: [account] } = await db.query('SELECT username FROM accounts WHERE id=$1 AND enabled FOR SHARE', [accountId])
+  if (!account) throw new ProductError(401, 'Inicia sesión en Thoughtseize')
   const { rows: [existing] } = await db.query(`SELECT engine_key FROM agent_grants
     WHERE account_id=$1 AND oauth_managed AND revoked_at IS NULL`, [accountId])
   if (existing) return existing.engine_key
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    // The default XMage login configuration accepts at most 14 characters.
-    const engineName = 'mcp_' + randomBytes(5).toString('hex')
-    await lockName(db, engineName)
-    if (await nameExists(db, engineName)) continue
-    await db.query(`INSERT INTO agent_grants(digest,account_id,engine_name,engine_key,scopes,oauth_managed)
-      VALUES($1,$2,$3,$3,$4,true)`, [randomBytes(32).toString('hex'), accountId, engineName, allScopes])
-    return engineName
-  }
-  throw new ProductError(503, 'No se pudo conectar el agente de Thoughtseize')
+  const engineName = 'mcp_' + account.username
+  const engineKey = normalize(engineName)
+  await lockName(db, engineName)
+  if (await nameExists(db, engineName)) throw new ProductError(409, 'El nombre del asiento MCP ya está ocupado.')
+  await db.query(`INSERT INTO agent_grants(digest,account_id,engine_name,engine_key,scopes,oauth_managed)
+    VALUES($1,$2,$3,$4,$5,true)`, [randomBytes(32).toString('hex'), accountId, engineName, engineKey, allScopes])
+  return engineKey
 }
 
 export function createIdentity(pool, insecureCookie, resolveOAuth = async () => null) {
@@ -118,13 +123,14 @@ export function createIdentity(pool, insecureCookie, resolveOAuth = async () => 
   }
 
   async function provisionHuman(name, password) {
-    if (!usernamePattern.test(name) || typeof password !== 'string' || password.length < 12 || password.length > 128) {
+    if (!validHumanName(name) || typeof password !== 'string' || password.length < 12 || password.length > 128) {
       throw new ProductError(400, 'Provide a valid username and a password between 12 and 128 characters')
     }
     const hash = await hashPassword(password)
     return transaction(pool, async db => {
       await lockName(db, name)
       await assertAvailable(db, name)
+      await assertAvailable(db, 'mcp_' + name)
       const id = randomUUID()
       await db.query('INSERT INTO accounts(id,username,username_key,password_hash) VALUES ($1,$2,$3,$4)', [id, name, normalize(name), hash])
       return id
@@ -132,7 +138,7 @@ export function createIdentity(pool, insecureCookie, resolveOAuth = async () => 
   }
 
   async function provisionAgent(owner, engineName, scopes, token = newToken()) {
-    if (!usernamePattern.test(engineName) || !digestPattern.test(token)
+    if (!validName(engineName) || /^mcp_/i.test(engineName) || !digestPattern.test(token)
       || !Array.isArray(scopes) || scopes.length < 1 || scopes.some(scope => !allScopes.includes(scope))) {
       throw new ProductError(400, 'Provide a distinct engine name, token and valid grant scopes')
     }
@@ -184,11 +190,14 @@ export function createIdentity(pool, insecureCookie, resolveOAuth = async () => 
       for (const name of names) await lockName(db, name)
       for (const user of accounts) {
         if (await nameExists(db, user.username)) continue
+        await assertAvailable(db, 'mcp_' + user.username)
+        if (!validHumanName(user.username)) throw new ProductError(400, 'El prefijo MCP está reservado.')
         await db.query('INSERT INTO accounts(id,username,username_key,password_hash) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING',
           [randomUUID(), user.username, normalize(user.username), user.passwordHash])
       }
       for (const agent of agents) {
         if (await nameExists(db, agent.engineName)) continue
+        if (/^mcp_/i.test(agent.engineName)) throw new ProductError(400, 'El prefijo mcp_ está reservado para el asiento de la cuenta.')
         const { rows: [owner] } = await db.query('SELECT id FROM accounts WHERE username_key=$1 AND enabled', [normalize(agent.owner)])
         if (!owner) throw new ProductError(400, 'Manual agent owner is unavailable')
         await db.query(`INSERT INTO agent_grants(digest,account_id,engine_name,engine_key,scopes)
@@ -219,6 +228,7 @@ export function createIdentity(pool, insecureCookie, resolveOAuth = async () => 
     if (typeof username !== 'string' || !publicUsernamePattern.test(username)) {
       throw new ProductError(400, 'El usuario debe tener entre 3 y 14 letras, números o guiones bajos.')
     }
+    if (!validHumanName(username)) throw new ProductError(400, 'El prefijo MCP está reservado.')
     if (normalize(username) === 'admin') throw new ProductError(409, 'Ese usuario ya está ocupado.')
     if (typeof password !== 'string' || password.length < 12 || password.length > 128) {
       throw new ProductError(400, 'La contraseña debe tener entre 12 y 128 caracteres.')
@@ -232,7 +242,7 @@ export function createIdentity(pool, insecureCookie, resolveOAuth = async () => 
         WHERE token_digest=$1 AND expires_at>now() RETURNING email`, [tokenDigest])
       if (!link) throw new ProductError(410, expired)
       await lockName(db, username)
-      if (await nameExists(db, username)) throw new ProductError(409, 'Ese usuario ya está ocupado.')
+      if (await nameExists(db, username) || await nameExists(db, 'mcp_' + username)) throw new ProductError(409, 'Ese usuario ya está ocupado.')
       const accountId = randomUUID()
       const { rowCount } = await db.query(`INSERT INTO accounts(id,username,username_key,password_hash,email)
         VALUES ($1,$2,$3,$4,$5) ON CONFLICT (email) DO NOTHING`, [accountId, username, normalize(username), hash, link.email])
@@ -274,7 +284,7 @@ export function createIdentity(pool, insecureCookie, resolveOAuth = async () => 
   }
 
   async function fromEngine(name) {
-    if (!name || !usernamePattern.test(name)) return null
+    if (!validEngineName(name)) return null
     const { rows: [human] } = await pool.query('SELECT id, username FROM accounts WHERE username_key=$1 AND enabled', [normalize(name)])
     if (human) return actor(human.id, human.username, human.username, allScopes)
     const { rows: [agent] } = await pool.query(
@@ -282,6 +292,19 @@ export function createIdentity(pool, insecureCookie, resolveOAuth = async () => 
       [normalize(name)],
     )
     return agent ? actor(agent.id, agent.username, agent.engine_name, agent.scopes, true) : null
+  }
+
+  async function publicPlayers(requested) {
+    const names = requested?.split(',')
+    if (!names?.length || names.length > 50 || !names.every(validEngineName)) {
+      throw new ProductError(400, 'Supply up to 50 valid player names')
+    }
+    const { rows } = await pool.query(`SELECT username AS name, username AS "displayName", false AS "isMcp"
+      FROM accounts WHERE username_key=ANY($1::text[])
+      UNION ALL
+      SELECT g.engine_name, a.username, true FROM agent_grants g JOIN accounts a ON a.id=g.account_id
+      WHERE g.engine_key=ANY($1::text[])`, [names.map(normalize)])
+    return { players: rows }
   }
 
   async function recoveryPrincipal(actor) {
@@ -316,7 +339,7 @@ export function createIdentity(pool, insecureCookie, resolveOAuth = async () => 
     return rowCount === 1
   }
 
-  return { provisionHuman, provisionAgent, revokeAgent, importProvisionBundle, signIn, signOut, resolve, fromEngine, completeSignup,
+  return { publicPlayers, provisionHuman, provisionAgent, revokeAgent, importProvisionBundle, signIn, signOut, resolve, fromEngine, completeSignup,
     recoveryPrincipal, validateRecoveryPrincipal }
 }
 
@@ -325,7 +348,7 @@ function actor(accountId, username, engineName, scopes, agent = false) {
 }
 
 export function viewerNames(actor) {
-  return [...new Set([actor.engineName, actor.username].map(normalize))]
+  return [...new Set([actor.engineName, ...(actor.previousSeatNames ?? []), actor.username].map(normalize))]
 }
 
 export function identityView(actor) {

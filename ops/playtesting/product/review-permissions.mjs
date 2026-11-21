@@ -1,3 +1,4 @@
+import { viewerNames } from './identity.mjs'
 import { isUuid, normalize, ProductError, transaction } from './decks.mjs'
 
 const reviewCaptureVersion = 2
@@ -72,8 +73,7 @@ export function createReviewPermissions(pool) {
       : await ownerAccounts(db, humanKeys, false)
     const perspectives = players.map(player => ({ seatId: player.engine_key, name: player.name,
       owned: owners.get(player.engine_key) === actor.accountId }))
-    const viewer = perspectives.find(seat => seat.owned && seat.seatId === normalize(actor.engineName))
-      ?? perspectives.find(seat => seat.owned && seat.seatId === normalize(actor.username))
+    const viewer = viewerNames(actor).map(name => perspectives.find(seat => seat.owned && seat.seatId === name)).find(Boolean)
     if (!viewer) throw new ProductError(404, 'Match not found')
     const atEnd = match.status === 'completed'
     const ownersKnown = humanKeys.length > 0 && humanKeys.every(key => owners.get(key))

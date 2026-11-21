@@ -1,3 +1,4 @@
+import { PlayerLabel } from '../ui/PlayerLabel';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Eye, RotateCcw } from 'lucide-react';
 import { useState } from 'react';
@@ -54,7 +55,7 @@ function Item({ api, entry, now }: { api: AdminApi; entry: FeedbackEntry; now: n
   }
   return (
     <li className={styles.report}>
-      <p><span className={styles.tag}>{entry.type}</span> <strong>{entry.title}</strong> · {entry.userName} · {describeAge(entry.createdAt ?? 0, now)}</p>
+      <p><span className={styles.tag}>{entry.type}</span> <strong>{entry.title}</strong> · <PlayerLabel name={entry.userName ?? ''} /> · {describeAge(entry.createdAt ?? 0, now)}</p>
       {entry.message && entry.message !== entry.title && <blockquote>{entry.message}</blockquote>}
       {entry.context && <p className={styles.quiet}>{entry.context}</p>}
       {entry.handledBy && <p className={styles.quiet}>{entry.status} by {entry.handledBy}{entry.note ? `: ${entry.note}` : ''}</p>}

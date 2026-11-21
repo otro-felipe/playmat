@@ -6,8 +6,8 @@ import type { Plugin } from 'vite'
 const PUBLIC_SHELL = ['/favicon.svg', '/icon-192.png', '/icon-512.png', '/icon-maskable-512.png', '/apple-touch-icon.png']
 
 // the mat's colours (src/app/styles/tokens.css): --mat-800 is the page background and the browser's theme colour
-const THEME_COLOR = '#0f1714'
-const BACKGROUND_COLOR = '#0f1714'
+const THEME_COLOR = '#1b1b1d'
+const BACKGROUND_COLOR = '#1b1b1d'
 
 /** The web app manifest; the name is the build setting VITE_APP_NAME (src/app/brand.ts). */
 export function webManifest(name: string) {

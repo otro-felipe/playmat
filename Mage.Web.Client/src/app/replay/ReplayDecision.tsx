@@ -1,3 +1,4 @@
+import { usePlayerNames } from '../ui/usePlayerIdentity';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { Check, Star } from 'lucide-react';
@@ -34,7 +35,8 @@ export function ReviewRating({ category, label = false }: { category: ReviewCate
 
 export function DecisionTitle({ moment }: { moment: ReviewMoment }) {
   const t = useT();
-  const { fullTitle, cards } = decisionPresentation(moment, t);
+  const formatName = usePlayerNames();
+  const { fullTitle, cards } = decisionPresentation(moment, t, formatName);
   if (!cards.length) return fullTitle;
   const byName = new Map(cards.map((card) => [card.name, card]));
   const alternatives = [...byName.keys()].filter(Boolean).sort((a, b) => b.length - a.length);
@@ -73,8 +75,9 @@ function PreviewName({ card }: { card: ReviewReference }) {
 
 export function RecordedDecision({ moment }: { moment: ReviewMoment }) {
   const t = useT();
-  const { shortTitle, targets } = decisionPresentation(moment, t);
-  const modes = [moment.actual?.castMode, ...(moment.actual?.modes ?? [])].flatMap((value) => value ? [cleanDecisionText(value, t)] : []);
+  const formatName = usePlayerNames();
+  const { shortTitle, targets } = decisionPresentation(moment, t, formatName);
+  const modes = [moment.actual?.castMode, ...(moment.actual?.modes ?? [])].flatMap((value) => value ? [cleanDecisionText(value, t, formatName)] : []);
   const mana = Object.entries(moment.actual?.paidMana ?? {}).map(([symbol, amount]) => `${amount} ${symbol}`).join(' + ');
   return (
     <section className={styles.decision} aria-label={t('replay.decision')}>
@@ -111,8 +114,9 @@ export function DecisionContext({ context, handDecision }: {
   handDecision: boolean;
 }) {
   const t = useT();
+  const formatName = usePlayerNames();
   const choiceLabel = (value: string) => {
-    const label = cleanDecisionText(value, t);
+    const label = cleanDecisionText(value, t, formatName);
     if (context.choiceKind !== 'use') return label;
     if (/^yes$/i.test(label)) return t('replay.context.answerYes');
     if (/^no$/i.test(label)) return t('replay.context.answerNo');
@@ -129,7 +133,7 @@ export function DecisionContext({ context, handDecision }: {
   const optionCardIds = new Set(options.flatMap((option) => [option.id, option.card?.id]));
   const cards = (context.cards ?? []).filter((card) => !card.id || !optionCardIds.has(card.id));
   const labels = options.length === 0 ? (context.options ?? []).map(choiceLabel).filter(Boolean) : [];
-  const prompt = context.prompt && cleanDecisionText(context.prompt, t);
+  const prompt = context.prompt && cleanDecisionText(context.prompt, t, formatName);
   const selectedText = context.selectedText && choiceLabel(context.selectedText);
   const pass = context.passKind ? [
     t(`replay.context.pass.${context.passKind}`),
@@ -169,7 +173,7 @@ export function DecisionContext({ context, handDecision }: {
             ))}
             {cards.map((card, index) => (
               <ChoiceItem key={card.id ?? index} chosen={!!card.id && selected.has(card.id)}>
-                {card.kind === 'player' ? replayName(card.name, t) : <PreviewName card={card} />}
+                {card.kind === 'player' ? replayName(card.name, t, formatName) : <PreviewName card={card} />}
               </ChoiceItem>
             ))}
             {labels.map((label, index) => <li key={`label-${index}`}>{label}</li>)}
@@ -241,10 +245,11 @@ function DecisionMarker({ items, fraction, current, onMoment }: {
   onMoment: (moment: ReviewMoment) => void;
 }) {
   const t = useT();
+  const formatName = usePlayerNames();
   const [first] = items;
   const markerName = (moment: RatedMoment) => t('replay.decisionMarker', {
     rating: t(`replay.rating.${moment.category}`),
-    play: decisionPresentation(moment, t).fullTitle,
+    play: decisionPresentation(moment, t, formatName).fullTitle,
   });
   const style = { '--decision-position': `${fraction * 100}%` } as CSSProperties;
   if (items.length === 1) {
@@ -268,7 +273,7 @@ function DecisionMarker({ items, fraction, current, onMoment }: {
           <DropdownMenu.Item key={item.cursor} className={styles.markerMenuItem}
             aria-current={item.cursor === current ? 'step' : undefined} onSelect={() => onMoment(item)}>
             <ReviewRating category={item.category} />
-            <span>{decisionPresentation(item, t).fullTitle}</span>
+            <span>{decisionPresentation(item, t, formatName).fullTitle}</span>
           </DropdownMenu.Item>
         ))}
       </DropdownMenu.Content>

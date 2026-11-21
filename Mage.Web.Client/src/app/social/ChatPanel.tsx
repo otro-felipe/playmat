@@ -1,3 +1,5 @@
+import { PlayerLabel } from '../ui/PlayerLabel';
+import { playerLabelText } from '../ui/playerIdentity';
 import { Send } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Link } from 'react-router-dom';
@@ -167,7 +169,7 @@ function Line({ line, me, onWhisper }: { line: ChatLine; me: string; onWhisper(n
       <li className={[styles.line, kindClass].join(' ')}>
         {line.segments.map((segment, index) => (segment.kind === 'text'
           ? <PromptText key={index} text={segment.text} />
-          : <span key={index} className={styles.name}>{segment.name}</span>))}
+          : <span key={index} className={styles.name}><PlayerLabel name={segment.name} /></span>))}
       </li>
     );
   }
@@ -178,8 +180,8 @@ function Line({ line, me, onWhisper }: { line: ChatLine; me: string; onWhisper(n
       <time className={styles.time} dateTime={new Date(line.at).toISOString()}>{time}</time>
       {prefix && <span className={styles.whisperTag}>{prefix}</span>}
       {other && other !== me
-        ? <button type="button" className={styles.who} onClick={() => onWhisper(other)} title={`Whisper to ${other}`}>{other}</button>
-        : <span className={styles.who}>{other || 'You'}</span>}
+        ? <button type="button" className={styles.who} onClick={() => onWhisper(other)} title={`Whisper to ${playerLabelText(other)}`}><PlayerLabel name={other} /></button>
+        : <span className={styles.who}><PlayerLabel name={other || 'You'} /></span>}
       <Flair name={other || me} />
       <span className={styles.text}>
         {splitInviteLinks(line.text, PUBLIC_ORIGIN).map((part, index) => (part.kind === 'invite'

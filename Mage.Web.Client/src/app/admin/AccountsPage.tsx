@@ -1,3 +1,4 @@
+import { PlayerLabel } from '../ui/PlayerLabel';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Ban, Download, KeyRound, Mic, MicOff, Power, ShieldCheck, Trash2, Unlock } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -58,7 +59,7 @@ function AccountList({ api, onOpen }: { api: AdminApi; onOpen(name: string): voi
           {(page.data?.accounts ?? []).map((account) => (
             <tr key={account.name}>
               <td>
-                <button type="button" className={styles.linkButton} onClick={() => onOpen(account.name!)}>{account.name}</button>
+                <button type="button" className={styles.linkButton} onClick={() => onOpen(account.name!)}><PlayerLabel name={account.name ?? ''} /></button>
                 {account.email && <div className={styles.quiet}>{account.email}{account.emailVerified ? '' : ` · ${t('admin.accounts.notConfirmed')}`}</div>}
               </td>
               <td><StatusChips account={account} now={now} /></td>
@@ -134,7 +135,7 @@ function Account({ api, role, name, onBack }: { api: AdminApi; role: StaffRole; 
       <div className={styles.block}>
         <BackLink onBack={onBack} />
         <div className={styles.sectionHead}>
-          <h2>{account.name}</h2>
+          <h2><PlayerLabel name={account.name ?? ''} /></h2>
           <StatusChips account={account} now={now} />
         </div>
         <p className={styles.quiet}>
@@ -179,7 +180,7 @@ function Account({ api, role, name, onBack }: { api: AdminApi; role: StaffRole; 
         {error && <p className={styles.error} role="alert">{error}</p>}
         {code && (
           <div className={styles.confirm} role="status">
-            <h3>Reset code for {name}</h3>
+            <h3>Reset code for <PlayerLabel name={name} /></h3>
             <p className={styles.code}>{code.code}</p>
             <p>The player enters it under <strong>Forgot password</strong> with {code.email}. It works until {formatDate(code.expiresAt ?? 0)}, once.
               {code.emailed ? ' It was emailed to them as well.' : ' It was not emailed: pass it on yourself. It is not shown again.'}</p>
@@ -244,11 +245,11 @@ function Account({ api, role, name, onBack }: { api: AdminApi; role: StaffRole; 
 
       <section className={styles.block} aria-labelledby="account-reports">
         <h2 id="account-reports">Reports</h2>
-        {(data.reports?.length ?? 0) === 0 ? <p className={styles.quiet}>No reports by or about {name}.</p> : (
+        {(data.reports?.length ?? 0) === 0 ? <p className={styles.quiet}>No reports by or about <PlayerLabel name={name} />.</p> : (
           <ul className={styles.reports}>
             {data.reports!.map((report) => (
               <li key={report.id} className={styles.report}>
-                <p>{report.reporter === name ? <>Reported <strong>{report.reported}</strong></> : <>Reported by {report.reporter}</>} for <strong>{report.reason}</strong> · {describeAge(report.createdAt ?? 0, now)}{report.open ? '' : ` · closed: ${report.resolution || 'no note'}`}</p>
+                <p>{report.reporter === name ? <>Reported <strong><PlayerLabel name={report.reported ?? ''} /></strong></> : <>Reported by <PlayerLabel name={report.reporter ?? ''} /></>} for <strong>{report.reason}</strong> · {describeAge(report.createdAt ?? 0, now)}{report.open ? '' : ` · closed: ${report.resolution || 'no note'}`}</p>
                 {report.details && <blockquote>{report.details}</blockquote>}
               </li>
             ))}
@@ -269,7 +270,7 @@ function Account({ api, role, name, onBack }: { api: AdminApi; role: StaffRole; 
 
       <section className={styles.block} aria-labelledby="account-audit">
         <h2 id="account-audit">History</h2>
-        {(data.audit?.length ?? 0) === 0 ? <p className={styles.quiet}>Staff haven't acted on {name}.</p> : (
+        {(data.audit?.length ?? 0) === 0 ? <p className={styles.quiet}>Staff haven't acted on <PlayerLabel name={name} />.</p> : (
           <table className={styles.table}>
             <thead><tr><th>When</th><th>By</th><th>What</th><th>Detail</th><th>Reason</th></tr></thead>
             <tbody>

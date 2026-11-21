@@ -1,3 +1,4 @@
+import { usePlayerNames } from '../ui/usePlayerIdentity';
 import { useMemo, useRef } from 'react';
 import type { CardView, GameView } from '../../protocol/generated/views';
 import { publicCardName, publicTargetLabels } from '../../core/game/publicTargets';
@@ -10,7 +11,7 @@ import { CardFace } from '../ui/CardFace';
 import { zoneKeys } from './boardModel';
 import { useFlip } from './flip';
 import { useMatchUi } from './matchUi';
-import { seatDisplayName, type SeatDisplayNames } from './seatDisplayNames';
+import { seatAlias, type SeatDisplayNames } from './seatDisplayNames';
 import styles from './StackZone.module.css';
 
 export interface StackZoneProps {
@@ -30,7 +31,8 @@ export interface StackZoneProps {
 export function StackZone({ items, view = null, seatDisplayNames, clickable, selected, sleeveOf, onClick, originOf }: StackZoneProps) {
   // a spell keeps its card's identity (abilities have no card of their own): it is the card that left the hand
   const keys = useMemo(() => zoneKeys(items.map((item) => (isStackAbility(item) ? { id: item.id } : item))), [items]);
-  const targets = useMemo(() => items.map((item) => publicTargetLabels(item, view).map((label) => seatDisplayName(label, seatDisplayNames))), [items, view, seatDisplayNames]);
+  const formatName = usePlayerNames();
+  const targets = useMemo(() => items.map((item) => publicTargetLabels(item, view).map((label) => formatName(label, seatAlias(label, seatDisplayNames)))), [items, view, seatDisplayNames, formatName]);
   if (items.length === 0) return null;
   return (
     <section className={styles.zone} aria-label={`Stack, ${items.length} ${items.length === 1 ? 'object' : 'objects'}`}>

@@ -174,14 +174,15 @@ describe('GameLog (#249)', () => {
       });
     });
     rerender(<GameLog {...props} seatDisplayNames={{ mcp_fixture: 'Spell Pilot' }} />);
-    expect(drawer.getByText('Spell Pilot:')).toBeTruthy();
+    expect(drawer.getByText('Spell Pilot')).toBeTruthy();
+    expect(drawer.getByText('MCP')).toBeTruthy();
     expect(drawer.queryByText('mcp_fixture:')).toBeNull();
     expect(drawer.getByText('Roberto:')).toBeTruthy();
     expect(drawer.getByText('mcp_fixture is the other player.')).toBeTruthy();
 
     fireEvent.click(drawer.getByRole('button', { name: /^Log$/ }));
     const log = within(screen.getByRole('complementary', { name: 'Game log' }));
-    expect(log.getByText('Spell Pilot', { exact: true })).toBeTruthy();
+    expect(log.getAllByText('Spell Pilot')).toHaveLength(2);
     expect(connection.api.chatJoin).toHaveBeenCalledTimes(1);
   });
 });
@@ -195,7 +196,8 @@ test('chat text keeps accents, literal entities and HTML as text while the MCP o
   act(() => connection.rpc.emit({ method: 'CHATMESSAGE', objectId: 'chat1', messageId: 20, data: {
     username: 'mcp_1234567890', messageType: 'TALK', message: 'Ahora s&iacute; 😈 &amp;iacute; [abc] {G} &lt;img src=x onerror=alert(1)&gt;',
   } }));
-  await screen.findByText('Rakún:');
+  await screen.findByText('Rakún');
+  expect(screen.getByText('MCP')).toBeTruthy();
   expect(container.textContent).toContain('Ahora sí 😈 &iacute; [abc] {G} <img src=x onerror=alert(1)>');
   expect(container.querySelector('img[src="x"], [onerror], script')).toBeNull();
   expect(container.querySelector('.ms-g')).toBeNull();

@@ -317,17 +317,21 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
   tool('cancel_sequence', 'Cancel unapplied steps without undoing moves already accepted by XMage.', { gameId: Uuid, sequenceId: Uuid }, 'play',
     (args) => getSeat().cancelSequence(args));
 
+  const agentRuntime = {
+    model: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9.:/_+-]{0,95}$/).optional().describe('Your actual playing model ID if known.'),
+    reasoningEffort: z.string().regex(/^[a-z][a-z0-9_-]{0,23}$/).optional().describe('Your configured reasoning effort if known, such as high.'),
+  };
   tool('list_joinable_games', 'List only tables with an available invitation for this account.', { limit: z.number().int().min(1).max(50).default(25) },
     'play', (args) => fromProduct('list_joinable_games', args), true);
   tool('create_game', 'Create a private, unrated best-of-three table as this agent seat.', {
     format: Format, name: z.string().trim().min(1).max(80), deck: Deck,
-    guestEngineName: z.string().trim().min(1).max(36),
-  }, 'play', async ({ guestEngineName, ...args }) => getSeat().engine.createGame(args,
-    (record) => fromProduct('create_game_invite', { ...record, guestEngineName })));
+    guestEngineName: z.string().trim().min(1).max(36), ...agentRuntime,
+  }, 'play', async ({ guestEngineName, model, reasoningEffort, ...args }) => getSeat().engine.createGame(args,
+    (record) => fromProduct('create_game_invite', { ...record, guestEngineName, model, reasoningEffort })));
   tool('join_game', 'Join a private table from its Thoughtseize invite link or table ID. Use a legal deck and an optional seat display name.', {
     tableId: Uuid.optional(), inviteLink: z.url().max(2048).optional(),
-    displayName: z.string().trim().min(1).max(24).optional(), deck: Deck,
-  }, 'play', async ({ tableId, inviteLink, displayName, deck }) => {
+    displayName: z.string().trim().min(1).max(24).optional(), deck: Deck, ...agentRuntime,
+  }, 'play', async ({ tableId, inviteLink, displayName, model, reasoningEffort, deck }) => {
       if (Boolean(tableId) === Boolean(inviteLink)) throw new ToolError('invalid_invite', 'Provide either the invite link or the table ID.');
       if (inviteLink) {
         const url = new URL(inviteLink);
@@ -340,7 +344,7 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
       }
       const invitation = await fromProduct('inspect_game_invite', { tableId });
       return getSeat().engine.joinGame({ tableId, deck }, invitation,
-        () => fromProduct('get_game_invite', { tableId, displayName }));
+        () => fromProduct('get_game_invite', { tableId, displayName, model, reasoningEffort }));
     });
   tool('start_match', 'Start your own private table when it is ready.', { tableId: Uuid }, 'play',
     (args) => getSeat().engine.startMatch(args.tableId));

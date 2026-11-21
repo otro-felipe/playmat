@@ -1,3 +1,6 @@
+import { PlayerLabel } from '../ui/PlayerLabel';
+import { playerLabelText } from '../ui/playerIdentity';
+import { usePlayerIdentity } from '../ui/usePlayerIdentity';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Heart, Swords } from 'lucide-react';
 import { COMMANDER_DAMAGE_LETHAL } from '../../core/game/commander';
@@ -87,7 +90,8 @@ function useRopeSeconds(player: PlayerView): number {
 /** A player's seat: who they are, their life, counters, floating mana and clock. */
 export function PlayerPlate({ player, displayName, isMe, targetable, selected, deciding, sleeve, onClick, toPay, payable, onPay, commanderDamage = [], outOfRange = false, look }: PlayerPlateProps) {
   const t = useT();
-  const name = displayName ?? player.name ?? '';
+  const identity = usePlayerIdentity(player.name ?? '');
+  const name = playerLabelText(player.name ?? '', identity?.displayName ?? displayName, identity?.isMcp);
   const life = player.life ?? 0;
   // a player out of the game (lost, conceded or left: leaving loses) has no life worth showing, however low it went
   const out = !!player.hasLeft;
@@ -169,7 +173,7 @@ export function PlayerPlate({ player, displayName, isMe, targetable, selected, d
       </PlateFrame>
       <div className={styles.info}>
         <div className={styles.name}>
-          {name}
+          <PlayerLabel name={player.name ?? ''} displayName={displayName} />
           <LevelBadge level={look?.level} />
           {look?.flair === 'heart' && <Heart className={styles.flair} size={14} fill="currentColor" role="img" aria-label={t('shell.supporter')} />}
           {out && <span className={styles.range}>{t('match.plate.lost')}</span>}

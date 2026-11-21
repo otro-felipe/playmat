@@ -737,6 +737,41 @@ test('[PM-AC-21] history retains twenty completed matches per account across its
   assert.equal((await list(exempt)).matches.length, 21)
 })
 
+test('a personal history reset hides closed matches across owned seats, preserves shared replays and counts new matches', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t, new Map(), { purgeExpiredHistory: true })
+  const felipe = await signIn(f, 'Felipe')
+  const rival = await signIn(f, 'OtherPlayer')
+  const agent = { Authorization: 'Bearer ' + await f.product.provisionAgent('Felipe', 'Pilot', ['history']) }
+  await f.product.setUnlimitedMatchHistory(['Felipe'], true)
+  const cutoff = Date.now() - 5000
+  const shared = await historyMatch(f, ['Felipe', 'OtherPlayer'], cutoff - 1000)
+  const solo = await historyMatch(f, ['Pilot', 'Guest'], cutoff - 500)
+  const live = await historyMatch(f, ['Felipe', 'OtherPlayer'], cutoff - 50, { active: true })
+  const later = await historyMatch(f, ['Felipe', 'OtherPlayer'], cutoff + 2000)
+  await f.product.archiveGames()
+  const root = '/api/playtesting/'
+  const list = async headers => (await (await f.path(root + 'matches', { headers })).json()).matches.map(m => m.id)
+  const counts = await f.product.resetMatchHistory('fELiPe', cutoff)
+  assert.deepEqual(counts, { hidden: 2, remainingClosed: 1 })
+  assert.deepEqual(await list(felipe), [later.id, live.id])
+  assert.deepEqual(await list(agent), [later.id, live.id])
+  assert.deepEqual(await list(rival), [later.id, live.id, shared.id])
+  const stats = await (await f.path(root + 'stats', { headers: felipe })).json()
+  assert.equal(stats.groups.reduce((n, g) => n + g.games, 0), 1)
+  for (const path of ['matches/' + shared.id, 'replays/' + shared.games[0], 'review/matches/' + shared.id]) {
+    assert.equal((await f.path(root + path, { headers: felipe })).status, 404)
+  }
+  assert.equal((await f.path(root + 'replays/' + shared.games[0], { headers: rival })).status, 200)
+  await f.product.archiveGames({ maintainHistory: true })
+  await withTestDatabase(f, async db => {
+    assert.equal((await db.query('SELECT id FROM matches WHERE id=$1', [solo.id])).rowCount, 1)
+    assert.equal((await db.query('SELECT unlimited_match_history FROM accounts WHERE username_key=$1', ['felipe'])).rows[0].unlimited_match_history, true)
+  })
+  assert.deepEqual(await f.product.resetMatchHistory('Felipe', cutoff), { hidden: 0, remainingClosed: 1 })
+  await assert.rejects(f.product.resetMatchHistory('Unknown', cutoff), { status: 404 })
+  await assert.rejects(f.product.resetMatchHistory('Felipe', Date.now() + 60000), { status: 400 })
+})
+
 test('[PM-AC-21] opt-in purge removes only unretained closed matches and retries replay deletion safely', { skip: !databaseUrl }, async t => {
   const objects = new Map()
   const deletionAttempts = []
@@ -1437,11 +1472,12 @@ test('[PM-AC-12] grouped stats use finalized games and the requesting player’s
   await f.product.archiveGames()
   let response = await f.path('/api/playtesting/stats?format=Pioneer', { headers: alice })
   assert.equal(response.status, 200)
-  assert.deepEqual(await response.json(), { groups: [] })
+  assert.deepEqual(await response.json(), { groups: [], totals: { matches: 0, games: 0, wins: 0 } })
   await writeFile(join(f.replayDirectory, match + '.match.json'), JSON.stringify({ matchId: match, endedAt: Date.now(), winner: 'Alice' }))
   await f.product.archiveGames()
   response = await f.path('/api/playtesting/stats?format=Pioneer', { headers: alice })
-  const { groups: [group] } = await response.json()
+  const { groups: [group], totals } = await response.json()
+  assert.deepEqual(totals, { matches: 1, games: 2, wins: 1 })
   assert.equal(group.games, 2)
   assert.equal(group.wins, 1)
   assert.equal(group.onPlay, 2)
@@ -1449,13 +1485,30 @@ test('[PM-AC-12] grouped stats use finalized games and the requesting player’s
   assert.equal(group.averageMulligans, 1)
   assert.equal(group.averageTurns, 4)
   assert.doesNotMatch(JSON.stringify(group), /private:Bob/)
-  assert.deepEqual(await (await f.path('/api/playtesting/stats', { headers: carol })).json(), { groups: [] })
+  assert.deepEqual(await (await f.path('/api/playtesting/stats', { headers: carol })).json(), { groups: [], totals: { matches: 0, games: 0, wins: 0 } })
+  // More deck versions than the chart can return must still count in the dashboard.
+  await withTestDatabase(f, db => db.query(
+    `WITH extra AS (
+       INSERT INTO games(id,match_id,started_at,game_number,winner,status,archive_state)
+       SELECT gen_random_uuid(), $1, 1, n+2, 'Alice', 'completed', 'ready' FROM generate_series(1,101) n
+       RETURNING id
+     )
+     INSERT INTO game_players(game_id,engine_key,engine_name,human,deck_signature)
+     SELECT id,'alice','Alice',true,id::text FROM extra`, [match]))
+  const capped = await (await f.path('/api/playtesting/stats?format=Pioneer', { headers: alice })).json()
+  assert.equal(capped.groups.length, 100)
+  assert.deepEqual(capped.totals, { matches: 1, games: 103, wins: 102 })
+  const otherFormat = await (await f.path('/api/playtesting/stats?format=Modern', { headers: alice })).json()
+  assert.deepEqual(otherFormat.totals, { matches: 0, games: 0, wins: 0 })
+
 })
 
 test('social discovery classifies real delegated identities without guessing from names or deleting progress', { skip: !databaseUrl }, async t => {
   const f = await fixture(t)
   await signIn(f, 'SocialOwner')
-  await signIn(f, 'mcp_abcdef1234') // a real human can have a technical-looking name
+  // Human created before the prefix became reserved retains their existing name.
+  await withTestDatabase(f, db => db.query(`INSERT INTO accounts(id,username,username_key,password_hash)
+    VALUES($1,'mcp_abcdef1234','mcp_abcdef1234','disabled-fixture')`, [randomUUID()]))
   const grant = await f.product.provisionAgent('SocialOwner', 'LegacyRival', ['play', 'chat'])
   const before = await f.path('/internal/verify?scope=play', { headers: { Authorization: 'Bearer ' + grant } })
   assert.equal(before.status, 200)
@@ -1592,6 +1645,10 @@ test('[PM-SIGNUP-AC-02] rejects expired and reused links and preserves valid lin
   assert.equal((await f.request('claim@example.test')).status, 202)
   const token = f.token()
   assert.equal((await f.complete(token, 'a'.repeat(15))).status, 400)
+  for (const reserved of ['mcp', 'McpAlice', 'MCP_Bob']) {
+    assert.equal((await f.complete(token, reserved)).status, 400)
+    await assert.rejects(f.product.provisionHuman(reserved, password), { status: 400 })
+  }
   assert.equal((await f.complete(token, 'NewPlayer', 'short')).status, 400)
   assert.equal((await f.complete(token, 'existing')).status, 409)
   const results = await Promise.all([f.complete(token, 'NewPlayer'), f.complete(token, 'OtherPlayer')])
@@ -1619,4 +1676,85 @@ test('[PM-SIGNUP-AC-03] limits delivery and releases failed delivery for retry',
   const off = await fixture(t)
   assert.equal((await signIn(off, 'ExistingUser')).Cookie.startsWith('playmat-session='), true)
   assert.equal((await off.path(`${signupPath}/request`, json('POST', {}, { email: 'new@example.test' }))).status, 503)
+})
+
+
+test('match participants retain their own declared model across retries, archive scans and invitation removal', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const alice = await signIn(f, 'Alice')
+  await signIn(f, 'Bob')
+  const seat = async (owner, name) => ({ Authorization: 'Bearer ' + await f.product.provisionAgent(owner, name, ['play','history']) })
+  const host = await seat('Alice', 'AgentAlice')
+  const guest = await seat('Bob', 'OldRival')
+  const tableId = randomUUID()
+  const gameId = randomUUID()
+  const invites = '/api/playtesting/invites'
+  const payload = { tableId, roomId: randomUUID(), password, format: 'Pioneer', guestEngineName: 'OldRival' }
+  const claim = data => f.path(invites + '/' + tableId + '/claim', json('POST', guest, data))
+  const runtime = { model: 'vendor/model-2.1', reasoningEffort: 'high' }
+  assert.equal((await f.path(invites, json('POST', alice, { ...payload, ...runtime }))).status, 400)
+  assert.equal((await f.path(invites, json('POST', host, { ...payload, ...runtime }))).status, 201)
+  assert.equal((await claim({ reasoningEffort: '<bad>' })).status, 400)
+  assert.equal((await claim({ model: 'model-B' })).status, 200)
+  assert.equal((await claim({ model: 'different', reasoningEffort: 'high' })).status, 200)
+  const info = await (await f.path(invites + '/' + tableId, { headers: host })).json()
+  assert.equal(info.guestOwnerName, 'Bob')
+  await addReplay(f, tableId, gameId, ['AgentAlice', 'OldRival'])
+  await f.product.archiveGames()
+  await withTestDatabase(f, db => db.query('DELETE FROM invitations WHERE table_id=$1', [tableId]))
+  const replay = await (await f.path('/api/playtesting/replays/' + gameId, { headers: host })).json()
+  assert.equal(replay.info.viewerName, 'agentalice')
+  assert.deepEqual(replay.info.players, [
+    { name: 'AgentAlice', displayName: 'Alice', human: true, isMcp: true, ...runtime },
+    { name: 'OldRival', displayName: 'Bob', human: true, isMcp: true, model: 'model-B', reasoningEffort: null },
+  ])
+  const directory = '/api/playtesting/player-identities?names=Alice,OLDRIVAL,Unknown'
+  assert.equal((await f.path(directory)).status, 401)
+  const lookup = await (await f.path(directory, { headers: alice })).json()
+  assert.deepEqual(lookup.players.sort((a,b) => a.name.localeCompare(b.name)), [
+    { name: 'Alice', displayName: 'Alice', isMcp: false },
+    { name: 'OldRival', displayName: 'Bob', isMcp: true },
+  ])
+})
+
+test('upgrading a random OAuth seat keeps existing credentials, history perspective and recovery ownership', { skip: !databaseUrl }, async t => {
+  const issuer = 'https://playmat.example.test'
+  const f = await fixture(t, new Map(), { publicUrl: issuer })
+  const { newToken, digest } = await import('./identity.mjs')
+  const owner = await signIn(f, 'FourteenPlayer')
+  const other = await signIn(f, 'Other')
+  const old = 'mcp_a001b002c0'
+  await assert.rejects(f.product.provisionAgent('Other', 'MCP_FourteenPlayer', ['play']), { status: 400 })
+  await assert.rejects(f.product.importProvisionBundle({ agents: [{ owner: 'Other', engineName: 'mcp_FourteenPlayer', tokenDigest: digest(newToken()), scopes: ['play'] }] }), { status: 400 })
+  const access = newToken()
+  const connection = randomUUID()
+  const recovery = randomUUID()
+  const headers = { Authorization: 'Bearer ' + access }
+  await withTestDatabase(f, async db => {
+    const { rows: [account] } = await db.query("SELECT id FROM accounts WHERE username='FourteenPlayer'")
+    await db.query(`INSERT INTO agent_grants(digest,account_id,engine_name,engine_key,scopes,oauth_managed,recovery_id)
+      VALUES($1,$2,$3,$3,ARRAY['play','history'],true,$4)`, [digest(newToken()), account.id, old, recovery])
+    await db.query(`INSERT INTO oauth_connections(id,account_id,engine_key,client_id,audience,scopes_approved,refresh_digest,expires_at)
+      VALUES($1,$2,$3,'client',$4,ARRAY['play','history'],$5,now()+interval '1 hour')`,
+    [connection, account.id, old, issuer + '/mcp', digest(newToken())])
+    await db.query("INSERT INTO oauth_access_tokens VALUES($1,$2,now()+interval '1 hour')", [digest(access), connection])
+  })
+  const legacy = await historyMatch(f, [old, 'Other'], Date.now())
+  await f.product.archiveGames()
+  const migrate = await readFile(new URL('./player-identities.sql', import.meta.url), 'utf8')
+  await withTestDatabase(f, async db => { await db.query(migrate); await db.query(migrate) })
+  const identity = await (await f.path('/internal/verify', { headers })).json()
+  assert.equal(identity.engineName, 'mcp_FourteenPlayer')
+  assert.equal(identity.recoverySeatId, 'agent:' + recovery)
+  assert.equal(identity.connectionId, connection)
+  const history = await (await f.path('/api/playtesting/matches', { headers })).json()
+  assert.equal(history.matches[0].id, legacy.id)
+  const game = history.matches[0].games[0]
+  assert.equal(game.viewerName, old)
+  assert.deepEqual(game.players.find(seat => seat.name === old),
+    { name: old, human: true, isMcp: true, displayName: 'FourteenPlayer', model: null, reasoningEffort: null })
+  assert.equal((await f.path('/api/playtesting/replays/' + game.gameId, { headers: other })).status, 200)
+  assert.equal((await f.path('/api/playtesting/replays/' + game.gameId, { headers: owner })).status, 404)
+  const privacy = await (await f.path(reviewPrivacy + '/matches/' + legacy.id, { headers })).json()
+  assert.equal(privacy.viewerSeatId, old)
 })

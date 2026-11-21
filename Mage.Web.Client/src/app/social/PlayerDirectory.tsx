@@ -1,3 +1,5 @@
+import { PlayerLabel } from '../ui/PlayerLabel';
+import { playerLabelText } from '../ui/playerIdentity';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { MessageCircle, Star, StarOff } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -96,9 +98,9 @@ function DirectoryRow({ player }: { player: DirectoryPlayer }) {
   const isMe = name.toLowerCase() === me.toLowerCase();
   return (
     <li className={[styles.player, player.online ? '' : styles.away].join(' ')}>
-      <button type="button" className={styles.identity} onClick={() => useLobby.getState().openProfile(name)} title={`${name}'s profile`}>
+      <button type="button" className={styles.identity} onClick={() => useLobby.getState().openProfile(name)} title={`${playerLabelText(name)}'s profile`}>
         <Avatar name={name} size="sm" />
-        <span className={styles.playerName}>{name}<LevelBadge level={player.level} />{isMe ? ' (you)' : ''}</span>
+        <span className={styles.playerName}><PlayerLabel name={name} /><LevelBadge level={player.level} />{isMe ? ' (you)' : ''}</span>
         {friend && <Star className={styles.star} size={14} aria-label="Friend" />}
       </button>
       <span className={styles.status}>
@@ -108,10 +110,10 @@ function DirectoryRow({ player }: { player: DirectoryPlayer }) {
       {!isMe && (
         <span className={styles.rowActions}>
           {player.online && (
-            <IconButton label={`Whisper to ${name}`} icon={<MessageCircle size={16} />} onClick={() => useLobby.getState().whisper(name)} />
+            <IconButton label={`Whisper to ${playerLabelText(name)}`} icon={<MessageCircle size={16} />} onClick={() => useLobby.getState().whisper(name)} />
           )}
           <IconButton
-            label={friend ? `Remove ${name} from friends` : `Add ${name} to friends`}
+            label={friend ? `Remove ${playerLabelText(name)} from friends` : `Add ${playerLabelText(name)} to friends`}
             icon={friend ? <StarOff size={16} /> : <Star size={16} />}
             onClick={() => (friend ? useSocial.getState().removeFriend(name) : useSocial.getState().addFriend(name))}
           />

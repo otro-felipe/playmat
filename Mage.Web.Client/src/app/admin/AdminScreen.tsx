@@ -1,3 +1,4 @@
+import { PlayerLabel } from '../ui/PlayerLabel';
 import * as Tabs from '@radix-ui/react-tabs';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Ban, Eye, KeyRound, LogOut, Mic, MicOff, Power, Trash2 } from 'lucide-react';
@@ -395,7 +396,7 @@ function Players({ api, role }: { api: AdminApi; role: StaffRole }) {
             return (
               // a player who just left keeps a row without a session for a while, next to their new one
               <tr key={user.sessionId || `${name}-${index}`}>
-                <td>{name}{muted && <span className={styles.tag}>muted</span>}</td>
+                <td><PlayerLabel name={name} />{muted && <span className={styles.tag}>muted</span>}</td>
                 <td>{user.host}</td>
                 <td>{user.userState}</td>
                 <td className={styles.clip}>{user.gameInfo}</td>

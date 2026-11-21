@@ -196,7 +196,7 @@ test('[PM-AC-04] the play entry shows the connection guide and remembers the hos
 
 test('[PM-AC-04] the MCP alias is visible when seated and Start follows the engine seat state', async () => {
   tables = [{ tableId, tableName: 'Pioneer fixture', controllerName: 'Host', tableState: 'WAITING', seats: [{ playerName: 'Host', playerType: 'HUMAN' }, {}] }];
-  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ tableId, mode: 'mcp', guestEngineName: 'FixtureAgent', guestDisplayName: 'Angels' })));
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ tableId, mode: 'mcp', guestEngineName: 'FixtureAgent', guestDisplayName: 'Angels', guestOwnerName: 'Felipe' })));
   const { page, update } = mount();
   await page.findByText('Waiting for Rival MCP');
   const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined);
@@ -207,6 +207,8 @@ test('[PM-AC-04] the MCP alias is visible when seated and Start follows the engi
   tables = [{ ...tables[0], tableState: 'READY_TO_START', seats: [{ playerName: 'Host', playerType: 'HUMAN' }, { playerName: 'FixtureAgent', playerType: 'HUMAN' }] }];
   update();
   await page.findByText('Rival MCP ready');
-  expect(page.getByText('Angels')).toBeTruthy();
+  expect(page.getByText('Felipe')).toBeTruthy();
+  expect(page.getByText('MCP')).toBeTruthy();
+  expect(page.queryByText('Angels')).toBeNull();
   expect((page.getByRole('button', { name: 'Start' }) as HTMLButtonElement).disabled).toBe(false);
 });

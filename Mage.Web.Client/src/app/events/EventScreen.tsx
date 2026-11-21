@@ -1,3 +1,4 @@
+import { PlayerLabel } from '../ui/PlayerLabel';
 import { useQuery } from '@tanstack/react-query';
 import { Eye, Hammer, LogOut, Trophy } from 'lucide-react';
 import { useState } from 'react';
@@ -80,7 +81,7 @@ export function EventScreen() {
       {finished && players[0] && (players[0].points ?? 0) > (players[1]?.points ?? -1) && (
         <div className={styles.winner}>
           <Trophy size={28} aria-hidden="true" />
-          <p><strong>{players[0].name}</strong> wins the event</p>
+          <p><strong><PlayerLabel name={players[0].name ?? ''} /></strong> wins the event</p>
         </div>
       )}
 
@@ -94,7 +95,7 @@ export function EventScreen() {
               {players.map((player, index) => (
                 <tr key={player.name} className={player.name === userName ? styles.meRow : undefined}>
                   <td>{index + 1}</td>
-                  <td className={styles.player}>{player.name}{player.quit && !finished ? ' (left)' : ''}</td>
+                  <td className={styles.player}><PlayerLabel name={player.name ?? ''} />{player.quit && !finished ? ' (left)' : ''}</td>
                   <td className={styles.points}>{player.points ?? 0}</td>
                   <td className={styles.results}>{player.results || '—'}</td>
                   <td className={styles.now}>{STATE_TEXT[player.state ?? ''] ?? player.state ?? ''}</td>

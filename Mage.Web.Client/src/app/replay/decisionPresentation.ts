@@ -1,3 +1,5 @@
+import type { FormatPlayerName } from '../ui/usePlayerIdentity';
+import { playerLabelText } from '../ui/playerIdentity';
 import { parseLogHtml, segmentsText } from '../../core/game/gameLog';
 import type { MessageKey, Translate } from '../i18n';
 import type { ReviewMoment, ReviewReference } from './reviewData';
@@ -27,25 +29,26 @@ const directedTitles: Partial<Record<string, MessageKey>> = {
   block: 'replay.action.blockWhat',
 };
 
-export function replayName(name: string, t: Translate) {
-  return /^mcp_[a-f0-9]+$/i.test(name) ? t('replay.agent') : name;
+export function replayName(name: string, t: Translate, format: FormatPlayerName = playerLabelText) {
+  const label = format(name);
+  return label === 'MCP' ? t('replay.agent') : label;
 }
 
-export function cleanDecisionText(text: string, t: Translate) {
+export function cleanDecisionText(text: string, t: Translate, format?: FormatPlayerName) {
   return segmentsText(parseLogHtml(text))
-    .replace(/\bmcp_[a-f0-9]+\b/gi, t('replay.agent'))
+    .replace(/\bmcp_\w+\b/gi, (name) => replayName(name, t, format))
     .replace(/\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
-export function decisionPresentation(moment: ReviewMoment, t: Translate) {
+export function decisionPresentation(moment: ReviewMoment, t: Translate, format?: FormatPlayerName) {
   const { actual } = moment;
   const card = actual?.cardRef ?? (actual?.card ? { name: actual.card } : null);
   const targets = (actual?.targets ?? []).map((target) => target.kind === 'player'
-    ? { ...target, name: replayName(target.name, t) } : target);
+    ? { ...target, name: replayName(target.name, t, format) } : target);
   const actingName = moment.decisionActor ?? moment.actor;
-  const actor = actingName ? replayName(actingName, t) : t('replay.player');
+  const actor = actingName ? replayName(actingName, t, format) : t('replay.player');
   const window = actual?.kind === 'omission' ? moment.evidence?.window : undefined;
   const affected = moment.affectedActor ?? (actual?.kind === 'discard' ? moment.actor : undefined);
   const forcedDiscard = actual?.kind === 'discard' && card && affected && affected !== actingName;
@@ -57,8 +60,8 @@ export function decisionPresentation(moment: ReviewMoment, t: Translate) {
   const targetNames = targets.map(({ name }) => name).join(', ');
   const title = titleKey
     ? t(directedKey ?? titleKey, { actor, ...(card ? { card: card.name } : {}), ...(directedKey ? { targets: targetNames } : {}),
-      ...(forcedDiscard ? { affected: replayName(affected, t) } : {}) })
-    : cleanDecisionText(moment.text ?? actual?.text ?? '', t) || t('replay.decision');
+      ...(forcedDiscard ? { affected: replayName(affected, t, format) } : {}) })
+    : cleanDecisionText(moment.text ?? actual?.text ?? '', t, format) || t('replay.decision');
   const targetPart = titleKey && !directedKey && targetNames ? ` ${t('replay.action.targets', { targets: targetNames })}` : '';
   const source = actual?.sourceCardRef;
   const causePart = titleKey && source ? ` ${t('replay.action.causedBy', { source: source.name })}` : '';

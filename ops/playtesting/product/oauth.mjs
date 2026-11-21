@@ -1,3 +1,4 @@
+import { authStyles } from './auth-styles.mjs'
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
 import { digest, ensureOAuthAgent, newToken } from './identity.mjs'
 import { isUuid, ProductError, transaction } from './decks.mjs'
@@ -32,11 +33,9 @@ function html(res, title, content, redirectOrigin = '') {
   })
   res.end(`<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
     <title>${title} · Thoughtseize</title><style>
-    :root{color-scheme:dark;font:16px system-ui;background:#171c18;color:#f5f3ed}
-    main{box-sizing:border-box;max-width:min(92vw,32rem);margin:8dvh auto;padding:2rem;background:#222b24;border:1px solid #405043;border-radius:1rem}
+    ${authStyles}
+    main{max-width:min(92vw,32rem);margin:8dvh auto}
     form,label{display:grid;gap:.65rem}form+form{margin-top:1rem}
-    button{border:1px solid #687568;border-radius:.5rem;padding:.75rem;color:inherit;background:#18201a;font:inherit}
-    button{cursor:pointer}button[value="allow"]{background:#c6dfaf;color:#182018;font-weight:650}
     </style><main><h1>${title}</h1>${content}</main></html>`)
 }
 
@@ -290,6 +289,8 @@ export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions
 
   async function resolve(accessDigest) {
     const { rows: [row] } = await pool.query(`SELECT a.id,a.username,g.engine_name,c.id AS connection_id,
+      ARRAY(SELECT legacy.engine_key FROM agent_grants legacy WHERE legacy.successor_key=g.engine_key
+        AND legacy.account_id=g.account_id AND legacy.oauth_managed) AS previous_seats,
       g.scopes AS current_scopes,c.scopes_approved,c.client_id FROM oauth_access_tokens t
       JOIN oauth_connections c ON c.id=t.connection_id JOIN accounts a ON a.id=c.account_id
       JOIN agent_grants g ON g.engine_key=c.engine_key AND g.account_id=c.account_id
@@ -298,7 +299,7 @@ export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions
     if (!row) return null
     const scopes = approvedScopes(row.current_scopes, row.scopes_approved)
     return scopes.length ? { accountId: row.id, username: row.username, engineName: row.engine_name,
-      scopes, agent: true, accountAgent: true, connectionId: row.connection_id } : null
+      scopes, agent: true, accountAgent: true, previousSeatNames: row.previous_seats, connectionId: row.connection_id } : null
   }
 
   return { route, resolve }

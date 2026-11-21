@@ -132,9 +132,8 @@ import { gzipSync } from 'node:zlib';
 const BUDGET_KB = {
   entry: 86,
   initial: 221,
-  // Public registration and the match selection and invitation changes bring the private build to about 854 kB.
-  // Entry and initial limits stay fixed.
-  app: 856,
+  // The history dashboard, bilingual labels and batched player identity display bring the private build to 861 kB.
+  app: 864,
 };
 
 const dist = new URL('../dist/', import.meta.url).pathname;

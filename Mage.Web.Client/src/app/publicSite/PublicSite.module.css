@@ -1,14 +1,14 @@
 .site {
-  --public-amber: #f2bb69;
-  --public-paper: #f5eddb;
-  --public-muted: #bebeb1;
-  --public-line: #ffffff22;
+  --public-accent: var(--decision);
+  --public-paper: var(--ink-strong);
+  --public-muted: var(--ink-soft);
+  --public-line: var(--ink-ghost);
   --public-width: 1280px;
   container-type: inline-size;
   min-height: 100%;
   height: 100%;
   overflow: auto;
-  background: #101713;
+  background: var(--mat-900);
   color: var(--public-paper);
 }
 
@@ -56,10 +56,10 @@
   min-height: 54px;
   padding-inline: 22px;
   border-color: transparent;
-  background: var(--public-amber);
-  color: #21180d;
+  background: var(--public-accent);
+  color: var(--decision-ink);
 }
-.primary:hover:not(:disabled) { background: #ffc980; }
+.primary:hover:not(:disabled) { background: var(--decision-strong); }
 .primary:disabled { opacity: .72; cursor: wait; }
 
 .hero {
@@ -70,17 +70,25 @@
   overflow: hidden;
   min-height: clamp(445px, 48vw, 620px);
   padding: clamp(27px, 5vw, 76px);
-  border: 1px solid #dcc28c38;
+  border: 1px solid var(--ink-ghost);
   border-radius: 16px;
-  background: #141c15;
+  background: #242426;
 }
 
-.heroArt {
+.tabletop {
   position: absolute;
   z-index: -2;
   inset: 0 0 0 auto;
-  width: 80%;
+  width: 86%;
   height: 100%;
+  overflow: hidden;
+}
+
+.heroArt {
+  display: block;
+  width: 100%;
+  height: 100%;
+  filter: saturate(.73) contrast(1.08);
   object-fit: cover;
   object-position: 62% 53%;
 }
@@ -89,7 +97,7 @@
   position: absolute;
   z-index: -1;
   inset: 0;
-  background: linear-gradient(90deg, #141c15 16%, #141c15 20%, #141c15f5 27%, #141c15d6 36%, #141c158a 48%, #141c1515 75%);
+  background: linear-gradient(90deg, #242426 16%, #242426 20%, #242426f5 27%, #242426d9 35%, #24242658 54%, transparent 79%);
   content: '';
 }
 
@@ -104,7 +112,7 @@
 .heroCopy em {
   display: block;
   margin-top: .07em;
-  color: var(--public-amber);
+  color: var(--public-accent);
   font-style: normal;
 }
 
@@ -133,7 +141,7 @@
   padding: 25px clamp(13px, 2.4vw, 33px);
 }
 .feature + .feature { border-inline-start: 1px solid var(--public-line); }
-.feature svg, .mail { color: var(--public-amber); }
+.feature svg, .mail { color: var(--public-accent); }
 .feature h2 { font-size: 23px; text-wrap: auto; }
 .feature p { margin-top: 7px; color: var(--public-muted); }
 
@@ -151,7 +159,7 @@
   overflow: hidden;
   border: 1px solid var(--public-line);
   border-radius: 16px;
-  background: #171f19;
+  background: var(--mat-700);
 }
 .formPanel {
   display: flex;
@@ -170,7 +178,7 @@
 .form { display: grid; gap: 14px; width: 100%; max-width: 390px; }
 .form .primary { margin-top: 6px; }
 .field input { min-height: 47px; }
-.error { color: #ffb3a6; }
+.error { color: var(--danger-text); }
 .signupArt { width: 100%; height: 100%; min-height: 0; object-fit: cover; object-position: 62% center; }
 
 @media (max-width: 900px) {
@@ -180,8 +188,9 @@
 @media (max-width: 680px) {
   .header { min-height: 72px; }
   .hero { align-items: end; min-height: 548px; border-radius: 12px; }
-  .heroArt { width: 100%; height: 76%; object-position: 61% 44%; }
-  .hero::after { background: linear-gradient(0deg, #141c15 19%, #141c15 27%, #141c15c7 48%, #141c1533 77%, transparent); }
+  .tabletop { width: 100%; height: 76%; }
+  .heroArt { object-position: 61% 44%; }
+  .hero::after { background: linear-gradient(0deg, #242426 19%, #242426 27%, #242426c7 48%, #24242633 77%, transparent); }
   .heroCopy h1 { font-size: clamp(3.3125rem, 12cqi, 5rem); }
   .heroCopy p { margin-block: 19px; }
   .features { grid-template-columns: 1fr; margin-top: 18px; }
@@ -189,4 +198,41 @@
   .feature + .feature { border-inline-start: none; border-top: 1px solid var(--public-line); }
   .signup { display: block; min-height: 0; }
   .signupArt { display: none; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .tabletop {
+    translate: var(--pan-x, 0px) var(--pan-y, 0px);
+    scale: 1.035;
+    transition: translate 600ms cubic-bezier(.2,.7,.25,1);
+  }
+  .heroArt {
+    transform-origin: 70% 48%;
+    animation: dealTable 1350ms cubic-bezier(.16,.72,.21,1) both;
+  }
+  .tabletop::after {
+    position: absolute;
+    inset: -30%;
+    background: linear-gradient(110deg, transparent 34%, rgb(255 197 142 / .19) 48%, transparent 59%);
+    pointer-events: none;
+    content: '';
+    animation: tableLight 1200ms 100ms ease-out both;
+  }
+  .heroCopy em { animation: settleTitle 650ms cubic-bezier(.16,.72,.21,1) both; }
+  .heroCopy .primary svg { transition: transform 170ms ease; }
+  .heroCopy .primary:is(:hover, :focus-visible) svg { transform: translateX(4px); }
+}
+
+@keyframes dealTable {
+  from { transform: scale(1.11) rotate(-1.1deg); }
+  to { transform: scale(1) rotate(0); }
+}
+@keyframes tableLight {
+  from { transform: translateX(-44%); opacity: 0; }
+  22% { opacity: 1; }
+  to { transform: translateX(43%); opacity: 0; }
+}
+@keyframes settleTitle {
+  from { transform: translateY(.16em); }
+  to { transform: translateY(0); }
 }

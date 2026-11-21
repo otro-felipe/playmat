@@ -15,12 +15,12 @@ export interface MatCloth {
 
 /** The free cloths everyone has. */
 const FREE_CLOTHS: MatCloth[] = [
+  { id: 'charcoal', shades: ['#101012', '#171719', '#1b1b1d', '#242426', '#303033', '#404044', '#535358'], dye: '#65534d' },
   { id: 'green', shades: ['#070c0a', '#0b120f', '#0f1714', '#142019', '#1c2d27', '#27403a', '#3a5a51'], dye: '#2f6b58' },
   { id: 'navy', shades: ['#070a10', '#0b1018', '#0f1520', '#141c2b', '#1c273a', '#28364f', '#3a4c6b'], dye: '#2f4c7a' },
   { id: 'plum', shades: ['#0d080d', '#140c14', '#1a101a', '#231523', '#301d30', '#432943', '#5c3b5c'], dye: '#6b3566' },
   { id: 'oxblood', shades: ['#0e0707', '#160b0b', '#1d0f0e', '#271413', '#361c1a', '#4b2724', '#663934'], dye: '#7a302a' },
   { id: 'teal', shades: ['#060c0d', '#091315', '#0d191b', '#112225', '#182f33', '#224247', '#335b61'], dye: '#2a6b70' },
-  { id: 'charcoal', shades: ['#09090a', '#0e0e10', '#141416', '#1b1b1e', '#25252a', '#34343b', '#4a4a53'], dye: '#55555f' },
 ];
 
 /** supporters' thanks: a deep verdigris with a brass dye, like the supporter sleeve */

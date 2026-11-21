@@ -31,6 +31,8 @@ Public registration uses `PLAYMAT_PUBLIC_URL` for email links. Set `PLAYMAT_POST
 For public deployments, configure a managed Cloudflare Turnstile widget for the hostname in `PLAYMAT_PUBLIC_URL`. Set its public key as `PLAYMAT_TURNSTILE_SITE_KEY` and its secret as `PLAYMAT_TURNSTILE_SECRET` in the app service. Together they enable server-side challenge verification on email link requests and password sign-in. Set both together. Leaving both unset keeps the local and existing unconfigured environments usable.
 
 
+A personal history reset accepts a fixed UTC timestamp via `PLAYMAT_HISTORY_RESET=USERNAME@YYYY-MM-DDTHH:MM:SSZ`. Startup reports the count hidden and newer closed matches. Remove the setting after verification. Reapplying it preserves newer matches. The account cutoff applies across its seats and respects its existing retention allowance. Other participants and physical archive retention keep their own policies.
+
 ## Public request budgets
 
 The Railway ingress sets the visitor address using its edge-provided `X-Real-IP`. Caddy replaces the app's forwarding header, and a standalone container uses the TCP peer by default. Only publish Caddy's port. If another proxy is placed before Railway, verify the resulting source grouping before enabling public traffic.
@@ -38,6 +40,10 @@ The Railway ingress sets the visitor address using its edge-provided `X-Real-IP`
 Product endpoints group requests by source and operations with shared backing resources also enforce a per-account budget. Export, replay, and theory endpoints limit concurrent work. MCP limits authorization and RPC requests by source and account. WebSocket upgrades use the source budget and verify browser origins. The engine constrains pending frames, applies its connection quota before decoding requests, and shares a 24-call-per-minute budget for expensive RPCs across seats belonging to one account. Instance-wide budgets apply even when traffic has multiple sources. HTTP throttling returns `429` with `Retry-After`.
 
 ## Provisioning
+
+Each ordinary player's OAuth connections share the engine seat `mcp_<username>`. The prefix `mcp` is reserved at human registration. Historical matches retain their original seat identifiers and show the owner's name with the MCP label. The archive stores the playing client's declared model and reasoning effort when supplied to `join_game` or `create_game`. Older matches and clients that omit those fields have no recorded configuration.
+
+The manual grants below are an operator-only compatibility path for independently scoped credentials. Their engine names stay distinct, and new manual grants cannot occupy the `mcp_` namespace. A legacy name collision preserves the existing owner and grant.
 
 Pass newly chosen credentials from a masked or restricted write-only source. The provisioning command reads the password or bearer token from standard input. Keep values out of command arguments, shell transcripts, repositories and public logs.
 

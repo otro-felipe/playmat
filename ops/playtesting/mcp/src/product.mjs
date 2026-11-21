@@ -46,7 +46,7 @@ export function createProductClient(baseUrl, publicUrl) {
         break;
       case 'get_game_invite':
         path = `${root}/invites/${encode(args.tableId)}/claim`;
-        config = { method: 'POST', body: { displayName: args.displayName } };
+        config = { method: 'POST', body: { displayName: args.displayName, model: args.model, reasoningEffort: args.reasoningEffort } };
         break;
       case 'create_game_invite':
         path = `${root}/invites`;

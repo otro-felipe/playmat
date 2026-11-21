@@ -1,3 +1,5 @@
+import { formatEngineText } from '../ui/playerIdentity';
+import { usePlayerNames } from '../ui/usePlayerIdentity';
 import { useMemo, useState, type ReactNode } from 'react';
 import type { Command, Interaction } from '../../core/game/interaction';
 import type { Prompt } from '../../core/game/prompt';
@@ -53,7 +55,7 @@ export function MulliganOverlay({ hand, interaction, sleeve, onCommand }: {
     <div ref={keyboard} tabIndex={-1} className={styles.scrim} role="dialog" aria-modal="true" aria-labelledby="mulligan-title">
       <div className={styles.center}>
         <h2 id="mulligan-title" className={styles.bigTitle}>Opening hand</h2>
-        <p className={styles.subtitle}>{prompt.text}</p>
+        <p className={styles.subtitle}><PromptText text={prompt.text} /></p>
         <div className={styles.handRow}>
           {hand.map((card) => (
             <div key={card.id} className={styles.handCard} data-card-id={card.id} {...zoom(card)}>
@@ -372,7 +374,7 @@ function ChoiceList({ prompt, onCommand, sourceId }: { prompt: Extract<Prompt, {
   }
   return (
     <PanelShell title={title}>
-      {choice.subMessage && <p className={styles.panelText}>{stripMarkup(choice.subMessage)}</p>}
+      {choice.subMessage && <p className={styles.panelText}><PromptText text={stripMarkup(choice.subMessage)} /></p>}
       {entries.length > 8 && (
         <input className={styles.search} placeholder="Search" value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Search choices" />
       )}
@@ -451,7 +453,7 @@ function MultiAmountChooser({ prompt, onCommand }: { prompt: Extract<Prompt, { k
       <div className={styles.split}>
         {prompt.items.map((item, index) => (
           <label key={index} className={styles.splitRow}>
-            <span>{stripMarkup(item.message)}</span>
+            <span><PromptText text={stripMarkup(item.message)} /></span>
             <input
               type="number"
               className={styles.splitValue}
@@ -520,6 +522,7 @@ export function GameOverOverlay({ message, endInfo, myName, onLeave, leaveLabel 
   stamps?: { mine: string | null; theirs: string | null };
 }) {
   const t = useT();
+  const formatName = usePlayerNames();
   const paintedArt = usePaintedArt();
   // a match of several games ends on the match's result; a single game on the game's
   const matchEnd = matchResult(endInfo);
@@ -540,8 +543,8 @@ export function GameOverOverlay({ message, endInfo, myName, onLeave, leaveLabel 
           </h2>
           {stamp && <VictoryStamp id={stamp} />}
         </div>
-        <p className={styles.subtitle}>{line}</p>
-        {extra && <p className={styles.score}>{extra}</p>}
+        <p className={styles.subtitle}>{formatEngineText(line, formatName)}</p>
+        {extra && <p className={styles.score}>{formatEngineText(extra, formatName)}</p>}
         {rewards}
         <div className={styles.buttons}>
           <Button variant="print" size="lg" onClick={onLeave}>{leaveLabel}</Button>

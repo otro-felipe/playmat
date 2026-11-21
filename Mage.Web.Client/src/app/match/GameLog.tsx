@@ -1,3 +1,5 @@
+import { usePlayerNames } from '../ui/usePlayerIdentity';
+import { PlayerLabel } from '../ui/PlayerLabel';
 import {
   AlertTriangle, ArrowDownToLine, HelpCircle, Ban, BellRing, BookOpen, Dot, Flag, Flame, Heart, HeartCrack, MessageCircle,
   MessageSquare, Mountain, Pin, PinOff, Shield, Shuffle, Skull, Sparkles, Swords, Trophy, Archive, Zap, X, type LucideIcon,
@@ -23,7 +25,7 @@ import { matchKeysBlocked } from './keyboard';
 import './matchMessages';
 import { useMatchUi } from './matchUi';
 import { usePresence } from './presence';
-import { seatDisplayName, type SeatDisplayNames } from './seatDisplayNames';
+import { seatAlias, type SeatDisplayNames } from './seatDisplayNames';
 import styles from './GameLog.module.css';
 
 const MAX_LINES = 300;
@@ -174,6 +176,7 @@ export function GameLog({ gameId, notices, canChat, view, replayLog, delayMs = 0
   seatDisplayNames?: SeatDisplayNames;
 }) {
   const t = useT();
+  const formatName = usePlayerNames();
   const open = useMatchUi((state) => state.logOpen);
   const toggle = useMatchUi((state) => state.toggleLog);
   const muted = useEmotes((state) => !!state.muted[gameId]);
@@ -290,7 +293,7 @@ export function GameLog({ gameId, notices, canChat, view, replayLog, delayMs = 0
             {displayed.map((row) => (row.kind === 'separator'
               ? (
                 <li key={row.key} className={[styles.separator, row.mine ? styles.separatorMine : ''].join(' ')}>
-                  <span>Turn {row.turn}{row.player ? ` · ${row.mine ? 'You' : seatDisplayName(row.player, seatDisplayNames)}` : ''}</span>
+                  <span>Turn {row.turn}{row.player ? ` · ${row.mine ? 'You' : formatName(row.player, seatAlias(row.player, seatDisplayNames))}` : ''}</span>
                 </li>
               )
               : <LogLine key={row.key} entry={row.entry} cards={cards} seatDisplayNames={seatDisplayNames} />))}
@@ -339,7 +342,7 @@ const LogLine = memo(function LogLine({ entry, cards, seatDisplayNames }: {
     <li className={[styles.line, styles[entry.tone]].join(' ')}>
       <Icon className={[styles.icon, styles[`icon_${entry.icon}`] ?? ''].join(' ')} size={16} aria-hidden="true" />
       <span className={styles.body}>
-        {entry.who && <b>{seatDisplayName(entry.who, seatDisplayNames)}: </b>}
+        {entry.who && <b><PlayerLabel name={entry.who} displayName={seatAlias(entry.who, seatDisplayNames)} />: </b>}
         {entry.tone === 'chat' ? entry.text : entry.segments.map((segment, index) => <Segment key={index} segment={segment} cards={cards} seatDisplayNames={seatDisplayNames} />)}
         {notes.length > 0 && (
           <button
@@ -371,7 +374,7 @@ function Segment({ segment, cards, seatDisplayNames }: {
   const setZoom = useMatchUi((state) => state.setZoom);
   const openDetail = useMatchUi((state) => state.openDetail);
   if (segment.kind === 'text') return <PromptText text={segment.text} />;
-  if (segment.kind === 'player') return <span className={styles.player}>{seatDisplayName(segment.name, seatDisplayNames)}</span>;
+  if (segment.kind === 'player') return <span className={styles.player}><PlayerLabel name={segment.name} displayName={seatAlias(segment.name, seatDisplayNames)} /></span>;
   // looked up when used: the card may have moved since the line was written
   const find = () => findLogCard(cards.current, segment);
   return (

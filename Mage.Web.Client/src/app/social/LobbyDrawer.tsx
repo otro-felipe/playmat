@@ -1,3 +1,5 @@
+import { PlayerLabel } from '../ui/PlayerLabel';
+import { playerLabelText } from '../ui/playerIdentity';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { Ban, Flag as FlagIcon, MessageCircle, MoreHorizontal, Send, Star, StarOff, UserRound, X } from 'lucide-react';
 import { useEffect, useMemo } from 'react';
@@ -146,8 +148,8 @@ function PlayerList() {
             {offlineFriends.map((name) => (
               <li key={name} className={[styles.player, styles.offline].join(' ')}>
                 <Avatar name={name} size="sm" />
-                <span className={styles.playerName}>{name}<NameLevel name={name} /></span>
-                <IconButton label={`Remove ${name} from friends`} icon={<StarOff size={16} />} onClick={() => useSocial.getState().removeFriend(name)} />
+                <span className={styles.playerName}><PlayerLabel name={name} /><NameLevel name={name} /></span>
+                <IconButton label={`Remove ${playerLabelText(name)} from friends`} icon={<StarOff size={16} />} onClick={() => useSocial.getState().removeFriend(name)} />
               </li>
             ))}
           </ul>
@@ -196,16 +198,16 @@ function PlayerRow({ user, me, myTables }: { user: UsersView; me: string; myTabl
     if (!table.tableId) return;
     const link = inviteLink(PUBLIC_ORIGIN, table.tableId);
     void useLobby.getState().send(`/w ${name} Join my table ${table.tableName ?? ''}: ${link}`)
-      .then(() => notify('Invite sent', `${name} got a link to ${table.tableName}.`))
+      .then(() => notify('Invite sent', `${playerLabelText(name)} got a link to ${table.tableName}.`))
       .catch(() => notify("Couldn't send the invite", 'The lobby chat is not connected.', 'error'));
   };
 
   return (
     <li className={[styles.player, ignoredUser ? styles.ignored : ''].join(' ')}>
-      <button type="button" className={styles.identity} onClick={() => useLobby.getState().openProfile(name)} title={`${name}'s profile`}>
+      <button type="button" className={styles.identity} onClick={() => useLobby.getState().openProfile(name)} title={`${playerLabelText(name)}'s profile`}>
         <Avatar name={name} avatarId={user.avatarId} size="sm" ring={look?.frame === THANK_YOU.frame} frame={look?.frame} />
         <span className={styles.playerName}>
-          {name}<LevelBadge level={look?.level} /><Flair name={name} />{isMe ? ' (you)' : ''} <Flag flagName={user.flagName} />
+          <PlayerLabel name={name} /><LevelBadge level={look?.level} /><Flair name={name} />{isMe ? ' (you)' : ''} <Flag flagName={user.flagName} />
           {user.status === 'looking' && <span className={[styles.badge, styles.looking].join(' ')}>Looking to play</span>}
           {user.status === 'hidden' && <span className={styles.badge} title="Others don't see this player online">Hidden</span>}
         </span>
@@ -215,7 +217,7 @@ function PlayerRow({ user, me, myTables }: { user: UsersView; me: string; myTabl
       {!isMe && (
         <DropdownMenu.Root>
           <DropdownMenu.Trigger asChild>
-            <IconButton label={`Actions for ${name}`} icon={<MoreHorizontal size={16} />} />
+            <IconButton label={`Actions for ${playerLabelText(name)}`} icon={<MoreHorizontal size={16} />} />
           </DropdownMenu.Trigger>
           <DropdownMenu.Portal>
             <DropdownMenu.Content className={shell.menu} align="end" sideOffset={6}>

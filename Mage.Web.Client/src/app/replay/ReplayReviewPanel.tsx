@@ -1,3 +1,4 @@
+import { usePlayerNames } from '../ui/usePlayerIdentity';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useId, type ReactNode } from 'react';
 import { registerMessages, useT } from '../i18n';
@@ -60,6 +61,7 @@ export function ReplayReviewPanel({ analysis, sideboardDelta, moments, current, 
   onRetry: () => void;
 }) {
   const t = useT();
+  const formatName = usePlayerNames();
   const handDecision = decision?.actual?.kind === 'mulligan' || decision?.actual?.kind === 'keep';
   const context = <>
     {decisionContexts.map((step, index) => <DecisionContext key={step.id ?? index} context={step} handDecision={handDecision} />)}
@@ -94,7 +96,7 @@ export function ReplayReviewPanel({ analysis, sideboardDelta, moments, current, 
         {moments.length > 0 ? (
           <ol>
             {moments.map((moment) => {
-              const { fullTitle } = decisionPresentation(moment, t);
+              const { fullTitle } = decisionPresentation(moment, t, formatName);
               return <li key={moment.cursor}>
                 <button type="button" data-replay-step-focus aria-current={moment.cursor === current ? 'step' : undefined} onClick={() => onMoment(moment)}>
                   {moment.category && <ReviewRating category={moment.category} />}

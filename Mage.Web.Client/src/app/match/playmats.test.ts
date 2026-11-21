@@ -3,7 +3,7 @@ import { clothOf, clothStyle, DEFAULT_CLOTH, MAT_CLOTHS } from './playmats';
 
 describe('playmat cloths', () => {
   test('the default cloth is the app mat', () => {
-    expect(DEFAULT_CLOTH.id).toBe('green');
+    expect(DEFAULT_CLOTH.id).toBe('charcoal');
     expect(clothOf('nope')).toBe(DEFAULT_CLOTH);
     expect(clothOf(null)).toBe(DEFAULT_CLOTH);
   });

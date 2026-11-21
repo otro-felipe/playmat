@@ -114,15 +114,22 @@ async function recordMetadata(pool, info, status, recovering = false) {
         info.turns, info.events, status, status === 'interrupted' || status === 'abandoned' || info.truncated ? 'partial' : 'pending',
         info.truncated, info.reviewVersion, info.reviewIncomplete],
     )
+    const { rows: [invitation] } = await db.query(`SELECT creator_key, creator_model, creator_effort,
+      invitee_key, guest_model, guest_effort FROM invitations WHERE table_id=$1`, [info.tableId])
     for (const player of info.players) {
+      const seat = normalize(player.name)
+      const runtime = seat === invitation?.creator_key ? [invitation.creator_model, invitation.creator_effort]
+        : seat === invitation?.invitee_key ? [invitation.guest_model, invitation.guest_effort] : [null, null]
       await db.query(
-        `INSERT INTO game_players(game_id,engine_key,engine_name,human,deck_snapshot,mulligans,deck_signature,player_id)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(game_id,engine_key)
+        `INSERT INTO game_players(game_id,engine_key,engine_name,human,deck_snapshot,mulligans,deck_signature,player_id,model,reasoning_effort)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(game_id,engine_key)
          DO UPDATE SET mulligans=COALESCE(EXCLUDED.mulligans,game_players.mulligans),
                        deck_snapshot=COALESCE(game_players.deck_snapshot,EXCLUDED.deck_snapshot),
                        deck_signature=COALESCE(game_players.deck_signature,EXCLUDED.deck_signature),
-                       player_id=COALESCE(game_players.player_id,EXCLUDED.player_id)`,
-        [info.gameId, normalize(player.name), player.name, player.human, player.deck, player.mulligans, deckSignature(player.deck), player.playerId],
+                       player_id=COALESCE(game_players.player_id,EXCLUDED.player_id),
+                       model=COALESCE(game_players.model,EXCLUDED.model),
+                       reasoning_effort=COALESCE(game_players.reasoning_effort,EXCLUDED.reasoning_effort)`,
+        [info.gameId, seat, player.name, player.human, player.deck, player.mulligans, deckSignature(player.deck), player.playerId, ...runtime],
       )
     }
     return true
@@ -181,14 +188,16 @@ function gameView(row) {
     result: row.result, winner: row.winner, startPlayer: row.start_player, turns: row.turns,
     events: row.events, archiveState: row.archive_state, status: row.status,
     truncated: row.truncated, players: row.players, replayAvailable: Boolean(row.object_key),
-    ownMulligans: row.own_mulligans,
+    ownMulligans: row.own_mulligans, viewerName: row.viewer,
   }
 }
 
 const selectGame = `
   SELECT g.*, m.table_id, m.name, m.format, m.status AS match_status,
-    (SELECT json_agg(json_build_object('name',p.engine_name,'human',p.human) ORDER BY p.engine_name)
-       FROM game_players p WHERE p.game_id=g.id) AS players,
+    (SELECT json_agg(json_build_object('name',p.engine_name,'human',p.human,'displayName',COALESCE(a.username,p.engine_name),
+        'isMcp',a.id IS NOT NULL,'model',p.model,'reasoningEffort',p.reasoning_effort) ORDER BY p.engine_name)
+       FROM game_players p LEFT JOIN agent_grants seat ON p.human AND seat.engine_key=p.engine_key
+       LEFT JOIN accounts a ON a.id=seat.account_id WHERE p.game_id=g.id) AS players,
     (SELECT p.engine_key FROM game_players p WHERE p.game_id=g.id AND p.engine_key=ANY($1::text[])
        ORDER BY array_position($1::text[],p.engine_key) LIMIT 1) AS viewer,
     (SELECT p.mulligans FROM game_players p WHERE p.game_id=g.id AND p.engine_key=ANY($1::text[])
@@ -452,7 +461,7 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
     if (requestedFormat && !format) throw new ProductError(400, 'Unsupported format')
     const { rows } = await pool.query(
       `WITH eligible AS (
-         SELECT m.format, g.winner, g.start_player, g.turns, p.engine_key, p.mulligans,
+         SELECT m.id AS match_id, m.format, g.winner, g.start_player, g.turns, p.engine_key, p.mulligans,
            p.deck_snapshot->>'name' AS deck_name, COALESCE(p.deck_signature, md5(p.deck_snapshot::text)) AS signature
          FROM games g JOIN matches m ON m.id=g.match_id
          JOIN retained_match_history h ON h.match_id=m.id AND h.account_id=$3
@@ -462,15 +471,21 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
          ) p ON TRUE
          WHERE g.status='completed' AND m.status='completed' AND ($2::text IS NULL OR m.format=$2)
        )
-       SELECT format, MAX(deck_name) AS "deckName", signature AS "deckVersion",
+       SELECT GROUPING(format, signature) <> 0 AS total, COUNT(DISTINCT match_id)::integer AS matches,
+         format, MAX(deck_name) AS "deckName", signature AS "deckVersion",
          COUNT(*)::integer AS games, COUNT(*) FILTER (WHERE lower(winner)=engine_key)::integer AS wins,
          COUNT(*) FILTER (WHERE lower(start_player)=engine_key)::integer AS "onPlay",
          COUNT(*) FILTER (WHERE lower(start_player)<>engine_key)::integer AS "onDraw",
          AVG(mulligans)::float AS "averageMulligans", AVG(turns)::float AS "averageTurns"
-       FROM eligible GROUP BY format, signature ORDER BY games DESC, format, signature LIMIT 100`,
+       FROM eligible GROUP BY GROUPING SETS ((), (format, signature))
+       ORDER BY total DESC, games DESC, format, signature LIMIT 101`,
       [viewerNames(actor), format, actor.accountId],
     )
-    return { groups: rows }
+    const [totals, ...decks] = rows
+    return {
+      totals: { matches: totals.matches, games: totals.games, wins: totals.wins },
+      groups: decks.map(({ total, matches, ...group }) => group),
+    }
   }
 
   async function authorizeExport(actor, ids) {

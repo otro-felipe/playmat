@@ -1,3 +1,5 @@
+import { PlayerLabel } from '../ui/PlayerLabel';
+import { playerLabelText } from '../ui/playerIdentity';
 import { useQuery } from '@tanstack/react-query';
 import { Ban, Flag as FlagIcon, History, MessageCircle, Star, StarOff } from 'lucide-react';
 import { lazy, Suspense, useMemo } from 'react';
@@ -31,7 +33,7 @@ export function ProfileDialog() {
   const name = useLobby((state) => state.profile);
   const close = () => useLobby.getState().openProfile(null);
   return (
-    <Dialog open={!!name} onOpenChange={(open) => !open && close()} title={name ? `${name}` : 'Profile'} width="md">
+    <Dialog open={!!name} onOpenChange={(open) => !open && close()} title={name ? playerLabelText(name) : 'Profile'} width="md">
       {name && <Profile name={name} onClose={close} />}
     </Dialog>
   );
@@ -62,7 +64,7 @@ function Profile({ name, onClose }: { name: string; onClose(): void }) {
       <header className={styles.head}>
         <Avatar name={name} avatarId={avatarId} size="lg" ring={look?.frame === THANK_YOU.frame} frame={look?.frame} />
         <div>
-          <p className={styles.name}>{name}<LevelBadge level={look?.level} /><Flair name={name} /> <Flag flagName={flagName} always /></p>
+          <p className={styles.name}><PlayerLabel name={name} /><LevelBadge level={look?.level} /><Flair name={name} /> <Flag flagName={flagName} always /></p>
           {look?.title && <p className={styles.title} style={{ color: titleColor(look.title) }}>{titleName(look.title)}</p>}
           <p className={styles.presence}>{user ? (user.infoGames?.trim() || 'Online') : 'Offline'}</p>
         </div>
@@ -86,7 +88,7 @@ function Profile({ name, onClose }: { name: string; onClose(): void }) {
           </dl>
         </>
       ) : (
-        <p className={styles.note}>{name} is not online, so their record isn't available right now.</p>
+        <p className={styles.note}><PlayerLabel name={name} /> is not online, so their record isn't available right now.</p>
       )}
 
       <Progression name={name} />

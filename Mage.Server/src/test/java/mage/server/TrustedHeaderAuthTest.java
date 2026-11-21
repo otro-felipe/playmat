@@ -117,6 +117,18 @@ public class TrustedHeaderAuthTest {
     }
 
     @Test
+    void fullLengthProductNamesConnectThroughTheirOwnDelegatedSeat() throws Exception {
+        overrides.put("getMaxUserNameLength", args -> 14);
+        String name = "mcp_FourteenPlayer";
+        TrustedHeaderAuth.use(sso());
+        assertThat(sso().account(accounts, name, 2000)).isEqualTo(name);
+        assertThat(newSession().connectUser(name, "", "")).contains("longer");
+        Session delegated = newSession();
+        delegated.trustSignedOnLogin(name);
+        assertThat(delegated.connectUser(name, "", "")).isNull();
+    }
+
+    @Test
     void refusesNamesThatCantBePlayerNames() {
         assertThatThrownBy(() -> sso().account(accounts, "alice@example.com", 2000)).hasMessageContaining("can't be a player name");
         assertThatThrownBy(() -> sso().account(accounts, "Admin", 2000)).hasMessageContaining("can't be a player name");

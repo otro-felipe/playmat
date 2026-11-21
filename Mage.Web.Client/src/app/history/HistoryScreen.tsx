@@ -1,16 +1,16 @@
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { Clapperboard, Trophy } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { ChevronRight, Clapperboard, Trophy } from 'lucide-react';
 import { Fragment, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { MatchView, ReplayInfo } from '../../protocol/generated/views';
 import { formatRules } from '../../core/decks/formats';
-import { matchPlayers, matchWinner } from '../../core/history/matchRecord';
+import { matchPlayers, matchScores, matchWinner } from '../../core/history/matchRecord';
 import { describeResult, replayWinner } from '../../core/replay/timeline';
 import { api } from '../connection';
-import { useT } from '../i18n';
 import { PRIVATE_PLAYTESTING } from '../playtesting';
-import { RatingCounts } from '../replay/ReplayReviewPanel';
-import type { ReviewSummary } from '../replay/reviewData';
+import { PrivateHistoryScreen } from './PrivateHistoryScreen';
+import { formatEngineText } from '../ui/playerIdentity';
+import { PlayerLabel } from '../ui/PlayerLabel';
 import { NameLevel } from '../social/LevelBadge';
 import { useSession } from '../stores/session';
 import { Button } from '../ui/Button';
@@ -24,7 +24,7 @@ function Players({ names }: { names: readonly string[] }) {
       {names.map((name, index) => (
         <Fragment key={`${index}-${name}`}>
           {index > 0 && ' vs '}
-          {name}
+          <PlayerLabel name={name} />
           <NameLevel name={name} />
         </Fragment>
       ))}
@@ -36,234 +36,9 @@ function when(time: number | undefined): string {
   return time ? new Date(time).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '';
 }
 
-
 /** Finished matches on this server, with their replays, and every saved replay. */
 export function HistoryScreen() {
   return PRIVATE_PLAYTESTING ? <PrivateHistoryScreen /> : <LobbyHistoryScreen />;
-}
-
-interface PracticeGame {
-  gameId: string;
-  gameNumber: number;
-  endedAt: number;
-  archiveState: 'ready' | 'pending' | 'partial';
-  replayAvailable: boolean;
-  winner?: string;
-  startPlayer?: string;
-  turns?: number;
-  ownMulligans?: number;
-  players: { name: string; seatId?: string }[];
-  analysis?: ReviewSummary;
-}
-
-interface PracticeMatch {
-  id: string;
-  name: string;
-  format: string;
-  status: 'active' | 'completed' | 'interrupted';
-  winner?: string;
-  startedAt: number;
-  games: PracticeGame[];
-  analysis?: ReviewSummary;
-}
-
-interface PracticeHistoryPage {
-  matches: PracticeMatch[];
-  cursor: string | null;
-}
-
-interface PracticeStat {
-  format: string;
-  deckName: string | null;
-  deckVersion: string | null;
-  games: number;
-  wins: number;
-  onPlay: number;
-  onDraw: number;
-  averageMulligans: number | null;
-  averageTurns: number | null;
-}
-
-const practiceStatus = { active: 'En curso', completed: 'Terminado', interrupted: 'Interrumpido' };
-
-function PrivateHistoryScreen() {
-  const navigate = useNavigate();
-  const account = useSession((state) => state.userName);
-  const [format, setFormat] = useState('');
-  const [selected, setSelected] = useState<string[]>([]);
-  const [exportState, setExportState] = useState<'idle' | 'downloading' | 'error'>('idle');
-  const history = useInfiniteQuery({
-    queryKey: ['playtesting-history', account, format],
-    initialPageParam: '',
-    queryFn: async ({ pageParam }) => {
-      const query = new URLSearchParams({ limit: '25' });
-      if (format) query.set('format', format);
-      if (pageParam) query.set('cursor', pageParam);
-      const response = await fetch('/api/playtesting/matches?' + query);
-      if (!response.ok) throw new Error('No se pudo abrir el historial.');
-      return await response.json() as PracticeHistoryPage;
-    },
-    getNextPageParam: (page) => page.cursor ?? undefined,
-    enabled: !!account,
-    refetchInterval: 15_000,
-  });
-  const matches = (history.data?.pages ?? []).flatMap((page) => page.matches);
-  const stats = useQuery({
-    queryKey: ['playtesting-stats', account, format],
-    queryFn: async () => {
-      const response = await fetch('/api/playtesting/stats?' + new URLSearchParams({ format }));
-      if (!response.ok) throw new Error('No se pudieron cargar las estadísticas.');
-      return await response.json() as { groups: PracticeStat[] };
-    },
-    enabled: !!account,
-    refetchInterval: 15_000,
-  });
-
-  async function exportSelected() {
-    setExportState('downloading');
-    try {
-      const response = await fetch('/api/playtesting/exports', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ gameIds: selected }),
-      });
-      if (!response.ok) throw new Error('Export unavailable');
-      const url = URL.createObjectURL(await response.blob());
-      const download = document.createElement('a');
-      download.href = url;
-      download.download = 'playmat-replays.zip';
-      download.click();
-      setTimeout(() => URL.revokeObjectURL(url), 0);
-      setExportState('idle');
-    } catch {
-      setExportState('error');
-    }
-  }
-
-  return (
-    <div className={styles.page}>
-      <header className={styles.head}>
-        <h1 className={styles.title}>Historial</h1>
-        <div className={styles.filter}>
-          <select aria-label="Formato" value={format} onChange={(event) => setFormat(event.target.value)}>
-            <option value="">Todos los formatos</option>
-            {['Standard', 'Pioneer', 'Modern'].map((option) => <option key={option}>{option}</option>)}
-          </select>
-          <Button disabled={!selected.length || exportState === 'downloading'} onClick={() => void exportSelected()}>
-            Descargar selección{selected.length > 0 ? ` (${selected.length})` : ''}
-          </Button>
-        </div>
-      </header>
-      {exportState === 'error' && <p role="alert">No se pudo descargar la selección.</p>}
-      {!!stats.data?.groups.length && (
-        <Zone label="Resultados por mazo" className={styles.zone}>
-          <ul className={styles.list}>
-            {stats.data.groups.map((group) => (
-              <li className={styles.row} key={`${group.format}-${group.deckVersion}`}>
-                <div className={styles.main}>
-                  <p className={styles.name}>{group.deckName ?? 'Mazo sin nombre'} · {group.format}</p>
-                  <p className={styles.meta}>
-                    {[
-                      group.deckVersion ? `Versión ${group.deckVersion.slice(0, 6)}` : null,
-                      `${group.wins} de ${group.games} juegos ganados`,
-                      `Play ${group.onPlay} · Draw ${group.onDraw}`,
-                      group.averageMulligans !== null ? `Mulligans ${new Intl.NumberFormat('es', { maximumFractionDigits: 1 }).format(group.averageMulligans)}` : null,
-                      group.averageTurns !== null ? `Turnos ${new Intl.NumberFormat('es', { maximumFractionDigits: 1 }).format(group.averageTurns)}` : null,
-                    ].filter(Boolean).join(' · ')}
-                  </p>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </Zone>
-      )}
-      <Zone label="Tus partidas" className={styles.zone}>
-        {history.isPending && <p className={styles.empty}>Cargando…</p>}
-        {history.isError && <p role="alert" className={styles.empty}>No se pudo abrir el historial.</p>}
-        {history.isSuccess && !matches.length && <p className={styles.empty}>Todavía no hay partidas en este formato.</p>}
-        <ul className={styles.list}>
-          {matches.map((match) => (
-            <li key={match.id} className={styles.row}>
-              <div className={styles.main}>
-                <p className={styles.name}>{match.games[0]?.players.length
-                  ? <Players names={match.games[0].players.map((player) => player.name)} />
-                  : match.name}</p>
-                <p className={styles.meta}>
-                  {[match.format, practiceStatus[match.status], when(match.startedAt)].filter(Boolean).join(' · ')}
-                </p>
-                {match.winner && <p className={styles.result}>Ganó {match.winner}</p>}
-                {match.games.map((game) => (
-                  <div className={styles.actions} key={game.gameId}>
-                    <span className={styles.meta}>
-                      {[
-                        `Juego ${game.gameNumber}`,
-                        game.turns ? `Turnos ${game.turns}` : null,
-                        game.startPlayer ? `Empieza ${game.startPlayer}` : null,
-                        game.ownMulligans !== undefined && game.ownMulligans !== null ? `Tus mulligans ${game.ownMulligans}` : null,
-                        game.archiveState === 'partial' ? 'Replay parcial' : null,
-                        game.endedAt && game.archiveState === 'pending' ? 'Archivando replay' : null,
-                      ].filter(Boolean).join(' · ')}
-                    </span>
-                    {game.replayAvailable && (
-                      <>
-                        <Button size="sm" variant="quiet" icon={<Clapperboard size={15} />} onClick={() => navigate(`/replay/${game.gameId}`)}>
-                          Replay
-                        </Button>
-                        <Button size="sm" variant="quiet" aria-pressed={selected.includes(game.gameId)}
-                          disabled={selected.length >= 10 && !selected.includes(game.gameId)}
-                          onClick={() => setSelected((prior) => prior.includes(game.gameId) ? prior.filter((id) => id !== game.gameId) : [...prior, game.gameId])}>
-                          {selected.includes(game.gameId) ? 'Quitar' : 'Seleccionar'}
-                        </Button>
-                      </>
-                    )}
-                  </div>
-                ))}
-                {match.status === 'completed' && match.analysis && (
-                  <HistoryAnalysis match={match} onOpen={(gameId) => navigate(`/replay/${gameId}?analysis=1`)} />
-                )}
-              </div>
-            </li>
-          ))}
-        </ul>
-        {history.hasNextPage && <Button disabled={history.isFetchingNextPage} onClick={() => void history.fetchNextPage()}>Ver más partidas</Button>}
-      </Zone>
-    </div>
-  );
-}
-
-function HistoryAnalysis({ match, onOpen }: { match: PracticeMatch; onOpen: (gameId: string) => void }) {
-  const t = useT();
-  const review = match.analysis!;
-  const games = match.games.filter((game) => game.replayAvailable);
-  const gamesWithReviews = games.filter((game) => !!game.analysis?.reviewed);
-  return (
-    <div className={styles.analysisSummary}>
-      <p className={styles.result}>{t(`replay.status.${review.status}`)}</p>
-      {review.reviewed > 0 && <>
-        <p className={styles.meta}>{review.eligible === null
-          ? t('replay.reviewedCount', { count: review.reviewed })
-          : t('replay.reviewed', { reviewed: review.reviewed, eligible: review.eligible })}</p>
-        <RatingCounts counts={review.counts} />
-      </>}
-      {gamesWithReviews.length > 0 && (
-        <details>
-          <summary>{t('replay.historyBreakdown')}</summary>
-          {gamesWithReviews.map((game) => (
-            <section key={game.gameId} role="group" aria-label={`Juego ${game.gameNumber}`} className={styles.gameBreakdown}>
-              <Button type="button" variant="quiet" size="sm" onClick={() => onOpen(game.gameId)}>
-                {t('replay.analysis')} · Juego {game.gameNumber}
-              </Button>
-              {game.analysis?.bySeat?.filter((seat) => !!seat.reviewed || Object.values(seat.counts).some((count) => !!count)).map((seat) => (
-                <div key={seat.seatId} className={styles.seatBreakdown}>
-                  <strong>{seat.name ?? game.players.find((player) => player.seatId === seat.seatId)?.name ?? t('replay.perspective')}</strong>
-                  <RatingCounts counts={seat.counts} />
-                </div>
-              ))}
-            </section>
-          ))}
-        </details>
-      )}
-    </div>
-  );
 }
 
 function LobbyHistoryScreen() {
@@ -344,27 +119,32 @@ function MatchRow({ match, me, replayIds, onReplay }: { match: MatchView; me: st
   const games = match.games ?? [];
   const won = matchWinner(match.result) === me;
   const players = matchPlayers(match.players);
+  const scores = matchScores(match.result);
+  const score = scores.find((score) => score.name === me) ?? scores[0];
   return (
     <li className={styles.row}>
-      <div className={styles.main}>
-        <p className={styles.name}>
-          {won && <Trophy size={14} className={styles.trophy} aria-label="You won" />}
-          {players.length > 0 ? <Players names={players} /> : match.matchName}
-        </p>
+      <details>
+        <summary>
+          <span className={styles.name}>
+            {won && <Trophy size={14} className={styles.trophy} aria-label="You won" />}
+            {players.length > 0 ? <Players names={players} /> : formatEngineText(match.matchName ?? '')}
+          </span>
+          <strong>{score ? `${score.wins}–${score.losses}` : '—'}</strong><ChevronRight size={15} aria-hidden="true" />
+        </summary>
         <p className={styles.meta}>
           {[formatRules(match.deckType ?? '').label, match.gameType, match.rated ? 'Rated' : '', when(match.endTime)].filter(Boolean).join(' · ')}
         </p>
-        {match.result && <p className={styles.result}>{match.result}</p>}
-      </div>
-      <div className={styles.actions}>
-        {games.map((gameId, index) => (replayIds.has(gameId)
-          ? (
-            <Button key={gameId} size="sm" variant="quiet" icon={<Clapperboard size={15} />} onClick={() => onReplay(gameId)}>
-              {games.length > 1 ? `Game ${index + 1}` : 'Replay'}
-            </Button>
-          )
-          : null))}
-      </div>
+        {match.result && <p className={styles.result}>{formatEngineText(match.result)}</p>}
+        <div className={styles.actions}>
+          {games.map((gameId, index) => (replayIds.has(gameId)
+            ? (
+              <Button key={gameId} size="sm" variant="quiet" icon={<Clapperboard size={15} />} onClick={() => onReplay(gameId)}>
+                {games.length > 1 ? `Game ${index + 1}` : 'Replay'}
+              </Button>
+            )
+            : null))}
+        </div>
+      </details>
     </li>
   );
 }
@@ -375,11 +155,14 @@ function ReplayRow({ replay, me, onWatch, onReview }: { replay: ReplayInfo; me: 
   const minutes = replay.startedAt && replay.endedAt ? Math.max(1, Math.round((replay.endedAt - replay.startedAt) / 60_000)) : null;
   return (
     <li className={styles.row}>
-      <div className={styles.main}>
-        <p className={styles.name}>
-          {replayWinner(replay.result) === me && <Trophy size={14} className={styles.trophy} aria-label="You won" />}
-          <Players names={names} />
-        </p>
+      <details>
+        <summary>
+          <span className={styles.name}>
+            {replayWinner(replay.result) === me && <Trophy size={14} className={styles.trophy} aria-label="You won" />}
+            <Players names={names} />
+          </span>
+          <span>{minutes ? `${minutes} min` : ''}</span><ChevronRight size={15} aria-hidden="true" />
+        </summary>
         <p className={styles.meta}>
           {[
             formatRules(replay.deckType ?? '').label,
@@ -388,12 +171,12 @@ function ReplayRow({ replay, me, onWatch, onReview }: { replay: ReplayInfo; me: 
             when(replay.endedAt ?? replay.startedAt),
           ].filter(Boolean).join(' · ')}
         </p>
-        <p className={styles.result}>{describeResult(replay.result)}</p>
-      </div>
-      <div className={styles.actions}>
-        {played && <Button size="sm" variant="quiet" onClick={onReview}>Review</Button>}
-        <Button size="sm" icon={<Clapperboard size={15} />} onClick={onWatch}>Watch</Button>
-      </div>
+        <p className={styles.result}>{formatEngineText(describeResult(replay.result))}</p>
+        <div className={styles.actions}>
+          {played && <Button size="sm" variant="quiet" onClick={onReview}>Review</Button>}
+          <Button size="sm" icon={<Clapperboard size={15} />} onClick={onWatch}>Watch</Button>
+        </div>
+      </details>
     </li>
   );
 }

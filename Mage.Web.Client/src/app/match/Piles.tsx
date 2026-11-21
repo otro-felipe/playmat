@@ -1,3 +1,4 @@
+import { usePlayerNames } from '../ui/usePlayerIdentity';
 import { BookOpen, Castle, Crown, Skull, Sparkles, Ban } from 'lucide-react';
 import { useRef, type ReactNode } from 'react';
 import type { CommanderStatus } from '../../core/game/commander';
@@ -23,6 +24,7 @@ export interface CommandProps {
 
 /** Library, graveyard, exile and command zone of one player, as piles on the mat. */
 export function Piles({ player, sleeve, isMe, commanders = [], clickable, onCast, inHand }: { player: PlayerView; sleeve: string; isMe: boolean } & CommandProps) {
+  const formatName = usePlayerNames();
   const t = useT();
   const openViewer = useMatchUi((state) => state.openViewer);
   const libraryRef = useRef<HTMLButtonElement>(null);
@@ -30,7 +32,7 @@ export function Piles({ player, sleeve, isMe, commanders = [], clickable, onCast
   const graveyard = Object.values(player.graveyard ?? {});
   const exile = Object.values(player.exile ?? {});
   const { waiting, dungeon, others } = splitCommand(player, commanders);
-  const name = isMe ? 'Your' : `${player.name}'s`;
+  const name = isMe ? 'Your' : `${formatName(player.name ?? '')}'s`;
   const libraryZoom = usePileZoom(player.topCard, sleeve);
 
   return (
@@ -165,13 +167,14 @@ function PileTop({ top, count, sleeve, inHand }: { top: CardView | undefined; co
  * Their commander waiting in the command zone shows by name with its tax.
  */
 export function MiniPiles({ player, commanders = [] }: { player: PlayerView } & Pick<CommandProps, 'commanders'>) {
+  const formatName = usePlayerNames();
   const t = useT();
   const openViewer = useMatchUi((state) => state.openViewer);
   const graveyard = Object.values(player.graveyard ?? {});
   const exile = Object.values(player.exile ?? {});
   const openDungeon = useMatchUi((state) => state.openDungeon);
   const { waiting, dungeon, others } = splitCommand(player, commanders);
-  const name = `${player.name}'s`;
+  const name = `${formatName(player.name ?? '')}'s`;
   const libraryRef = useRef<HTMLSpanElement>(null);
   useFlipOrigin(`library:${player.playerId}`, libraryRef);
   return (

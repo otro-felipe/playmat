@@ -1,4 +1,5 @@
 import { ArrowRight, History, Layers, Swords } from 'lucide-react';
+import { type PointerEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { APP_NAME } from '../brand';
 import { useT } from '../i18n';
@@ -12,6 +13,15 @@ const features = [
   { Icon: History, title: 'public.review.title', description: 'public.review.description' },
 ] as const;
 
+function moveTabletop(event: PointerEvent<HTMLElement>) {
+  if (event.pointerType !== 'mouse' || !window.matchMedia('(prefers-reduced-motion: no-preference)').matches) return;
+  const bounds = event.currentTarget.getBoundingClientRect();
+  const x = (event.clientX - bounds.left) / bounds.width - .5;
+  const y = (event.clientY - bounds.top) / bounds.height - .5;
+  event.currentTarget.style.setProperty('--pan-x', (x * -16).toFixed(1) + 'px');
+  event.currentTarget.style.setProperty('--pan-y', (y * -12).toFixed(1) + 'px');
+}
+
 export function PublicLanding() {
   const t = useT();
   return (
@@ -21,8 +31,14 @@ export function PublicLanding() {
         <a className={styles.secondary} href="/login">{t('public.signIn')}</a>
       </header>
       <main className={styles.content}>
-        <section className={styles.hero} aria-labelledby="public-title">
-          <img className={styles.heroArt} src={hero} alt="" fetchPriority="high" width={1450} height={967} />
+        <section className={styles.hero} aria-labelledby="public-title" onPointerMove={moveTabletop}
+          onPointerLeave={(event) => {
+            event.currentTarget.style.removeProperty('--pan-x');
+            event.currentTarget.style.removeProperty('--pan-y');
+          }}>
+          <div className={styles.tabletop} aria-hidden="true">
+            <img className={styles.heroArt} src={hero} alt="" fetchPriority="high" width={1450} height={967} />
+          </div>
           <div className={styles.heroCopy}>
             <h1 id="public-title">{t('public.title')} <em>{t('public.secondLine')}</em></h1>
             <p>{t('public.lead')}</p>

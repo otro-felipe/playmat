@@ -67,7 +67,7 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
       await shot(page, `personal-library-${viewport.width}.png`);
       await page.getByRole('button', { name: 'Rival IA · MCP', exact: true }).click();
       await expect(page.getByRole('heading', { name: 'Rakún Burn' })).toBeVisible();
-      await expect(page.getByRole('button', { name: 'Rival IA · MCP', exact: true }).locator('span')).toHaveCSS('color', 'rgb(29, 20, 6)');
+      await expect(page.getByRole('button', { name: 'Rival IA · MCP', exact: true }).locator('span')).toHaveCSS('color', 'rgb(33, 18, 14)');
       await expect(page.getByText('Gruul propio', { exact: true })).toHaveCount(0);
       await shot(page, `mcp-library-${viewport.width}.png`);
       await page.getByRole('button', { name: 'Mis mazos', exact: true }).click();

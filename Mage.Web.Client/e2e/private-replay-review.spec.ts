@@ -166,6 +166,7 @@ for (const [device, viewport] of Object.entries({ desktop: { width: 1440, height
       await expect(page.getByRole('group', { name: 'Mano registrada de Bob' })).toHaveCount(0);
       await expect(page.locator('[data-replay-cursor]')).toHaveAttribute('data-replay-cursor', '6');
       await page.goto('/history');
+      await page.getByRole('button', { name: /Bob/ }).click();
       await expect(page.getByText('1 de 6 jugadas revisadas')).toBeVisible();
       await page.getByText('Calificaciones por jugador y juego').click();
       await expect(page.getByRole('group', { name: 'Juego 3' }).getByText('Normal')).toBeVisible();
