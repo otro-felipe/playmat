@@ -18,8 +18,8 @@ test('[PM-REVIEW-UI-3] the history shows persisted analysis and separates seat a
     status: 'partial', reviewed: 3, eligible: 8, counts: { good: 2, inaccuracy: 1 },
     bySeat: [{ seatId: 'alice', name: 'Alice', reviewed: 2, counts: { good: 2 } }, { seatId: 'bob', name: 'Bob', reviewed: 1, counts: { inaccuracy: 1 } }],
   };
-  vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response(JSON.stringify(url.includes('/stats')
-    ? { groups: [] }
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response(JSON.stringify(url.includes('/performance')
+    ? { groups: [], decks: [], summary: { matches: { total: 0 }, games: { total: 0 } } }
     : { matches: [{
       id: 'match', name: 'Pioneer practice', format: 'Pioneer', status: 'completed', startedAt: 1, analysis,
       games: [{ gameId: 'game', gameNumber: 3, archiveState: 'ready', replayAvailable: true, players: [{ name: 'Alice' }, { name: 'Bob' }], analysis }],

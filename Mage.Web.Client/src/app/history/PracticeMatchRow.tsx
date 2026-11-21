@@ -32,14 +32,14 @@ export function PracticeMatchRow({ match, account, selected, onSelect }: RowProp
           {index > 0 && ', '}<PlayerLabel {...rival} />
         </Fragment>) : match.name}
       </span>
-      <span className={styles.format}>{match.format}</span>
+      <span className={styles.format}>{match.format === 'Unknown' ? t('history.unreported') : match.format}</span>
       <span className={styles.outcome} data-outcome={result}><Icon size={15} aria-hidden="true" />{t(`history.${result}`)}</span>
       <strong className={styles.score}>{score}</strong>
       <ChevronRight size={16} className={styles.chevron} aria-hidden="true" />
     </button>
     <div hidden={!open} id={detailId} className={styles.details}>
       {open && <>
-        <div className={styles.detailMeta}><span>{fullDate}</span><span>{match.format}</span></div>
+        <div className={styles.detailMeta}><span>{fullDate}</span><span>{match.format === 'Unknown' ? t('history.unreported') : match.format}</span></div>
         {match.games.map((game) => <GameDetail key={game.gameId} game={game} selected={selected} onSelect={onSelect} />)}
         {match.status === 'completed' && match.analysis && <HistoryAnalysis match={match} />}
       </>}

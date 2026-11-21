@@ -1,56 +1,38 @@
-import { ChevronRight } from 'lucide-react';
-import { formatNumber, useT } from '../i18n';
-import type { PracticeStat, PracticeStats } from './practiceHistory';
-import styles from './PracticeHistory.module.css';
+import { ArrowUpRight } from 'lucide-react';
+import { useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
+import { Button } from '../ui/Button';
+import { useT } from '../i18n';
+import { analysisSearch, sample, rate, type Performance } from './performance';
+import styles from './DeckAnalysis.module.css';
 
-function percent(wins: number, games: number) {
-  return games > 0 ? formatNumber(wins / games, { style: 'percent', maximumFractionDigits: 0 }) : '—';
-}
-
-function DeckPerformance({ group, distinguish }: { group: PracticeStat; distinguish: boolean }) {
+export function HistoryOverview({ data, format }: { data: Performance; format: string }) {
   const t = useT();
-  const numbers = [
-    [t('history.version'), group.deckVersion?.slice(0, 6)], [t('history.onPlay'), group.onPlay],
-    [t('history.onDraw'), group.onDraw], [t('history.avgMulligans'), group.averageMulligans], [t('history.avgTurns'), group.averageTurns],
-  ] as const;
-  return <details className={styles.deck}>
-    <summary>
-      <span className={styles.deckName}>{group.deckName ?? t('history.noDeck')}{distinguish && <small>{group.format}{group.deckVersion && ` · ${group.deckVersion.slice(0, 6)}`}</small>}</span>
-      <span className={styles.bar} aria-hidden="true"><i style={{ width: percentForCss(group) }} /></span>
-      <span className={styles.fraction} title={t('history.wins')}>{formatNumber(group.wins)}/{formatNumber(group.games)}</span>
-      <b>{percent(group.wins, group.games)}</b>
-      <ChevronRight size={13} aria-hidden="true" />
-    </summary>
-    <dl className={styles.smallStats}>
-      <div><dt>{t('history.format')}</dt><dd>{group.format}</dd></div>
-      {numbers.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{typeof value === 'number' ? formatNumber(value, { maximumFractionDigits: 1 }) : value ?? '—'}</dd></div>)}
-    </dl>
-  </details>;
-}
-
-function percentForCss(group: PracticeStat) {
-  return (group.games > 0 ? 100 * group.wins / group.games : 0) + '%';
-}
-
-export function HistoryOverview({ stats: { totals, groups } }: { stats: PracticeStats }) {
-  const t = useT();
-  const metrics = [
-    [t('history.matches'), totals?.matches], [t('history.games'), totals?.games], [t('history.wins'), totals?.wins],
-    [t('history.winRate'), totals && percent(totals.wins, totals.games)],
-  ] as const;
-  const nameCounts = new Map<string | null, number>();
-  for (const group of groups) nameCounts.set(group.deckName, (nameCounts.get(group.deckName) ?? 0) + 1);
-  const renderDeck = (group: PracticeStat) => <DeckPerformance key={JSON.stringify([group.format, group.deckVersion])}
-    group={group} distinguish={nameCounts.get(group.deckName)! > 1} />;
-  return <section aria-label={t('history.summary')} className={styles.overview}>
-    <dl className={styles.metrics}>
-      {metrics.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{typeof value === 'number' ? formatNumber(value) : value ?? '—'}</dd></div>)}
-    </dl>
-    <div className={styles.chart}>
-      <h2>{t('history.deckResults')}</h2>
-      {groups.slice(0, 3).map(renderDeck)}
-      {!groups.length && <p>{t('history.noDeckResults')}</p>}
-      {groups.length > 3 && <details className={styles.moreDecks}><summary>{t('history.moreDecks', { count: groups.length })}</summary>{groups.slice(3).map(renderDeck)}</details>}
+  const location = useLocation();
+  const [expanded, setExpanded] = useState(false);
+  const groups = data.groups.filter((group) => !format || group.format === format);
+  const shown = expanded ? groups : groups.slice(0, 4);
+  const matches = groups.reduce((total, group) => total + group.matches.total, 0);
+  const games = groups.reduce((total, group) => total + group.games.total, 0);
+  return <section aria-labelledby="history-archetypes" className={styles.landing}>
+    <div className={styles.groupHead}>
+      <h2 id="history-archetypes">{t('perf.byArchetype')}</h2>
+      <p>{t('perf.finishedMatches', { count: matches })} · {t('perf.finishedGames', { count: games })}</p>
     </div>
+    {groups.length === 0 && <p className={styles.hint}>{t('history.noDeckResults')}</p>}
+    <div id="history-archetype-cards" className={styles.cards}>
+      {shown.map((group) => <Link key={JSON.stringify([group.format, group.archetype])}
+        className={styles.card} state={{ historySearch: location.search }}
+        to={'/history/analysis?' + analysisSearch(group, data.decks).toString()}>
+        <span className={styles.eyebrow}>{group.format === 'Unknown' ? t('history.unreported') : group.format}</span>
+        <strong className={styles.cardTitle}>{group.archetype || t('perf.unclassified')}</strong>
+        <span className={styles.cardRate}>{rate(group.matches.wins, group.matches.total)}</span>
+        <small>{t('perf.matchSample', { sample: sample(group.matches.wins, group.matches.total) })}</small>
+        <ArrowUpRight size={18} aria-hidden="true" />
+      </Link>)}
+    </div>
+    {groups.length > 4 && <Button size="sm" variant="quiet" aria-controls="history-archetype-cards" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+      {t(expanded ? 'perf.showLess' : 'perf.showAll', { count: groups.length })}
+    </Button>}
   </section>;
 }

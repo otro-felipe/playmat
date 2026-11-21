@@ -1,13 +1,15 @@
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery } from '@tanstack/react-query';
 import { ChevronDown, Download } from 'lucide-react';
 import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { formatNumber, registerMessages, useT } from '../i18n';
 import messages from '../i18n/en/replay';
 import { useSession } from '../stores/session';
 import { Button } from '../ui/Button';
 import { HistoryOverview } from './HistoryOverview';
 import { PracticeMatchRow } from './PracticeMatchRow';
-import type { PracticeHistoryPage, PracticeStats } from './practiceHistory';
+import type { PracticeHistoryPage } from './practiceHistory';
+import { usePerformance } from './performance';
 import styles from './PracticeHistory.module.css';
 
 registerMessages(messages);
@@ -25,7 +27,8 @@ export function PrivateHistoryScreen() {
 
 function AccountHistory({ account }: { account: string }) {
   const t = useT();
-  const [format, setFormat] = useState('');
+  const [search, setSearch] = useSearchParams();
+  const format = search.get('format') || '';
   const [selected, setSelected] = useState<string[]>([]);
   const [exportState, setExportState] = useState<'idle' | 'downloading' | 'error'>('idle');
   const history = useInfiniteQuery({
@@ -41,12 +44,9 @@ function AccountHistory({ account }: { account: string }) {
     enabled: !!account,
     refetchInterval: 15_000,
   });
-  const stats = useQuery({
-    queryKey: ['playtesting-stats', account, format],
-    queryFn: ({ signal }) => read<PracticeStats>('stats', new URLSearchParams({ format }), signal),
-    enabled: !!account,
-    refetchInterval: 15_000,
-  });
+  const stats = usePerformance(account, new URLSearchParams({ scope: 'all' }));
+  const formats = new Set(['Standard', 'Pioneer', 'Modern', ...stats.data?.groups.map((group) => group.format) ?? []]);
+  if (format) formats.add(format);
   const matches = (history.data?.pages ?? []).flatMap((page) => page.matches);
   const visibleGames = new Set(matches.flatMap((match) => match.games.filter((game) => game.replayAvailable).map((game) => game.gameId)));
   const selectedGames = selected.filter((id) => visibleGames.has(id));
@@ -54,7 +54,7 @@ function AccountHistory({ account }: { account: string }) {
   function changeFormat(value: string) {
     setSelected([]);
     setExportState('idle');
-    setFormat(value);
+    setSearch(value ? { format: value } : {});
   }
 
   function toggleGame(id: string) {
@@ -94,7 +94,7 @@ function AccountHistory({ account }: { account: string }) {
           <label className={styles.filter}>
             <select aria-label={t('history.format')} value={format} onChange={(event) => changeFormat(event.target.value)}>
               <option value="">{t('history.formats')}</option>
-              {['Standard', 'Pioneer', 'Modern'].map((value) => <option key={value}>{value}</option>)}
+              {[...formats].map((value) => <option key={value} value={value}>{value === 'Unknown' ? t('history.unreported') : value}</option>)}
             </select>
             <ChevronDown size={14} aria-hidden="true" />
           </label>
@@ -105,7 +105,7 @@ function AccountHistory({ account }: { account: string }) {
       </header>
       {exportState === 'error' && <p role="alert">{t('history.exportError')}</p>}
       {stats.isError && <p role="alert">{t('history.statsError')}</p>}
-      {stats.data && <HistoryOverview stats={stats.data} />}
+      {stats.data && !stats.isPlaceholderData && <HistoryOverview key={format} data={stats.data} format={format} />}
       <section aria-labelledby="history-matches" className={styles.matches}>
         <h2 id="history-matches">{t('history.yourMatches')}</h2>
         {history.isPending && <p className={styles.empty}>{t('history.loading')}</p>}
