@@ -53,6 +53,9 @@
 .results thead { color: var(--ink-soft); background: var(--mat-800); }
 .results td { font-variant-numeric: tabular-nums; }
 .sort { display: inline-flex; align-items: center; justify-content: end; gap: 4px; color: inherit; font: inherit; padding: 2px 0; background: none; border: 0; cursor: pointer; }
+.replays { display: flex; flex-wrap: wrap; gap: 3px 12px; margin-top: 4px; }
+.replays a { color: var(--ink-soft); font-size: var(--text-xs); }
+.replays a:hover { color: var(--decision-strong); }
 .sort svg { flex-shrink: 0; }
 .sort:focus-visible { outline: 2px solid var(--decision); outline-offset: 2px; }
 .results td small { color: var(--ink-dim); white-space: nowrap; }

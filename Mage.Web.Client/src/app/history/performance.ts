@@ -40,8 +40,8 @@ export interface Performance {
   }[];
   splits: { preboard: Outcome; postboard: Outcome; play: Outcome; draw: Outcome };
   mulligans: { count: number; games: Outcome }[];
-  openingCards: { card: string; games: Outcome }[];
-  opponentCards: { card: string; games: Outcome }[];
+  openingCards: { card: string; games: Outcome; without: Outcome }[];
+  opponentCards: { card: string; games: Outcome; gameIds: string[] }[];
   coverage: { keptHands: number; opponentCards: number; games: number };
 }
 

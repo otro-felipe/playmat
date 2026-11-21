@@ -18,9 +18,9 @@ function performance(params: URLSearchParams) {
     decks: [deck, ...otherDecks], groups: params.get('format') === 'Standard' ? [] : [group, shared], selected: { deckId: 'family', version: 2 },
     summary, options: { ownArchetypes: ['Golgari Midrange'], opponentArchetypes: ['Izzet Phoenix'] },
     splits: { play: record(1, 0), draw: record(1, 1), preboard: record(0, 1), postboard: record(2, 0) },
-    mulligans: isEmptyGroup ? [] : [{ count: 1, games: record(1, 0) }], openingCards: isEmptyGroup ? [] : [{ card: 'Thoughtseize', games: record(1, 1) }, { card: 'Duress', games: record(1, 0) }],
+    mulligans: isEmptyGroup ? [] : [{ count: 1, games: record(1, 0) }], openingCards: isEmptyGroup ? [] : [{ card: 'Thoughtseize', games: record(1, 1), without: record(0, 0) }, { card: 'Duress', games: record(1, 0), without: record(0, 1) }],
     matchups: [{ archetype: 'Izzet Phoenix', mulligans: { known: 3, taken: 1, opponentKnown: 2, opponentTaken: 0 }, matches: record(1, 0), games: record(2, 1) }],
-    opponentCards: [{ card: 'Arclight Phoenix', games: record(1, 1) }],
+    opponentCards: [{ card: 'Arclight Phoenix', games: record(1, 1), gameIds: ['replay-loss', 'replay-win'] }],
     coverage: isEmptyGroup ? { keptHands: 0, opponentCards: 0, games: 0 } : { keptHands: 2, opponentCards: 2, games: 3 }, matchIds: ['match-0'],
   };
 }
@@ -93,11 +93,21 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
       await expect(page.getByRole('row', { name: /Thoughtseize/ })).toContainText(/50\s?%/);
       const openingTable = page.getByRole('table', { name: 'Cartas en tu mano conservada' });
       await expect(openingTable.getByRole('row').nth(1)).toContainText('Thoughtseize');
-      await openingTable.getByRole('button', { name: '% de victorias' }).click();
+      const thoughtseize = openingTable.getByRole('row', { name: /Thoughtseize/ });
+      await expect(thoughtseize.getByRole('cell').nth(0)).toContainText('(1/2)');
+      await expect(thoughtseize.getByRole('cell').nth(1)).toContainText('— (0/0)');
+      const duress = openingTable.getByRole('row', { name: /Duress/ });
+      await expect(duress.getByRole('cell').nth(0)).toContainText(/100\s?%.*1\/1/);
+      await expect(duress.getByRole('cell').nth(1)).toContainText(/0\s?%.*0\/1/);
+      await openingTable.getByRole('button', { name: 'Con la carta' }).click();
       await expect(openingTable.getByRole('row').nth(1)).toContainText('Duress');
+      await page.screenshot({ path: info.outputPath(`mulligan-${viewport.width}.png`), animations: 'disabled' });
       await page.getByRole('tab', { name: 'Matchups' }).click();
       await expect(page.getByRole('table', { name: 'Resultados por arquetipo rival' }).getByRole('row', { name: /Izzet Phoenix/ })).toBeVisible();
-      await expect(page.getByRole('row', { name: /Arclight Phoenix/ })).toBeVisible();
+      const phoenix = page.getByRole('row', { name: /Arclight Phoenix/ });
+      await expect(phoenix.getByRole('link')).toHaveCount(2);
+      await expect(phoenix.getByRole('link').first()).toHaveAttribute('href', '/replay/replay-loss');
+      await phoenix.getByRole('link').first().scrollIntoViewIfNeeded();
       await page.screenshot({ path: info.outputPath(`analisis-${viewport.width}.png`), animations: 'disabled' });
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await page.getByRole('tab', { name: 'Resumen' }).click();
