@@ -7,7 +7,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Proxy;
+import java.util.List;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -40,6 +44,36 @@ class SideboardPoolTest {
         assertTrue(seat.updateDeck(swapped, false));
         assertSame(swapped, seat.getDeck());
         assertFalse(seat.isDoneSideboarding());
+    }
+
+    @Test
+    @DisplayName("[PM-GAME-01a] Keeping four sideboard exchanges preserves the actual third-game deck")
+    void keepsTheSecondGameConfigurationThroughTheNextSubmission() {
+        Deck original = new Deck();
+        List<Card> firstGameMain = IntStream.range(0, 60).mapToObj(i -> namedCard("Land " + i)).collect(Collectors.toList());
+        List<Card> reserves = IntStream.range(0, 8).mapToObj(i -> namedCard("Reserve " + i)).collect(Collectors.toList());
+        original.getCards().addAll(firstGameMain);
+        original.getSideboard().addAll(reserves);
+
+        MatchPlayer player = seat(original);
+        player.setSideboarding();
+        Deck changed = new Deck();
+        changed.getCards().addAll(firstGameMain.subList(4, 60));
+        changed.getCards().addAll(reserves.subList(0, 4));
+        changed.getSideboard().addAll(firstGameMain.subList(0, 4));
+        changed.getSideboard().addAll(reserves.subList(4, 8));
+        assertTrue(player.hasSameSideboardPool(changed, false));
+        player.submitDeck(changed);
+
+        player.setSideboarding();
+        Deck keep = new Deck();
+        keep.getCards().addAll(player.getDeck().getCards());
+        keep.getSideboard().addAll(player.getDeck().getSideboard());
+        assertTrue(player.hasSameSideboardPool(original, false), "An intentional return is also a legal redistribution");
+        player.submitDeck(keep);
+        assertEquals(changed.getCards(), player.getDeck().getCards());
+        assertEquals(changed.getSideboard(), player.getDeck().getSideboard());
+        assertTrue(player.isDoneSideboarding());
     }
 
     private static MatchPlayer seat(Deck deck) {

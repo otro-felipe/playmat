@@ -89,7 +89,7 @@ const TurnActivation = z.object({
   kind: z.literal('activate'),
   sourceId: StringId.describe('Visible battlefield object ID of your permanent.'),
   abilityId: StringId.describe('Exact engine ability ID from this source’s nonManaAbilities in the priority choice.'),
-  abilityText: z.string().min(1).max(2000).describe('Full public ability rule text for verifying the stack object.'),
+  abilityText: z.string().min(1).max(2000).describe('Full public rule from the same nonManaAbilities entry (abilityText) or the exact visible ability picker. The short label can be truncated.'),
   when: z.enum(['stack_empty', 'priority']).default('stack_empty'),
   targets: PlannedTargets.optional().describe('Exact legal target selectors with their role or prompt guard.'),
   payWith: z.array(Payment).max(16).optional(),
@@ -410,9 +410,9 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
   });
   tool('concede', 'Surrender this game (default) or the whole match explicitly. Cancels the remaining queued plan before sending the concession; accepted earlier actions remain applied.', { gameId: Uuid, entireMatch: z.boolean().default(false) }, 'play',
     ({ gameId, entireMatch }) => { const seat = getSeat(); seat.snapshot(gameId); seat.invalidate('conceded'); return seat.engine.concede(gameId, entireMatch); });
-  tool('get_sideboard_state', 'Read the private eligible card pool and state of your sideboarding step.', { gameId: Uuid.optional() }, 'play',
+  tool('get_sideboard_state', 'Read this seat’s current deck and decisionId together at every sideboard window. Use the distribution supplied by the open prompt, including after match recovery.', { gameId: Uuid.optional() }, 'play',
     ({ gameId }) => getSeat().engine.sideboardState(gameId), true);
-  tool('submit_sideboard', 'Submit an engine-validated deck drawn from the registered card pool for the next game.', {
+  tool('submit_sideboard', 'Submit the full next-game deck for the current decisionId. To keep, copy deck from that same read. Check intended moves from the current deck first. The private mainDeckChanges receipt summarizes the accepted submission by card name.', {
     gameId: Uuid.optional(), decisionId: StringId, deck: Deck,
   }, 'play', (args) => getSeat().engine.submitSideboard(args));
   tool('request_rollback', 'Ask the other player to approve a rewind to the start of a turn.', { gameId: Uuid, turnsBack: z.number().int().min(0).max(1) },
@@ -546,7 +546,7 @@ export function createMcpServer({
       }
       return seat;
     }
-    const mcp = new McpServer({ name: 'thoughtseize', title: 'Thoughtseize', version: '0.4.0' }, { instructions: guideInstructions });
+    const mcp = new McpServer({ name: 'thoughtseize', title: 'Thoughtseize', version: '0.5.0' }, { instructions: guideInstructions });
     const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true, sessionIdGenerator: undefined });
     registerGuides(mcp);
     if (eventRequest) registerEvents(mcp.server, actor, (method, args) => eventRequest(token, method, args));

@@ -142,9 +142,22 @@ interface AgentChoice {
   plainMana?: boolean;
   manaAbilities?: { abilityId: string; manaColors?: ManaColor[] }[];
   spellAbilities?: { abilityId: string; label?: string }[];
-  nonManaAbilities?: { abilityId: string; label?: string }[];
+  nonManaAbilities?: { abilityId: string; label?: string; abilityText?: string }[];
   answer?: boolean;
   intent?: 'attack_all' | 'confirm_attack' | 'confirm_block' | 'confirm_targets';
+}
+
+// XMage abbreviates its priority labels before expanding {this}. Compare in the
+// same representation so a cut inside the marker still matches the printed rule.
+export function publicActivationText(card: { name?: string; rules?: string[] }, label: string | undefined,
+  abilities: { label?: string }[]) {
+  if (!label || abilities.filter((ability) => ability.label === label).length !== 1) return undefined;
+  const abbreviated = label.endsWith('...');
+  const prefix = abbreviated ? label.slice(0, -3) : label;
+  if (!prefix) return undefined;
+  const matches = (value: string) => abbreviated ? value.startsWith(prefix) : value === prefix;
+  const rules = card.rules?.filter((rule) => matches(rule) || (card.name && matches(rule.replaceAll(card.name, '{this}'))));
+  return rules?.length === 1 ? rules[0] : undefined;
 }
 
 type Limits = { min?: number; max?: number };
@@ -227,7 +240,10 @@ export function projectedChoices(state: GameSessionState, promptId: string) {
       && view.players?.some((player) => player.playerId === state.playerId && !!player.battlefield?.[id])
       ? other.flatMap((ability) => ability.abilityType === 'ACTIVATED_NONMANA' && ability.id
         ? [{ abilityId: ability.id, ...(ability.value ? { label: stripMarkup(ability.value) } : {}) }] : [])
-      : [];
+        .map((ability, _, abilities) => {
+          const abilityText = publicActivationText(card, ability.label, abilities);
+          return abilityText ? { ...ability, abilityText } : ability;
+        }) : [];
     const plainMana = manaOnly && manaAbilities.every((ability) => typeof ability.plainMana === 'boolean')
       ? manaAbilities.every((ability) => ability.plainMana) : undefined;
     let label = pregame === 'startingPlayer' ? id === state.playerId ? 'Play first' : 'Draw first'

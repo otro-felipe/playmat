@@ -11,6 +11,47 @@ Before creating, joining or playing, call `get_guide({"bundle":true})` to load *
 3. Use `play_line` from that cursor with a fresh `commandId`. Request `view:"compact"` in state reads, lines and waits when the connector lists that field. Send the longest justified line, including known choices, combat and where you intend to stop. For any observed engine prompt, `choose` takes its `decisionId`, a listed `choiceId` and the requested `value` if applicable. The line returns a receipt and current state together. When it still owns execution, wait for that line with `wait_for_decision` using the receipt’s `gameId` and `commandId`. When it stops, plan from the returned state and preserve all accepted actions.
 4. Between games of a best-of-three match, read `get_sideboard_state` and submit the current decision with `submit_sideboard`. Keep within the registered card pool. Read the new game state for its game ID or final result when the match ends.
 
+## Sideboard between games
+
+Read `get_sideboard_state` anew at **each** window. At the start of the normal G3 window, its `deck` is the G2 list. Read it together with the new `decisionId`. A recovered window uses the distribution XMage restored for this seat. A cached G1 list can still be perfectly legal and submitting it will undo your earlier swaps. A deliberate return to G1 is legal too. State the intended moves from the current distribution before submitting. Check copies by card and printing in both zones, including a zero difference in each when keeping. Keep the decision and the receipt private to your seat.
+
+With a connected MCP SDK `client`, copy these functions and call `await keepSideboard(client, {})` for the MCP Player or `await keepSideboard(client, { humanTableId: tableId })` for the Human Player. The same seat selector goes on both calls. Use your traced SDK caller where match recording is required.
+
+```js
+function checkedSideboard(current, proposed, moves = []) {
+  if (!current.decisionId || current.submitted) throw Error("Read the open sideboard decision");
+  const difference = new Map();
+  function add(zone, card, amount) {
+    const key = JSON.stringify([zone, card.cardName, card.setCode ?? "", card.cardNumber ?? ""]);
+    difference.set(key, (difference.get(key) ?? 0) + amount);
+  }
+  for (const zone of ["cards", "sideboard"]) {
+    for (const card of current.deck[zone]) add(zone, card, -card.amount);
+    for (const card of proposed[zone]) add(zone, card, card.amount);
+  }
+  for (const move of moves) {
+    if (!["cards", "sideboard"].includes(move.to) || !Number.isSafeInteger(move.amount) || move.amount < 1)
+      throw Error("Invalid intended move");
+    add(move.to, move, -move.amount);
+    add(move.to === "cards" ? "sideboard" : "cards", move, move.amount);
+  }
+  if ([...difference.values()].some(amount => amount !== 0)) throw Error("Deck differs from the intended moves");
+  return { decisionId: current.decisionId, deck: proposed };
+}
+
+async function keepSideboard(client, seat) {
+  const read = await client.callTool({ name: "get_sideboard_state", arguments: seat });
+  if (read.isError) throw Error("Read the current sideboard for this seat");
+  const current = JSON.parse(read.content[0].text);
+  const args = checkedSideboard(current, structuredClone(current.deck));
+  const reply = await client.callTool({ name: "submit_sideboard", arguments: { ...seat, ...args } });
+  if (reply.isError) throw Error("Check this seat's current decision before retrying");
+  return JSON.parse(reply.content[0].text);
+}
+```
+
+For partial changes, clone the freshly read deck and edit the amounts in both zones. Run `checkedSideboard(current, proposed, moves)` before sending. Each move copies the printing fields from a current entry and specifies the number of copies and destination, for example `{ ...current.deck.sideboard[0], amount: 1, to: "cards" }`. List an outgoing move when exchanging cards. On success, `submitted: true` confirms XMage accepted the submission. The private `mainDeckChanges` receipt summarizes cards brought in and taken out by **name and quantity** relative to this prompt. The local check also catches printing differences. If the other seat is still choosing, wait. Read the new game ID once it starts.
+
 ## Start a match for the Human Player
 
 Use the signed-in account's OAuth connection. Call `list_human_decks({})` for the Human Player's personal library. An MCP Player selects its own deck with `list_decks({})`. Use the IDs returned by each respective tool.

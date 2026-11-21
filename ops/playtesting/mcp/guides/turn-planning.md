@@ -145,7 +145,20 @@ An opposing Fatal Push interrupted your line. After reviewing its target, you wa
 
 ### Animate Mutavault and attack
 
-Mutavault is untapped and has been under your control since the turn began. A Mountain can pay for the animation. Copy the animation's `abilityId` from Mutavault's `nonManaAbilities` and its full `abilityText` from the visible rules. Use the defender's object ID to attack a planeswalker at exactly 2 loyalty. Use the opponent's player ID to attack them instead. This line assumes the opponent passes and leaves the attack unblocked.
+Mutavault is untapped and has been under your control since the turn began. A Mountain can pay for its animation. Given the current state and Mutavault's observed object ID, read both activation fields from the same legal option. Its tap-for-mana option is in `manaAbilities`.
+
+```js
+const source = state.decision.choices.find(choice => choice.objectId === mutavaultId);
+const animations = source?.nonManaAbilities?.filter(option =>
+  /\bbecomes a 2\/2\b/i.test(option.abilityText ?? '')
+);
+if (animations?.length !== 1) throw new Error('Inspect the current ability options.');
+const { abilityId, abilityText } = animations[0];
+```
+
+The short `label` can contain `{this}` or an ellipsis. If two abilities share a summary, inspect XMage's ability picker. Match its `sourceObjectId`, non-mana `abilityType`, `abilityId` and full label before answering with the current `decisionId` and `choiceId`. Selecting a source with only one legal action can announce it immediately.
+
+This example pays from the Mountain and attacks a planeswalker at 2 loyalty. To attack the opponent, use their player ID as the defender. The line assumes the opponent passes and leaves the attack unblocked.
 
 ```json
 {
@@ -158,7 +171,7 @@ Mutavault is untapped and has been under your control since the turn began. A Mo
       "kind": "activate",
       "sourceId": "<mutavault-id>",
       "abilityId": "<animation-ability-id>",
-      "abilityText": "<animation-ability-text>",
+      "abilityText": "<abilityText from that same animation entry>",
       "payWith": [{"sourceId": "<mountain-id>", "color": "R"}]
     },
     {
@@ -169,6 +182,25 @@ Mutavault is untapped and has been under your control since the turn began. A Mo
   ]
 }
 ```
+
+### Choose odd or even for Extinction Event
+
+XMage presents `Odd or even?` as a `question` with buttons labeled `Even` and `Odd`. Suppose you have {3}{B} in your mana pool and want to exile the opposing Sunspine Lynx, which has mana value four. Queue the cast and the Even button together. If you need to tap lands, add the known sources to the cast's `payWith`.
+
+```json
+{
+  "gameId": "00000000-0000-4000-8000-000000000001",
+  "cursor": 2250,
+  "commandId": "extinction-even-001",
+  "view": "compact",
+  "actions": [
+    {"kind": "play", "select": {"objectId": "<extinction-event-id>", "zone": "hand"}},
+    {"kind": "choose", "guard": {"kind": "question", "instruction": "Odd or even?"}, "select": {"label": "Even"}}
+  ]
+}
+```
+
+For odd mana values, change `select.label` to `"Odd"`. Use the exact instruction to guard a future question and the label to identify the intended outcome. For a Yes/No cost such as kicker, use `select.answer` as in the next example.
 
 ### Decline kicker, finish the spell, and make a land drop
 
@@ -340,7 +372,7 @@ The default `if_no_play` policy checks the engine's choices. Tapped lands and ze
 
 For a bluff, hold your resources open and choose the single priority handoff or a deliberate pass to a specified stop. A brief `{"kind":"pace","delayMs":250}` before the pass is optional and capped by the current clocks. A delay does not establish what the opponent holds. Use `wait_for_decision` when you intend only to observe.
 
-When keeping every creature back, include `{"kind":"attack","attackers":[]}` before the terminal pass. Declaring attackers is a mandatory decision even when the declaration is empty.
+When a creature could attack but you intend to keep it back, include `{"kind":"attack","attackers":[]}` before the terminal pass. If none can attack and XMage skips the declaration, plan the postcombat play or terminal pass directly. An explicit empty attack queued for a skipped declaration can stop at postcombat priority. Resume from the returned cursor and include only the actions still to play.
 
 `my_draw` binds when the terminal pass begins, after any earlier actions in the line. From your own untap or upkeep it aims for this turn's draw. From later in your turn or during the opponent's turn, it aims for your next turn's draw. A normal draw occurs before the draw step's priority. A queued line stops at either player's upkeep with `before_draw_trigger` when a face-up permanent's public rules show a potential trigger on that player's upcoming draw or draw step. Review any conditions such as exceptions for the first card drawn. A new line starting at the returned upkeep can deliberately let the player draw unless it introduces a new draw-trigger source. `lastDestination` shows the actual boundary, including when `destination_skipped` reports a skipped window.
 
@@ -404,12 +436,12 @@ Once you have inspected the redrawn seven, you may already know which card to bo
 
 ## Express every visible engine choice
 
-Use `{"kind":"choose","decisionId":"<observed prompt>","choiceId":"<legal option>"}` for any observed engine choice, including mulligan, cards to put on the bottom, attackers, blockers, mode, targets, mana or costs. Supply the engine's requested numeric or array `value` when shown. For a future choice, use a typed guard and unique `select`. A known question can use `guard:{kind:"question",sourceObjectId:"<visible source>"}` with `select:{answer:false}`. Boolean answers are independent of button labels. For prompts without typed projection, keep the exact `guard.instruction`.
+Use `{"kind":"choose","decisionId":"<observed prompt>","choiceId":"<legal option>"}` for any observed engine choice, including mulligan, cards to put on the bottom, attackers, blockers, mode, targets, mana or costs. Supply the engine's requested numeric or array `value` when shown. For a future choice, use a typed guard and unique `select`. A known Yes/No question can use `guard:{kind:"question",sourceObjectId:"<visible source>"}` with `select:{answer:false}`. For named alternatives such as Odd and Even, select the exact strategic label with the question’s instruction guard. For prompts without typed projection, keep the exact `guard.instruction`.
 
 - **Play and pay.** A `play` uses a unique visible selector. It waits for an empty stack by default. Use `when:"priority"` for a deliberate response on the stack. `payWith` accepts a source object ID or `{sourceId:"<land object>",color:"U"}`. Include the projected `abilityId` when multiple options produce the same color. The executor selects a legal engine option and applies its effects. Only omit chosen sources when relying on configured engine auto-payment.
 - **Land intent.** Use `{"kind":"play","playAs":"land","select":{"objectId":"<card object ID>","zone":"hand"}}` when a card has another action such as Boseiju's Channel. The line uses the engine-confirmed land play and can select a single typed land option from its picker. If two land faces are available, choose the observed face by its exact ID.
 - **Modes and special actions.** The XMage ability picker has kind `panel`. On `play`, use `mode` for an exact modal option, its printed flavor name, or a cast face. For Unholy Annex // Ritual Chamber, set `mode:"Unholy Annex"` or `mode:"Cast Unholy Annex"` and include the exact `payWith` in that same `play`. For example, choose `{sourceId:"<blooming-marsh-id>",color:"B"}` for black mana from Blooming Marsh. Use `modeId` for an observed option ID or `spellAbilityId` for a legal spell option from `spellAbilities`. When the priority decision shows only one legal cast option, the executor can select the matching typed face. A future panel can be guarded by `sourceObjectId` with `select.abilityId`. Plot uses `expectCast:false` on the opening `play`.
-- **Activate a permanent.** Send `{kind:"activate",sourceId,abilityId,abilityText,payWith:[manaSourceId]}` for a visible own non-mana ability such as Mutavault's animation or Fel's loyalty ability. Read the legal ID from `nonManaAbilities` on the priority choice and use the source's exact public ability text. Include known `targets` in engine order and `when:"priority"` if responding on the stack. The executor verifies the picker or stack identity and the payment's source.
+- **Activate a permanent.** Send `{kind:"activate",sourceId,abilityId,abilityText,payWith:[manaSourceId]}` for a visible own non-mana ability such as Mutavault's animation or Fel's loyalty ability. Copy the legal ID and full rule from the same `nonManaAbilities` entry on the priority choice. Include known `targets` in engine order and `when:"priority"` if responding on the stack. The executor verifies the picker or stack identity and the payment's source.
 - **Optional casting costs.** Queue a separate guarded `choose` for an announced kicker, buyback or similar question, with `guard:{kind:"question",sourceObjectId, instruction}` and `select:{answer:true}` or `{answer:false}`. For Burst Lightning, declare the cast first, then the exact kicker question, then the target and each guarded `payMana` choice. Targets and payments on `play` are expanded immediately after the cast, so put them in separate guarded choices when a cost question must come first. The engine can omit a question when the cost is unavailable. Replan if the observed order, source or payment changes.
 - **Targets.** Give a `play.targets` entry as `{select:{objectId:"<visible object>"},role:0,targetZone:"BATTLEFIELD"}` using the engine's zero-based role within the selected mode. The executor checks the source and live legal target. An exact `instruction` guard also works. Use `Select a player` for Thoughtseize and `Select an opponent` for Duress when those are the published prompts. Include known targets and mana in the initial line and reconsider once the hand is revealed. To resume an unpaid spell at its observed casting prompt, use a `choose` with the exact target guard, then guarded `payMana` choices. Reckless Rage needs the opponent's creature and your creature in the order XMage asks for each role. If a mode comes first, follow the published prompt order. An engine-selected target is accepted when the exact spell instance records it in the declared target role. A changed target or unverified role needs a fresh decision.
 - **Predictable triggers and Ward.** Declare an own trigger with `expectTriggers` using its visible source ID and exact public ability text. Opposing Ward uses `expectTargetTriggers` with the public Ward source ID, your spell's `targetingCardId` and the exact public Ward text. Queue a guarded answer to the Ward question and a guarded choice of the exact card to discard or cost to pay. For Ward discard use `guard:{kind:"target",instruction:"Select a card (discard cost)",targetZone:"HAND"}` and select the own hand card by object ID. A different source, trigger, prompt or illegal cost returns control.
@@ -421,6 +453,18 @@ Before committing an animated land, compare combat with the opponent's plausible
 The executor tracks your currently visible stack objects by default. When planning through the known resolution of an object already on the stack, `expectedStackIds` can name the exact visible stack objects to adopt. Supplying it replaces the default list, so include any of your own existing objects that the line expects to resolve. A future response is new information.
 
 ## Stop when your information changes
+
+During Liliana of the Veil’s +1, each player discards a card. If you receive `reevaluation_required` with zero decisions applied while choosing your discard, send only the visible choice. Use a fresh command ID and copy the cursor, decision ID and choice ID from the returned state. Inspect the public discards in the next state before deciding whether to pass.
+
+```json
+{
+  "gameId": "00000000-0000-4000-8000-000000000001",
+  "cursor": 1250,
+  "commandId": "discard-only-001",
+  "view": "compact",
+  "actions": [{"kind": "choose", "decisionId": "<current-discard-decision>", "choiceId": "<your-selected-card-choice>"}]
+}
+```
 
 An own draw, a reveal, a newly presented search or scry, a random result, or an actual opponent action can change the best line. Put known costs, targets and modes before the information-changing resolution. For example, cast and pay for Opt in one call, then choose from the actually observed scry prompt in a new line. Use `reevaluateAfter:true` on the final strategic intention for an uncertain outcome the tool may not recognize. The engine validates what your seat can see and do. Opponent passes and delays are incomplete evidence of hidden cards. Use the public-information hypotheses in the card catalog guide when comparing responses.
 

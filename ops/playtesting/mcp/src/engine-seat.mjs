@@ -3,6 +3,7 @@ import WebSocket from 'ws';
 import { createApi, RpcClient, EventBus, GameSession, PROMPT_EVENTS, stripMarkup, chatText, projectedChoices, commandForAgentChoice, describeAgentDecision, visibleAgentGame } from '../dist/engine-core.mjs';
 import { cardCatalogEntry, formatTag } from './catalog.mjs';
 import { ToolError, waitFor } from './game-seat.mjs';
+import { mainDeckChanges } from '../../product/sideboard-delta.mjs';
 import { TableConversation } from './table-conversation.mjs';
 
 const ROLLBACK_VOTE = 'ADD_PERMISSION_TO_ROLLBACK_TURN';
@@ -470,7 +471,7 @@ export class PlaymatEngineSeat {
       throw error;
     }
     this.#publish();
-    return { submitted: true };
+    return { submitted: true, mainDeckChanges: mainDeckChanges(sideboard.deck, deck) };
   }
 
   async requestRollback({ gameId, turnsBack }) {

@@ -162,6 +162,75 @@ async function verifySagaOrder(fixture) {
   await call('concede', { gameId: state.gameId, entireMatch: true })
 }
 
+// Both parities are represented on the battlefield so picking the wrong legal
+// button cannot pass this check. Every setup creature is free or costs one black.
+export async function verifyLabeledQuestions(fixture) {
+  const { startFixture, ownPlayer, call } = fixture
+  const namesByParity = { Even: ['Ornithopter', 'Memnite'], Odd: ['Tormented Soul', 'Diregraf Ghoul'] }
+  const deck = { name: 'Isolated labeled parity question', cards: [
+    { cardName: 'Swamp', amount: 40 },
+    ...['Extinction Event', ...namesByParity.Even, ...namesByParity.Odd].map(cardName => ({ cardName, amount: 4 })),
+  ], sideboard: [] }
+  for (const label of ['Even', 'Odd']) {
+    let state = await startFixture('Isolated Extinction Event ' + label, deck, 77)
+    const board = view => ownPlayer(view).battlefield
+    const hasParity = (view, names) => board(view).some(card => names.includes(card.name))
+    const untapped = view => board(view).filter(card => card.name === 'Swamp' && !card.tapped)
+    let castingCreature
+    state = await setup(fixture, state, {
+      basic: 'Swamp', landLimit: 4,
+      ready: view => ownMain(view, ownPlayer) && !view.stack.length && untapped(view).length >= 4
+        && view.ownHand.some(card => card.name === 'Extinction Event')
+        && Object.values(namesByParity).every(names => hasParity(view, names)),
+      choose: view => {
+        if (view.decision.kind === 'mulligan' && view.ownHand.length > 5
+          && !view.ownHand.some(card => card.name === 'Extinction Event')) {
+          return view.decision.choices.find(choice => /^Mulligan\b/.test(choice.label))
+        }
+        if (view.decision.kind === 'mulliganBottom') {
+          // Keep one sweeper, one creature of each parity and as many of the first four lands as possible.
+          const hand = view.ownHand
+          const bottom = view.decision.choices.filter(choice => choice.card && hand.some(card => card.id === (choice.objectId ?? choice.card.id)))
+          const surplus = bottom.find(({ card }) => card.name === 'Extinction Event'
+            ? hand.filter(other => other.name === card.name).length > 1
+            : Object.values(namesByParity).some(names => names.includes(card.name) && hand.filter(other => names.includes(other.name)).length > 1))
+          return surplus ?? bottom.find(({ card }) => card.name === 'Swamp') ?? bottom[0]
+        }
+        if (view.decision.kind === 'panel' && castingCreature && view.decision.sourceObjectId === castingCreature.objectId) {
+          const options = view.decision.choices.filter(choice => choice.abilityType === 'SPELL'
+            && choice.spellName === castingCreature.card.name)
+          const exact = options.filter(choice => choice.label === 'Cast ' + castingCreature.card.name)
+          const legal = exact.length === 1 ? exact : options
+          assert.equal(legal.length, 1, 'The fixture creature offers a unique ordinary cast')
+          return legal[0]
+        }
+        if (view.step === 'CLEANUP' && view.decision.kind === 'target') {
+          const surplus = view.decision.choices.find(choice => choice.card?.name !== 'Extinction Event'
+            && Object.values(namesByParity).some(names => names.includes(choice.card?.name) && hasParity(view, names)))
+          if (surplus) return surplus
+        }
+        if (ownMain(view, ownPlayer) && !view.stack.length) {
+          castingCreature = view.decision.choices.find(choice => view.ownHand.some(card => card.id === choice.objectId)
+            && Object.values(namesByParity).some(names => names.includes(choice.card?.name) && !hasParity(view, names)))
+          return castingCreature
+        }
+      },
+    })
+    const source = state.ownHand.find(card => card.name === 'Extinction Event')
+    const receipt = await runLine(fixture, state, [
+      { ...actionForCard(source), payWith: untapped(state).slice(0, 4).map(card => card.id) },
+      { kind: 'choose', guard: { kind: 'question', instruction: 'Odd or even?' }, select: { label } },
+    ])
+    assert.equal(receipt.status, 'completed', JSON.stringify(receipt.error))
+    assert.equal(receipt.state.stack.length, 0)
+    const remaining = label === 'Even' ? 'Odd' : 'Even'
+    assert.equal(hasParity(receipt.state, namesByParity[label]), false, 'The chosen parity left the battlefield')
+    assert.equal(hasParity(receipt.state, namesByParity[remaining]), true, 'The other parity stayed on the battlefield')
+    console.log(JSON.stringify({ phase: 'real XMage labeled question', label, appliedDecisions: receipt.appliedDecisions }))
+    await call('concede', { gameId: state.gameId, entireMatch: true })
+  }
+}
+
 export async function verifyCastingCosts(fixture) {
   for (const accept of [false, true]) await verifyOptionalCost(fixture, {
     cardName: 'Burst Lightning', basic: 'Mountain', mana: 5, instruction: 'Pay Kicker {4} ?', accept, damage: accept ? 4 : 2,

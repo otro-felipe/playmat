@@ -361,6 +361,7 @@ try {
   const pioneerScenarios = [
     ['mulligan', './london-mulligan.local.mjs', 'verifyLondonMulligan'],
     ['casting', './casting-and-order.local.mjs', 'verifyCastingCosts'],
+    ['labeled-questions', './casting-and-order.local.mjs', 'verifyLabeledQuestions'],
     ['order', './casting-and-order.local.mjs', 'verifyTriggerOrder'],
     ['activation', './creature-land-activation.local.mjs', 'verifyCreatureLandActivation'],
     ['combat', './combat-destinations.local.mjs', 'verifyPlaneswalkerCombat'],
@@ -374,7 +375,7 @@ try {
     const humanCapture = await verifyHumanReplayCapture({ startHumanReviewFixture, gameClock })
     await verifyReplayReviewOverMcp({ capture, humanCapture, Client, StreamableHTTPClientTransport, token })
   } else if (scenarios === 'discard-capture') {
-    await verifyDiscardChoiceCapture({ startFixture, ownPlayer, rivalPlayer, call, answer, waitNextOwn, gameClock })
+    await verifyDiscardChoiceCapture(fixture)
   } else if (scenarios === 'review-prepared') {
     // This line also verifies mode/use evidence in the archived replay using the history grant.
     await verifyPreparedModeLine('Patrol Night', true)

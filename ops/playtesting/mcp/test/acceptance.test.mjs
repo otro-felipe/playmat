@@ -206,6 +206,7 @@ test('[PM-LINE-04] one bootstrap returns all four complete guides without openin
   const client = await connect(t, url, 'fixture-other');
   const bundle = await call(client, 'get_guide', { bundle: true });
   assert.equal(bundle.error, false);
+  assert.equal(client.getServerVersion().version, '0.5.0');
   assert.match(bundle.value.version, /^[a-f0-9]{64}$/);
   assert.equal(bundle.value.guides.length, 4);
   const onboarding = bundle.value.guides.find(({ name }) => name === 'getting-started');
@@ -227,6 +228,44 @@ test('[PM-LINE-04] one bootstrap returns all four complete guides without openin
   const playLine = tools.find(({ name }) => name === 'play_line');
   assert.match(playLine?.description, /get_guide\(\{"bundle":true\}\)/);
   assert.equal(fixtures.size, 0, 'Reading the bundle must not create or join an engine seat');
+});
+
+test('[PM-GAME-01a] the bundled sideboard example submits the latest seat and guards the intended printing moves', async (t) => {
+  const { url } = await start(t);
+  const client = await connect(t, url, 'fixture-player');
+  const { guides } = (await call(client, 'get_guide', { bundle: true })).value;
+  const onboarding = guides.find(guide => guide.name === 'getting-started').text;
+  const snippet = onboarding.match(/## Sideboard between games[\s\S]*?```js\n([\s\S]*?)\n```/);
+  assert.ok(snippet, 'the actual startup bundle contains the executable sideboarding example');
+  // Run the published SDK code against a controlled pair of private-seat responses.
+  const example = await import('data:text/javascript;base64,' + Buffer.from(snippet[1]
+    + '\nexport { checkedSideboard, keepSideboard };').toString('base64'));
+  const card = (cardNumber, amount) => ({ cardName: 'Forest', setCode: 'M15', cardNumber, amount });
+  const deck = { name: 'Fixture', cards: [card('266', 56), card('267', 4)], sideboard: [card('266', 4)] };
+  const original = { ...deck, cards: [card('266', 60)], sideboard: [card('267', 4)] };
+  const current = { decisionId: 'second-window', submitted: false, deck };
+  for (const seat of [{}, { humanTableId: TEST_TABLE }]) {
+    const calls = [];
+    const sdk = { async callTool(request) {
+      calls.push(request);
+      return { content: [{ type: 'text', text: JSON.stringify(request.name === 'get_sideboard_state'
+        ? current : { submitted: true }) }] };
+    } };
+    await example.keepSideboard(sdk, seat);
+    assert.deepEqual(calls, [
+      { name: 'get_sideboard_state', arguments: seat },
+      { name: 'submit_sideboard', arguments: { ...seat, decisionId: current.decisionId, deck } },
+    ]);
+  }
+  assert.throws(() => example.checkedSideboard(current, original), /intended/i, 'a legal cached G1 deck fails the keep check');
+  const outside = { ...deck, sideboard: [{ cardName: 'Island', amount: 4 }] };
+  assert.throws(() => example.checkedSideboard(current, outside), /intended/i, 'changing the pool fails before submission');
+  const moves = [{ ...card('266', 4), to: 'cards' }, { ...card('267', 4), to: 'sideboard' }];
+  assert.deepEqual(example.checkedSideboard(current, original, moves), { decisionId: current.decisionId, deck: original });
+  const partial = { ...deck, cards: [card('266', 58), card('267', 2)], sideboard: [card('266', 2), card('267', 2)] };
+  assert.deepEqual(example.checkedSideboard(current, partial, moves.map(move => ({ ...move, amount: 2 }))).deck, partial);
+  assert.throws(() => example.checkedSideboard(current, { ...partial, sideboard: [] }, moves), /intended/i);
+  assert.throws(() => example.checkedSideboard({ ...current, submitted: true }, deck));
 });
 
 test('get_guide delivers the public opponent response range guidance before seating an agent', async (t) => {

@@ -2,20 +2,21 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 
 const scenarios = [
-  { landName: 'Mutavault', format: 'Pioneer' },
-  { landName: "Mishra's Factory", format: 'Modern' },
-  { landName: 'Mutavault', format: 'Pioneer', rivalResponse: true },
+  { landName: 'Mutavault', setCode: 'M14', cardNumber: '228', format: 'Pioneer' },
+  { landName: "Mishra's Factory", setCode: 'MH2', cardNumber: '302', format: 'Modern' },
+  { landName: 'Mutavault', setCode: 'M14', cardNumber: '228', format: 'Pioneer', rivalResponse: true },
 ]
 
 export async function verifyCreatureLandActivation({ startFixture, ownPlayer, rivalPlayer, answer, waitNextOwn,
   playLineWithPeer, call, gameClock, setRivalSetup }) {
-  for (const { landName, format, rivalResponse } of scenarios) {
+  for (const { landName, setCode, cardNumber, format, rivalResponse } of scenarios) {
     const deck = { name: 'Isolated creature land fixture', cards: [
-      { cardName: landName, amount: 4 }, { cardName: 'Mountain', amount: 56 },
+      { cardName: landName, setCode, cardNumber, amount: 4 },
+      { cardName: 'Mountain', setCode: 'DMU', cardNumber: '271', amount: 56 },
     ], sideboard: [] }
     let state = await startFixture('Isolated activation of ' + landName, deck, 77, undefined, format)
     let playedLandTurn
-    let source, mountain, activation, abilityText
+    let source, mountain, activation
     while (gameClock.hasTime()) {
       const own = ownPlayer(state)
       const { decision } = state
@@ -25,9 +26,10 @@ export async function verifyCreatureLandActivation({ startFixture, ownPlayer, ri
       if (ownMain && source && mountain && state.turn > playedLandTurn && !state.stack.length
         && (!rivalResponse || rivalPlayer(state).battlefield.some(({ name, tapped }) => name === 'Mountain' && !tapped))) {
         const legal = decision.choices.find(({ objectId }) => objectId === source.id)
-        activation = legal?.nonManaAbilities?.find(({ label }) => /\bbecomes a 2\/2\b/i.test(label))
-        abilityText = source.rules.find((rule) => /^\{1\}: .*\bbecomes a 2\/2\b/i.test(rule))
-        assert.ok(activation?.abilityId && abilityText, 'The exact source projects its legal animation and full public rules')
+        const animations = legal?.nonManaAbilities?.filter(({ abilityText }) => /\bbecomes a 2\/2\b/i.test(abilityText))
+        assert.equal(animations?.length, 1, 'A unique legal animation has a full source-named rule')
+        activation = animations[0]
+        assert.ok(activation.abilityId && source.rules.includes(activation.abilityText))
         break
       }
 
@@ -37,15 +39,26 @@ export async function verifyCreatureLandActivation({ startFixture, ownPlayer, ri
       const playMountain = ownMain && !mountain && canPlay('Mountain')
       const discardMountain = state.step === 'CLEANUP' && decision.kind === 'target'
         && decision.choices.find(({ card }) => card?.name === 'Mountain' && state.ownHand.some(({ id }) => id === card.id))
-      const choice = playCreatureLand || playMountain || discardMountain
+      // London bottoms happen before the next keep prompt. Redraw at seven or six
+      // when the fixture land is missing; every seven contains at least three Mountains.
+      const redraw = decision.kind === 'mulligan' && state.ownHand.length > 5
+        && !state.ownHand.some(card => card.name === landName)
+        && decision.choices.find(choice => /^Mulligan\b/i.test(choice.label))
+      const bottom = decision.kind === 'mulliganBottom' && decision.choices.find(choice =>
+        state.ownHand.some(card => card.id === (choice.objectId ?? choice.card?.id) && card.name === 'Mountain'))
+      const choice = playCreatureLand || playMountain || discardMountain || redraw || bottom
         || decision.choices.find(({ label }) => /^Keep\b|^Play first\b/.test(label))
         || decision.choices.find(({ type }) => type === 'pass')
       assert.ok(choice, 'Unexpected creature-land setup prompt ' + decision.kind)
-      if (playCreatureLand) playedLandTurn = state.turn
-      await answer(state, choice)
+      try {
+        await answer(state, choice)
+        if (playCreatureLand) playedLandTurn = state.turn
+      } catch (error) {
+        if (!['not_actionable', 'stale_decision'].includes(error.code)) throw error
+      }
       state = await waitNextOwn(decision.id)
     }
-    assert.ok(activation && abilityText && source && mountain, 'The fixture reached an attack-ready creature land')
+    assert.ok(activation && source && mountain, 'The fixture reached an attack-ready creature land')
     const rival = rivalPlayer(state)
     const rivalActionsBefore = state.sequenceEvidence.publicActions[rival.id] ?? 0
     let rivalAttempted = false
@@ -62,7 +75,7 @@ export async function verifyCreatureLandActivation({ startFixture, ownPlayer, ri
     try {
       const result = await playLineWithPeer({ gameId: state.gameId, cursor: state.cursor, commandId: randomUUID(),
         view: 'compact', waitMs: 15_000, actions: [
-          { kind: 'activate', sourceId: source.id, abilityId: activation.abilityId, abilityText,
+          { kind: 'activate', sourceId: source.id, abilityId: activation.abilityId, abilityText: activation.abilityText,
             payWith: [{ sourceId: mountain.id, color: 'R' }] },
           { kind: 'attack', attackers: [source.id] },
           { kind: 'pass_until', destination: 'end_step', policy: 'decline_optional' },

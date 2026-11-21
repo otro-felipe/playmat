@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -202,7 +203,7 @@ export async function verifyHumanReplayCapture({ startHumanReviewFixture, gameCl
   })
 }
 
-export async function verifyDiscardChoiceCapture({ startFixture, ownPlayer, rivalPlayer, call, answer, waitNextOwn, gameClock }) {
+export async function verifyDiscardChoiceCapture({ startFixture, ownPlayer, rivalPlayer, call, answer, waitNextOwn, gameClock, playLineWithPeer }) {
   requireIsolatedFixture()
   const actingDeck = { name: 'Isolated Thoughtseize choice fixture', cards: [
     { cardName: 'Swamp', amount: 52 }, { cardName: 'Thoughtseize', amount: 4 }, { cardName: 'Duress', amount: 4 },
@@ -242,7 +243,16 @@ export async function verifyDiscardChoiceCapture({ startFixture, ownPlayer, riva
   assert.equal(state.decision.kind, 'pickCards')
   const chosen = state.decision.choices.find(choice => choice.card && choice.card.name !== 'Mountain')
   assert.ok(chosen?.card)
-  await move(chosen)
+  const select = { kind: 'choose', decisionId: state.decision.id, choiceId: chosen.id }
+  const rejected = await call('play_line', { gameId: state.gameId, cursor: state.cursor, commandId: randomUUID(),
+    expectedStackIds: state.stack.map(card => card.id), actions: [select, { kind: 'pass_priority' }] })
+  assert.equal(rejected.code, 'reevaluation_required')
+  assert.equal(rejected.appliedDecisions, 0)
+  assert.match(rejected.message, /only.*decisionId.*choiceId.*inspect/i)
+  assert.equal(rejected.state.decision.id, select.decisionId)
+  const recovery = await playLineWithPeer({ gameId: state.gameId, cursor: rejected.state.cursor, commandId: randomUUID(),
+    actions: [select] }, { gameId: state.gameId, turn: state.turn, activePlayerId: state.activePlayerId })
+  assert.equal(recovery.appliedDecisions, 1, 'Only the visible discard was submitted')
   await call('concede', { gameId: state.gameId, entireMatch: true })
   const { rows } = await archived(state.gameId, gameClock.deadlineWithin(10_000))
   const selection = rows.find(row => row.action === 'select' && row.decision?.sourceCard?.name === 'Thoughtseize')

@@ -5,6 +5,7 @@ import { createRequire } from 'node:module'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { createProduct } from './product.mjs'
 import { fixtureMcpFetch } from './fixture-mcp-fetch.mjs'
+import { hostDeck, guestDeck, verifySideboarding } from '../mcp/test/bo3-sideboard-fixture.mjs'
 import { PlaymatEngineSeat } from '../mcp/src/engine-seat.mjs'
 import { createProductClient } from '../mcp/src/product.mjs'
 
@@ -63,7 +64,9 @@ async function connect(label) {
     const text = response.content[0]?.text ?? ''
     if (!text.startsWith('{')) throw Error(tool+' returned a protocol error')
     const value = JSON.parse(text)
-    if (expectedCode) { assert.equal(value.code, expectedCode); return }
+    if (Array.isArray(expectedCode)) {
+      if (response.isError && expectedCode.includes(value.code)) return null
+    } else if (expectedCode) { assert.equal(value.code, expectedCode); return }
     if (response.isError) throw Error(tool+' failed: '+value.code)
     return value
   }
@@ -74,7 +77,7 @@ async function until(f, label, timeoutMs=30000) {
   while (Date.now()<end) { const value = await f(); if (value) return value; await sleep(250) }
   throw Error('Timed out waiting for '+label)
 }
-try {
+async function verifyHumanControls() {
   await browser.open()
   const room = await browser.api.serverGetMainRoomId()
   const [host, rival] = await Promise.all([connect('human-controller'),connect('mcp-player')])
@@ -275,6 +278,22 @@ try {
     await until(()=>browser.snapshot().status==='match_over',mode+' complete')
   }
   console.log('Verified four modes, discovery, human and MCP decisions, isolated hands and an observer-only browser with and without an attached agent.')
+}
+
+async function verifyHumanSideboard() {
+  const [human, guest] = await Promise.all([connect('human-controller'), connect('mcp-player')])
+  const { tableId } = await human('create_human_match', { mode: 'mcp', humanMcpAllowed: true,
+    format: 'Pioneer', winsNeeded: 2, name: 'Sideboarding via both seats', deck: hostDeck })
+  await guest('join_game', { tableId, deck: guestDeck })
+  const host = (name, args, retryable) => human(name, { ...args, humanTableId: tableId }, retryable)
+  await host('start_match')
+  await verifySideboarding(host, guest, [humanName, 'mcp_' + humanName])
+  console.log('Verified a 2–1 BO3 with both seat routes, private swap receipts and two sideboard windows.')
+}
+
+try {
+  if (process.env.PLAYMAT_SEQUENCE_SCENARIOS === 'human-sideboarding') await verifyHumanSideboard()
+  else await verifyHumanControls()
 } finally {
   for(const client of clients) await client.close()
   browser.close()

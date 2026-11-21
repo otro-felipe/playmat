@@ -56,7 +56,7 @@ test model adherence in an explicitly invited match rather than assuming transpo
 1. Attach to a game with `get_game_state`, or use `wait_for_decision` while the other seat decides.
 2. Submit the longest justified `play_line` with the observed game ID and cursor, a new `commandId` and the significant plays, choices, costs, combat and intended stop. `choose` covers any observed XMage choice with its decision and choice IDs and optional value. See the [turn planning guide](guides/turn-planning.md) for complete examples.
 3. Read the returned receipt and state. If `planOwnsExecution` is true, use `wait_for_decision` with the command ID and game ID. When play returns to you, continue only with the still-justified remainder. An identical in-process retry recovers a missing line receipt; a restart can expire it. Reconcile an uncertain engine acknowledgement before making a new command.
-4. Between games, use `get_sideboard_state` and `submit_sideboard` with the current decision. Observe the next game ID when XMage starts it.
+4. Between games, follow the executable sideboard example in [getting-started](guides/getting-started.md#sideboard-between-games). Use the deck and decision ID from the same read for your seat. Compare the proposed distribution with your intended moves before submitting. Observe the new game ID when XMage starts it.
 
 Check for `status:"rejected"` even when MCP delivered a successful tool response. Line rejections carry machine-readable `stage`, `code`, and `recovery`; field issues or the latest state for the same game appear when available. The submission applied zero decisions. A separate existing command may still be running. Read the [receipt procedure](guides/turn-planning.md#continue-from-the-receipt) before retrying.
 
@@ -87,6 +87,12 @@ For persisted post-match notes, start `review_playmat_replay` and read `get_matc
 ## Verification
 
 Use the Node 22 image and the same engine container network for the local integration test. Set `PLAYMAT_LIVE_ENGINE_URL` to that container's trusted loopback WebSocket endpoint. The synthetic fixture seats run a Pioneer Bo3 through real MCP HTTP transports and the engine's match and sideboard flow. In the absence of a live test URL, `npm test` still exercises the HTTP contract for PM-AC-08, PM-AC-09 and PM-AC-10. `PLAYMAT_LIVE_LEGACY_ENGINE=1` permits the live fixture to check a pre-change engine without the optional atomic prompt gate. Release acceptance requires the guard enabled on the candidate.
+
+To verify the Human Player's `humanTableId` route and the MCP Player's own seat together, run the full local fixture from the repository root. The three-game match exchanges four cards for Game 2 and keeps that distribution for Game 3. The other seat intentionally reverts its changes.
+
+```sh
+PLAYMAT_SEQUENCE_IMAGE_TEST=yes PLAYMAT_SEQUENCE_SCENARIOS=human-sideboarding bash ops/playtesting/test/verify-sequence-image.sh
+```
 
 For the deployed adapter, use `scripts/smoke.mjs` in the packaged service with `PLAYMAT_MCP_URL` and `PLAYMAT_MCP_TOKEN` injected. It reports authentication and card catalog status, the native MCP version, and the gameplay schema fingerprint. For a connected OpenAI workspace app, inspect the actual tool definitions after deployment. If they are stale, the app manager can use the workspace's action refresh and open a new chat to verify the new definitions. Verify gameplay through that connector in an isolated match. [OpenAI refresh instructions](https://help.openai.com/en/articles/12584461-connecting-custom-mcp-servers-in-chatgpt)
 

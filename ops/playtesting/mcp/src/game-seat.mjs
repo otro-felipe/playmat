@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { publicActivationText } from '../dist/engine-core.mjs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { observedAttacks, observedBlocks, PlannedDefenderCombat, PlannedPermanentCombat } from './planned-combat.mjs';
 import { canCallCoin, drawTriggerSources, guardsEffectQuestion, needsEffectReevaluation, needsSpellReevaluation,
@@ -341,7 +342,15 @@ export class GameSeat {
       && actions.every((action) => isPriorityResponse(action) || guardedCostChoice(action));
     const resumingCast = resolvingInformation && resumesObservedCast(initial, actions, ownId, expectedStackIds);
     const passingObservedStack = actions.length === 1 && finalPass;
-    if (resolvingInformation && actions.length && !answeringObservedInformation && !respondingBeforeResolution && !resumingCast && !passingObservedStack) throw new ToolError('reevaluation_required', 'The existing stack can reveal information or require an unknown decision. Resolve/inspect it before planning new actions; use when:priority for deliberate responses before resolution.');
+    if (resolvingInformation && actions.length && !answeringObservedInformation && !respondingBeforeResolution && !resumingCast && !passingObservedStack) {
+      const prompt = visibleDecision(initial);
+      if (prompt?.choices?.length && prompt.kind !== 'priority') {
+        const valueHint = prompt.choices.some(({ type }) => type === 'number' || type === 'numbers')
+          ? ' Include the requested numeric or array value.' : '';
+        throw new ToolError('reevaluation_required', 'Answer only the visible prompt with one choose action using its decisionId and legal choiceId.' + valueHint + ' Then inspect the returned state before passing or planning another action.');
+      }
+      throw new ToolError('reevaluation_required', 'The existing stack can reveal information or require an unknown decision. Inspect its resolution before planning new actions, or use when:priority for a deliberate response before resolution.');
+    }
     const exact = actions.length === 1 && actions[0];
     const singleObservedChoice = !settle && finish === 'none' && exact?.kind === 'choose' && exact.choiceId
       && exact.decisionId === initial.decision?.id && !exact.expectCast && !exact.expectAbility
@@ -1233,8 +1242,11 @@ export class GameSeat {
                 && choice.type === 'option' && choice.abilityType === 'ACTIVATED_NONMANA';
             if (!source || source.faceDown || !matchesSource) throw new ToolError('bad_ability_expectation', 'Expect only an exact non-mana activation of the selected visible own battlefield source.');
             if (step.activationId) {
-              if (!choice.nonManaAbilities?.some(({ abilityId }) => abilityId === step.activationId)) {
-                throw new ToolError('illegal_choice', 'The declared non-mana ability is unavailable from this source.');
+              const legal = choice.nonManaAbilities?.find(({ abilityId }) => abilityId === step.activationId);
+              if (!legal) throw new ToolError('illegal_choice', 'The declared non-mana ability is unavailable from this source.');
+              const text = legal.abilityText ?? publicActivationText(source, legal.label, choice.nonManaAbilities);
+              if (!text || text !== step.expectAbility.abilityText) {
+                throw new ToolError('illegal_choice', 'Copy abilityId and full abilityText from the same nonManaAbilities entry, or inspect the visible ability picker.');
               }
               castingSources.set(step.actionIndex, { objectId: source.id, cardId: source.cardId });
             }
