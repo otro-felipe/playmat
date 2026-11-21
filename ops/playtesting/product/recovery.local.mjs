@@ -1,6 +1,7 @@
 // Explicit fixture harness, never run by npm test. Requires the isolated container opt-in below.
 import { fixtureMcpFetch } from './fixture-mcp-fetch.mjs'
 import assert from 'node:assert/strict'
+import { waitForConcession } from './recovery-concession.mjs'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -131,14 +132,11 @@ async function playTo(targetTurn) {
   throw Error('No durable turn reached: ' + JSON.stringify({ targetTurn, furthestTurn, seats: last }))
 }
 async function concedeAndWaitFor(status, description) {
-  await browser.concede(browser.snapshot().gameId, false)
+  const gameId = browser.snapshot().gameId
+  await browser.concede(gameId, false)
   // XMage processes a non-priority concession at the next game-thread safe
   // point. Managed MCP seats can have priority in upkeep and draw as well.
-  return until(async state => {
-    if (state.every(s => s.status === status)) return true
-    await choose(1, state[1], false)
-    return false
-  }, description)
+  return until(waitForConcession(status, gameId, peer => choose(1, peer, false)), description)
 }
 async function completeMatch(fixture) {
   const ended = await concedeAndWaitFor('match_over', 'whole best-of-three match completed')

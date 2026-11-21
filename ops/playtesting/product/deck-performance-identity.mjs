@@ -30,12 +30,16 @@ const familyOf = format => String(format || 'Freeform').replace(/^(?:Constructed
 
 // Build the exact-composition index once from the shipped public examples. It is
 // entirely local and cannot turn a partial or ambiguous match into a classification.
+export function publicDeckDirectory(shelf) {
+  const roots = [new URL('../../../Mage.Web.Client/public/', import.meta.url), new URL('file:///srv/playmat/')]
+  return roots.map(base => new URL(shelf + '/', base)).find(dir => existsSync(new URL('index.json', dir)))
+}
+
 let publicLists
 function loadPublicLists() {
   const examples = new Map()
-  const roots = [new URL('../../../Mage.Web.Client/public/', import.meta.url), new URL('file:///srv/playmat/')]
   for (const shelf of ['meta-decks', 'starter-decks']) {
-    const root = roots.map(base => new URL(shelf + '/', base)).find(dir => existsSync(new URL('index.json', dir)))
+    const root = publicDeckDirectory(shelf)
     if (!root) continue
     const index = JSON.parse(readFileSync(new URL('index.json', root), 'utf8'))
     for (const item of index.decks ?? index) {
