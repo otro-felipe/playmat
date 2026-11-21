@@ -79,7 +79,7 @@ test('[PM-AC-08] the MCP seat receives its chosen display name and chat mode for
   });
   const invite = { tableId, roomId, format: 'Pioneer', mode: 'mcp', chatMode: 'coach' };
   const engine = new PlaymatEngineSeat({
-    engineUrl: `ws://127.0.0.1:${engineServer.address().port}`, engineName, trustedHeader: 'x-fixture-user',
+    engineUrl: `ws://127.0.0.1:${engineServer.address().port}`, engineName, trustedHeader: 'x-fixture-user', canonicalAgent: true,
   });
   const server = createMcpServer({
     allowedOrigins: [origin],
@@ -115,7 +115,8 @@ test('[PM-AC-08] the MCP seat receives its chosen display name and chat mode for
   assert.equal(join.chatMode, 'coach');
   assert.equal(join.displayName, 'Counter Pilot');
   assert.equal((await call('get_game_state')).displayName, 'Counter Pilot');
-  const [socket] = await connected;
+  const [socket, request] = await connected;
+  assert.equal(request.headers['x-playmat-canonical-agent'], '1');
   const starts = [
     { gameId: '11111111-1111-4111-8111-111111111111', currentTableId: tableId, expectedMode: 'coach' },
     { gameId: '55555555-5555-4555-8555-555555555555', currentTableId: tableId, expectedMode: 'coach' },

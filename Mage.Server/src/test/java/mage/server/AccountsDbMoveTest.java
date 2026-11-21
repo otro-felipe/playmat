@@ -19,7 +19,7 @@ public class AccountsDbMoveTest {
     File dir;
 
     @Test
-    void movesToSqliteAndBack() {
+    void movesToSqliteAndBack() throws Exception {
         AuthorizedUserRepository h2 = AuthorizedUserRepository.open(dir, "h2");
         assertThat(h2.isSqlite()).isFalse();
         h2.add("Alice", "secret", "Alice@Example.test");
@@ -28,13 +28,17 @@ public class AccountsDbMoveTest {
         alice.lockedUntil = new Date(1_800_000_000_000L);
         h2.update(alice);
         String phone = h2.rememberLogin("Alice");
+        mage.server.recovery.RecoveryPrincipal agent = new mage.server.recovery.RecoveryPrincipal(
+                java.util.UUID.randomUUID(), "agent:" + java.util.UUID.randomUUID());
+        h2.addProductSeat("mcp_Alice", "fixture", agent);
         h2.close();
 
         AuthorizedUserRepository sqlite = AuthorizedUserRepository.open(dir, null);
         assertThat(sqlite.isSqlite()).isTrue();
         assertThat(new File(dir, "authorized_user.db")).exists();
         assertThat(new File(dir, "authorized_user.db.part")).doesNotExist();
-        assertThat(sqlite.count(null)).isEqualTo(2);
+        assertThat(sqlite.count(null)).isEqualTo(3);
+        assertThat(sqlite.productSeat("mcp_Alice").belongsTo(agent)).isTrue();
         AuthorizedUser moved = sqlite.getByName("ALICE");
         assertThat(moved.getName()).isEqualTo("Alice");
         assertThat(moved.doCredentialsMatch("Alice", "secret")).isTrue();
@@ -49,7 +53,8 @@ public class AccountsDbMoveTest {
         sqlite.close();
         AuthorizedUserRepository back = AuthorizedUserRepository.open(dir, "h2");
         assertThat(back.isSqlite()).isFalse();
-        assertThat(back.count(null)).isEqualTo(3);
+        assertThat(back.count(null)).isEqualTo(4);
+        assertThat(back.productSeat("MCP_ALICE").belongsTo(agent)).isTrue();
         assertThat(back.getByName("bob").doCredentialsMatch("bob", "new password")).isTrue();
         assertThat(back.isRememberedLogin("Alice", phone)).isTrue();
         assertThat(new File(dir, "authorized_user.db")).doesNotExist();
@@ -60,7 +65,7 @@ public class AccountsDbMoveTest {
         // and forward again: copied afresh
         AuthorizedUserRepository again = AuthorizedUserRepository.open(dir, "");
         assertThat(again.isSqlite()).isTrue();
-        assertThat(again.count(null)).isEqualTo(4);
+        assertThat(again.count(null)).isEqualTo(5);
         again.close();
     }
 

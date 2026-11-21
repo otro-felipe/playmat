@@ -1,6 +1,7 @@
 package mage.server;
 
 import mage.server.admin.AccessPolicy;
+import mage.server.recovery.RecoveryPrincipal;
 import mage.server.admin.AdminStore;
 import mage.server.managers.ManagerFactory;
 import org.junit.jupiter.api.AfterEach;
@@ -121,11 +122,33 @@ public class TrustedHeaderAuthTest {
         overrides.put("getMaxUserNameLength", args -> 14);
         String name = "mcp_FourteenPlayer";
         TrustedHeaderAuth.use(sso());
-        assertThat(sso().account(accounts, name, 2000)).isEqualTo(name);
+        assertThat(sso().account(accounts, name, 2000, new RecoveryPrincipal(UUID.randomUUID(), "agent:" + UUID.randomUUID()))).isEqualTo(name);
         assertThat(newSession().connectUser(name, "", "")).contains("longer");
         Session delegated = newSession();
         delegated.trustSignedOnLogin(name);
         assertThat(delegated.connectUser(name, "", "")).isNull();
+    }
+
+    @Test
+    void canonicalAgentSignOnRequiresItsOriginalProductSeat() {
+        RecoveryPrincipal seat = new RecoveryPrincipal(UUID.randomUUID(), "agent:" + UUID.randomUUID());
+        String name = "mcp_Alice";
+        accounts.add("mcp_Other", PASSWORD, null);
+        assertThatThrownBy(() -> sso().account(accounts, "mcp_Other", 2000, seat)).isInstanceOf(IllegalArgumentException.class);
+        assertThat(sso().account(accounts, name, 2000, seat)).isEqualTo(name);
+        assertThat(sso().account(accounts, name, 2001, new RecoveryPrincipal(seat.accountId, seat.seatId, UUID.randomUUID()))).isEqualTo(name);
+        RecoveryPrincipal another = new RecoveryPrincipal(UUID.randomUUID(), "agent:" + UUID.randomUUID());
+        assertThatThrownBy(() -> sso().account(accounts, name, 2002, another)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> sso().account(accounts, name.toUpperCase(java.util.Locale.ROOT), 2003)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void canonicalAgentCannotInheritStaffReservedBeforeAnEngineAccountExists() throws Exception {
+        String name = "mcp_Reserved";
+        store.grantStaff(name, mage.server.admin.StaffRole.ADMIN, "console", 1000);
+        RecoveryPrincipal seat = new RecoveryPrincipal(UUID.randomUUID(), "agent:" + UUID.randomUUID());
+        assertThatThrownBy(() -> sso().account(accounts, name, 2000, seat)).isInstanceOf(IllegalArgumentException.class);
+        assertThat(accounts.getByName(name)).isNull();
     }
 
     @Test

@@ -156,8 +156,11 @@ test('[PM-AC-18] a Playmat account connects its library and rival without a prec
   async function authenticate(accessToken) {
     return f.request('/internal/verify', { Authorization: 'Bearer ' + accessToken })
   }
-  const identity = await (await authenticate(tokens.access_token)).json()
+  const authorized = await authenticate(tokens.access_token)
+  assert.equal(authorized.headers.get('x-playmat-canonical-agent'), '1')
+  const identity = await authorized.json()
   assert.equal(identity.engineName, 'mcp_Alice')
+  assert.equal(identity.canonicalAgent, true)
   assert.equal(identity.agent, true)
   assert.equal(identity.accountAgent, true)
   assert.deepEqual(identity.scopes, ['play', 'library', 'chat'])

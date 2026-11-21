@@ -39,6 +39,7 @@ final class ConnectionState implements RpcConnection {
     /** set once, from the handshake, before the connection's first request */
     private volatile String signedOnUser;
     private mage.server.recovery.RecoveryPrincipal recoveryPrincipal;
+    private boolean canonicalAgent;
     private volatile WebSocketCallbackHandler callbackHandler;
     private final GameStates gameStates = new GameStates();
     /** one per connection, shared by its logins' handlers, so its messages keep their order */
@@ -102,6 +103,9 @@ final class ConnectionState implements RpcConnection {
     void setSignedOnUser(String signedOnUser) {
         this.signedOnUser = signedOnUser;
     }
+
+    @Override public boolean isCanonicalAgent() { return canonicalAgent; }
+    void setCanonicalAgent(boolean canonicalAgent) { this.canonicalAgent = canonicalAgent; }
 
     @Override public mage.server.recovery.RecoveryPrincipal getRecoveryPrincipal() { return recoveryPrincipal; }
     void setRecoveryPrincipal(mage.server.recovery.RecoveryPrincipal principal) { recoveryPrincipal = principal; }

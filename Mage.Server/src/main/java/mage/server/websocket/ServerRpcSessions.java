@@ -86,10 +86,22 @@ final class ServerRpcSessions implements RpcSessions {
 
     @Override
     public String trustSignedOnLogin(String sessionId, String signedOnUser) {
+        return signOn(sessionId, signedOnUser, null);
+    }
+
+    @Override
+    public String trustProductAgentLogin(String sessionId, String name, mage.server.recovery.RecoveryPrincipal seat) {
+        if (seat == null) {
+            throw new IllegalArgumentException("The engine cannot verify the product agent seat.");
+        }
+        return signOn(sessionId, name, seat);
+    }
+
+    private String signOn(String sessionId, String signedOnUser, mage.server.recovery.RecoveryPrincipal seat) {
         if (!managers.configSettings().isAuthenticationActivated() || !TrustedHeaderAuth.get().isEnabled()) {
             throw new IllegalArgumentException("This server has no single sign-on");
         }
-        String account = TrustedHeaderAuth.get().account(AuthorizedUserRepository.getInstance(), signedOnUser, System.currentTimeMillis());
+        String account = TrustedHeaderAuth.get().account(AuthorizedUserRepository.getInstance(), signedOnUser, System.currentTimeMillis(), seat);
         managers.sessionManager().getSession(sessionId).ifPresent(session -> session.trustSignedOnLogin(account));
         return account;
     }

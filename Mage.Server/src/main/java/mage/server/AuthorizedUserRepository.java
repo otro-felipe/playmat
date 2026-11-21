@@ -11,6 +11,7 @@ import com.j256.ormlite.support.ConnectionSource;
 import com.j256.ormlite.support.DatabaseConnection;
 import com.j256.ormlite.table.TableUtils;
 import mage.cards.repository.CardRepository;
+import mage.server.recovery.RecoveryPrincipal;
 import mage.cards.repository.DatabaseUtils;
 import mage.cards.repository.RepositoryUtil;
 import org.apache.log4j.Logger;
@@ -58,6 +59,7 @@ public class AuthorizedUserRepository {
 
     private Dao<AuthorizedUser, Object> usersDao;
     private Dao<RememberedLogin, String> rememberedDao;
+    private Dao<ProductSeatBinding, String> productSeats;
     private final boolean sqlite;
 
     public AuthorizedUserRepository(String connectionString) {
@@ -84,6 +86,8 @@ public class AuthorizedUserRepository {
             usersDao = DaoManager.createDao(connectionSource, AuthorizedUser.class);
             TableUtils.createTableIfNotExists(connectionSource, RememberedLogin.class);
             rememberedDao = DaoManager.createDao(connectionSource, RememberedLogin.class);
+            TableUtils.createTableIfNotExists(connectionSource, ProductSeatBinding.class);
+            productSeats = DaoManager.createDao(connectionSource, ProductSeatBinding.class);
         } catch (SQLException ex) {
             LOGGER.error("Error creating / assigning authorized_user repository - ", ex);
         }
@@ -155,9 +159,14 @@ public class AuthorizedUserRepository {
     static long copy(AuthorizedUserRepository from, AuthorizedUserRepository to) throws SQLException {
         List<AuthorizedUser> users = from.usersDao.queryForAll();
         List<RememberedLogin> remembered = from.rememberedDao.queryForAll();
+        List<ProductSeatBinding> bindings = from.productSeats.queryForAll();
         TransactionManager.callInTransaction(to.usersDao.getConnectionSource(), () -> {
             to.usersDao.deleteBuilder().delete();
             to.rememberedDao.deleteBuilder().delete();
+            to.productSeats.deleteBuilder().delete();
+            for (ProductSeatBinding binding : bindings) {
+                to.productSeats.create(binding);
+            }
             for (AuthorizedUser user : users) {
                 to.usersDao.create(user);
             }
@@ -215,6 +224,19 @@ public class AuthorizedUserRepository {
     /** For tests: the repository every server class sees. */
     public static void use(AuthorizedUserRepository repository) {
         instance = repository;
+    }
+
+    ProductSeatBinding productSeat(String name) throws SQLException {
+        return productSeats.queryForId(name.toLowerCase(java.util.Locale.ROOT));
+    }
+
+    void addProductSeat(String name, String password, RecoveryPrincipal principal) throws SQLException {
+        TransactionManager.callInTransaction(usersDao.getConnectionSource(), () -> {
+            Hash hash = new SimpleHash(Sha256Hash.ALGORITHM_NAME, password, rng.nextBytes(), 1024);
+            usersDao.create(new AuthorizedUser(name, hash, null));
+            productSeats.create(new ProductSeatBinding(name, principal));
+            return null;
+        });
     }
 
     public void add(final String userName, final String password, final String email) {

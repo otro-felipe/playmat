@@ -335,12 +335,16 @@ export async function createProduct({
     }
     if (enableInternal && path === '/internal/verify' && req.method === 'GET') {
       if (url.searchParams.get('scope') === 'play') requireScope(actor, 'play')
+      const canonicalAgent = actor.accountAgent === true && normalize(actor.engineName) === 'mcp_' + normalize(actor.username)
+      if (canonicalAgent) {
+        res.setHeader('X-Playmat-Canonical-Agent', '1')
+      }
       res.setHeader('X-Playmat-User', actor.engineName)
       res.setHeader('X-Playmat-Account', actor.accountId)
       const principal = await id.recoveryPrincipal(actor)
       if (principal) res.setHeader('X-Playmat-Seat', principal.seatId)
       if (principal?.connectionId) res.setHeader('X-Playmat-Connection', principal.connectionId)
-      return send(res, 200, { ...identityView(actor), ...(principal ? { recoverySeatId: principal.seatId } : {}) })
+      return send(res, 200, { ...identityView(actor), ...(canonicalAgent ? { canonicalAgent } : {}), ...(principal ? { recoverySeatId: principal.seatId } : {}) })
     }
     gateAccount(res, group, actor, releases)
     const endpoint = path.slice('/api/playtesting/'.length)

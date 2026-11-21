@@ -167,6 +167,7 @@ public class WebSocketServerImpl extends WebSocketServer {
         ConnectionState state = new ConnectionState(conn, workers, clientIp, limits.maxOutgoingBytes);
         state.setSignedOnUser(signedOnUser(conn, handshake));
         if (state.getSignedOnUser() != null && mage.server.playtesting.ProductGateway.enabled()) {
+            state.setCanonicalAgent("1".equals(handshake.getFieldValue("X-Playmat-Canonical-Agent")));
             try {
                 state.setRecoveryPrincipal(new mage.server.recovery.RecoveryPrincipal(
                         java.util.UUID.fromString(handshake.getFieldValue("X-Playmat-Account")),

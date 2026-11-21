@@ -404,7 +404,9 @@ final class SessionApi {
                 throw new IllegalArgumentException("You're signed on as " + signedOn + ". Sign out of the single sign-on to "
                         + "use another account.");
             }
-            account = ctx.sessions.trustSignedOnLogin(call.sessionId(), signedOn);
+            account = call.getConnection().isCanonicalAgent()
+                    ? ctx.sessions.trustProductAgentLogin(call.sessionId(), signedOn, call.getConnection().getRecoveryPrincipal())
+                    : ctx.sessions.trustSignedOnLogin(call.sessionId(), signedOn);
         } catch (IllegalArgumentException e) {
             // the dispatcher already opened a session for this login: do not leave it behind
             ctx.sessions.disconnect(call.sessionId(), DisconnectReason.LostConnection);

@@ -37,6 +37,8 @@ public interface RpcConnection {
         return null;
     }
 
+    default boolean isCanonicalAgent() { return false; }
+
     default mage.server.recovery.RecoveryPrincipal getRecoveryPrincipal() { return null; }
 
     /**

@@ -1,6 +1,7 @@
 package mage.server;
 
 import mage.server.admin.AccessPolicy;
+import mage.server.recovery.RecoveryPrincipal;
 import org.apache.log4j.Logger;
 
 import java.security.SecureRandom;
@@ -33,7 +34,7 @@ public final class TrustedHeaderAuth {
     static final int MAX_VALUE_LENGTH = 254;
     /** names of new accounts, like registration and GitHub sign-in */
     private static final Pattern NEW_NAME = Pattern.compile("[A-Za-z0-9_]{3,14}");
-    private static final Pattern MCP_SEAT = Pattern.compile("mcp_[A-Za-z0-9_-]{3,24}");
+    private static final Pattern MCP_SEAT = Pattern.compile("mcp_[A-Za-z0-9_-]{3,24}", Pattern.CASE_INSENSITIVE);
 
     static boolean isMcpSeat(String name) {
         return name != null && MCP_SEAT.matcher(name).matches();
@@ -120,12 +121,19 @@ public final class TrustedHeaderAuth {
      * @throws IllegalArgumentException with the reason for the player when there is no account and none can be made
      */
     public String account(AuthorizedUserRepository accounts, String name, long now) {
+        return account(accounts, name, now, null);
+    }
+
+    public String account(AuthorizedUserRepository accounts, String name, long now, RecoveryPrincipal canonicalSeat) {
         synchronized (accounts) {
             AuthorizedUser existing = accounts.getByNameIgnoreCase(name);
+            if (canonicalSeat != null || isMcpSeat(name)) {
+                verifySeatBinding(accounts, name, existing, canonicalSeat);
+            }
             if (existing != null) {
                 return existing.getName();
             }
-            if ((!NEW_NAME.matcher(name).matches() && !isMcpSeat(name)) || name.equalsIgnoreCase(User.ADMIN_NAME)) {
+            if ((!NEW_NAME.matcher(name).matches() && canonicalSeat == null) || name.equalsIgnoreCase(User.ADMIN_NAME)) {
                 throw new IllegalArgumentException("Your sign-on name \"" + name + "\" can't be a player name here (3 to 14 "
                         + "letters, digits or underscores). Ask whoever runs the sign-on to change it.");
             }
@@ -138,7 +146,16 @@ public final class TrustedHeaderAuth {
             byte[] bytes = new byte[24];
             random.nextBytes(bytes);
             // nobody knows this password: the account signs in through the sign-on (or a reset code, once it has an email)
-            accounts.add(name, Base64.getEncoder().encodeToString(bytes) + "a1", null);
+            String password = Base64.getEncoder().encodeToString(bytes) + "a1";
+            if (canonicalSeat == null) {
+                accounts.add(name, password, null);
+            } else {
+                try {
+                    accounts.addProductSeat(name, password, canonicalSeat);
+                } catch (SQLException e) {
+                    throw new IllegalArgumentException("The engine seat could not be created.", e);
+                }
+            }
             if (accounts.getByName(name) == null) {
                 throw new IllegalArgumentException("The account can't be created right now. Try again in a minute.");
             }
@@ -152,4 +169,26 @@ public final class TrustedHeaderAuth {
             return name;
         }
     }
+    private static void verifySeatBinding(AuthorizedUserRepository accounts, String name,
+                                          AuthorizedUser existing, RecoveryPrincipal canonicalSeat) {
+        try {
+            ProductSeatBinding binding = accounts.productSeat(name);
+            if (binding != null && !binding.belongsTo(canonicalSeat)) {
+                throw new IllegalArgumentException("This engine seat belongs to another account.");
+            }
+            if (canonicalSeat == null) {
+                return;
+            }
+            if (!isMcpSeat(name) || !canonicalSeat.seatId.startsWith("agent:")) {
+                throw new IllegalArgumentException("Invalid product agent identity.");
+            }
+            if ((existing != null && binding == null) || AccessPolicy.get().isOwner(name)
+                    || AccessPolicy.get().store().staffRole(name) != null) {
+                throw new IllegalArgumentException("This engine name is already reserved.");
+            }
+        } catch (SQLException e) {
+            throw new IllegalArgumentException("The engine seat could not be verified.", e);
+        }
+    }
+
 }

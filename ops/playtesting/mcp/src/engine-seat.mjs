@@ -102,7 +102,7 @@ export class PlaymatEngineSeat {
   #chat = [];
   #invitePresentation = null;
 
-  constructor({ engineUrl, engineName, trustedHeader, accountId, recoverySeatId, connectionId, authenticationHeaders = {}, guardedPrompts = true, managedPriorityStops = false }) {
+  constructor({ engineUrl, engineName, trustedHeader, accountId, recoverySeatId, connectionId, canonicalAgent = false, authenticationHeaders = {}, guardedPrompts = true, managedPriorityStops = false }) {
     this.engineUrl = engineUrl;
     this.managedPriorityStops = managedPriorityStops;
     this.engineName = engineName;
@@ -111,6 +111,7 @@ export class PlaymatEngineSeat {
         ...authenticationHeaders,
         ...(accountId && recoverySeatId ? { 'X-Playmat-Account': accountId, 'X-Playmat-Seat': recoverySeatId } : {}),
         ...(connectionId ? { 'X-Playmat-Connection': connectionId } : {}),
+        ...(canonicalAgent ? { 'X-Playmat-Canonical-Agent': '1' } : {}),
       }, maxPayload: 4 * 1024 * 1024 }),
       requestTimeoutMs: 12_000, heartbeatTimeoutMs: 30_000, maxReconnectAttempts: 4, stateDiffs: false,
     });

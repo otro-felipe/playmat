@@ -58,6 +58,10 @@ public interface RpcSessions {
         throw new IllegalArgumentException("This server has no single sign-on");
     }
 
+    default String trustProductAgentLogin(String sessionId, String name, mage.server.recovery.RecoveryPrincipal seat) {
+        throw new IllegalArgumentException("The engine cannot verify the product agent seat.");
+    }
+
     /**
      * Marks the session as a sign-in through the identity provider with its verified ID token, so a later
      * sign-out can end the provider session (RP-initiated logout, RFC 7063).
