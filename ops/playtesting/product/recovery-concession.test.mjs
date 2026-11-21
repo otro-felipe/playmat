@@ -19,6 +19,20 @@ test('a concession reconciles an unverified peer response by observing both seat
   assert.deepEqual(actions, ['first', 'second'])
 })
 
+test('a peer decision can expire while the two clients are receiving the concession result', async () => {
+  let attempts = 0
+  const settle = waitForConcession('match_over', 'recovered-game', async () => {
+    ++attempts
+    throw Object.assign(new Error('The game closed while answering'), { code: 'not_actionable' })
+  })
+  const choosing = seat('active', 'last-choice'), ended = seat('match_over')
+  assert.equal(await settle([choosing, choosing]), false)
+  assert.equal(await settle([choosing, choosing]), false)
+  assert.equal(await settle([ended, choosing]), false)
+  assert.equal(await settle([ended, ended]), true)
+  assert.equal(attempts, 1)
+})
+
 test('a concession requires the expected status from both seats and propagates unrelated peer errors', async () => {
   const settle = waitForConcession('match_over', 'recovered-game', async () => { throw new Error('Transport unavailable') })
   const own = seat('active')

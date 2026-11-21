@@ -10,7 +10,8 @@ export function waitForConcession(expectedStatus, gameId, advancePeer) {
     try {
       if (await advancePeer(peer)) submitted.add(decisionId)
     } catch (error) {
-      if (error.code !== 'operation_failed') throw error
+      // A concurrent concession can close the game between observation and submission.
+      if (error.code !== 'operation_failed' && error.code !== 'not_actionable') throw error
       submitted.add(decisionId)
     }
     return false
