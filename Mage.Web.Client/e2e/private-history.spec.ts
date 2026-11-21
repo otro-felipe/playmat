@@ -4,11 +4,26 @@ test.skip(process.env.VITE_PRIVATE_PLAYTESTING !== 'true', 'private build only')
 
 const me = { name: 'Felipe', isMcp: false };
 const opponent = { name: 'mcp_e70ebd2d48', displayName: 'Felipe', isMcp: true, model: 'gpt-5', reasoningEffort: 'high' };
-const decks = [
-  { deckName: 'Golgari Midrange', format: 'Pioneer', deckVersion: 'c710feed', games: 14, wins: 8 },
-  { deckName: 'Golgari Midrange', format: 'Pioneer', deckVersion: 'ae62bbee', games: 7, wins: 3 },
-  { deckName: 'Boros Energy', format: 'Modern', deckVersion: 'b0137ecc', games: 4, wins: 3 },
-].map((deck) => ({ ...deck, onPlay: 2, onDraw: 1, averageMulligans: 0.6, averageTurns: 10 }));
+const record = (wins: number, losses: number) => ({ wins, losses, draws: 0, total: wins + losses });
+const deck = { id: 'family', name: 'BG testing', format: 'Pioneer', archetype: 'Golgari Midrange', currentVersion: 2, versions: [1, 2].map((version) => ({ version, format: 'Pioneer', archetype: 'Golgari Midrange' })) };
+function performance(params: URLSearchParams) {
+  const group = { deckIds: ['family'], format: 'Pioneer', archetype: 'Golgari Midrange', matches: record(6, 4), games: record(14, 11) };
+  const shared = { ...group, deckIds: ['a', 'b'], archetype: 'Boros Energy', format: 'Modern', matches: record(0, 0), games: record(0, 0) };
+  const otherDecks = shared.deckIds.map((id) => ({ ...deck, id, name: 'Boros ' + id, archetype: shared.archetype, format: shared.format,
+    versions: [{ version: 2, format: shared.format, archetype: shared.archetype }] }));
+  const isEmptyGroup = params.get('format') === 'Modern';
+  const summary = params.get('scope') === 'all' ? group : isEmptyGroup ? shared
+    : params.get('version') === '1' ? { matches: record(0, 1), games: record(1, 2) } : { matches: record(1, 0), games: record(2, 1) };
+  return {
+    decks: [deck, ...otherDecks], groups: params.get('format') === 'Standard' ? [] : [group, shared], selected: { deckId: 'family', version: 2 },
+    summary, options: { ownArchetypes: ['Golgari Midrange'], opponentArchetypes: ['Izzet Phoenix'] },
+    splits: { play: record(1, 0), draw: record(1, 1), preboard: record(0, 1), postboard: record(2, 0) },
+    mulligans: isEmptyGroup ? [] : [{ count: 1, games: record(1, 0) }], openingCards: isEmptyGroup ? [] : [{ card: 'Thoughtseize', games: record(1, 1) }, { card: 'Duress', games: record(1, 0) }],
+    matchups: [{ archetype: 'Izzet Phoenix', mulligans: { known: 3, taken: 1, opponentKnown: 2, opponentTaken: 0 }, matches: record(1, 0), games: record(2, 1) }],
+    opponentCards: [{ card: 'Arclight Phoenix', games: record(1, 1) }],
+    coverage: isEmptyGroup ? { keptHands: 0, opponentCards: 0, games: 0 } : { keptHands: 2, opponentCards: 2, games: 3 }, matchIds: ['match-0'],
+  };
+}
 const rivals = [opponent, { name: 'Camila' }, { name: 'Roberto' }, opponent, { name: 'Valentina' }, { name: 'Camila' }];
 const matches = rivals.map((rival, index) => {
   const winner = index % 3 === 0 ? me.name : rival.name;
@@ -25,7 +40,7 @@ const matches = rivals.map((rival, index) => {
 for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 }]) {
   test.describe(`history ${viewport.width}px`, () => {
     test.use({ viewport, isMobile: viewport.width < 600, hasTouch: viewport.width < 600 });
-    test('one line per match, correct seat, game-level export and a filtered empty state', async ({ page, baseURL }, info) => {
+    test('deck performance, version filters, seat, export and an empty format', async ({ page, baseURL }, info) => {
       expect(['127.0.0.1', 'localhost', '[::1]']).toContain(new URL(baseURL!).hostname);
       await page.addInitScript(() => localStorage.setItem('playmat.settings', JSON.stringify({ locale: 'es', sound: false, animations: false })));
       let exported: string[] = [];
@@ -38,7 +53,7 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
         const empty = url.searchParams.get('format') === 'Standard';
         const result = url.pathname.endsWith('/me') ? { engineName: 'Felipe', agent: false }
           : url.pathname.endsWith('/matches') ? { matches: empty ? [] : matches, cursor: null }
-          : url.pathname.endsWith('/stats') ? { groups: empty ? [] : decks, totals: empty ? { matches: 0, games: 0, wins: 0 } : { matches: 12, games: 25, wins: 14 } } : {};
+          : url.pathname.endsWith('/performance') ? performance(url.searchParams) : {};
         return route.fulfill({ json: result });
       });
       await page.routeWebSocket(/\/ws$/, (socket) => socket.onMessage((raw) => {
@@ -56,8 +71,53 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
       const opener = page.getByRole('button', { name: /Felipe MCP.*Victoria/i }).first();
       await expect(opener).toHaveAttribute('aria-expanded', 'false');
       await expect(opener).toContainText('2–1');
-      await expect(page.getByText(/Golgari Midrange.*c710fe/)).toHaveCount(1);
-      await expect(page.getByRole('region', { name: 'Resumen' })).toContainText(/56\s?%/);
+      const card = page.getByRole('link', { name: /Golgari Midrange/ });
+      await expect(card).toContainText('Pioneer');
+      await expect(card).toContainText(/60\s?%/);
+      await card.click();
+      await expect(page.getByRole('heading', { name: 'Golgari Midrange' })).toBeVisible();
+      await expect(page.getByRole('combobox', { name: 'Versión' })).toHaveValue('2');
+      await page.getByRole('combobox', { name: 'Modalidad' }).selectOption('3');
+      await expect(page.getByRole('region', { name: 'Partidas ganadas' })).toContainText(/100\s?%/);
+      await expect(page.getByRole('region', { name: 'Juegos ganados' })).toContainText(/67\s?%/);
+      await page.getByRole('combobox', { name: 'Versión' }).selectOption('1');
+      await expect(page.getByRole('region', { name: 'Partidas ganadas' })).toContainText('0/1');
+      await page.getByRole('combobox', { name: 'Versión' }).selectOption('2');
+      await page.getByRole('tab', { name: 'Mulligan' }).click();
+      await expect(page.getByRole('tabpanel')).toContainText('2 de 3 juegos con mano conservada registrada');
+      await expect(page.getByRole('row', { name: /Thoughtseize/ })).toContainText(/50\s?%/);
+      const openingTable = page.getByRole('table', { name: 'Cartas en tu mano conservada' });
+      await expect(openingTable.getByRole('row').nth(1)).toContainText('Thoughtseize');
+      await openingTable.getByRole('button', { name: '% de victorias' }).click();
+      await expect(openingTable.getByRole('row').nth(1)).toContainText('Duress');
+      await page.getByRole('tab', { name: 'Matchups' }).click();
+      await expect(page.getByRole('table', { name: 'Resultados por arquetipo rival' }).getByRole('row', { name: /Izzet Phoenix/ })).toBeVisible();
+      await expect(page.getByRole('row', { name: /Arclight Phoenix/ })).toBeVisible();
+      await page.screenshot({ path: info.outputPath(`analisis-${viewport.width}.png`), animations: 'disabled' });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await page.getByRole('tab', { name: 'Resumen' }).click();
+      await page.getByRole('combobox', { name: 'Modalidad' }).selectOption('1');
+      await expect(page.getByRole('region', { name: 'Partidas ganadas' })).toBeVisible();
+      await expect(page.getByRole('region', { name: 'Juegos ganados' })).toHaveCount(0);
+      await page.getByRole('combobox', { name: 'Versión' }).selectOption('');
+      await expect(page).toHaveURL(/scope=deck/);
+      await page.getByRole('combobox', { name: 'Mazo', exact: true }).selectOption('');
+      await expect(page).toHaveURL(/scope=archetype/);
+      await expect(page.getByRole('combobox', { name: 'Versión' })).toHaveCount(0);
+      await page.getByRole('combobox', { name: 'Arquetipo rival' }).selectOption('unknown');
+      await expect(page).toHaveURL(/opponentArchetypeUnknown=true/);
+      await page.reload();
+      await expect(page.getByRole('combobox', { name: 'Arquetipo rival' })).toHaveValue('unknown');
+      await page.getByRole('link', { name: 'Volver al historial' }).click();
+      await expect(opener).toBeVisible();
+      await page.getByRole('link', { name: /Boros Energy/ }).click();
+      await expect(page.getByRole('combobox', { name: 'Mazo', exact: true })).toHaveValue('');
+      await expect(page.getByRole('region', { name: 'Partidas ganadas' })).toContainText('—');
+      await page.getByRole('combobox', { name: 'Mazo', exact: true }).selectOption('b');
+      await expect(page.getByRole('combobox', { name: 'Versión' })).toHaveValue('2');
+      await page.getByRole('tab', { name: 'Mulligan' }).click();
+      await expect(page.getByRole('tabpanel')).toContainText('0 de 0 juegos con mano conservada registrada');
+      await page.getByRole('link', { name: 'Volver al historial' }).click();
       await expect(page.getByRole('button', { name: 'Replay', exact: true })).toHaveCount(0);
       await page.evaluate(async () => { await document.fonts.ready; });
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

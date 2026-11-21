@@ -40,23 +40,6 @@ export interface PracticeHistoryPage {
   cursor: string | null;
 }
 
-export interface PracticeStat {
-  format: string;
-  deckName: string | null;
-  deckVersion: string | null;
-  games: number;
-  wins: number;
-  onPlay: number;
-  onDraw: number;
-  averageMulligans: number | null;
-  averageTurns: number | null;
-}
-
-export interface PracticeStats {
-  totals?: { matches: number; games: number; wins: number };
-  groups: PracticeStat[];
-}
-
 export function findSeat(game: PracticeGame, name: string | null | undefined) {
   return name ? game.players?.find((player) => player.name.toLowerCase() === name.toLowerCase()) : undefined;
 }

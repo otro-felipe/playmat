@@ -154,6 +154,7 @@ const router = createBrowserRouter([
           { path: '/train', lazy: () => import('./train/TrainScreen').then((m) => ({ Component: m.TrainScreen })) },
           { path: '/train/:tool', lazy: () => import('./train/TrainScreen').then((m) => ({ Component: m.TrainScreen })) },
           { path: '/history', lazy: () => import('./history/HistoryScreen').then((m) => ({ Component: m.HistoryScreen })) },
+          ...(PRIVATE_PLAYTESTING ? [{ path: '/history/analysis', lazy: () => import('./history/DeckAnalysisScreen').then((m) => ({ Component: m.DeckAnalysisScreen })) }] : []),
         ],
       },
     ],
