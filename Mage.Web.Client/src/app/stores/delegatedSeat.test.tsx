@@ -34,6 +34,10 @@ function setup(result: { status: number; humanName?: string; allowed?: boolean }
       await ready;
       return Response.json({ tableId: 'duel', humanMcpAllowed: result.allowed ?? true, humanName: result.humanName }, { status: result.status });
     }
+    if (String(input).endsWith('/tables/duel/spectator')) return Response.json({
+      role: 'spectator', gameId: 'game', status: 'playing', spectators: 1,
+      players: view.players, view: { ...view, myHand: {} }, hands: { 'alice-id': view.myHand, other: {} }, lines: [], chat: [],
+    });
     return Response.json({});
   }));
   const session = useGames.getState().open('game', 'alice-id', 'play', { tableId, parentTableId: null });
@@ -57,8 +61,9 @@ test('a human MCP seat observes its live private board without commands from mou
   await session.respond({ type: 'boolean', value: true });
   expect(answer).not.toHaveBeenCalled();
   await release();
-  expect(await page.findByText('Player controlled by MCP · Read only')).toBeTruthy();
-  expect(page.getAllByLabelText(/Forest/i).length).toBeGreaterThan(0);
+  expect(await page.findByText(/Player controlled by MCP · Read only/)).toBeTruthy();
+  expect((await page.findAllByLabelText(/Forest/i)).length).toBeGreaterThan(0);
+  expect(page.getByRole('group', { name: 'Rival’s hand' })).toBeTruthy();
   expect(page.queryByRole('button', { name: /pass turn|pass priority|keep hand|mulligan/i })).toBeNull();
   act(() => { events.dispatch({ method: 'USER_REQUEST_DIALOG', objectId: 'game', messageId: 1, data: {
     gameId: 'game', title: 'Reveal your hand?', button1Action: 'ADD_PERMISSION_TO_SEE_HAND_CARDS', button1Text: 'Reveal cards',

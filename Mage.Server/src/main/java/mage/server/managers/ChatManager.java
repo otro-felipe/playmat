@@ -22,6 +22,8 @@ public interface ChatManager {
 
     void joinChat(UUID chatId, UUID userId);
 
+    List<ChatMessage> joinWithRecentTalk(UUID chatId, UUID userId);
+
     void leaveChat(UUID chatId, UUID userId);
 
     void destroyChatSession(UUID chatId);

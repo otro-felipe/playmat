@@ -470,7 +470,7 @@ for (const outcome of ['lethal', 'rival-response', 'missing-combat-witness', 'no
     });
     assert.equal(result.skippedSteps, 1);
     assert.equal(result.reason, {
-      lethal: 'invalidated', 'rival-response': 'opponent_action', 'missing-combat-witness': 'opponent_state_changed',
+      lethal: 'game_over', 'rival-response': 'opponent_action', 'missing-combat-witness': 'opponent_state_changed',
       'nonterminal-lethal-cleanup': 'opponent_state_changed',
     }[outcome], JSON.stringify(result));
     if (rivalResponds) {

@@ -4,7 +4,8 @@ const missing = () => new ProductError(404, 'Human match seat not found')
 
 function settings(row) {
   if (!row) throw missing()
-  return { tableId: row.table_id, humanName: row.username, humanMcpAllowed: row.allowed, createdViaMcp: row.created_via_mcp }
+  return { tableId: row.table_id, humanName: row.username, humanMcpAllowed: row.allowed, createdViaMcp: row.created_via_mcp,
+    ...(row.chat_mode ? { chatMode: row.chat_mode } : {}) }
 }
 
 // Called only on loopback by the engine after it creates a table as the signed-in user.
@@ -22,8 +23,9 @@ export async function recordHumanSeat(pool, input) {
 
 export async function readHumanSeat(pool, actor, tableId, { ownerOnly = false } = {}) {
   if (!isUuid(tableId)) throw missing()
-  const { rows: [row] } = await pool.query(`SELECT h.*, a.username FROM human_match_seats h
+  const { rows: [row] } = await pool.query(`SELECT h.*, a.username, i.chat_mode FROM human_match_seats h
     JOIN accounts a ON a.id=h.account_id
+    LEFT JOIN invitations i ON i.table_id=h.table_id AND i.mode='mcp'
     WHERE h.table_id=$1 AND (h.account_id=$2 OR (NOT $3 AND EXISTS (
       SELECT 1 FROM invitations i WHERE i.table_id=h.table_id AND i.claimed_at IS NOT NULL AND i.invitee_key=$4)))`,
     [tableId, actor.accountId, ownerOnly, normalize(actor.engineName)])

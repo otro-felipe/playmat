@@ -135,7 +135,8 @@ const BUDGET_KB = {
   // Private app measured 873.1 KiB before match-scoped MCP control, card previews in
   // analyses, replay explanations, and the expanded archetype catalog. Together these
   // measure 879.6 KiB (2026-11-21), including all lazy screens.
-  app: 881,
+  // Public board, two-hand broadcast, copy link and shared commentary: private app 884.95 KiB.
+  app: 886,
 };
 
 const dist = new URL('../dist/', import.meta.url).pathname;

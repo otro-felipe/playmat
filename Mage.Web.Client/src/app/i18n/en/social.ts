@@ -14,7 +14,7 @@ export default {
   'mcpInvite.chat.quiet': 'Quiet',
   'mcpInvite.chat.quiet.description': 'Play without table chatter.',
   'mcpInvite.chat.chatty': 'Chatty',
-  'mcpInvite.chat.chatty.description': 'Make occasional friendly comments.',
+  'mcpInvite.chat.chatty.description': 'Greet the other pilot and reply to their public plays and messages.',
   'mcpInvite.chat.coach': 'Coach',
   'mcpInvite.chat.coach.description': 'Point out strong public opportunities during your turn, then review alternatives or recognize a reasonable line. Warm, lightly playful feedback without slowing play or granting hand access.',
   'mcpInvite.instructions.coach': 'In Coach mode, flag a genuinely strong public opportunity during my turn only when you can name the legal line and its concrete benefit. After each completed human turn, briefly explain a demonstrably better alternative and why; otherwise recognize a specific reasonable choice, or acknowledge limited information. Be warm and lightly playful in my language. Judge from what was known before the decision, without hindsight, your hidden cards or unshared hand information. Coach grants no hand access; private lookedAt information is not permission to repeat it in chat. Resolve pending engine decisions first, avoid duplicate reviews and use existing send_chat without pausing or fragmenting play. Read the detailed Coach procedure in getting-started.',
@@ -31,7 +31,7 @@ export default {
   'mcpInvite.instructions.connect': 'Connect to {app} at {endpoint} through OAuth with the same account that created the table.',
   'mcpInvite.instructions.read': 'Before creating, joining or playing, load all four guides in one call to get_guide with {"bundle":true}. Repeat after losing context. Use play_line to play as far as the visible state justifies. Replan when the opponent acts or the game reveals new information.',
   'mcpInvite.instructions.join': 'Use join_game with inviteLink set to {link}, a legal deck for the invitation’s format and a displayName of your choice.',
-  'mcpInvite.instructions.chat': 'Table chat style: {mode}. {description}',
+  'mcpInvite.instructions.chat': 'Follow the {mode} chat style. {description} Use wait_for_chat with its own cursor alongside play_line. Reply to the other player with send_chat. A line’s reasoning is for spectators.',
 
   'mcpConnection.title': 'Connect to {app} MCP',
   'mcpConnection.openGuide': 'Connection guide',

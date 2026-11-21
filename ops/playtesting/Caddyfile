@@ -61,7 +61,7 @@
 			respond 404
 		}
 
-		@publicPages path / /register /register/ /register/complete /register/complete/ /index.html
+		@publicPages path / /register /register/ /register/complete /register/complete/ /index.html /watch/*
 		handle @publicPages {
 			header Referrer-Policy no-referrer
 			header Cache-Control no-cache

@@ -18,6 +18,15 @@ export class ToolError extends Error {
   }
 }
 
+/** The engine ended this game while the plan was executing. Queued steps remain unplayed. */
+class GameEnded extends Error {
+  constructor(state) {
+    super(state.status);
+    this.status = state.status;
+    this.cursor = state.cursor;
+  }
+}
+
 function gameState(engine, gameId) {
   const state = engine.snapshot();
   if (gameId && state.gameId !== gameId) throw new ToolError('forbidden_game', 'Your seat does not control that game.');
@@ -884,9 +893,12 @@ export class GameSeat {
     };
     const checkGame = (state) => {
       accountTime(state);
+      if (state.gameId === sequence.gameId && !state.rollbackRequest
+        && ['game_over', 'match_over', 'sideboarding'].includes(state.status)) {
+        if (awaitingOwnCombatWitness && state.epoch === initial.epoch) checkStack(state, false);
+        throw new GameEnded(state);
+      }
       if (state.gameId !== sequence.gameId || state.status !== 'active' || state.epoch !== initial.epoch) {
-        if (awaitingOwnCombatWitness && state.gameId === sequence.gameId && state.epoch === initial.epoch
-          && ['game_over', 'match_over', 'sideboarding'].includes(state.status)) checkStack(state, false);
         throw new ToolError('invalidated', 'The game state changed.');
       }
       if (waitingForOpeningTurn && (state.turn == null || state.turn === 0 || state.turn === 1)) {
@@ -1574,7 +1586,20 @@ export class GameSeat {
       requireSettledCombat();
       sequence.status = 'completed';
     } catch (error) {
-      const reason = signal.aborted ? signal.reason : error;
+      // A terminal callback may precede an action's acknowledgement. A rejected or
+      // uncertain submission still owns its error, even if a game just ended.
+      let reason = signal.aborted && !(signal.reason instanceof GameEnded) ? signal.reason : error;
+      if (reason instanceof GameEnded) {
+        let authorized = false;
+        try { authorized = await authorize(); } catch { /* fail closed */ }
+        if (authorized) {
+          sequence.status = 'ended';
+          sequence.reason = reason.status;
+          sequence.cursor = reason.cursor;
+          return;
+        }
+        reason = new ToolError('authorization_expired', 'The seat authorization expired.');
+      }
       sequence.status = reason?.code === 'cancelled' ? 'cancelled' : 'interrupted';
       sequence.reason = reason?.code ?? 'action_failed';
       const latest = this.snapshot();

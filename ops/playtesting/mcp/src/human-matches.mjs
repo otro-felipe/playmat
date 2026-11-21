@@ -39,7 +39,7 @@ export function humanMatchAccess({ actor, product, createEngine, seats, maxSeats
     throw new ToolError('capacity', 'The beta seat limit has been reached.');
   }
   async function select(tableId, action) {
-    await policy(tableId);
+    const settings = await policy(tableId);
     const key = tableKey(tableId);
     let seat = seats.get(key);
     if (!seat) {
@@ -55,6 +55,7 @@ export function humanMatchAccess({ actor, product, createEngine, seats, maxSeats
       }
       throw error;
     }
+    if (settings.chatMode) seat.engine.setTableChatMode(tableId, settings.chatMode);
     const currentTable = seat.snapshot().tableId;
     if (currentTable && currentTable !== tableId) throw accessDenied();
     return seatContext.run({ seat, tableId }, action);

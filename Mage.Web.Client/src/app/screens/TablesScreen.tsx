@@ -1,3 +1,4 @@
+import { SpectatorLink } from '../spectator/SpectatorLink';
 import { MatchHumanSeat, useEnabledHumanSeat, useHumanInputLock } from '../ui/humanSeat';
 import { PlayerLabel } from '../ui/PlayerLabel';
 import { Switch } from '../ui/Switch';
@@ -266,6 +267,7 @@ function MyTable({ table }: { table: TableView }) {
   return (
     <>
       <TableRow table={table} mcpInvite={mcpInvite}>
+        {PRIVATE_PLAYTESTING && isOwner && table.tableId && <SpectatorLink tableId={table.tableId} />}
         {table.tableState === 'WAITING' && (
           <Button size="sm" variant="quiet" icon={<Link2 size={16} />} onClick={() => void copyInvite()}>{mcpInvite ? t('mcpInvite.copyLink') : 'Invite'}</Button>
         )}

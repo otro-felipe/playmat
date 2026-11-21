@@ -115,8 +115,8 @@ export function createApi(rpc: RpcCaller) {
       rpc.call('submitDeck', SESSION, tableId, deck),
     deckSave: (tableId: UUID, deck: DeckCardLists) =>
       rpc.call('deckSave', SESSION, tableId, deck),
-    chatJoin: (chatId: UUID, userName?: string | null) =>
-      rpc.call('chatJoin', chatId, SESSION, userName),
+    chatJoin: (chatId: UUID, userName?: string | null, recentTalk?: boolean | null) =>
+      rpc.call('chatJoin', chatId, SESSION, userName, recentTalk),
     chatLeave: (chatId: UUID) =>
       rpc.call('chatLeave', chatId, SESSION),
     chatSendMessage: (chatId: UUID, userName: string | null, message: string) =>

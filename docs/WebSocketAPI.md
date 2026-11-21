@@ -185,7 +185,7 @@ Generated from the server's method registry (`mage.server.websocket.api`). Do no
 | `deckSubmit` | `sessionId: string`, `tableId: UUID`, `deck: DeckCardLists` | `boolean` | session | Submit a deck for a table in construction or sideboarding. |
 | `submitDeck` | `sessionId: string`, `tableId: UUID`, `deck: DeckCardLists` | `boolean` | session | Alias of `deckSubmit`. |
 | `deckSave` | `sessionId: string`, `tableId: UUID`, `deck: DeckCardLists` | `boolean` | session | Save the in-progress limited deck without submitting it. |
-| `chatJoin` | `chatId: UUID`, `sessionId: string`, `userName?: string` | `boolean` | session | Subscribe to a chat. |
+| `chatJoin` | `chatId: UUID`, `sessionId: string`, `userName?: string`, `recentTalk?: boolean` | `boolean` | session | Subscribe to a chat. Pass recentTalk to receive up to 50 recent public player messages from this game on this connection, with their original chatSequence. |
 | `chatLeave` | `chatId: UUID`, `sessionId: string` | `boolean` | session | Unsubscribe from a chat. |
 | `chatSendMessage` | `chatId: UUID`, `userName?: string`, `message: string` | `boolean` | session | Post to a chat as the logged in user, who must have joined it (chatJoin; the lobby chat is joined on login). userName is ignored; the session decides the author. |
 | `chatSetIgnored` | `names: string[]` | `boolean` | session | Players this user ignores, by name, for as long as the session lasts (the client keeps the list and sends it after each login): their table chat doesn't reach the user and their whispers are refused. At most 500 names; an empty list clears it. |

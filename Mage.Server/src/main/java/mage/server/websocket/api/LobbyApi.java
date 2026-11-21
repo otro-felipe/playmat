@@ -288,13 +288,22 @@ final class LobbyApi {
 
                 RpcMethod.named("chatJoin")
                         .session(1)
-                        .params(of("chatId", UUID), of("sessionId", STRING), optional("userName", STRING))
-                        .doc("Subscribe to a chat.")
+                        .params(of("chatId", UUID), of("sessionId", STRING), optional("userName", STRING), optional("recentTalk", mage.server.websocket.rpc.RpcParam.Type.BOOLEAN))
+                        .doc("Subscribe to a chat. Pass recentTalk to receive up to 50 recent public player messages from this game on this connection, with their original chatSequence.")
                         .handler(call -> {
-                            if (ProductGateway.enabled() && !canJoinPrivateChat(ctx, call.sessionId(), call.uuid(0))) {
+                            java.util.UUID chatId = call.uuid(0);
+                            boolean recentTalk = call.optBool(3, false);
+                            if ((ProductGateway.enabled() || recentTalk) && !canJoinPrivateChat(ctx, call.sessionId(), chatId)) {
                                 throw RpcException.notAuthorized("Only the participants can join that chat");
                             }
-                            ctx.server.chatJoin(call.uuid(0), call.string(1), call.optString(2, ""));
+                            if (recentTalk) {
+                                mage.server.Session member = ctx.managers.sessionManager().getSession(call.sessionId())
+                                        .orElseThrow(() -> RpcException.notAuthorized("Sign in first"));
+                                if (member.getUserId() == null) throw RpcException.notAuthorized("Sign in first");
+                                call.getConnection().deliverRecentTalk(chatId, ctx.managers.chatManager().joinWithRecentTalk(chatId, member.getUserId()));
+                            } else {
+                                ctx.server.chatJoin(chatId, call.string(1), call.optString(2, ""));
+                            }
                             return true;
                         }),
 

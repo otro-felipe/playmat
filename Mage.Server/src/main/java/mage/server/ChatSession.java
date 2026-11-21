@@ -43,6 +43,8 @@ public class ChatSession {
     private final ConcurrentMap<UUID, String> users = new ConcurrentHashMap<>(); // active users
     private final Set<UUID> usersHistory = new HashSet<>(); // all users that was here (need for system messages like connection problem)
     private final UUID chatId;
+    private final Deque<ChatMessage> recentGameTalk = new ArrayDeque<>();
+    private long lastChatSequence;
     private final Date createTime;
     private final String info;
 
@@ -152,76 +154,94 @@ public class ChatSession {
     }
 
     public void broadcast(String userName, String message, MessageColor color, boolean withTime, Game game, MessageType messageType, SoundToPlay soundToPlay) {
-        // TODO: is it called by single thread for all users?
-        // TODO: is it freeze on someone's connection fail/freeze?
-        // TODO: is it freeze on someone's connection fail/freeze with play multiple games/chats/lobby?
-        // TODO: send messages in another thread?!
-        if (!message.isEmpty()) {
-            ChatMessage chatMessage = new ChatMessage(userName, message, (withTime ? new Date() : null), game, color, messageType, soundToPlay);
-            if (messageType == MessageType.GAME) {
-                ReplayRecorder.onLog(chatId, chatMessage);
+        if (message.isEmpty()) return;
+        if (gameId != null && messageType == MessageType.TALK && userName != null && !userName.isEmpty()) {
+            synchronized (recentGameTalk) {
+                ChatMessage talk = new ChatMessage(userName, message, withTime ? new Date() : null, game, color, messageType, soundToPlay, ++lastChatSequence);
+                recentGameTalk.addLast(talk);
+                if (recentGameTalk.size() > 50) recentGameTalk.removeFirst();
+                ReplayRecorder.onLog(chatId, talk);
+                deliver(userName, message, messageType, talk);
             }
+        } else {
+            ChatMessage row = new ChatMessage(userName, message, withTime ? new Date() : null, game, color, messageType, soundToPlay);
+            if (messageType == MessageType.GAME) ReplayRecorder.onLog(chatId, row);
+            deliver(userName, message, messageType, row);
+        }
+    }
 
-            switch (messageType) {
-                case USER_INFO:
-                case STATUS:
-                case TALK:
-                    if (this.roomId != null) {
-                        DataCollectorServices.getInstance().onChatRoom(this.roomId, userName, message);
-                    } else if (this.tourneyId != null) {
-                        DataCollectorServices.getInstance().onChatTourney(this.tourneyId, userName, message);
-                    } else if (this.tableId != null) {
-                        DataCollectorServices.getInstance().onChatTable(this.tableId, userName, message);
-                    } else if (this.gameId != null) {
-                        DataCollectorServices.getInstance().onChatGame(this.gameId, userName, message);
-                    }
-                    break;
-                case GAME:
-                    // game logs processing in other place
-                    break;
-                case WHISPER_FROM:
-                case WHISPER_TO:
-                    // ignore private messages
-                    break;
-                default:
-                    throw new IllegalStateException("Unsupported message type " + messageType);
+    /** Replay only game TALK the current member is allowed to receive. */
+    public List<ChatMessage> recentTalk(UUID userId) {
+        synchronized (recentGameTalk) {
+            if (gameId == null || !users.containsKey(userId)) return Collections.emptyList();
+            List<ChatMessage> result = new ArrayList<>();
+            for (ChatMessage row : recentGameTalk) {
+                if (!UserRelations.ignores(userId, row.getUsername())) result.add(row);
             }
+            return result;
+        }
+    }
 
-            // TODO: wtf, remove all that locks/tries and make it simpler
-            Set<UUID> clientsToRemove = new HashSet<>();
-            List<UUID> chatUserIds = new ArrayList<>();
-            final Lock r = lock.readLock();
-            r.lock();
+    private void deliver(String userName, String message, MessageType messageType, ChatMessage chatMessage) {
+        switch (messageType) {
+            case USER_INFO:
+            case STATUS:
+            case TALK:
+                if (this.roomId != null) {
+                    DataCollectorServices.getInstance().onChatRoom(this.roomId, userName, message);
+                } else if (this.tourneyId != null) {
+                    DataCollectorServices.getInstance().onChatTourney(this.tourneyId, userName, message);
+                } else if (this.tableId != null) {
+                    DataCollectorServices.getInstance().onChatTable(this.tableId, userName, message);
+                } else if (this.gameId != null) {
+                    DataCollectorServices.getInstance().onChatGame(this.gameId, userName, message);
+                }
+                break;
+            case GAME:
+                // game logs processing in other place
+                break;
+            case WHISPER_FROM:
+            case WHISPER_TO:
+                // ignore private messages
+                break;
+            default:
+                throw new IllegalStateException("Unsupported message type " + messageType);
+        }
+
+        // TODO: wtf, remove all that locks/tries and make it simpler
+        Set<UUID> clientsToRemove = new HashSet<>();
+        List<UUID> chatUserIds = new ArrayList<>();
+        final Lock r = lock.readLock();
+        r.lock();
+        try {
+            chatUserIds.addAll(users.keySet());
+        } finally {
+            r.unlock();
+        }
+
+        // fill queue by order, but send as is from async flush
+        List<User> recipients = new ArrayList<>(chatUserIds.size());
+        for (UUID userId : chatUserIds) {
+            Optional<User> user = managerFactory.userManager().getUser(userId);
+            if (user.isPresent() && messageType == MessageType.TALK && UserRelations.ignores(userId, userName)) {
+                continue; // they ignore the author
+            }
+            if (user.isPresent()) {
+                user.get().addCallback(new ClientCallback(ClientCallbackMethod.CHATMESSAGE, chatId, chatMessage));
+                recipients.add(user.get());
+            } else {
+                clientsToRemove.add(userId);
+            }
+        }
+        recipients.forEach(User::flushCallbacksQueue);
+
+        if (!clientsToRemove.isEmpty()) {
+            final Lock w = lock.writeLock();
+            w.lock();
             try {
-                chatUserIds.addAll(users.keySet());
+                users.keySet().removeAll(clientsToRemove);
             } finally {
-                r.unlock();
-            }
-
-            // fill queue by order, but send as is from async flush
-            List<User> recipients = new ArrayList<>(chatUserIds.size());
-            for (UUID userId : chatUserIds) {
-                Optional<User> user = managerFactory.userManager().getUser(userId);
-                if (user.isPresent() && messageType == MessageType.TALK && UserRelations.ignores(userId, userName)) {
-                    continue; // they ignore the author
-                }
-                if (user.isPresent()) {
-                    user.get().addCallback(new ClientCallback(ClientCallbackMethod.CHATMESSAGE, chatId, chatMessage));
-                    recipients.add(user.get());
-                } else {
-                    clientsToRemove.add(userId);
-                }
-            }
-            recipients.forEach(User::flushCallbacksQueue);
-
-            if (!clientsToRemove.isEmpty()) {
-                final Lock w = lock.writeLock();
-                w.lock();
-                try {
-                    users.keySet().removeAll(clientsToRemove);
-                } finally {
-                    w.unlock();
-                }
+                w.unlock();
             }
         }
     }

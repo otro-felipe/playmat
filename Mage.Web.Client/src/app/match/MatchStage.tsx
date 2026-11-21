@@ -1,3 +1,5 @@
+import { SpectatorFrame } from '../spectator/SpectatorFrame';
+import type { SpectatorFeedEvent } from './SpectatorCommentary';
 import { PlayerNames, usePlayerNames, useRosterNames } from '../ui/usePlayerIdentity';
 import { PlayerLabel } from '../ui/PlayerLabel';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -66,6 +68,7 @@ import { useOpponentVoice } from './useOpponentVoice';
 import { useRevealedHands } from './useRevealedHands';
 import { setCardMotion, useFlipOrigin } from './flip';
 import { GameLog } from './GameLog';
+import { SpectatorCommentary, SpectatorCommentaryProvider } from './SpectatorCommentary';
 import { RecentActions } from './RecentActions';
 import { stackTargetConnections } from './stackTargetArrows';
 import { seatAlias, type SeatDisplayNames } from './seatDisplayNames';
@@ -179,6 +182,7 @@ export interface MatchStageProps {
   replayLog?: ChatMessage[];
   /** explicitly authorized replay hands keyed by engine player ID */
   replayHands?: Readonly<Record<string, Readonly<Record<string, CardView>>>>;
+  publicSpectator?: { events: readonly SpectatorFeedEvent[] };
   reviewLayout?: boolean;
   /** where leaving goes, instead of closing the game and going back to Play */
   onLeave?: () => void;
@@ -193,10 +197,14 @@ export function MatchStage(props: MatchStageProps) {
   const visible = state.browserInputLock
     ? { ...state, prompt: null, interaction: deriveInteraction(null, null), prediction: null }
     : state;
-  return <PlayerNames.Provider value={formatName}><MatchBoard {...props} state={visible} /></PlayerNames.Provider>;
+  const stage = <MatchBoard {...props} state={visible} publicSpectator={state.mode === 'watch' ? props.publicSpectator : undefined} />;
+  return <PlayerNames.Provider value={formatName}>{state.mode === 'watch' && props.publicSpectator
+    ? <SpectatorCommentaryProvider gameId={state.gameId} events={props.publicSpectator.events}
+        players={state.view?.players ?? []} names={props.seatDisplayNames}>{stage}</SpectatorCommentaryProvider>
+    : stage}</PlayerNames.Provider>;
 }
 
-function MatchBoard({ session, state, replayLog, replayHands, reviewLayout, onLeave, leaveLabel, seatDisplayNames }: MatchStageProps) {
+function MatchBoard({ session, state, replayLog, replayHands, publicSpectator, reviewLayout, onLeave, leaveLabel, seatDisplayNames }: MatchStageProps) {
   const formatName = usePlayerNames();
   const { view, interaction, playerId, awaitingServer, prediction } = state;
   const mode = state.browserInputLock ? 'observeHuman' : state.mode;
@@ -220,8 +228,8 @@ function MatchBoard({ session, state, replayLog, replayHands, reviewLayout, onLe
   useMatchZoomKeys(!state.browserInputLock);
   useEffect(() => {
     // the session only delays a game being watched; turning the delay off catches up at once
-    session.setBroadcastDelay(mode === 'watch' && isBroadcastDelay(broadcastDelay) ? broadcastDelay * 1000 : 0);
-  }, [session, mode, broadcastDelay]);
+    session.setBroadcastDelay(!publicSpectator && mode === 'watch' && isBroadcastDelay(broadcastDelay) ? broadcastDelay * 1000 : 0);
+  }, [session, mode, broadcastDelay, publicSpectator]);
   const viewer = useMatchUi((ui) => ui.viewer);
   const openViewer = useMatchUi((ui) => ui.openViewer);
   const deckSleeves = useSleeves();
@@ -236,18 +244,18 @@ function MatchBoard({ session, state, replayLog, replayHands, reviewLayout, onLe
   const [stopState, setStopState] = useState<{ turnKey: string; stops: readonly PhaseStop[] } | null>(null);
   const turnStops = stopState?.turnKey === turnKey && !state.gameOver ? stopState.stops : NO_STOPS;
   useEffect(() => {
-    if (state.browserInputLock) return;
+    if (state.browserInputLock || publicSpectator) return;
     if (turnStops !== NO_STOPS) setTurnStops({ side: myTurn ? 'yourTurn' : 'opponentTurn', stops: turnStops });
     else setTurnStops(null);
-  }, [myTurn, setTurnStops, turnStops, state.browserInputLock]);
-  useEffect(() => state.browserInputLock ? undefined : () => setTurnStops(null), [setTurnStops, state.browserInputLock]);
+  }, [myTurn, setTurnStops, turnStops, state.browserInputLock, publicSpectator]);
+  useEffect(() => publicSpectator || state.browserInputLock ? undefined : () => setTurnStops(null), [setTurnStops, state.browserInputLock, publicSpectator]);
   const toggleStops = (keys: readonly PhaseStop[]) => {
     const remove = keys.some((stop) => turnStops.includes(stop));
     const remaining = turnStops.filter((stop) => !keys.includes(stop));
     setStopState({ turnKey, stops: remove ? remaining : [...remaining, ...keys] });
   };
   // full control lasts for the match on screen, as on Arena
-  useEffect(() => state.browserInputLock ? undefined : () => useSettings.getState().setFullControl(false), [state.browserInputLock]);
+  useEffect(() => publicSpectator || state.browserInputLock ? undefined : () => useSettings.getState().setFullControl(false), [state.browserInputLock, publicSpectator]);
   // Arena's pass turn (">>"): set for one turn of one game, so it ends by itself when the next turn begins
   const [passTurnAt, setPassTurnAt] = useState<{ gameId: string; turn: number } | null>(null);
   const passTurn = !!passTurnAt && passTurnAt.gameId === state.gameId && passTurnAt.turn === (view?.turn ?? 0) && !state.gameOver;
@@ -308,8 +316,8 @@ function MatchBoard({ session, state, replayLog, replayHands, reviewLayout, onLe
   // watching: the seat's hand, if its player lets us see it, and only backs while hands are hidden for the broadcast
   // (a replay of one's own game shows the hand that was held, as before)
   const seatHand = useMemo(
-    () => (mode === 'observeHuman' ? { cards: hand, faceDown: false } : spectating ? spectatorHand(view, board.me?.player, mode === 'watch' && hideHands) : null),
-    [spectating, mode, hand, view, board.me?.player, hideHands],
+    () => (publicSpectator ? { cards: Object.values(replayHands?.[board.me?.player.playerId ?? ''] ?? {}), faceDown: false } : mode === 'observeHuman' ? { cards: hand, faceDown: false } : spectating ? spectatorHand(view, board.me?.player, mode === 'watch' && hideHands) : null),
+    [spectating, mode, hand, view, board.me?.player, hideHands, publicSpectator, replayHands],
   );
   const stack = useMemo(() => Object.values(view?.stack ?? {}), [view?.stack]);
 
@@ -405,7 +413,7 @@ function MatchBoard({ session, state, replayLog, replayHands, reviewLayout, onLe
   useAutoOrder(session, state);
   // the players' own looks (servers with accounts), refreshed during the match so late uploads reach every seat
   const playerNames = (view?.players ?? []).map((player) => player.name).join('\n');
-  const looks = usePlayerLooks(playerNames.split('\n'), true);
+  const looks = usePlayerLooks(publicSpectator ? [] : playerNames.split('\n'), true);
   const lookOf = useCallback((player: PlayerView | undefined): PlayerLook | undefined => (player?.name ? looks[player.name.trim().toLowerCase()] ?? undefined : undefined), [looks]);
   const mine = board.me?.isMe ? deckSleeves.mine : playerSleeve(lookOf(board.me?.player), deckSleeves.mine);
   const sleeves = useMemo(() => ({
@@ -640,9 +648,9 @@ function MatchBoard({ session, state, replayLog, replayHands, reviewLayout, onLe
   // quick emotes (B298): players only, at their own seat
   const emotes = mode === 'play' && !!board.me?.isMe;
 
-  return (
+  const stage = (
     // basic lands show their players' land styles anywhere on the stage (B301, ui/landStyles.ts)
-    <LandStyleContext.Provider value={landStyleOf}><TokenArtContext.Provider value={tokenArtOf}><CardStyleContext.Provider value={cardStylesOf}><Stage style={matStyle} contained={mode === 'replay'}>
+    <LandStyleContext.Provider value={landStyleOf}><TokenArtContext.Provider value={tokenArtOf}><CardStyleContext.Provider value={cardStylesOf}><Stage style={matStyle} contained={mode === 'replay' || !!publicSpectator || !!state.browserInputLock}>
       {(stage) => {
         // the stage widens with the window and the field takes the extra width; a portrait window gets the tall layout
         // "Match size" grows the creatures and the hand for a laptop screen (#147)
@@ -687,7 +695,8 @@ function MatchBoard({ session, state, replayLog, replayHands, reviewLayout, onLe
                 displayName={seatAlias(opponent.player.name ?? '', seatDisplayNames)}
                 look={lookOf(opponent.player)}
                 handCount={opponent.player.handCount ?? 0}
-                replayHand={mode === 'replay' ? replayHands?.[opponent.player.playerId ?? ''] : undefined}
+                liveHand={!!publicSpectator}
+                replayHand={publicSpectator || mode === 'replay' ? replayHands?.[opponent.player.playerId ?? ''] : undefined}
                 revealed={revealedInHand(revealedHands, opponent.player.playerId)}
                 clickable={clickable}
                 selected={interaction.selected}
@@ -708,7 +717,7 @@ function MatchBoard({ session, state, replayLog, replayHands, reviewLayout, onLe
               <>
                 <Battlefield board={board.me} sleeve={sleeves.mine} clickable={clickable} selected={chosen} attacking={attacking} blocking={blocking} targeting={targeting} onClick={onClick} pending={pending} onBlockDrop={interaction.mode === 'declareBlockers' && canAct ? onBlockDrop : interaction.mode === 'declareAttackers' && canAct ? attackDrop.onDrop : undefined} dropTargets={interaction.mode === 'declareAttackers' ? attackDrop.targets : undefined} place={layout.me} />
                 <div ref={plateRef} className={styles.myPlate} style={layout.myPlate}>
-                  <PlayerPlate
+                  <PlayerPlate bubbleSide="lower"
                     player={board.me.player}
                     displayName={seatAlias(board.me.player.name ?? '', seatDisplayNames)}
                     isMe={board.me.isMe}
@@ -751,7 +760,7 @@ function MatchBoard({ session, state, replayLog, replayHands, reviewLayout, onLe
               <Hand
                 cards={seatHand.cards}
                 faceDown={seatHand.faceDown}
-                label={`${displayName(board.me.player.name) ?? 'Player'}'s hand`}
+                label={publicSpectator ? t('watch.handOf', { name: displayName(board.me.player.name) ?? '' }) : `${displayName(board.me.player.name) ?? 'Player'}'s hand`}
                 clickable={EMPTY}
                 selected={EMPTY}
                 sleeve={sleeves.mine}
@@ -808,9 +817,7 @@ function MatchBoard({ session, state, replayLog, replayHands, reviewLayout, onLe
             ) : (
               <>
                 <div className={styles.viewPhases}>{phaseLadder}</div>
-                {state.browserInputLock ? <div className={styles.observerNotice}>
-                  <InputLockNotice lock={state.browserInputLock} onLeave={leave} leaveLabel={leaveLabel} onResync={onResync} />
-                </div> : <SpectatorBar session={session} state={state} onLeave={leave} externalPerspective={mode === 'replay' && reviewLayout} />}
+                {!publicSpectator && !state.browserInputLock && <SpectatorBar session={session} state={state} onLeave={leave} externalPerspective={mode === 'replay' && reviewLayout} />}
               </>
             )}
 
@@ -826,7 +833,7 @@ function MatchBoard({ session, state, replayLog, replayHands, reviewLayout, onLe
             {mode === 'play' && <DecisionIdleNotice timing={view?.responseIdle} active={!state.gameOver && !awaitingServer} />}
             {mode === 'play' && <Coach view={view ?? null} mode={choosingStarter ? 'panel' : interaction.mode} awaiting={awaitingServer} gameOver={!!state.gameOver} />}
             {mode === 'play' && <LessonCoach gameId={state.gameId} view={view ?? null} mode={choosingStarter ? 'panel' : interaction.mode} awaiting={awaitingServer} gameOver={!!state.gameOver} />}
-            <GameLog key={`chat:${state.gameId}`} gameId={state.gameId} notices={state.notices} canChat={mode === 'play'} view={view} replayLog={replayLog} delayMs={state.broadcastDelayMs} seatDisplayNames={seatDisplayNames} />
+            {mode === 'watch' && publicSpectator ? <SpectatorCommentary /> : <GameLog key={`chat:${state.gameId}`} gameId={state.gameId} notices={state.notices} canChat={mode === 'play'} view={view} replayLog={replayLog} delayMs={state.broadcastDelayMs} seatDisplayNames={seatDisplayNames} />}
             {mode === 'watch' && !view && state.broadcastDelayMs > 0 && (
               <p className={styles.delayNote} role="status">
                 The table appears in {delayLabel(Math.round(state.broadcastDelayMs / 1000))}: the broadcast delay holds the game back.
@@ -834,7 +841,7 @@ function MatchBoard({ session, state, replayLog, replayHands, reviewLayout, onLe
             )}
             {mode === 'play' && <WatcherCount watchers={watchers} className={styles.watchers} />}
             <EngineBadge gameId={state.gameId} view={view} showNotice={mode === 'play' && !state.gameOver} />
-            {!state.browserInputLock && <GameMenu
+            {!publicSpectator && !state.browserInputLock && <GameMenu
               gameId={state.gameId}
               quests={mode === 'play' && !state.gameOver}
               practice={mode === 'play' && !state.gameOver && !career && board.opponents.length > 0 && board.opponents.every((opponent) => opponent.player.isHuman === false)}
@@ -916,6 +923,9 @@ function MatchBoard({ session, state, replayLog, replayHands, reviewLayout, onLe
       }}
     </Stage></CardStyleContext.Provider></TokenArtContext.Provider></LandStyleContext.Provider>
   );
+  return state.browserInputLock ? <SpectatorFrame actions={
+    <InputLockNotice lock={state.browserInputLock} onLeave={leave} leaveLabel={leaveLabel} onResync={onResync} />
+  }>{stage}</SpectatorFrame> : stage;
 }
 
 interface RowProps {
@@ -1003,7 +1013,7 @@ function landTaps(groups: PermanentGroup[]) {
 }
 
 /** An opponent's half: their rows mirrored above the seam, their seat, piles and hidden hand. */
-function OpponentSide({ board, index, count, sleeve, handCount, replayHand, revealed, deciding, layout, commanders, commanderDamage, outOfRange, look, displayName, ...row }: RowProps & {
+function OpponentSide({ board, index, count, sleeve, handCount, replayHand, liveHand, revealed, deciding, layout, commanders, commanderDamage, outOfRange, look, displayName, ...row }: RowProps & {
   layout: MatchLayout;
   look: PlayerLook | undefined;
   displayName?: string;
@@ -1012,6 +1022,7 @@ function OpponentSide({ board, index, count, sleeve, handCount, replayHand, reve
   count: number;
   handCount: number;
   replayHand?: Readonly<Record<string, CardView>>;
+  liveHand?: boolean;
   /** cards revealed from this hand and still in it */
   revealed: CardView[];
   deciding: boolean;
@@ -1026,7 +1037,7 @@ function OpponentSide({ board, index, count, sleeve, handCount, replayHand, reve
     <>
       <Battlefield board={board} sleeve={sleeve} place={place} {...row} />
       <div className={[styles.theirPlate, count > 1 ? styles.seat : '', look?.pet && count === 1 ? styles.withPet : ''].join(' ')} style={layout.theirPlate(index, count)}>
-        <PlayerPlate
+        <PlayerPlate bubbleSide="upper"
           player={player}
           displayName={displayName}
           isMe={false}
@@ -1057,13 +1068,13 @@ function OpponentSide({ board, index, count, sleeve, handCount, replayHand, reve
       )}
       {count > 1 && !layout.tall && <span className={styles.seatName} style={{ left: place.left + 16 }} aria-hidden="true"><PlayerLabel name={player.name ?? ''} displayName={displayName} /></span>}
       {replayHand ? (
-        <RecordedHand cards={replayHand} name={formatName(player.name ?? '', displayName)} sleeve={sleeve} left={layout.hiddenHandX(index, count)} />
+        <RecordedHand live={liveHand} cards={replayHand} name={formatName(player.name ?? '', displayName)} sleeve={sleeve} left={layout.hiddenHandX(index, count)} />
       ) : <HiddenHand playerId={player.playerId!} count={handCount} revealed={revealed} sleeve={sleeve} left={layout.hiddenHandX(index, count)} />}
     </>
   );
 }
 
-function RecordedHand({ cards, name, sleeve, left }: { cards: Readonly<Record<string, CardView>>; name: string; sleeve: string; left: number }) {
+function RecordedHand({ cards, name, sleeve, left, live }: { live?: boolean; cards: Readonly<Record<string, CardView>>; name: string; sleeve: string; left: number }) {
   const t = useT();
   const setZoom = useMatchUi((state) => state.setZoom);
   const openCard = (card: CardView, anchor: HTMLElement) => {
@@ -1071,9 +1082,9 @@ function RecordedHand({ cards, name, sleeve, left }: { cards: Readonly<Record<st
     setZoom({ card, x: bounds.x + bounds.width / 2, y: bounds.bottom, sleeve, anchor });
   };
   return (
-    <div className={styles.recordedHand} style={{ left }} role="group" aria-label={t('replay.handOf', { name })}>
+    <div className={styles.recordedHand} style={{ left }} role="group" aria-label={t(live ? 'watch.handOf' : 'replay.handOf', { name })}>
       {Object.entries(cards).map(([id, card]) => (
-        <button key={id} type="button" aria-label={card.displayName ?? card.name ?? t('replay.recordedCard')}
+        <button key={id} type="button" aria-label={card.displayName ?? card.name ?? t(live ? 'watch.card' : 'replay.recordedCard')}
           onPointerEnter={(event) => openCard(card, event.currentTarget)} onPointerLeave={() => setZoom(null)}
           onFocus={(event) => openCard(card, event.currentTarget)} onBlur={() => setZoom(null)}
           onClick={(event) => openCard(card, event.currentTarget)}>

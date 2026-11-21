@@ -12,7 +12,7 @@ const choice = (id, kind = 'amount', instruction = 'Choose an amount') => ({
   id, kind, instruction, choices: [{ id: `${id}-answer`, type: 'number', label: `Answer for ${id}` }],
 });
 
-async function fixture(t, { first = choice('first'), onResponse = () => {}, evidence = true, initial = {} } = {}) {
+async function fixture(t, { first = choice('first'), onResponse = () => {}, evidence = true, initial = {}, authorized = () => true } = {}) {
   const listeners = new Set();
   const applied = [];
   const players = [
@@ -44,7 +44,7 @@ async function fixture(t, { first = choice('first'), onResponse = () => {}, evid
     },
   };
   const server = createMcpServer({
-    authorize: async (token) => token === 'fixture' ? { accountId: 'fixture', engineName: 'pilot', scopes: ['play'] } : null,
+    authorize: async (token) => token === 'fixture' && authorized() ? { accountId: 'fixture', engineName: 'pilot', scopes: ['play'] } : null,
     createEngine: () => engine,
   });
   server.listen(0, '127.0.0.1');
@@ -263,6 +263,62 @@ test('[PM-LINE-03] an information interruption includes its next actionable call
   assert.equal(result.state.ownHand[0].id, 'fresh-card');
   assert.equal(result.needsAgent, true);
   assert.equal(f.applied.length, 1);
+});
+
+for (const status of ['game_over', 'match_over', 'sideboarding']) {
+  test(`an observed ${status} ends a line without claiming its queued decisions or replaying its last answer`, async t => {
+    const ack = Promise.withResolvers();
+    const sent = Promise.withResolvers();
+    const f = await fixture(t, { onResponse: async (_answer, update) => {
+      update({ status, decision: null, ...(status === 'sideboarding' && { epoch: 2, sideboard: { submitted: false } }) });
+      sent.resolve();
+      await ack.promise;
+    } });
+    const line = { ...f.request, actions: [...f.request.actions, { kind: 'choose', guard: { kind: 'amount', instruction: 'Choose the next amount' }, select: { label: 'Answer for second' }, value: 1 }] };
+    const { result: running } = await f.call('play_line', { ...line, waitMs: 0 });
+    assert.equal(running.planOwnsExecution, true, JSON.stringify(running));
+    await sent.promise;
+    ack.resolve();
+    const args = { gameId, commandId: line.commandId };
+    for (const reply of [await f.call('wait_for_decision', args), await f.call('play_line', line)]) {
+      assert.equal(reply.result.status, 'ended');
+      assert.equal(reply.result.reason, status);
+      assert.equal(reply.result.event, status);
+      assert.equal(reply.result.appliedDecisions, 1);
+      assert.equal(reply.result.planOwnsExecution, false);
+      assert.equal(reply.result.needsAgent, status === 'sideboarding');
+      assert.ok(!reply.result.error);
+    }
+    assert.equal(f.applied.length, 1);
+  });
+}
+
+test('a terminal callback does not hide a rejected answer or an invalidated plan', async t => {
+  for (const cause of ['rejected', 'rollback']) {
+    const f = await fixture(t, { onResponse: (_answer, update) => {
+      if (cause === 'rollback') update({ epoch: 2, decision: null, rollbackRequest: { id: 'rewind' } });
+      update({ status: 'game_over', decision: null, rollbackRequest: null });
+      if (cause === 'rejected') throw new Error('Engine did not acknowledge the response');
+    } });
+    let { result } = await f.call('play_line', f.request);
+    if (result.planOwnsExecution) ({ result } = await f.call('wait_for_decision', { gameId, commandId: f.request.commandId }));
+    assert.equal(result.status, 'interrupted');
+    assert.equal(result.reason, cause === 'rollback' ? 'invalidated' : 'action_failed');
+    assert.equal(result.appliedDecisions, cause === 'rollback' ? 1 : 0);
+  }
+});
+
+test('a grant that expires at the terminal callback cannot read the outcome', async t => {
+  let allowed = true;
+  const f = await fixture(t, { authorized: () => allowed, onResponse: (_answer, update) => {
+    allowed = false;
+    update({ status: 'match_over', decision: null });
+  } });
+  const { result } = await f.call('play_line', f.request);
+  assert.equal(result.status, 'interrupted');
+  assert.equal(result.reason, 'authorization_expired');
+  assert.equal(result.state, null);
+  assert.equal(result.appliedDecisions, 1);
 });
 
 test('[PM-LINE-03] a decision wait can return a rollback vote without a gameplay prompt', async (t) => {

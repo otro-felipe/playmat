@@ -19,10 +19,13 @@ async function fixture(t, chatMode, chat = true) {
   await once(websocket, 'listening');
   const connected = once(websocket, 'connection');
   const actions = [], messages = [];
+  let readyChat;
+  const chatJoined = new Promise(resolve => { readyChat = resolve; });
   websocket.on('connection', socket => socket.on('message', raw => {
     const { method, id, params } = JSON.parse(raw);
     if (method.startsWith('sendPlayer')) actions.push(method);
     if (method === 'chatSendMessage') messages.push(params[2]);
+    if (method === 'chatJoin') readyChat();
     const replies = { connectUser: true, serverGetMainRoomId: roomId, deckValidate: { valid: true }, roomJoinTable: true,
       gameJoin: true, chatFindByGame: chatId, chatJoin: true, chatSendMessage: true, sendPlayerBoolean: true };
     if (id !== undefined) socket.send(JSON.stringify({ jsonrpc: '2.0', id, result: replies[method] ?? null }));
@@ -66,7 +69,9 @@ async function fixture(t, chatMode, chat = true) {
     await changed;
   }
   await emit('START_GAME', { gameId, playerId, currentTableId: tableId }, state => state.gameId === gameId);
-  return { client, call, emit, join, guides, actions, messages };
+  await chatJoined;
+  const talk = (data, channel = chatId) => socket.send(JSON.stringify({ method: 'CHATMESSAGE', messageId: ++messageId, objectId: channel, data }));
+  return { client, call, emit, join, guides, actions, messages, talk };
 }
 
 function position(turn, activePlayerName = 'Human') {
@@ -146,4 +151,38 @@ test('missing chat scope refuses a review without answering or removing the engi
   assert.equal((await call('get_game_state', { gameId })).decision.id, before.decision.id);
   assert.deepEqual(messages, []);
   assert.deepEqual(actions, []);
+});
+
+
+test('a pilot receives opponent speech on its own cursor while the same game decision remains available', async t => {
+  const { call, emit, talk, actions } = await fixture(t, 'chatty');
+  await emit('GAME_SELECT', { message: 'Play spells and abilities', gameView: position(2, 'CoachRival') }, s => s.turn === 2 && s.decision);
+  const before = await call('get_game_state', { gameId });
+  const message = { username: 'Human', message: 'Buen ataque &amp; buen bloqueo', messageType: 'TALK', time: 12, chatSequence: 1 };
+  const waiting = call('wait_for_chat', { gameId, afterCursor: 0, timeoutMs: 1000 });
+  talk({ ...message, messageType: 'GAME', message: 'engine log' });
+  talk(message, roomId);
+  talk(message);
+  const received = await waiting;
+  assert.equal(received.event, 'chat');
+  assert.equal(received.cursor, 1);
+  assert.deepEqual(received.messages.map(m => [m.author,m.message]), [['Human','Buen ataque & buen bloqueo']]);
+  talk(message);
+  talk({ ...message, username: 'CoachRival', message: 'Gracias', chatSequence: 2 });
+  const idle = await call('wait_for_chat', { gameId, afterCursor: received.cursor, timeoutMs: 100 });
+  assert.equal(idle.event, 'timeout');
+  assert.deepEqual(idle.messages, []);
+  const after = await call('get_game_state', { gameId });
+  assert.equal(after.chatCursor, 1);
+  assert.equal(after.cursor, before.cursor);
+  assert.equal(after.decision.id, before.decision.id);
+  assert.deepEqual(actions, []);
+  assert.equal((await call('list_chat', { gameId })).messages.length, 2);
+});
+
+test('chat waits require chat access and never expose messages through play-only responses', async t => {
+  const { call, talk } = await fixture(t, 'chatty', false);
+  talk({username:'Human',message:'Hola',messageType:'TALK',time:1,chatSequence:1});
+  assert.equal((await call('wait_for_chat', {gameId,timeoutMs:100}, true)).code, 'forbidden');
+  assert.equal((await call('get_game_state', {gameId})).chatCursor, undefined);
 });

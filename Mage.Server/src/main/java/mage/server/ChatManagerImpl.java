@@ -12,6 +12,7 @@ import mage.server.managers.ManagerFactory;
 import mage.server.social.Presence;
 import mage.util.GameLog;
 import mage.utils.SystemUtil;
+import mage.view.ChatMessage;
 import mage.view.ChatMessage.MessageColor;
 import mage.view.ChatMessage.MessageType;
 import mage.view.ChatMessage.SoundToPlay;
@@ -86,6 +87,14 @@ public class ChatManagerImpl implements ChatManager {
         } else {
             logger.trace("Chat to join not found - chatId: " + chatId + " userId: " + userId);
         }
+    }
+
+    @Override
+    public List<ChatMessage> joinWithRecentTalk(UUID chatId, UUID userId) {
+        ChatSession chat = chatSessions.get(chatId);
+        if (chat == null) return java.util.Collections.emptyList();
+        chat.join(userId);
+        return chat.recentTalk(userId);
     }
 
     @Override

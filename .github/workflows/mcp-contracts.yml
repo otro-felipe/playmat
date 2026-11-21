@@ -10,6 +10,7 @@ on:
       - "ops/playtesting/product/fixture-game-clock*.mjs"
       - "ops/playtesting/product/human-match.local.mjs"
       - "ops/playtesting/product/human-seats.mjs"
+      - "ops/playtesting/product/spectators*.mjs"
       - "ops/playtesting/product/product.mjs"
       - "ops/playtesting/product/schema.sql"
       - "ops/playtesting/Caddyfile"

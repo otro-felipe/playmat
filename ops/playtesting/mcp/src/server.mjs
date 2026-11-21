@@ -157,7 +157,7 @@ const LinePassPriority = z.object({ kind: z.literal('pass_priority') }).strict()
 const LineActions = z.array(z.discriminatedUnion('kind', [TurnPlay, TurnActivation, TurnChoose, TurnAttack, TurnBlock, Pace, LinePassUntil, LinePassPriority])).min(1).max(32);
 const Line = {
   gameId: Uuid, cursor: Cursor, commandId: StringId.describe('Choose a unique ID for this line. For an uncertain result, reuse this ID with the same game, cursor and actions.'),
-  reasoning: z.string().trim().min(1).max(600).optional().describe('A short, player-facing explanation for this line in the completed replay, such as the goal and one visible fact. Share only what you intend replay viewers to read.'),
+  reasoning: z.string().trim().min(1).max(600).optional().describe('A brief comment for the live spectator audience and authorized replay. Describe the line’s objective and an observation. Use send_chat to speak to the opponent.'),
   actions: z.array(z.union([TurnPlayShape, TurnActivation, TurnChooseShape, TurnAttackShape, TurnBlockShape, Pace, LinePassUntilShape, LinePassPriority])).min(1).max(32)
     .describe('Plan as far as current information justifies. Use exact choices for visible engine prompts. Put pass_until or pass_priority last.'),
   expectedStackIds: z.array(StringId).max(16).optional().describe('Exact objects already visible on the stack. For a current trigger-order prompt, use choose.adoptTriggerOrder instead.'),
@@ -229,8 +229,15 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
       try {
         if (!actor.scopes.includes(scope)) throw new ToolError('forbidden', 'This credential lacks the required scope.');
         const { humanTableId, ...input } = args;
-        const result = humanTableId && gameTool
-          ? await human.select(humanTableId, () => run(input, extra.signal)) : await run(args, extra.signal);
+        const execute = async () => {
+          const result = await run(gameTool ? input : args, extra.signal);
+          if (actor.scopes.includes('chat') && ['get_game_state','wait_for_decision','play_line'].includes(name)) {
+            const cursor = getSeat().engine.chatCursor?.(result.gameId ?? result.state?.gameId);
+            if (cursor) return { ...result, chatCursor: cursor };
+          }
+          return result;
+        };
+        const result = humanTableId && gameTool ? await human.select(humanTableId, execute) : await execute();
         const response = textResult(result);
         // Rejected gameplay commands are application receipts. They carry a code,
         // stage and recovery instructions even through clients that normalize MCP errors.
@@ -412,8 +419,12 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
     'play', (args) => getSeat().engine.requestRollback(args));
   tool('vote_rollback', 'Vote on the one pending rollback request shown to your seat.', { gameId: Uuid, requestId: Uuid, accept: z.boolean() },
     'play', (args) => getSeat().engine.voteRollback(args));
-  tool('list_chat', 'Read recent messages from the current match chat only.', { gameId: Uuid }, 'chat',
-    ({ gameId }) => getSeat().engine.listChat(gameId), true);
+  tool('list_chat', 'Read recent messages from both players in this game chat. Pass its returned cursor as afterCursor to read only later messages.', {
+    gameId: Uuid, afterCursor: Cursor.optional(),
+  }, 'chat', ({ gameId, afterCursor }) => getSeat().engine.listChat(gameId, afterCursor), true);
+  tool('wait_for_chat', 'Wait for messages from the other seat, independently of a running play_line or decision wait. Start with afterCursor 0, then reuse the chat cursor returned here. Timeout returns an empty list. No game actions are performed.', {
+    gameId: Uuid, afterCursor: Cursor.optional(), timeoutMs: z.number().int().min(100).max(25_000).optional(),
+  }, 'chat', (args, signal) => getSeat().engine.waitChat(args, signal), true);
   tool('send_chat', 'Send a chat message as this seat in its active match. Follow the host chatMode and the coaching procedure in getting-started. A comment never answers or pauses a pending engine decision; keep play moving and private information out of chat.', {
     gameId: Uuid, message: z.string().trim().min(1).max(500),
   }, 'chat', (args) => getSeat().engine.sendChat(args));

@@ -43,7 +43,7 @@ async function lineResult(seat, { gameId, commandId, sequenceId }, timeoutMs, si
     actionIndex: receipt.error?.actionIndex ?? receipt.actionIndex ?? null,
     planOwnsExecution,
     needsAgent: rollback || !planOwnsExecution && requiresDecision(state),
-    event: rollback ? 'rollback' : planOwnsExecution ? 'line_running' : 'line_stopped',
+    event: rollback ? 'rollback' : receipt.status === 'ended' ? receipt.reason : planOwnsExecution ? 'line_running' : 'line_stopped',
     state,
   };
 }

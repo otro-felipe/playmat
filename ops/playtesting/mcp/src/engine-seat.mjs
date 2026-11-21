@@ -1,10 +1,10 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
-import { createApi, RpcClient, EventBus, GameSession, PROMPT_EVENTS, stripMarkup, projectedChoices, commandForAgentChoice, describeAgentDecision, visibleAgentGame } from '../dist/engine-core.mjs';
+import { createApi, RpcClient, EventBus, GameSession, PROMPT_EVENTS, stripMarkup, chatText, projectedChoices, commandForAgentChoice, describeAgentDecision, visibleAgentGame } from '../dist/engine-core.mjs';
 import { cardCatalogEntry, formatTag } from './catalog.mjs';
-import { ToolError } from './game-seat.mjs';
+import { ToolError, waitFor } from './game-seat.mjs';
+import { TableConversation } from './table-conversation.mjs';
 
-const MAX_MESSAGES = 50;
 const ROLLBACK_VOTE = 'ADD_PERMISSION_TO_ROLLBACK_TURN';
 // Use the normal XMage defaults for the managed MCP identity, with distinct
 // upkeep on either turn, plus own draw and both end-step windows.
@@ -101,7 +101,8 @@ export class PlaymatEngineSeat {
   #sideboard = null;
   #vote = null;
   #chatId = null;
-  #chat = [];
+  #chatJoin = null;
+  #chat = new TableConversation();
   #invitePresentation = null;
 
   constructor({ engineUrl, engineName, trustedHeader, accountId, recoverySeatId, connectionId, canonicalAgent = false, authenticationHeaders = {}, guardedPrompts = true, managedPriorityStops = false, humanTableId = null }) {
@@ -154,6 +155,8 @@ export class PlaymatEngineSeat {
     this.rpc.onStatus((status) => {
       if (status === 'reconnecting' || status === 'closed') {
         this.#connected = false;
+        this.#chatId = null;
+        this.#chatJoin = null;
         this.#invalidate();
       }
       if (status === 'open' && !initial) void this.#login().catch(() => this.#publish());
@@ -189,9 +192,14 @@ export class PlaymatEngineSeat {
       }
     });
     this.bus.on('CHATMESSAGE', (message, event) => {
-      if (!this.#chatId || event.objectId !== this.#chatId || !message?.username) return;
-      this.#chat.push({ author: message.username, message: stripMarkup(message.message), time: message.time ?? null });
-      if (this.#chat.length > MAX_MESSAGES) this.#chat.shift();
+      if (!this.#chatId || event.objectId !== this.#chatId || !message?.username
+          || (message.messageType && message.messageType !== 'TALK')) return;
+      const own = message.username === this.engineName;
+      const author = (own && this.#invitePresentation?.displayName) || message.username;
+      const inserted = this.#chat.receive({ author, message: chatText(message.message), time: message.time ?? null,
+        cursor: message.chatSequence }, own);
+      // Wake readers without advancing the game cursor or invalidating a queued action.
+      if (inserted) for (const listener of this.#signal) listener();
     });
   }
 
@@ -224,6 +232,8 @@ export class PlaymatEngineSeat {
       this.#roomId = await this.api.serverGetMainRoomId();
       this.#connected = true;
       this.#publish();
+      const gameId = this.#session?.getState().gameId;
+      if (gameId && !this.#chatId) void this.#joinChat(gameId).catch(() => {});
     })();
     try { return await this.#connecting; }
     finally { this.#connecting = null; }
@@ -253,7 +263,8 @@ export class PlaymatEngineSeat {
     this.#sideboard = null;
     this.#vote = null;
     this.#chatId = null;
-    this.#chat = [];
+    this.#chatJoin = null;
+    this.#chat = new TableConversation();
     this.#tableId = currentTableId ?? this.#tableId;
     this.#gameTableId = this.#tableId;
     this.#session = new GameSession(this.api, this.bus, { gameId, playerId, mode: 'play' });
@@ -488,21 +499,66 @@ export class PlaymatEngineSeat {
   }
 
   async #joinChat(gameId) {
-    const chatId = await this.api.chatFindByGame(gameId);
-    if (!chatId || this.#session?.getState().gameId !== gameId) return null;
-    if (this.#chatId !== chatId) {
-      const joined = await this.api.chatJoin(chatId, this.engineName);
-      if (!joined || this.#session?.getState().gameId !== gameId) return null;
+    if (this.#chatJoin) return this.#chatJoin;
+    if (this.#chatId) return this.#chatId;
+    const conversation = this.#chat;
+    const join = (async () => {
+      const chatId = await this.api.chatFindByGame(gameId);
+      if (!chatId || this.#chatJoin !== join || this.#session?.getState().gameId !== gameId || this.#chat !== conversation) return null;
+      // During chatJoin the engine can already deliver recent TALK callbacks.
       this.#chatId = chatId;
+      const accepted = await this.api.chatJoin(chatId, this.engineName, true);
+      if (!accepted) throw new ToolError('chat_unavailable', 'The engine could not join this game chat.');
+      return this.#chat === conversation ? chatId : null;
+    })();
+    this.#chatJoin = join;
+    try { return await join; }
+    catch (error) {
+      if (this.#chatJoin === join) this.#chatId = null;
+      throw error;
+    } finally {
+      if (this.#chatJoin === join) this.#chatJoin = null;
     }
-    return chatId;
   }
 
-  listChat(gameId) {
+  setTableChatMode(tableId, chatMode) {
+    if (this.humanTableId === tableId) this.#invitePresentation = { tableId, chatMode };
+  }
+
+  chatCursor(gameId) {
+    return this.#session?.getState().gameId === gameId ? this.#chat.latestOpponent : 0;
+  }
+
+  async listChat(gameId, afterCursor) {
     this.#requireGame(gameId);
-    const displayName = this.#invitePresentation?.tableId === this.#gameTableId ? this.#invitePresentation.displayName : null;
-    return { messages: this.#chat.map((message) => displayName && message.author === this.engineName
-      ? { ...message, author: displayName } : message) };
+    await this.#joinChat(gameId);
+    this.#requireGame(gameId);
+    const result = this.#chat.read(afterCursor);
+    // Preserve the original list_chat message shape for callers without a cursor.
+    if (afterCursor === undefined) result.messages = result.messages.map(({ cursor, ...message }) => message);
+    return result;
+  }
+
+  async waitChat({ gameId, afterCursor = 0, timeoutMs = 18000 }, signal) {
+    this.#requireGame(gameId);
+    const chatId = await this.#joinChat(gameId);
+    this.#requireGame(gameId);
+    const read = state => {
+      if (state.gameId !== gameId) return { event: 'game_changed', cursor: afterCursor, messages: [] };
+      const result = this.#chat.read(afterCursor, true);
+      if (result.messages.length) return { event: 'chat', ...result };
+      if (['disconnected','match_over','sideboarding','game_over'].includes(state.status)) return { event: state.status, ...result };
+      return null;
+    };
+    if (!chatId) {
+      const ended = read(this.snapshot());
+      if (ended) return ended;
+      throw new ToolError('chat_unavailable', 'There is no participant chat for the current game.');
+    }
+    const result = await waitFor(this, read, timeoutMs, signal);
+    if (result) return result;
+    const state = this.snapshot();
+    return read(state) ?? { event: 'timeout', ...this.#chat.read(afterCursor, true) };
   }
 
   async sendChat({ gameId, message }) {

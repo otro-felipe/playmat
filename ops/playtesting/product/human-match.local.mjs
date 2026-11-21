@@ -79,7 +79,7 @@ try {
   const room = await browser.api.serverGetMainRoomId()
   const [host, rival] = await Promise.all([connect('human-controller'),connect('mcp-player')])
   async function create(mode, allowed, winsNeeded=1) {
-    const table = await host('create_human_match',{mode,humanMcpAllowed:allowed,format:'Pioneer',winsNeeded,name:'Dual seat fixture',deck:deck('Forest')})
+    const table = await host('create_human_match',{mode,humanMcpAllowed:allowed,...(mode==='mcp'?{chatMode:'chatty'}:{}),format:'Pioneer',winsNeeded,name:'Dual seat fixture',deck:deck('Forest')})
     assert.ok(table.tableId)
     const list = await host('list_human_matches')
     assert.equal(list.matches.some(row=>row.tableId===table.tableId), allowed, 'Discovery includes only current enabled human seats')
@@ -93,8 +93,23 @@ try {
   await host('get_game_state',{humanTableId:waiting},'human_seat_forbidden')
   await browser.api.tableRemove(room,waiting)
   const tableId = await create('mcp',true,2)
+  const watchHost=base+'/api/playtesting/tables/'+tableId
+  const privateResponse=await fetch(watchHost+'/spectator',{headers:{Cookie}})
+  assert.equal(privateResponse.status,200)
+  assert.equal((await privateResponse.json()).role,'spectator')
+  const share=()=>fetch(watchHost+'/spectator-link',{method:'POST',headers:{Cookie}})
+  const issued=await share()
+  assert.equal(issued.status,200)
+  const {path:watchPath}=await issued.json()
+  assert.ok(/^\/watch\/[A-Za-z0-9_-]{43}$/.test(watchPath),'The host receives a separate public link')
+  assert.ok((await (await share()).json()).path===watchPath,'Repeated sharing returns the same link')
+  const watch=base+'/api/playtesting/spectate/'+watchPath.split('/').at(-1)
+  assert.equal((await fetch(base+watchPath,{redirect:'manual'})).status,200,'The spectator app can open signed out')
+  assert.equal((await fetch(watch,{method:'POST'})).status,405,'The anonymous channel never accepts writes')
+  assert.equal((await fetch(watch,{headers:{Authorization:'Bearer '+token}})).status,403,'Agent bearer cannot use the spectator projection')
+  assert.equal((await fetch(base+'/api/playtesting/spectate/'+tableId)).status,404,'Table IDs do not grant access to the feed')
   assert.ok((await rival('list_joinable_games')).invites.some(row=>row.tableId===tableId))
-  await rival('join_game',{tableId,deck:deck('Mountain')})
+  await rival('join_game',{tableId,deck:deck('Mountain'),displayName:'Rival del bosque'})
   assert.equal((await host('start_match',{humanTableId:tableId})).started,true)
   const own = () => host('get_game_state',{humanTableId:tableId})
   const peer = () => rival('get_game_state')
@@ -145,6 +160,49 @@ try {
     }
     return false
   },'both real seats to accept decisions with distinct private hands')
+  const greetings=['Watch fixture host greeting','Watch fixture rival reply']
+  assert.equal((await own()).chatMode,'chatty')
+  assert.equal((await peer()).chatMode,'chatty')
+  const [heardHost] = await Promise.all([
+    rival('wait_for_chat',{gameId,afterCursor:0,timeoutMs:5000}),
+    host('send_chat',{gameId,humanTableId:tableId,message:greetings[0]}),
+  ])
+  assert.equal(heardHost.messages.at(-1)?.message,greetings[0])
+  const [heardRival] = await Promise.all([
+    host('wait_for_chat',{gameId,humanTableId:tableId,afterCursor:0,timeoutMs:5000}),
+    rival('send_chat',{gameId,message:greetings[1]}),
+  ])
+  assert.equal(heardRival.messages.at(-1)?.message,greetings[1])
+  assert.deepEqual((await rival('wait_for_chat',{gameId,afterCursor:heardHost.cursor,timeoutMs:100})).messages,[])
+  const watched=await until(async()=>{
+    const response=await fetch(watch)
+    assert.equal(response.status,200)
+    assert.match(response.headers.get('cache-control'),/no-store/)
+    const state=await response.json()
+    return state.gameId===gameId && state.lines.length>=2 && greetings.every(message=>state.chat.some(row=>row.message===message)) && state
+  },'a public spectator to receive chat, hands and reasoning from both seats')
+  assert.equal(watched.status,'playing')
+  assert.equal(watched.players.length,2)
+  assert.equal(watched.humanMcpName,humanName)
+  assert.equal(watched.players.find(p=>p.name===humanName)?.control,'human-mcp')
+  assert.equal(watched.players.find(p=>p.control==='mcp')?.displayName,'Rival del bosque')
+  assert.equal(new Set(watched.lines.map(line=>line.playerId)).size,2)
+  const handNames=Object.values(watched.hands).map(cards=>Object.values(cards)[0]?.name).sort()
+  assert.deepEqual(handNames,['Forest','Mountain'])
+  for (const internal of ['review','seatViews','canPlayObjects','lookedAt','decision']) assert.equal(watched.view[internal],undefined)
+  const stream=await fetch(watch+'/events')
+  assert.equal(stream.status,200)
+  assert.match(stream.headers.get('content-type'),/text\/event-stream/)
+  const reader=stream.body.getReader()
+  try {
+    let buffer=''
+    while(!buffer.includes('event: snapshot\ndata:') || !buffer.endsWith('\n\n')) {
+      const {done,value}=await reader.read(); assert.equal(done,false)
+      buffer+=new TextDecoder().decode(value)
+    }
+    const event=JSON.parse(buffer.split('event: snapshot\ndata: ')[1].split('\n')[0])
+    assert.ok(event.spectators>=1 && event.lines.length>=2 && event.gameId===gameId)
+  } finally { await reader.cancel() }
   // In a best-of-three, resign from the seat that does not own the current decision.
   // The winning agent need not answer the opponent's concession.
   const deciding = await until(async()=> {
@@ -167,6 +225,7 @@ try {
     return true
   },'the completed duel')
   await until(async () => !(await host('list_human_matches')).matches.some(row=>row.tableId===tableId),'completed duel to leave discovery')
+  await until(async()=>{const x=await (await fetch(watch)).json();return x.gameId===gameId && x.status==='finished'},'the same spectator link to show the completed match')
   // A browser-hosted table is read-only before an agent has ever attached to its human seat.
   const invitationPassword = randomUUID()
   const waitingForControl = await browser.api.roomCreateTable(room, {name:'Browser opt-in',gameType:'Two Player Duel',
@@ -197,6 +256,7 @@ try {
 
   // Starting the lobby from a separate setup-only connection must work even though human gameplay is disabled.
   const disabled = await create('mcp',false)
+  assert.equal((await fetch(base+'/api/playtesting/tables/'+disabled+'/spectator',{headers:{Cookie}})).status,403,'Ordinary player view has no private broadcast')
   await rival('join_game',{tableId:disabled,deck:deck('Mountain')})
   assert.equal((await host('start_match',{humanTableId:disabled})).started,true)
   const browserGame = await until(() => {

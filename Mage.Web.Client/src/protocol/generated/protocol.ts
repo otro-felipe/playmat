@@ -60,7 +60,7 @@ export interface RpcMethods {
   deckSubmit: { params: [sessionId: string, tableId: UUID, deck: DeckCardLists]; result: boolean };
   submitDeck: { params: [sessionId: string, tableId: UUID, deck: DeckCardLists]; result: boolean };
   deckSave: { params: [sessionId: string, tableId: UUID, deck: DeckCardLists]; result: boolean };
-  chatJoin: { params: [chatId: UUID, sessionId: string, userName?: string | null]; result: boolean };
+  chatJoin: { params: [chatId: UUID, sessionId: string, userName?: string | null, recentTalk?: boolean | null]; result: boolean };
   chatLeave: { params: [chatId: UUID, sessionId: string]; result: boolean };
   chatSendMessage: { params: [chatId: UUID, userName: string | null, message: string]; result: boolean };
   chatSetIgnored: { params: [names: string[]]; result: boolean };

@@ -244,9 +244,9 @@ export class GameSession {
     }
   }
 
-  /** Replays: show one recorded moment of the game. */
+  /** Apply a read-only snapshot from a replay or spectator broadcast. */
   showFrame(view: GameView, perspective?: string | null): void {
-    if (this.store.getState().mode !== 'replay') return;
+    if (!['replay', 'watch'].includes(this.store.getState().mode)) return;
     this.applyView(view, false, perspective);
   }
 

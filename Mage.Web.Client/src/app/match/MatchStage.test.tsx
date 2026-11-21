@@ -16,7 +16,7 @@ import { usePlay } from '../stores/play';
 import { useSession } from '../stores/session';
 import { useSettings } from '../stores/settings';
 import { rememberLook } from '../support/supportData';
-import { MatchStage } from './MatchStage';
+import { MatchStage, type MatchStageProps } from './MatchStage';
 import type { MatCloth } from './playmats';
 
 vi.mock('./MatPrint', () => ({
@@ -45,7 +45,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function match(watch = false, seatDisplayNames?: Readonly<Record<string, string>>) {
+function match(watch = false, seatDisplayNames?: Readonly<Record<string, string>>, publicSpectator?: MatchStageProps['publicSpectator']) {
   const bus = new EventBus(rpc);
   const session = new GameSession(api, bus, { gameId: 'g1', playerId: watch ? null : 'me', mode: watch ? 'watch' : 'play' });
   const state = {
@@ -55,7 +55,7 @@ function match(watch = false, seatDisplayNames?: Readonly<Record<string, string>
       { playerId: 'them', name: 'Bob', life: 20, handCount: 1 },
     ] },
   };
-  const stage = (snapshot: GameSessionState) => <QueryClientProvider client={queryClient}><MemoryRouter><MatchStage session={session} state={snapshot} seatDisplayNames={seatDisplayNames} /></MemoryRouter></QueryClientProvider>;
+  const stage = (snapshot: GameSessionState) => <QueryClientProvider client={queryClient}><MemoryRouter><MatchStage session={session} state={snapshot} seatDisplayNames={seatDisplayNames} publicSpectator={publicSpectator} /></MemoryRouter></QueryClientProvider>;
   const rendered = render(stage(state));
   return {
     ...rendered,
@@ -262,4 +262,13 @@ test('watching uses the seated players server looks and contrasts identical slee
   expect(ownPlate?.getAttribute('style')).toContain('#1f2a44');
   expect(theirPlate?.getAttribute('style')).not.toContain('#1f2a44');
   dispose();
+});
+
+test('ordinary game seats never mount broadcast commentary, including with identical seat and game IDs', () => {
+  const game = match(false, undefined, { events: [{ gameId: 'g1', key: 'line', kind: 'line', playerId: 'me',
+    at: Date.now(), playerName: 'Alice', text: 'Audience only fixture' }] });
+  expect(game.queryByText('Audience only fixture')).toBeNull();
+  fireEvent.click(game.getByRole('button', { name: /^Chat$/ }));
+  expect(game.queryByText('Audience only fixture')).toBeNull();
+  game.dispose();
 });

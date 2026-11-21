@@ -21,17 +21,19 @@ test('the human host can launch all modes and only opted-in tables expose their 
     },
     createEngine: opts => {
       opens.push(opts.engineName);
-      let tableId = opts.humanTableId;
+      let tableId = opts.humanTableId, chatMode;
       return {
         async createGame(args, register) {
           assert.equal(opts.engineName, 'Owner');
           assert.deepEqual(args.deck, deck);
           tableId = randomUUID();
-          settings.set(tableId, { tableId, humanName: 'Owner', humanMcpAllowed: args.humanMcpAllowed, createdViaMcp: true });
+          settings.set(tableId, { tableId, ...(args.mode === 'mcp' ? {chatMode: 'chatty'} : {}), humanName: 'Owner', humanMcpAllowed: args.humanMcpAllowed, createdViaMcp: true });
           await register?.({ tableId, roomId: randomUUID(), format: args.format, password: 'synthetic-fixture' });
           return { tableId, state: ['bot','practice'].includes(args.mode) ? 'started' : 'waiting' };
         },
         open: async () => {},
+        setTableChatMode(id, mode) { assert.equal(id, tableId); chatMode = mode; },
+        waitChat: async () => ({ owner: opts.engineName }),
         listChat: async () => ({ owner:opts.engineName }),
         sideboardState: () => ({ owner:opts.engineName }),
         requestRollback: async () => ({ owner:opts.engineName }),
@@ -39,7 +41,7 @@ test('the human host can launch all modes and only opted-in tables expose their 
         recoveryStatus: async () => ({ owner:opts.engineName }),
         recoveryJoin: async () => ({ owner:opts.engineName }),
         startMatch: async id => ({ tableId: id, started: true }),
-        snapshot: () => ({ tableId, gameId, ownHand: [opts.engineName], cursor: 1 }),
+        snapshot: () => ({ tableId, gameId, chatMode, ownHand: [opts.engineName], cursor: 1 }),
         close: () => {},
       };
     },
@@ -74,6 +76,7 @@ test('the human host can launch all modes and only opted-in tables expose their 
       const owned = await call('get_game_state', { gameId, humanTableId: host.tableId, view: 'full' });
       if (humanMcpAllowed) {
         assert.deepEqual(owned.ownHand, ['Owner']);
+        if (mode === 'mcp') assert.equal(owned.chatMode, 'chatty');
         allowed = host.tableId;
       }
       else assert.equal(owned.code, 'human_seat_forbidden');
@@ -82,7 +85,7 @@ test('the human host can launch all modes and only opted-in tables expose their 
   }
   assert.deepEqual(invitations, ['mcp', 'mcp', 'friend', 'friend']);
   assert.deepEqual((await call('get_game_state', { gameId, view: 'full' })).ownHand, ['mcp_Owner']);
-  for (const [tool, extra] of [['list_chat',{}], ['get_sideboard_state',{}], ['request_rollback',{ turnsBack:0 }]]) {
+  for (const [tool, extra] of [['wait_for_chat',{}], ['list_chat',{}], ['get_sideboard_state',{}], ['request_rollback',{ turnsBack:0 }]]) {
     assert.equal((await call(tool,{ gameId,...extra })).owner, 'mcp_Owner');
     assert.equal((await call(tool,{ gameId,humanTableId:allowed,...extra })).owner, 'Owner');
   }

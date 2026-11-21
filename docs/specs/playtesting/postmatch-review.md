@@ -16,7 +16,7 @@ Private Playmat participants can revisit a completed encounter, inspect the evid
 
 - **PM-REVIEW-CAPTURE-5** Supported shared engine prompts emit a normalized selection with their semantic kind and committed answer. A replay can explain choices for unrelated cards that use the same prompt, including modes, targets, card selections, and optional effects. When a committed move already owns the corresponding choice, review preserves the course of the move without counting a second independent decision. Protected options remain scoped to the choosing seat or authorized full view.
 
-- **PM-REVIEW-CAPTURE-6** Either agent may attach a short shareable gameplay explanation to a line. The replay records it with the first committed decision, its acting seat and the captured board position. A participant can show or hide explanations in the authorized completed-match review. Public playback, live state and exports keep these explanations private.
+- **PM-REVIEW-CAPTURE-6** Either agent may attach a short shareable gameplay explanation to a line. The replay records it with the first committed decision, its acting seat and the captured board position. A participant can show or hide explanations in the authorized completed-match review. Live player seats, shared replay links and exports exclude these notes. The dedicated live spectator broadcast can show them as audience commentary.
 
 ## Evidence and saved analysis
 

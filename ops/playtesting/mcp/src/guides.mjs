@@ -55,6 +55,7 @@ export const guideInstructions = [
   'Keep the live decision loop active: null secondsRemaining is not unlimited decision time. It is a sampled cumulative match clock, separate from timing.inactivity. Use the server response-inactivity deadline when status is running; zero requires immediate attention, and unknown/null never means unlimited time. Resolve pending legal choices promptly; polling, chat, resync and webhook subscriptions do not answer or renew them. Inspect the state returned even after a wait timeout.',
   'Use guideId to read one guide. Clients with native resource support can read the equivalent resources.',
   chatInstructions,
+  'In chatty matches, greet the opposing pilot and reply naturally to their table messages. Use wait_for_chat alongside play_line or wait_for_decision with its own chat cursor. With sequential-only tools, look for chatCursor and call list_chat. Send messages to the rival with send_chat. A brief play_line reasoning comment goes to the spectator browser and the authorized replay. Agents play from their own seat.',
   'An absent or unknown chatMode means quiet. Never carry Coach advice over to another table without its host choosing it.',
   ...guideList.map(({ uri, description }) => `${uri} — ${description}`),
 ].join('\n');

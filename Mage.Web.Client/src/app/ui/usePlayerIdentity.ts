@@ -47,8 +47,12 @@ function options(name: string, enabled = true) {
   });
 }
 
+export const PublicBroadcast = createContext(false);
+
 export function usePlayerIdentity(name: string, enabled = true) {
-  return useQuery(options(name, enabled), identities).data;
+  const broadcast = useContext(PublicBroadcast);
+  const result = useQuery(options(name, enabled && !broadcast), identities);
+  return broadcast ? undefined : result.data;
 }
 
 function directory(results: UseQueryResult<PlayerIdentity | null>[]): Record<string, PlayerIdentity> {
@@ -61,7 +65,8 @@ export const usePlayerNames = () => useContext(PlayerNames);
 
 /** Resolve the whole table once for labels embedded in sentences, native options and replay annotations. */
 export function useRosterNames(names: readonly (string | undefined)[]) {
-  const keys = [...new Set(names.filter((name): name is string => !!name && engineName.test(name)).map((name) => name.toLowerCase()))];
+  const broadcast = useContext(PublicBroadcast);
+  const keys = broadcast ? [] : [...new Set(names.filter((name): name is string => !!name && engineName.test(name)).map((name) => name.toLowerCase()))];
   const roster = useQueries({ queries: keys.map((name) => options(name)), combine: directory }, identities);
   return useMemo<FormatPlayerName>(() => (name, alias) => {
     const seat = roster[name.toLowerCase()];

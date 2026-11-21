@@ -60,6 +60,10 @@ public interface RpcConnection {
     default void promptAnswered(UUID gameId) {
     }
 
+    /** Deliver public chat catch-up only to this transport. */
+    default void deliverRecentTalk(UUID chatId, List<mage.view.ChatMessage> messages) throws ClientChannel.Closed {
+    }
+
     /** Reopen an already joined shared game on this socket without disturbing the other transport. */
     default boolean rejoinSharedGame(UUID gameId) { return false; }
 

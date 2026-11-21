@@ -52,6 +52,7 @@ public final class ReplayRecorder {
     /** the recorder watches like a spectator nobody else can be */
     private final UUID watcherId = UUID.randomUUID();
     private Writer out;
+    private SpectatorTable broadcast;
     private String lastFrame;
     private int lastFrameCursor = -1;
     private long replayBranch;
@@ -110,6 +111,7 @@ public final class ReplayRecorder {
             if (ProductGateway.enabled()) {
                 store.markActive(info);
                 BY_GAME.put(game.getId(), recorder);
+                recorder.broadcast = SpectatorTable.start(table, game.getId());
                 if (info.reviewVersion != null) {
                     recorder.decisionSubscription = ReplayDecision.observe(game, recorder::recordDecision, recorder::offerPrompt);
                 }
@@ -241,7 +243,11 @@ public final class ReplayRecorder {
         row.addProperty("actorPlayerId", playerId.toString());
         row.addProperty("commandId", commandId);
         row.addProperty("reasoning", reasoning);
+        long at = System.currentTimeMillis();
+        row.addProperty("at", at);
+        row.addProperty("turn", game.getTurnNum());
         write(row.toString());
+        if (!broken && broadcast != null) broadcast.line(playerId, commandId, reasoning, game.getTurnNum(), at);
         return !broken;
     }
 
@@ -376,7 +382,7 @@ public final class ReplayRecorder {
         try {
             // building a spectator's view costs far more than this key: skip it while nothing visible has changed
             String key = GameChangeKey.of(game);
-            if (info.reviewVersion != null) {
+            if (info.reviewVersion != null || broadcast != null) {
                 key += ReplayEvidence.knowledgeKey(game);
             }
             if (!always && key.equals(lastKey)) {
@@ -387,23 +393,31 @@ public final class ReplayRecorder {
             StringBuilder frame = new StringBuilder(32 * 1024).append("{\"view\":");
             GameView spectator = info.reviewVersion == null
                     ? new GameView(game.getState(), game, null, watcherId) : GameView.forReplay(game, null, watcherId);
+            JsonObject visible = info.reviewVersion != null || broadcast != null ? ReplayEvidence.spectatorFrame(spectator) : null;
             if (info.reviewVersion == null) {
                 JsonCodec.GSON.toJson(spectator, frame);
             } else {
-                JsonObject visible = ReplayEvidence.spectatorFrame(spectator);
                 JsonCodec.GSON.toJson(visible, frame);
                 frame.append(",\"review\":");
                 JsonCodec.GSON.toJson(ReplayEvidence.protectedFrame(game, visible), frame);
             }
             frame.append(",\"hands\":{");
             boolean first = true;
+            JsonObject names = new JsonObject(), hands = new JsonObject();
             for (Player player : game.getPlayers().values()) {
+                if (!player.isHuman() && broadcast == null) continue;
+                com.google.gson.JsonElement cards = JsonCodec.GSON.toJsonTree(new CardsView(game, player.getHand().getCards(game), player.getId()));
+                if (broadcast != null) {
+                    names.addProperty(player.getId().toString(), player.getName());
+                    hands.add(player.getId().toString(), cards);
+                }
                 if (player.isHuman()) {
                     frame.append(first ? "" : ",").append(JsonCodec.GSON.toJson(player.getName())).append(':');
-                    JsonCodec.GSON.toJson(new CardsView(game, player.getHand().getCards(game), player.getId()), frame);
+                    JsonCodec.GSON.toJson(cards, frame);
                     first = false;
                 }
             }
+            if (broadcast != null) broadcast.frame(visible, hands, names);
             frame.append('}');
             String snapshot = frame.toString();
             lastKey = key;
@@ -424,6 +438,17 @@ public final class ReplayRecorder {
     }
 
     private synchronized void log(ChatMessage message) {
+        if (broadcast != null && message.getMessageType() == ChatMessage.MessageType.TALK) {
+            JsonObject talk = broadcast.chat(message);
+            if (talk != null && canWrite()) {
+                JsonObject event = new JsonObject();
+                event.addProperty("kind", "spectatorTalk");
+                event.addProperty("t", elapsed());
+                event.add("chat", talk);
+                write(event.toString());
+            }
+            return;
+        }
         if (!canWrite() || (ProductGateway.enabled() && message.getMessageType() != ChatMessage.MessageType.GAME
                 && message.getMessageType() != ChatMessage.MessageType.STATUS)) {
             return;
@@ -443,6 +468,16 @@ public final class ReplayRecorder {
             info.result = result;
         }
         frame(true);
+        if (broadcast != null && canWrite()) {
+            JsonObject snapshot = broadcast.snapshot();
+            JsonObject end = new JsonObject();
+            end.addProperty("kind", "spectatorEnd");
+            end.addProperty("t", elapsed());
+            end.add("hands", snapshot.get("hands"));
+            end.add("players", snapshot.get("players"));
+            write(end.toString());
+        }
+        SpectatorTable.end(broadcast);
         finished = true;
         if (decisionSubscription != null) {
             decisionSubscription.close();

@@ -1,0 +1,27 @@
+.bubble {
+  position: absolute;
+  left: 6px;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  width: max-content;
+  max-width: min(400px, max(90%, calc(var(--touch-target, 0px) * 3.1)));
+  padding: 6px 9px;
+  border: 1px solid var(--ink-faint);
+  border-radius: var(--radius-control);
+  color: var(--ink-strong);
+  background: var(--mat-950);
+  box-shadow: var(--shadow-held);
+  font-size: max(18px, calc(var(--touch-target, 0px) * .30));
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.bubble svg { flex-shrink: 0; margin-top: 2px; color: var(--ink-soft); }
+.bubble[data-side='upper'] { top: calc(100% + 4px); }
+.bubble[data-side='lower'] { bottom: calc(100% + 4px); }
+.excerpt { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.entry { padding: 8px 14px; overflow-wrap: anywhere; }
+.entry + .entry { border-top: 1px solid var(--ink-faint); }
+.meta { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; color: var(--ink-soft); font-size: .85em; }
+.entry[data-kind='line'] .meta svg { color: var(--decision); }
+.close { display: inline-grid; place-items: center; background: transparent; border: 0; color: var(--ink-strong); cursor: pointer; min-width: max(36px, var(--touch-target, 0px)); min-height: max(36px, var(--touch-target, 0px)); }

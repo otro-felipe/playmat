@@ -148,7 +148,9 @@ async function verifyRageLethal({ startFixture, ownPlayer, rivalPlayer, answer, 
     commandId: randomUUID() }, lineBoundary(state))
   assert.equal(receipt.skippedSteps, 1, 'Rage reconciles exactly one auto-selected target role: ' + lineContext(receipt))
   const after = receipt.state
-  assert.ok(receipt.status === 'completed' || receipt.reason === 'invalidated', 'Advance through Ward, triggers and combat: ' + lineContext(receipt))
+  assert.equal(receipt.status, 'ended', 'Advance through Ward, triggers and combat: ' + lineContext(receipt))
+  assert.ok(['game_over', 'match_over', 'sideboarding'].includes(receipt.reason), lineContext(receipt))
+  assert.equal(receipt.event, receipt.reason)
   assert.ok(ownPlayer(after).graveyard.some(card => card.id === spareSaga.id || card.cardId === spareSaga.cardId), 'Paid Ward with the declared Kumano: ' + lineContext(receipt))
   assert.ok(!rivalPlayer(after).battlefield.some(card => card.id === opposingCreature.id), 'Rage killed the only blocker')
   assert.equal(rivalPlayer(after).life, 0, 'Direct trigger and unblocked combat finish from eight life: ' + lineContext(receipt))

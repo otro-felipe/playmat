@@ -1155,6 +1155,7 @@ export interface CareerWeekly {
 }
 
 export interface ChatMessage extends Serializable {
+    chatSequence?: number;
     color?: MessageColor;
     message?: string;
     messageType?: MessageType;

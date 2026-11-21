@@ -37,6 +37,21 @@ class HumanTableScopeTest {
         assertThatThrownBy(() -> scope.check("gameJoin", params(game, null))).isInstanceOf(RpcException.class);
     }
 
+    @Test void aRepeatedStartOfTheSameGameRetainsItsAuthorizedChat() throws Exception {
+        HumanTableScope scope = scope(table.toString());
+        UUID chat = UUID.randomUUID();
+        assertThat(scope.accept(start(table))).isTrue();
+        scope.after("chatFindByGame", params(game, null), chat);
+        assertThat(scope.accept(start(table))).isTrue();
+        scope.check("chatJoin", params(chat, null, "Alice", true));
+        assertThat(scope.accept(new ClientCallback(ClientCallbackMethod.CHATMESSAGE, chat))).isTrue();
+        assertThat(scope.accept(new ClientCallback(ClientCallbackMethod.START_GAME, other,
+                new TableClientMessage().withTable(table, null).withGame(other).withPlayer(UUID.randomUUID())))).isTrue();
+        // A late result from the previous game cannot reopen that chat on the new seat.
+        scope.after("chatFindByGame", params(game, null), chat);
+        assertThat(scope.accept(new ClientCallback(ClientCallbackMethod.CHATMESSAGE, chat))).isFalse();
+    }
+
     @Test void creationWithControlDisabledCanStartOnlyTheCreatedTable() throws Exception {
         HumanTableScope scope = scope("create");
         scope.check("roomCreateTable", params(null, other, JsonParser.parseString("{\"humanMcpAllowed\":false}")));

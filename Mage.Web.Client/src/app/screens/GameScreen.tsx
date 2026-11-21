@@ -1,3 +1,4 @@
+import { SpectatorBroadcast } from '../spectator/SpectatorScreen';
 import { MatchHumanSeat, useEnabledHumanSeat } from '../ui/humanSeat';
 import { useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
@@ -77,6 +78,10 @@ function ConnectedStage({ gameId, leaveLabel, onLeave }: { gameId: string; leave
         && useGames.getState().sessions[gameId] === session;
     },
   });
+  if (state.browserInputLock === 'delegated' && tableId) {
+    return <SpectatorBroadcast key={tableId} tableId={tableId} humanMcpName={enabledHuman} seatDisplayNames={seatDisplayNames} onLeave={onLeave}
+      endpoint={'/api/playtesting/tables/' + encodeURIComponent(tableId) + '/spectator'} />;
+  }
   return (
     <>
       <MatchHumanSeat.Provider value={enabledHuman}><MatchStage session={session} state={state} seatDisplayNames={seatDisplayNames} onLeave={state.browserInputLock ? onLeave : undefined} leaveLabel={leaveLabel} /></MatchHumanSeat.Provider>

@@ -2232,3 +2232,47 @@ test('historical and newly archived human and MCP seats receive only evidenced a
   })
   assert.equal((await visible()).find(seat => seat.name === rival).archetype, 'Dimir Ninjas')
 })
+
+test('a shared match restores its final public broadcast after the engine is gone and exposes no other game or private evidence', { skip: !databaseUrl }, async t => {
+  const f=await fixture(t)
+  const owner=await signIn(f,'SpectatorHost')
+  const tableId=randomUUID(), gameId=randomUUID(), a=randomUUID(), b=randomUUID()
+  const names=['SpectatorHost','SpectatorPeer']
+  const players=[{playerId:a,name:names[0]},{playerId:b,name:names[1]}]
+  const hands={[a]:{x:{name:'Forest'}},[b]:{y:{name:'Mountain'}}}
+  const chat={messageId:gameId+':4',playerName:names[1],message:'Good game',at:42}
+  const watchToken='a'.repeat(43)
+  await addReplay(f,tableId,gameId,names,[
+    { t:1,view:{turn:2,players:players.map(player=>({...player,userData:{hidden:true}})),lookedAt:['Unseen']},review:{private:'never publish'} },
+    { t:2,kind:'line',actorPlayerId:a,commandId:'line',reasoning:'Keep mana available.',turn:2,at:41 },
+    { t:3,kind:'spectatorTalk',chat },
+    { t:4,log:{messageType:'WHISPER_FROM',message:'Personal note'} },
+    { t:5,kind:'spectatorEnd',hands,players },
+  ])
+  await writeFile(join(f.replayDirectory,tableId+'.match.json'),JSON.stringify({matchId:tableId,endedAt:Date.now()}))
+  await f.product.archiveGames()
+  await withTestDatabase(f,db=>db.query(`INSERT INTO spectator_links(table_id,owner_id,token)
+    SELECT $1,id,$2 FROM accounts WHERE username_key='spectatorhost'`,[tableId,watchToken]))
+  const path='/api/playtesting/spectate/'+watchToken
+  const response=await f.path(path)
+  assert.equal(response.status,200)
+  const view=await response.json()
+  assert.equal(view.gameId,gameId)
+  assert.equal(view.status,'finished')
+  assert.deepEqual(view.hands,hands)
+  assert.deepEqual(view.chat,[chat])
+  assert.equal(view.lines[0].at,41)
+  assert.equal(view.lines[0].playerId,a)
+  assert.ok(!JSON.stringify(view).includes('Personal note') && !JSON.stringify(view).includes('Unseen') && !JSON.stringify(view).includes('userData'))
+  assert.equal((await f.path(path,{headers:owner})).status,200)
+  const reissued=await f.path('/api/playtesting/tables/'+tableId+'/spectator-link',{method:'POST',headers:owner})
+  assert.equal((await reissued.json()).path,'/watch/'+watchToken)
+  const ownReplay=await f.path('/api/playtesting/replays/'+gameId,{headers:owner})
+  assert.equal(ownReplay.status,200)
+  const serialized=JSON.stringify(await ownReplay.json())
+  assert.ok(!serialized.includes('spectatorTalk') && !serialized.includes('Good game') && !serialized.includes('spectatorEnd') && !serialized.includes('Mountain'))
+  assert.equal((await f.path(path,{method:'POST'})).status,405)
+  assert.equal((await f.path(path,{headers:{authorization:'Bearer fixture'}})).status,403)
+  assert.equal((await f.path('/api/playtesting/spectate/'+'b'.repeat(43))).status,404)
+  assert.equal((await f.path('/api/playtesting/tables/'+tableId+'/spectator',{headers:owner})).status,403)
+})

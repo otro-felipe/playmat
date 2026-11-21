@@ -399,17 +399,3 @@
   font-size: 26px;
   text-align: center;
 }
-
-.observerNotice {
-  position: absolute;
-  bottom: 24px;
-  right: 24px;
-  z-index: var(--z-ladder);
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 12px;
-  background: var(--ink, #201d1c);
-  color: var(--paper, #fff);
-  border-radius: 6px;
-}

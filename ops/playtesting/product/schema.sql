@@ -232,3 +232,10 @@ CREATE TABLE IF NOT EXISTS human_match_seats (
 );
 
 ALTER TABLE human_match_seats ADD COLUMN IF NOT EXISTS restored_from uuid;
+
+CREATE TABLE IF NOT EXISTS spectator_links (
+  table_id uuid PRIMARY KEY,
+  owner_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  token text NOT NULL UNIQUE,
+  created_at timestamptz NOT NULL DEFAULT now()
+);

@@ -69,6 +69,12 @@ final class ConnectionState implements RpcConnection {
         return true;
     }
 
+    @Override public void deliverRecentTalk(UUID chatId, java.util.List<mage.view.ChatMessage> messages) throws ClientChannel.Closed {
+        for (mage.view.ChatMessage row : messages) {
+            deliver(new mage.interfaces.callback.ClientCallback(mage.interfaces.callback.ClientCallbackMethod.CHATMESSAGE, chatId, row));
+        }
+    }
+
     @Override public boolean rejoinSharedGame(UUID gameId) {
         return humanChannel != null && humanScope == null && humanChannel.rejoinBrowser(this, gameId);
     }

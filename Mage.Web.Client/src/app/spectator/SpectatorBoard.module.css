@@ -1,0 +1,29 @@
+.shell {
+  position: fixed;
+  inset: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--mat-950);
+  color: var(--ink);
+}
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 18px;
+  padding: 8px clamp(12px, 2vw, 28px);
+  background: var(--mat-900);
+  border-bottom: 1px solid var(--mat-600);
+}
+.title, .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; }
+.title h1 { margin: 0; font-size: 1.375rem; }
+.title > svg { color: var(--brass-ink); }
+.status { font-size: var(--text-sm); color: var(--ink-soft); }
+.board { position: relative; min-height: 0; overflow: hidden; }
+.empty { display: grid; min-height: 100%; place-content: center; justify-items: center; gap: 14px; padding: 24px; text-align: center; }
+@media (max-width: 650px) { .header { gap: 4px 12px; padding: 6px 10px; } }
+
+@media (max-width: 48rem) {
+  .title h1 { font-size: 1rem; }
+}

@@ -120,7 +120,7 @@ final class HumanTableScope {
             JsonElement allowed = params.get(2).getAsJsonObject().get("humanMcpAllowed");
             created(((TableView)result).getTableId(), allowed != null && allowed.getAsBoolean());
         } else if ("chatFindByGame".equals(method) && result instanceof UUID) {
-            chat = (UUID)result;
+            rememberChat(uuid(text(params, 0)), (UUID)result);
         } else if ("matchStart".equals(method) && Boolean.TRUE.equals(result)) {
             started = true;
         }
@@ -130,6 +130,16 @@ final class HumanTableScope {
         if (!creator || table != null) throw new IllegalStateException("A delegated socket creates one table");
         play = allowed;
         table = id;
+    }
+
+    private synchronized void rememberChat(UUID requestedGame, UUID found) {
+        if (requestedGame != null && requestedGame.equals(game)) chat = found;
+    }
+
+    private synchronized void startGame(UUID nextGame) {
+        if (!nextGame.equals(game)) chat = null;
+        game = nextGame;
+        started = true;
     }
 
     boolean accept(ClientCallback message) {
@@ -143,9 +153,7 @@ final class HumanTableScope {
                 if (!bound.equals(data.getCurrentTableId()) || !authorized.test(bound)) return false;
                 if (message.getMethod() == mage.interfaces.callback.ClientCallbackMethod.START_GAME) {
                     if (subject == null || !subject.equals(data.getGameId()) || data.getPlayerId() == null) return false;
-                    game = subject;
-                    chat = null;
-                    started = true;
+                    startGame(subject);
                 }
                 return true;
             case CHATMESSAGE: return chat != null && chat.equals(subject) && authorized.test(bound);

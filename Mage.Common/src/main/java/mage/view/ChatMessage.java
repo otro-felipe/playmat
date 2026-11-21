@@ -19,6 +19,12 @@ public class ChatMessage implements Serializable {
     private MessageColor color;
     private SoundToPlay soundToPlay;
     private MessageType messageType;
+    private final Long chatSequence;
+
+    /** Per-game position of a public player message, stable across reconnects. */
+    public Long getChatSequence() {
+        return chatSequence;
+    }
 
     public enum MessageColor {
         BLACK, RED, GREEN, BLUE, ORANGE, YELLOW
@@ -46,6 +52,11 @@ public class ChatMessage implements Serializable {
     }
 
     public ChatMessage(String username, String message, Date time, Game game, MessageColor color, MessageType messageType, SoundToPlay soundToPlay) {
+        this(username, message, time, game, color, messageType, soundToPlay, null);
+    }
+
+    public ChatMessage(String username, String message, Date time, Game game, MessageColor color, MessageType messageType, SoundToPlay soundToPlay, Long chatSequence) {
+        this.chatSequence = chatSequence;
         this.username = username;
         this.message = message;
         this.time = time;

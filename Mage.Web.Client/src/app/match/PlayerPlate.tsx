@@ -1,3 +1,4 @@
+import { SpectatorLineBubble } from './SpectatorCommentary';
 import { PlayerLabel } from '../ui/PlayerLabel';
 import { playerLabelText } from '../ui/playerIdentity';
 import { usePlayerIdentity } from '../ui/usePlayerIdentity';
@@ -23,6 +24,7 @@ import { isMatchObjectKey, preventMatchObjectMouseFocus } from './keyboard';
 import styles from './PlayerPlate.module.css';
 
 export interface PlayerPlateProps {
+  bubbleSide?: 'upper' | 'lower';
   player: PlayerView;
   displayName?: string;
   isMe: boolean;
@@ -88,7 +90,7 @@ function useRopeSeconds(player: PlayerView): number {
 }
 
 /** A player's seat: who they are, their life, counters, floating mana and clock. */
-export function PlayerPlate({ player, displayName, isMe, targetable, selected, deciding, sleeve, onClick, toPay, payable, onPay, commanderDamage = [], outOfRange = false, look }: PlayerPlateProps) {
+export function PlayerPlate({ bubbleSide, player, displayName, isMe, targetable, selected, deciding, sleeve, onClick, toPay, payable, onPay, commanderDamage = [], outOfRange = false, look }: PlayerPlateProps) {
   const t = useT();
   const identity = usePlayerIdentity(player.name ?? '');
   const name = playerLabelText(player.name ?? '', identity?.displayName ?? displayName, identity?.isMcp);
@@ -157,6 +159,7 @@ export function PlayerPlate({ player, displayName, isMe, targetable, selected, d
       }}
       data-object-id={player.playerId}
     >
+      {bubbleSide && <SpectatorLineBubble playerId={player.playerId} side={bubbleSide} />}
       <PlateFrame frame={supporterRing ? null : look?.frame}>
         <div
           className={[styles.avatar, supporterRing ? styles.ring : ''].join(' ')}

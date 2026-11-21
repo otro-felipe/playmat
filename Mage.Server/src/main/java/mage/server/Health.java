@@ -54,6 +54,8 @@ public final class Health {
 
         Map<String, String> humanTables(String owner);
 
+        default com.google.gson.JsonObject spectator(java.util.UUID table) { return null; }
+
         /** Announces maintenance in {@code minutes}; returns when it starts (epoch millis). */
         long startMaintenance(long minutes, String message);
 
@@ -119,6 +121,11 @@ public final class Health {
             }
 
             @Override
+            public com.google.gson.JsonObject spectator(java.util.UUID table) {
+                return mage.server.replay.SpectatorTable.lookup(table, managers.tableManager().getTable(table));
+            }
+
+            @Override
             public Map<String, String> humanTables(String owner) {
                 Map<String, String> result = new LinkedHashMap<>();
                 for (mage.game.Table table : managers.tableManager().getTables()) {
@@ -157,6 +164,18 @@ public final class Health {
         HttpServer server = HttpServer.create(address, 0);
         Gson gson = new Gson();
         // Product-only loopback metadata. The product filters these live IDs by persisted consent.
+        server.createContext("/internal/spectator", exchange -> {
+            try {
+                if (!"GET".equals(exchange.getRequestMethod()) || !"/internal/spectator".equals(exchange.getRequestURI().getPath())) {
+                    respond(exchange, 405, error("Use GET")); return;
+                }
+                java.util.UUID table;
+                try { table = java.util.UUID.fromString(query(exchange.getRequestURI().getRawQuery()).get("table")); }
+                catch (RuntimeException invalid) { respond(exchange, 400, error("Invalid table")); return; }
+                com.google.gson.JsonObject result = operations.spectator(table);
+                respond(exchange, result == null ? 404 : 200, result == null ? error("Table not found") : result.toString());
+            } finally { exchange.close(); }
+        });
         server.createContext("/internal/human-tables", exchange -> {
             try {
                 String owner = query(exchange.getRequestURI().getRawQuery()).get("owner");

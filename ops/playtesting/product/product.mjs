@@ -13,6 +13,7 @@ import { createArchive } from './archive.mjs'
 import { resetMatchHistory, setUnlimitedMatchHistory } from './history-retention.mjs'
 import { createTheoryStore, evaluateTheoryTactics } from './theory-store.mjs'
 import { createIdentity, identityView } from './identity.mjs'
+import { createSpectators, spectatorStorage, spectatorRoute } from './spectators.mjs'
 import { createSignup } from './signup.mjs'
 import { createTurnstile, loginChallengeAction } from './turnstile.mjs'
 import { authorizeHumanConnection, humanBrowserMayPlay, listHumanMatches, readHumanSeat, recordHumanSeat, restoreHumanSeat } from './human-seats.mjs'
@@ -154,6 +155,7 @@ export async function createProduct({
   const id = createIdentity(pool, insecureCookie, oauth.resolve)
   const registration = createSignup(pool, id, publicUrl, signup, challenge)
   const archive = createArchive(pool, replayDirectory, store, { purgeExpiredHistory })
+  const spectators = createSpectators({storage:spectatorStorage(pool, archive)})
   const review = createPostMatchReview(pool, archive, permissions)
   const theory = createTheoryStore(pool, review)
   const events = createMcpEvents(pool, eventOptions)
@@ -250,6 +252,7 @@ export async function createProduct({
     }
     if (await oauth.route(req, res, url, id.resolve)) return
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !sameOrigin(req, insecureCookie)) throw new ProductError(403, 'Cross-origin request')
+    if (await spectatorRoute(req,res,path,id.resolve,spectators,send)) return
     if (path === '/api/playtesting/signup/config' && req.method === 'GET') {
       return send(res, 200, { turnstileSiteKey: challenge?.siteKey ?? null })
     }
@@ -567,6 +570,7 @@ export async function createProduct({
       await pool.query('DROP SCHEMA ' + schema + ' CASCADE')
     },
     async close() {
+      spectators.close()
       await events.stop()
       return pool.end()
     },
