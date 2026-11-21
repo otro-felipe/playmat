@@ -226,6 +226,25 @@ public final class ReplayRecorder {
         }
     }
 
+    public static boolean recordLine(UUID gameId, UUID playerId, String commandId, String reasoning) {
+        ReplayRecorder recorder = BY_GAME.get(gameId);
+        return recorder != null && recorder.appendLine(playerId, commandId, reasoning);
+    }
+
+    private synchronized boolean appendLine(UUID playerId, String commandId, String reasoning) {
+        if (!canWrite() || lastFrameCursor < 0) {
+            return false;
+        }
+        JsonObject row = new JsonObject();
+        row.addProperty("kind", "line");
+        row.addProperty("t", elapsed());
+        row.addProperty("actorPlayerId", playerId.toString());
+        row.addProperty("commandId", commandId);
+        row.addProperty("reasoning", reasoning);
+        write(row.toString());
+        return !broken;
+    }
+
     private synchronized void rollback(int turn) {
         if (!canWrite()) {
             return;

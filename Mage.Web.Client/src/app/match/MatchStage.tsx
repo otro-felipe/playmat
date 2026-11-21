@@ -6,7 +6,8 @@ import { PRIVATE_PLAYTESTING } from '../playtesting';
 import { Fragment, lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { GameSession, GameSessionState } from '../../core/game/gameSession';
-import type { Command } from '../../core/game/interaction';
+import { deriveInteraction, type Command } from '../../core/game/interaction';
+import { InputLockNotice } from '../ui/InputLockNotice';
 import { phaseAt, type PhaseStop } from '../../core/game/phases';
 import { commanderDamageTo, commandersByPlayer, type CommanderStatus } from '../../core/game/commander';
 import { askedAttacker, defenderChoice, inRange } from '../../core/game/multiplayer';
@@ -181,18 +182,24 @@ export interface MatchStageProps {
   reviewLayout?: boolean;
   /** where leaving goes, instead of closing the game and going back to Play */
   onLeave?: () => void;
+  leaveLabel?: string;
   /** presentation names chosen by seats, keyed by their engine account name */
   seatDisplayNames?: SeatDisplayNames;
 }
 
 export function MatchStage(props: MatchStageProps) {
   const formatName = useRosterNames((props.state.view?.players ?? []).map((player) => player.name));
-  return <PlayerNames.Provider value={formatName}><MatchBoard {...props} /></PlayerNames.Provider>;
+  const { state } = props;
+  const visible = state.browserInputLock
+    ? { ...state, prompt: null, interaction: deriveInteraction(null, null), prediction: null }
+    : state;
+  return <PlayerNames.Provider value={formatName}><MatchBoard {...props} state={visible} /></PlayerNames.Provider>;
 }
 
-function MatchBoard({ session, state, replayLog, replayHands, reviewLayout, onLeave, seatDisplayNames }: MatchStageProps) {
+function MatchBoard({ session, state, replayLog, replayHands, reviewLayout, onLeave, leaveLabel, seatDisplayNames }: MatchStageProps) {
   const formatName = usePlayerNames();
-  const { view, interaction, playerId, mode, awaitingServer, prediction } = state;
+  const { view, interaction, playerId, awaitingServer, prediction } = state;
+  const mode = state.browserInputLock ? 'observeHuman' : state.mode;
   const revealedHands = useRevealedHands(view, mode === 'replay' ? null : `${state.gameId}:${state.rollbackRevision ?? 0}`);
   const reveals = useReveals(view, mode !== 'replay');
   const t = useT();
@@ -210,7 +217,7 @@ function MatchBoard({ session, state, replayLog, replayHands, reviewLayout, onLe
   const bigZoom = useSettings((settings) => settings.settings.bigZoom);
   const matchSize = useSettings((settings) => settings.settings.matchSize);
   // the browser's zoom keys and a trackpad pinch step the match size: zoom alone cancels out (#147)
-  useMatchZoomKeys(true);
+  useMatchZoomKeys(!state.browserInputLock);
   useEffect(() => {
     // the session only delays a game being watched; turning the delay off catches up at once
     session.setBroadcastDelay(mode === 'watch' && isBroadcastDelay(broadcastDelay) ? broadcastDelay * 1000 : 0);
@@ -229,17 +236,18 @@ function MatchBoard({ session, state, replayLog, replayHands, reviewLayout, onLe
   const [stopState, setStopState] = useState<{ turnKey: string; stops: readonly PhaseStop[] } | null>(null);
   const turnStops = stopState?.turnKey === turnKey && !state.gameOver ? stopState.stops : NO_STOPS;
   useEffect(() => {
+    if (state.browserInputLock) return;
     if (turnStops !== NO_STOPS) setTurnStops({ side: myTurn ? 'yourTurn' : 'opponentTurn', stops: turnStops });
     else setTurnStops(null);
-  }, [myTurn, setTurnStops, turnStops]);
-  useEffect(() => () => setTurnStops(null), [setTurnStops]);
+  }, [myTurn, setTurnStops, turnStops, state.browserInputLock]);
+  useEffect(() => state.browserInputLock ? undefined : () => setTurnStops(null), [setTurnStops, state.browserInputLock]);
   const toggleStops = (keys: readonly PhaseStop[]) => {
     const remove = keys.some((stop) => turnStops.includes(stop));
     const remaining = turnStops.filter((stop) => !keys.includes(stop));
     setStopState({ turnKey, stops: remove ? remaining : [...remaining, ...keys] });
   };
   // full control lasts for the match on screen, as on Arena
-  useEffect(() => () => useSettings.getState().setFullControl(false), []);
+  useEffect(() => state.browserInputLock ? undefined : () => useSettings.getState().setFullControl(false), [state.browserInputLock]);
   // Arena's pass turn (">>"): set for one turn of one game, so it ends by itself when the next turn begins
   const [passTurnAt, setPassTurnAt] = useState<{ gameId: string; turn: number } | null>(null);
   const passTurn = !!passTurnAt && passTurnAt.gameId === state.gameId && passTurnAt.turn === (view?.turn ?? 0) && !state.gameOver;
@@ -300,8 +308,8 @@ function MatchBoard({ session, state, replayLog, replayHands, reviewLayout, onLe
   // watching: the seat's hand, if its player lets us see it, and only backs while hands are hidden for the broadcast
   // (a replay of one's own game shows the hand that was held, as before)
   const seatHand = useMemo(
-    () => (spectating ? spectatorHand(view, board.me?.player, mode === 'watch' && hideHands) : null),
-    [spectating, mode, view, board.me?.player, hideHands],
+    () => (mode === 'observeHuman' ? { cards: hand, faceDown: false } : spectating ? spectatorHand(view, board.me?.player, mode === 'watch' && hideHands) : null),
+    [spectating, mode, hand, view, board.me?.player, hideHands],
   );
   const stack = useMemo(() => Object.values(view?.stack ?? {}), [view?.stack]);
 
@@ -392,7 +400,7 @@ function MatchBoard({ session, state, replayLog, replayHands, reviewLayout, onLe
   useSkipSingleChoice(session, state, automation.skipSingleChoice && mode === 'play');
   useAutoDamage(session, state, mode === 'play' ? damageSplit : null, { plain: automation.autoAssignDamage, trample: automation.autoAssignTrample });
   // holding priority means the player wants every stop
-  const autoPassing = useAutoPass(session, state, !holding, passTurn && mode === 'play', turnStops);
+  const autoPassing = useAutoPass(session, state, mode === 'play' && !holding, passTurn && mode === 'play', turnStops);
   useGameCues(state, myId, !!autoPassing);
   useAutoOrder(session, state);
   // the players' own looks (servers with accounts), refreshed during the match so late uploads reach every seat
@@ -800,7 +808,9 @@ function MatchBoard({ session, state, replayLog, replayHands, reviewLayout, onLe
             ) : (
               <>
                 <div className={styles.viewPhases}>{phaseLadder}</div>
-                <SpectatorBar session={session} state={state} onLeave={leave} externalPerspective={mode === 'replay' && reviewLayout} />
+                {state.browserInputLock ? <div className={styles.observerNotice}>
+                  <InputLockNotice lock={state.browserInputLock} onLeave={leave} leaveLabel={leaveLabel} onResync={onResync} />
+                </div> : <SpectatorBar session={session} state={state} onLeave={leave} externalPerspective={mode === 'replay' && reviewLayout} />}
               </>
             )}
 
@@ -824,7 +834,7 @@ function MatchBoard({ session, state, replayLog, replayHands, reviewLayout, onLe
             )}
             {mode === 'play' && <WatcherCount watchers={watchers} className={styles.watchers} />}
             <EngineBadge gameId={state.gameId} view={view} showNotice={mode === 'play' && !state.gameOver} />
-            <GameMenu
+            {!state.browserInputLock && <GameMenu
               gameId={state.gameId}
               quests={mode === 'play' && !state.gameOver}
               practice={mode === 'play' && !state.gameOver && !career && board.opponents.length > 0 && board.opponents.every((opponent) => opponent.player.isHuman === false)}
@@ -839,7 +849,7 @@ function MatchBoard({ session, state, replayLog, replayHands, reviewLayout, onLe
                 ? { ready: interaction.mode === 'priority' && !awaitingServer, canRequestPrevious: currentTurn > 1,
                     request: (turns) => onCommand({ type: 'action', action: 'ROLLBACK_TURNS', data: turns }) }
                 : null}
-            />
+            />}
 
             {interaction.mode === 'mulligan' && !awaitingServer && (
               <MulliganOverlay hand={hand} interaction={interaction} sleeve={sleeves.mine} onCommand={onCommand} />

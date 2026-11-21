@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { api } from '../connection';
+import { PRIVATE_PLAYTESTING } from '../playtesting';
 import { useDecks, META_PREFIX, RANDOM_META_PREFIX, STARTER_PREFIX } from './decks';
 import { useEvents } from './events';
 import { warmDeck } from '../ui/imageCache';
@@ -76,7 +77,7 @@ export const DEFAULT_AI_OPTIONS: AiOptions = {
 };
 
 /** One game's changes to the saved AI setup; `practice` is a goldfish game against an AI that only has lands. */
-export type PlayOverrides = Partial<AiOptions> & { practice?: boolean; guided?: boolean };
+export type PlayOverrides = Partial<AiOptions> & { practice?: boolean; guided?: boolean; humanMcpAllowed?: boolean };
 
 /**
  * The goldfish's deck: lands only, so it never casts anything and your deck plays against an empty board. A commander
@@ -148,7 +149,7 @@ export const usePlay = create<PlayState>((set, get) => ({
   async playVsAi(deckId, overrides = {}) {
     const { roomId, userName } = useSession.getState();
     if (!roomId) return;
-    const { practice = false, guided = false, ...picked } = overrides;
+    const { practice = false, guided = false, humanMcpAllowed = false, ...picked } = overrides;
     // the guided first game: the easiest AI with a random starter deck, one game, nothing unusual
     // a format deck for the player (Home's Format deck mode): the format's rules, and the AI takes one of its decks too
     const metaGame = deckId.startsWith(META_PREFIX) || deckId.startsWith(RANDOM_META_PREFIX);
@@ -217,6 +218,7 @@ export const usePlay = create<PlayState>((set, get) => ({
         gameType,
         deckType,
         winsNeeded: options.winsNeeded,
+        humanMcpAllowed: PRIVATE_PLAYTESTING ? humanMcpAllowed : undefined,
         playerTypes: ['HUMAN', ...rivals.map(() => seatableAiType(options.aiType, queryClient.getQueryData<ServerState>(['serverState'])?.playerTypes))],
         advanced: { startingLife: options.startingLife },
       }));

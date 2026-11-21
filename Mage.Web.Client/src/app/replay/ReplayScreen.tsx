@@ -1,6 +1,7 @@
+import { MatchHumanSeat, useEnabledHumanSeat } from '../ui/humanSeat';
 import { PlayerNames, useRosterNames } from '../ui/usePlayerIdentity';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { ChevronFirst, ChevronLast, GitBranch, Pause, Play, StepBack, StepForward } from 'lucide-react';
+import { Brain, ChevronFirst, ChevronLast, GitBranch, Pause, Play, StepBack, StepForward } from 'lucide-react';
 import { useEffect, useEffectEvent, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useStore } from 'zustand';
@@ -20,6 +21,7 @@ import { useSession } from '../stores/session';
 import { notify } from '../stores/toasts';
 import { Button, IconButton } from '../ui/Button';
 import { Dialog } from '../ui/Dialog';
+import { CardMarkdown } from '../ui/CardMarkdown';
 import { decisionFrame, replayName } from './decisionPresentation';
 import { ReplayDecisionMarkers, RecordedDecision } from './ReplayDecision';
 import { ReplayReviewPanel, ReviewSwitch } from './ReplayReviewPanel';
@@ -70,6 +72,8 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
   const [playing, setPlaying] = useState(action === undefined && !Number.isFinite(startFrame));
   const [speed, setSpeed] = useState(1);
   const [analysisOpen, setAnalysisOpen] = useState(() => search.get('analysis') === '1');
+  const [showLineExplanations, setShowLineExplanations] = useState(true);
+  const explanationsId = useId();
   const [bothHands, setBothHands] = useState(true);
   const [requestedSeat, setRequestedSeat] = useState<string>();
   const mobilePanel = useSyncExternalStore(subscribePanelSize, () => window.matchMedia(MOBILE_PANEL).matches, () => false);
@@ -113,6 +117,7 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
     gcTime: 0,
     retry: false,
   });
+  const enabledHuman = useEnabledHumanSeat(info?.tableId);
   const manifest = manifestQuery.data;
   const privacy = manifest?.privacy;
   const perspectives = useMemo(() => perspectivesFor(manifest), [manifest]);
@@ -399,7 +404,7 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
     onPrevious={previousMoment ? () => jump(previousMoment) : undefined} onNext={nextMoment ? () => jump(nextMoment) : undefined}
     loading={fetchingPlays || fetchingAnnotations || selectedAnnotation.isFetching} />;
   return (
-    <PlayerNames.Provider value={formatName}><MatchErrorBoundary gameId={gameId} backLabel="Back to History" onBack={leave}>
+    <MatchHumanSeat.Provider value={enabledHuman}><PlayerNames.Provider value={formatName}><MatchErrorBoundary gameId={gameId} backLabel="Back to History" onBack={leave}>
       <div className={styles.review} data-panel={manifest && analysisOpen && !mobilePanel ? 'open' : undefined} data-replay-cursor={currentCursor}>
         <div className={styles.table}>
           {manifest && (
@@ -407,6 +412,8 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
               <div className={styles.reviewControls}>
                 <ReviewSwitch label={t('replay.showAnalysis')} checked={analysisOpen} onCheckedChange={setAnalysis}
                   controls={analysisOpen && !mobilePanel ? panelId : undefined} />
+                {!!recorded?.lines?.length && <ReviewSwitch label={t('replay.lineExplanations')} checked={showLineExplanations}
+                  onCheckedChange={setShowLineExplanations} controls={explanationsId} />}
                 {canShowBoth && <ReviewSwitch label={t('replay.showBothHands')} checked={showBoth}
                   onCheckedChange={(checked) => { setPlaying(false); setBothHands(checked); }} />}
                 {!!perspectives.length && (
@@ -422,6 +429,15 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
               {partialArchive && <p className={styles.coverage}>{t('replay.partialArchive')}</p>}
               {manifest.status === 'active' && <p className={styles.coverage}>{t('replay.matchActive')}</p>}
               {decision && <RecordedDecision moment={decision} />}
+              {!!recorded?.lines?.length && <section id={explanationsId} hidden={!showLineExplanations}
+                className={styles.lineExplanations} aria-label={t('replay.lineExplanations')}>
+                {showLineExplanations && recorded.lines.map((line) => (
+                  <div key={line.cursor} className={styles.lineExplanation}>
+                    <Brain size={18} aria-hidden="true" />
+                    <div><strong>{replayName(line.actor, t, formatName)}</strong><p><CardMarkdown text={line.reasoning} /></p></div>
+                  </div>
+                ))}
+              </section>}
             </div>
           )}
           <div className={styles.board}>
@@ -479,6 +495,6 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
             {panel}
           </aside>)}
       </div>
-    </MatchErrorBoundary></PlayerNames.Provider>
+    </MatchErrorBoundary></PlayerNames.Provider></MatchHumanSeat.Provider>
   );
 }

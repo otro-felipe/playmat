@@ -18,7 +18,10 @@ export interface GameNotice {
   at: number;
 }
 
+export type BrowserInputLock = 'pending' | 'unavailable' | 'delegated' | null;
+
 export interface GameSessionState {
+  browserInputLock?: BrowserInputLock;
   gameId: string;
   rollbackRevision: number;
   /** the player we control (null when watching) */
@@ -60,6 +63,7 @@ export const REPLY_TIMEOUT_MS = 10_000;
 
 export interface GameSessionOptions {
   replyTimeoutMs?: number;
+  browserInputLock?: BrowserInputLock;
 }
 
 /** Another player holds priority or is making a choice, so the game waits on them, not on us. */
@@ -101,6 +105,7 @@ export class GameSession {
       rollbackRevision: 0,
       playerId: init.playerId,
       mode: init.mode,
+      browserInputLock: options.browserInputLock ?? null,
       view: null,
       prompt: null,
       interaction: deriveInteraction(null, null),
@@ -284,7 +289,8 @@ export class GameSession {
 
   /** Send an answer for the current prompt (or a player action, which needs no prompt). */
   async respond(command: Command): Promise<void> {
-    const { gameId, playerId } = this.store.getState();
+    const { gameId, playerId, browserInputLock } = this.store.getState();
+    if (browserInputLock) return;
     if (command.type !== 'action') {
       // the server will ask again (or move on); until then clicks are ignored, and the answered prompt fades out
       // only if nothing new arrives soon
@@ -337,7 +343,7 @@ export class GameSession {
    */
   cancelPayment(): void {
     const { interaction, awaitingServer } = this.store.getState();
-    if (interaction.mode !== 'payMana') return;
+    if (this.store.getState().browserInputLock || interaction.mode !== 'payMana') return;
     this.cancelPending = true;
     if (awaitingServer) return;
     this.paymentCancelSent = true;
@@ -351,7 +357,7 @@ export class GameSession {
   click(objectId: string, prediction: Prediction | null = null): boolean {
     const { interaction, awaitingServer } = this.store.getState();
     const command = interaction.clickable.get(objectId);
-    if (!command || awaitingServer) return false;
+    if (this.store.getState().browserInputLock || !command || awaitingServer) return false;
     this.store.setState({ prediction });
     void this.respond(command).catch(() => undefined);
     return true;

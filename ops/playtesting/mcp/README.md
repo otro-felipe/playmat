@@ -2,9 +2,11 @@
 
 This service runs alongside the product identity service and the XMage engine. It listens on loopback. The reverse proxy exposes its `/mcp` route over HTTPS. Each request revalidates the connected seat against the product service. The granted, distinct engine username is forwarded only over the loopback trusted-header bridge.
 
+The [project glossary](guides/glossary.md) defines players, agents, libraries, matches, games and history. MCP delivers it with onboarding and replay review.
+
 ## Connect an MCP client
 
-Add the remote `/mcp` URL in a client that supports OAuth. Sign in with your Thoughtseize account and authorize the connection. Deck tools use that account's library. Thoughtseize assigns the engine identity for an MCP rival automatically. The consent flow uses authorization code with S256 PKCE and rotating refresh tokens. Revoke a client from `/oauth/connections`.
+Add the remote `/mcp` URL in a client that supports OAuth. Sign in with your Thoughtseize account and authorize the connection. The Human Player and the MCP Player have separate deck libraries under the same account. Thoughtseize assigns the engine identity for an MCP rival automatically. The consent flow uses authorization code with S256 PKCE and rotating refresh tokens. Revoke a client from `/oauth/connections`.
 
 Clients from any vendor can use standard public-client OAuth. Thoughtseize resolves HTTPS Client ID Metadata Documents (CIMD) and offers `POST /oauth/register` (RFC 7591) as a fallback for clients without metadata documents. There is no vendor allowlist. Discovery advertises both mechanisms; registration alone grants no account access. The player must sign in and approve the displayed client, destination and scopes.
 

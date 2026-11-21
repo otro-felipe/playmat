@@ -1,3 +1,4 @@
+import { displayArchetype } from '../decks/displayArchetype';
 import * as Tabs from '@radix-ui/react-tabs';
 import { ArrowLeft } from 'lucide-react';
 import { useLocation, useSearchParams, Link } from 'react-router-dom';
@@ -41,6 +42,8 @@ function Analysis({ account }: { account: string }) {
   // Encoding the menu values keeps "unknown" distinct from every possible archetype label.
   const opponent = unknownOpponent ? 'unknown' : search.has('opponentArchetype') ? 'named:' + search.get('opponentArchetype') : '';
   const historySearch = location.state?.historySearch ?? '';
+  const unknownArchetype = search.has('ownArchetypeUnknown');
+  const titleArchetype = unknownArchetype ? null : archetype ?? deck?.archetype;
 
   function change(values: Record<string, string | undefined>) {
     const next = new URLSearchParams(search);
@@ -56,7 +59,7 @@ function Analysis({ account }: { account: string }) {
     <Link className={styles.back} to={'/history' + historySearch}><ArrowLeft size={15} aria-hidden="true" />{t('perf.back')}</Link>
     <header className={styles.head}>
       {format && <span className={styles.eyebrow}>{format === 'Unknown' ? t('history.unreported') : format}</span>}
-      <h1>{archetype || (search.has('ownArchetypeUnknown') ? t('perf.unclassified') : deck?.archetype ?? t('perf.analysis'))}</h1>
+      <h1>{unknownArchetype || titleArchetype ? displayArchetype(t, titleArchetype) : t('perf.analysis')}</h1>
     </header>
     {data && <div className={styles.filters}>
       <label>{t('perf.deck')}
@@ -88,7 +91,7 @@ function Analysis({ account }: { account: string }) {
           opponentArchetypeUnknown: target.value === 'unknown' ? 'true' : undefined,
         })}>
           <option value="">{t('perf.allOpponents')}</option>
-          {data.options.opponentArchetypes.map((name) => <option key={name} value={'named:' + name}>{name}</option>)}
+          {data.options.opponentArchetypes.map((name) => <option key={name} value={'named:' + name}>{displayArchetype(t, name)}</option>)}
           <option value="unknown">{t('perf.unclassified')}</option>
         </select>
       </label>

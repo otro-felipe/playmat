@@ -43,6 +43,12 @@ public class HealthTest {
             }
 
             @Override
+            public Map<String, String> humanTables(String owner) {
+                return "Host".equals(owner) ? java.util.Collections.singletonMap("fixture-table", "DUELING")
+                        : java.util.Collections.emptyMap();
+            }
+
+            @Override
             public long startMaintenance(long minutes, String message) {
                 calls.add("start " + minutes + " " + message);
                 planned = true;
@@ -112,6 +118,13 @@ public class HealthTest {
                 .containsEntry("minutes", "0")
                 .containsEntry("message", "a b&c")
                 .containsEntry("flag", "");
+    }
+
+    @Test
+    void loopbackTableDiscoveryContainsOnlyTheRequestedOwnersCurrentTableIdsAndStatuses() throws IOException {
+        assertThat(request("GET", "/internal/human-tables?owner=Host").body).isEqualTo("{\"fixture-table\":\"DUELING\"}");
+        assertThat(request("GET", "/internal/human-tables?owner=Guest").body).isEqualTo("{}");
+        assertThat(request("GET", "/internal/human-tables").status).isEqualTo(400);
     }
 
     private Answer request(String method, String path) throws IOException {

@@ -20,8 +20,8 @@ const server = createMcpServer({
   publishSeatEvent: product.publishSeatEvent,
   oauthResourceMetadata: publicUrl?.startsWith('https://')
     ? new URL('/.well-known/oauth-protected-resource/mcp', publicUrl).href : undefined,
-  createEngine: ({ engineName, canonicalAgent, accountId, recoverySeatId, connectionId }) => new PlaymatEngineSeat({
-    engineUrl, engineName, canonicalAgent, accountId, recoverySeatId, connectionId, trustedHeader, managedPriorityStops: true,
+  createEngine: ({ engineName, canonicalAgent, accountId, recoverySeatId, connectionId, humanTableId }) => new PlaymatEngineSeat({
+    engineUrl, engineName, canonicalAgent, accountId, recoverySeatId, connectionId, humanTableId, trustedHeader, managedPriorityStops: true,
   }),
   allowedOrigins,
 });

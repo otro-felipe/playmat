@@ -14,6 +14,7 @@ import mage.server.websocket.api.WebClientApi;
 import mage.server.websocket.rpc.JsonCodec;
 import mage.server.websocket.rpc.RpcDispatcher;
 import mage.server.websocket.rpc.RpcException;
+import mage.server.websocket.rpc.RpcMethod;
 import mage.server.websocket.rpc.RpcSessions;
 import mage.util.ThreadUtils;
 import org.apache.log4j.Logger;
@@ -66,7 +67,9 @@ public class WebSocketServerImpl extends WebSocketServer {
     static final int CLOSE_SIGNED_IN_ELSEWHERE = 4001;
 
     private final RpcDispatcher dispatcher;
+    private final ManagerFactory managers;
     private final RpcSessions sessions;
+    private final HumanSeatSessions humanSessions;
     private final Set<String> allowedOrigins;
     private final WebSocketLimits limits;
     private final ConnectionLimiter connectionLimiter;
@@ -102,7 +105,9 @@ public class WebSocketServerImpl extends WebSocketServer {
                 // the empty protocol accepts clients that request no subprotocol (all browsers by default)
                 new Draft_6455(Collections.singletonList(new PerMessageDeflateExtension()),
                         Collections.singletonList(new Protocol("")), MAX_MESSAGE_BYTES)));
+        this.managers = managerFactory;
         this.sessions = sessions;
+        this.humanSessions = new HumanSeatSessions(sessions);
         this.dispatcher = WebClientApi.createDispatcher(new ApiContext(mageServer, managerFactory, sessions, adminPassword));
         this.allowedOrigins = parseOrigins(allowedOrigins);
         this.limits = limits;
@@ -180,6 +185,17 @@ public class WebSocketServerImpl extends WebSocketServer {
         }
         InetSocketAddress peer = conn.getRemoteSocketAddress();
         state.setTrustedPeer(peer != null && peer.getAddress() != null && limits.addressResolver.isTrusted(peer.getAddress()));
+        String requested = handshake.getFieldValue("X-Playmat-Human-Table");
+        if (!requested.isEmpty()) {
+            boolean internal = peer != null && peer.getAddress() != null && peer.getAddress().isLoopbackAddress();
+            if (!HumanTableScope.validHeader(requested, internal, state.getRecoveryPrincipal())) {
+                conn.close(CloseFrame.POLICY_VALIDATION, "Invalid delegated table transport");
+                return;
+            }
+            state.setHumanScope(new HumanTableScope(requested, tableId -> requested.startsWith("start:")
+                    ? mage.server.playtesting.ProductGateway.humanTableStartAuthorized(state.getRecoveryPrincipal(), tableId)
+                    : mage.server.playtesting.ProductGateway.humanSeatAuthorized(state.getRecoveryPrincipal(), tableId)));
+        }
         conn.setAttachment(state);
         BridgeMetrics.get().opened(); // every connection with a state is closed through onClose
         if (limits.limitLoopback || !isLoopback(clientIp)) {
@@ -245,6 +261,7 @@ public class WebSocketServerImpl extends WebSocketServer {
         }
         // same as a dropped desktop connection: the user keeps tables for a while and can reconnect
         state.submitCleanup(() -> {
+            if (humanSessions.leave(state)) return;
             String sessionId = state.getSessionId();
             if (sessionId != null && sessions.exists(sessionId)) {
                 sessions.disconnect(sessionId, DisconnectReason.LostConnection);
@@ -307,7 +324,39 @@ public class WebSocketServerImpl extends WebSocketServer {
                     throw new RpcException(RpcException.RATE_LIMITED, "Too many expensive requests, try again shortly");
                 }
             }
-            Object result = dispatcher.dispatch(method, params, state);
+            HumanTableScope scope = state.humanScope();
+            if (scope != null) {
+                scope.check(method, params);
+            } else if (mage.server.playtesting.ProductGateway.enabled() && state.getSessionId() != null
+                    && (state.getRecoveryPrincipal() == null || !state.getRecoveryPrincipal().seatId.startsWith("agent:"))) {
+                HumanBrowserControl.forSeat(managers, state.getRecoveryPrincipal()).check(dispatcher.find(method), params);
+                if (("connectSetUserData".equals(method) || "chatSetIgnored".equals(method)
+                        || "disconnectSession".equals(method) || "playerLogout".equals(method))
+                        && managers.sessionManager().getUser(state.getSessionId()).map(mage.server.User::hasReadOnlyMatch).orElse(false)) {
+                    if ("disconnectSession".equals(method) || "playerLogout".equals(method)) {
+                        while (params.size() < 2) params.add(com.google.gson.JsonNull.INSTANCE);
+                        params.set(1, new com.google.gson.JsonPrimitive(true));
+                    } else {
+                        throw HumanBrowserControl.readOnly();
+                    }
+                }
+            }
+            Object result;
+            if ("connectUser".equals(method) && humanSessions.applies(state)) {
+                result = humanSessions.login(state, params, dispatcher);
+            } else if (("disconnectSession".equals(method) || "playerLogout".equals(method)) && humanSessions.leave(state)) {
+                state.setUserName(null);
+                result = true;
+            } else {
+                // An unrelated account operation from a browser may create a fresh login. Keep
+                // that replacement local to this socket if other transports are still playing.
+                RpcMethod definition = dispatcher.find(method);
+                if (state.humanChannel() != null && definition != null && definition.getAccess() == RpcMethod.Access.ESTABLISH) {
+                    humanSessions.leave(state);
+                }
+                result = dispatcher.dispatch(method, params, state);
+            }
+            if (scope != null) scope.after(method, params, result);
             if ("connectUser".equals(method) && Boolean.TRUE.equals(result) && state.getUserName() != null) {
                 closeReplaced(state);
             }

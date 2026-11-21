@@ -22,12 +22,14 @@ test('[PM-REVIEW-UI-3] the history shows persisted analysis and separates seat a
     ? { groups: [], decks: [], summary: { matches: { total: 0 }, games: { total: 0 } } }
     : { matches: [{
       id: 'match', name: 'Pioneer practice', format: 'Pioneer', status: 'completed', startedAt: 1, analysis,
-      games: [{ gameId: 'game', gameNumber: 3, archiveState: 'ready', replayAvailable: true, players: [{ name: 'Alice' }, { name: 'Bob' }], analysis }],
+      games: [{ gameId: 'game', gameNumber: 3, archiveState: 'ready', replayAvailable: true, players: [{ name: 'Alice', archetype: 'Golgari Midrange' }, { name: 'Bob', archetype: 'Izzet Phoenix' }], analysis }],
     }], cursor: null }))));
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   render(<QueryClientProvider client={client}><MemoryRouter><HistoryScreen /></MemoryRouter></QueryClientProvider>);
   const toggle = await screen.findByRole('button', { name: /Bob/ });
   expect(toggle.getAttribute('aria-expanded')).toBe('false');
+  expect(within(toggle).getByText('Golgari Midrange')).toBeTruthy();
+  expect(within(toggle).getByText('Izzet Phoenix')).toBeTruthy();
   fireEvent.click(toggle);
   const heading = await screen.findByText('Partial analysis');
   expect(heading).toBeTruthy();

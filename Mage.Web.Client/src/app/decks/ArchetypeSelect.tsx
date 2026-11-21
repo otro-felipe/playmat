@@ -1,3 +1,4 @@
+import { displayArchetype } from './displayArchetype';
 import { archetypesFor, classifyArchetype } from '../../core/decks/archetypes/library.mjs';
 import { useT } from '../i18n';
 import styles from './DeckShelf.module.css';
@@ -17,7 +18,7 @@ export function ArchetypeSelect({ format, archetype, name, onChange }: Props) {
     <label className={styles.archetype}>
       <span className={styles.label}>{t('decks.archetype')}</span>
       <select required value={selected} onChange={event => onChange(event.target.value)}>
-        {options.map(label => <option key={label} value={label}>{label === 'Other' ? t('decks.otherArchetype') : label}</option>)}
+        {options.map(label => <option key={label} value={label}>{displayArchetype(t, label)}</option>)}
       </select>
     </label>
   );

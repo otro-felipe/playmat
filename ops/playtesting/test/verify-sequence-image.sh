@@ -40,7 +40,7 @@ pioneer_combat=(combat saga-entry exile ward)
 modal=(date-night improvised-yes low-level-control)
 # Three independent CI workers build this revision. The default local run uses
 # exactly the same families, and the groupings keep partial retries bounded.
-capture_group=("${review[@]}" date-night typed)
+capture_group=("${review[@]}" date-night typed human-matches)
 priority_group=("${pioneer_costs[@]}" improvised-yes)
 combat_group=("${pioneer_combat[@]}" low-level-control causal)
 case "$selection" in
@@ -51,7 +51,7 @@ case "$selection" in
  pioneer) families=("${pioneer_costs[@]}" "${pioneer_combat[@]}") ;;
  turn-lines) families=("${modal[@]}" typed causal) ;;
  modal) families=("${modal[@]}") ;;
- review|discard-capture|review-prepared|mulligan|casting|order|activation|combat|saga-entry|exile|ward|date-night|improvised-yes|low-level-control|typed|causal) families=("$selection") ;;
+ human-matches|review|discard-capture|review-prepared|mulligan|casting|order|activation|combat|saga-entry|exile|ward|date-night|improvised-yes|low-level-control|typed|causal) families=("$selection") ;;
  *) echo 'Unknown isolated real-engine scenario' >&2; exit 2 ;;
 esac
 if (( ${#families[@]} > 1 )); then
@@ -77,14 +77,23 @@ for attempt in {1..60}; do
  [[ $attempt != 60 ]] || { echo 'Isolated PostgreSQL did not become ready' >&2; exit 1; }
  sleep 1
 done
+public_url=http://127.0.0.1:8080
+runner=sequence.local.mjs
+fixture_clients='[]'
+if [[ $selection == human-matches ]]; then
+ public_url=https://127.0.0.1:8080
+ runner=human-match.local.mjs
+ fixture_clients='[{"clientId":"https://fixture.invalid/client","redirectUri":"https://fixture.invalid/callback","name":"Local match test"}]'
+fi
 docker run -d --name "$app" --network "$network" --memory 4g --tmpfs /var/lib/playmat:size=512m --tmpfs /opt/xmage/cards-db:size=1024m --tmpfs /opt/xmage/gamesHistory:size=32m,mode=1777 \
  -e DATABASE_URL=postgresql://playmat:isolated-sequence-fixture@playmat-sequence-pg:5432/sequence_fixture \
- -e PLAYMAT_PUBLIC_URL=http://127.0.0.1:8080 -e PLAYMAT_INSECURE_COOKIE=true -e PLAYMAT_PVP_RECOVERY=on \
+ -e PLAYMAT_PUBLIC_URL="$public_url" -e PLAYMAT_OAUTH_CLIENTS="$fixture_clients" -e PLAYMAT_INSECURE_COOKIE=true -e PLAYMAT_PVP_RECOVERY=on \
  -e PLAYMAT_SEQUENCE_LOCAL_TEST=yes -e XMAGE_MEMORY=1024m "$image" >/dev/null
 app_created=true
 docker exec "$app" node -e '
-const end=Date.now()+150000;
+// A cold card catalog can take several minutes on a shared CI runner.
+const end=Date.now()+360000;
 while(Date.now()<end){try{const r=await fetch("http://127.0.0.1:8080/healthz");if(r.ok){const h=await r.json();if(h.status==="ok")process.exit(0)}}catch{}await new Promise(r=>setTimeout(r,500));}console.error("Isolated XMage health did not become ready");process.exit(1);'
 docker exec --user xmage -w /opt/xmage -e PLAYMAT_SEQUENCE_SCENARIOS="${PLAYMAT_SEQUENCE_SCENARIOS:-all}" \
- "$app" node /opt/playtesting/product/sequence.local.mjs
+ "$app" node "/opt/playtesting/product/$runner"
 echo "Isolated real-engine family passed: $selection"

@@ -221,3 +221,14 @@ CREATE TABLE IF NOT EXISTS mcp_event_deliveries (
 );
 CREATE INDEX IF NOT EXISTS mcp_event_deliveries_pending
   ON mcp_event_deliveries(available_at, lease_until);
+
+-- The policy belongs to the original table and applies to every game of its match.
+CREATE TABLE IF NOT EXISTS human_match_seats (
+  table_id uuid PRIMARY KEY,
+  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  allowed boolean NOT NULL,
+  created_via_mcp boolean NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+ALTER TABLE human_match_seats ADD COLUMN IF NOT EXISTS restored_from uuid;

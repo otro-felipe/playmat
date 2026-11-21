@@ -123,6 +123,24 @@
   gap: 0 var(--space-2);
 }
 
+.lineExplanations { max-height: min(24vh, 12rem); overflow-y: auto; }
+.lineExplanation + .lineExplanation { margin-top: var(--space-1); }
+
+.lineExplanation {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px dashed var(--ink-soft);
+  border-radius: var(--radius-control);
+  color: var(--ink);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.lineExplanation svg { flex-shrink: 0; }
+.lineExplanation p { margin: 0; }
+
 .coverage {
   margin: 0;
   padding-bottom: var(--space-1);

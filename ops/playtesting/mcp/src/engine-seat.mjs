@@ -86,10 +86,12 @@ export class PlaymatEngineSeat {
   #promptIds = new WeakMap();
   #enginePromptMessageId = null;
   #answerPromptMessageId = null;
+  #answerLine = null;
   #cursor = 0;
   #epoch = randomUUID();
   #restoreToken = null;
   #connected = false;
+  #allowHumanPlay = true;
   #connecting = null;
   #roomId = null;
   #tableId = null;
@@ -102,13 +104,19 @@ export class PlaymatEngineSeat {
   #chat = [];
   #invitePresentation = null;
 
-  constructor({ engineUrl, engineName, trustedHeader, accountId, recoverySeatId, connectionId, canonicalAgent = false, authenticationHeaders = {}, guardedPrompts = true, managedPriorityStops = false }) {
+  constructor({ engineUrl, engineName, trustedHeader, accountId, recoverySeatId, connectionId, canonicalAgent = false, authenticationHeaders = {}, guardedPrompts = true, managedPriorityStops = false, humanTableId = null }) {
     this.engineUrl = engineUrl;
     this.managedPriorityStops = managedPriorityStops;
     this.engineName = engineName;
+    this.humanTableId = humanTableId;
+    if (humanTableId && humanTableId !== 'create') {
+      this.#tableId = humanTableId.replace(/^start:/, '');
+      this.#allowHumanPlay = !humanTableId.startsWith('start:');
+    }
     this.rpc = new RpcClient({
       createSocket: (url) => new WebSocket(url, { headers: { [trustedHeader]: engineName,
         ...authenticationHeaders,
+        ...(this.humanTableId ? { 'X-Playmat-Human-Table': this.humanTableId } : {}),
         ...(accountId && recoverySeatId ? { 'X-Playmat-Account': accountId, 'X-Playmat-Seat': recoverySeatId } : {}),
         ...(connectionId ? { 'X-Playmat-Connection': connectionId } : {}),
         ...(canonicalAgent ? { 'X-Playmat-Canonical-Agent': '1' } : {}),
@@ -127,6 +135,11 @@ export class PlaymatEngineSeat {
           const needed = name === 'sendPlayerManaType' ? 3 : 2;
           while (args.length < needed) args.push(null);
           args.push(this.#answerPromptMessageId);
+        }
+        if (this.#answerLine) {
+          const expected = name === 'sendPlayerManaType' ? 4 : 3;
+          while (args.length < expected) args.push(null);
+          args.push(this.#answerLine);
         }
         return rejectOnFalse(await dispatch(...args), 'engine_rejected', 'The engine did not accept that action.');
       };
@@ -147,12 +160,14 @@ export class PlaymatEngineSeat {
       if (status === 'open') initial = false;
     });
     this.bus.on('JOINED_TABLE', (message) => {
+      if (!this.#acceptsTable(message?.currentTableId)) return;
       if (message?.currentTableId) this.#tableId = message.currentTableId;
       this.#publish();
     });
     this.bus.on('START_GAME', (message) => this.#joinStartedGame(message));
     this.bus.on('SIDEBOARD', (message, event) => {
-      if (!message?.deck || !(message.currentTableId ?? event.objectId)) return;
+      if (!message?.deck || !(message.currentTableId ?? event.objectId)
+          || !this.#allowHumanPlay || !this.#acceptsTable(message.currentTableId ?? event.objectId)) return;
       this.#sideboard = {
         decisionId: randomUUID(), tableId: message.currentTableId ?? event.objectId,
         deck: poolFromView(message.deck), deadline: message.time > 0 ? Date.now() + message.time * 1000 : null, submitted: false,
@@ -201,8 +216,8 @@ export class PlaymatEngineSeat {
     this.#connecting = (async () => {
       const login = await this.api.connectUser(this.engineName, '', this.#restoreToken, 'web');
       rejectOnFalse(login, 'engine_signin', 'This agent seat could not sign in to XMage.');
-      this.#restoreToken = await this.api.sessionGetRestoreToken();
-      if (this.managedPriorityStops) {
+      if (!this.humanTableId) this.#restoreToken = await this.api.sessionGetRestoreToken();
+      if (this.managedPriorityStops && !this.humanTableId) {
         rejectOnFalse(await this.api.connectSetUserData(null, MCP_USER_DATA, 'web', ''),
           'engine_preferences_unavailable', 'XMage could not initialize the MCP seat priority stops.');
       }
@@ -222,9 +237,13 @@ export class PlaymatEngineSeat {
     if (!this.#connected) await this.#login();
   }
 
+  #acceptsTable(tableId) {
+    return !this.humanTableId || this.humanTableId === tableId;
+  }
+
   #joinStartedGame(message) {
     const { gameId, playerId, currentTableId } = message ?? {};
-    if (!gameId || !playerId) return;
+    if (!gameId || !playerId || !this.#allowHumanPlay || !this.#acceptsTable(currentTableId)) return;
     // Repeated recovery/reconnect notifications must not discard the already initialized view or open decision.
     const existing = this.#session?.getState();
     if (existing?.gameId === gameId && existing.playerId === playerId) return;
@@ -259,10 +278,12 @@ export class PlaymatEngineSeat {
     const own = view?.players?.find((player) => player.playerId === state?.playerId);
     const priority = own?.hasPriority || view?.priorityPlayerName === this.engineName ? 'self'
       : view?.priorityPlayerName ? 'opponent' : 'none';
-    const status = !this.#connected && this.rpc.getStatus() !== 'idle' ? 'disconnected'
-      : this.#sideboard ? 'sideboarding' : state?.gameOver
-        ? Math.max(state.endInfo?.wins ?? 0, state.endInfo?.loses ?? 0) >= (state.endInfo?.winsNeeded ?? 2) ? 'match_over' : 'game_over'
-        : state ? 'active' : 'lobby';
+    const end = state?.endInfo;
+    const matchEnded = end && (end.matchView?.endTime != null
+      || Math.max(end.wins ?? 0, end.loses ?? 0) >= (end.winsNeeded ?? 2));
+    const status = matchEnded ? 'match_over'
+      : !this.#connected && this.rpc.getStatus() !== 'idle' ? 'disconnected'
+      : this.#sideboard ? 'sideboarding' : state?.gameOver ? 'game_over' : state ? 'active' : 'lobby';
     const decision = status === 'active' ? this.#decision(state) : null;
     const timing = seatTiming(view, own, decision);
     const tableId = state ? this.#gameTableId : this.#tableId;
@@ -283,7 +304,7 @@ export class PlaymatEngineSeat {
     };
   }
 
-  async respond(decisionId, choiceId, value) {
+  async respond(decisionId, choiceId, value, line) {
     const state = this.#session?.getState();
     const decision = this.#decision(state);
     if (!decision || decision.id !== decisionId) throw new ToolError('stale_decision', 'Read the current engine decision again.');
@@ -292,6 +313,7 @@ export class PlaymatEngineSeat {
     const command = commandForAgentChoice(choice, decision, value);
     if (!command) throw new ToolError('illegal_choice', 'The choice requires values within the given limits.');
     this.#answerPromptMessageId = this.#enginePromptMessageId;
+    this.#answerLine = line;
     try {
       await this.#session.respond(command);
     } catch (error) {
@@ -299,6 +321,7 @@ export class PlaymatEngineSeat {
       throw error;
     } finally {
       this.#answerPromptMessageId = null;
+      this.#answerLine = null;
     }
     return { submitted: true, gameId: state.gameId, cursor: this.#cursor };
   }
@@ -310,21 +333,35 @@ export class PlaymatEngineSeat {
     return { requested: await this.#session.resync() };
   }
 
-  async createGame({ name, format, deck, matchTimeLimit, seed }, register) {
+  async createGame({ name, format, deck, matchTimeLimit, seed, winsNeeded = 2, mode, botDeck, humanMcpAllowed }, register) {
     await this.open();
     const password = randomBytes(24).toString('base64url');
     await this.#validateForSeat(format, deck);
+    const computer = mode === 'practice' || mode === 'bot';
+    const rival = mode === 'practice' ? { name: 'Goldfish', cards: [{cardName: 'Plains', amount: 60}], sideboard: [] }
+      : botDeck ?? deck;
+    if (computer && rival !== deck) await this.#validateForSeat(format, rival);
     const table = await this.api.roomCreateTable(this.#roomId, {
-      name, gameType: 'Two Player Duel', deckType: formatTag(format), playerTypes: ['HUMAN', 'HUMAN'],
-      winsNeeded: 2, rollbackTurnsAllowed: true, rated: false, spectatorsAllowed: false, password,
+      name, gameType: 'Two Player Duel', deckType: formatTag(format), playerTypes: ['HUMAN', computer ? 'COMPUTER_MAD' : 'HUMAN'],
+      ...(this.humanTableId ? { humanMcpAllowed } : {}),
+      winsNeeded, rollbackTurnsAllowed: true, rated: false, spectatorsAllowed: false, password,
       ...(matchTimeLimit ? { matchTimeLimit } : {}), ...(seed === undefined ? {} : { seed }),
     });
     if (!table?.tableId) throw new ToolError('table_failed', 'XMage could not create the table.');
     const { tableId } = table;
+    if (this.humanTableId) {
+      this.humanTableId = tableId;
+      this.#allowHumanPlay = humanMcpAllowed === true;
+    }
     try {
       await this.#joinTable(this.#roomId, tableId, deck, password);
       const access = await register?.({ tableId, roomId: this.#roomId, format, password });
-      return { tableId, format, state: 'waiting', ...(access?.inviteLink ? { inviteLink: access.inviteLink } : {}) };
+      if (computer) {
+        rejectOnFalse(await this.api.roomJoinTable(this.#roomId, tableId, mode === 'practice' ? 'Goldfish' : 'Bot',
+          'COMPUTER_MAD', 4, rival, password), 'seat_refused', 'The computer could not join this table.');
+        await this.startMatch(tableId);
+      }
+      return { tableId, format, state: computer ? 'started' : 'waiting', ...(access?.inviteLink ? { inviteLink: access.inviteLink } : {}) };
     } catch (error) {
       await this.api.tableRemove(this.#roomId, tableId).catch(() => {});
       throw error;

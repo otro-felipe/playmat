@@ -48,10 +48,10 @@ async function lineResult(seat, { gameId, commandId, sequenceId }, timeoutMs, si
   };
 }
 
-export function playLine(seat, { gameId, cursor, commandId, actions, expectedStackIds, waitMs }, reauthorize, signal) {
+export function playLine(seat, { gameId, cursor, commandId, actions, expectedStackIds, waitMs, reasoning }, reauthorize, signal) {
   signal?.throwIfAborted();
   const commands = commandIndex(seat);
-  const fingerprint = createHash('sha256').update(JSON.stringify([gameId, cursor, actions, expectedStackIds])).digest('hex');
+  const fingerprint = createHash('sha256').update(JSON.stringify([gameId, cursor, actions, expectedStackIds, reasoning])).digest('hex');
   const known = commands.get(commandId);
   if (known) {
     if (known.fingerprint !== fingerprint) {
@@ -66,7 +66,8 @@ export function playLine(seat, { gameId, cursor, commandId, actions, expectedSta
     // An exact prompt response may only select an option. Settle an announced
     // line of plays, but do not assume a choose-only line also authorizes passes.
     const settle = actions.some(({ kind }) => ['play', 'activate', 'attack'].includes(kind));
-    started = seat.startTurn({ gameId, cursor, actions, expectedStackIds, finish: 'none', settle }, reauthorize);
+    const line = reasoning ? { commandId, reasoning } : undefined;
+    started = seat.startTurn({ gameId, cursor, actions, expectedStackIds, finish: 'none', settle, line }, reauthorize);
   } catch (error) {
     if (error instanceof ToolError && error.code !== 'forbidden_game') {
       error.state = currentGameState(seat, gameId);

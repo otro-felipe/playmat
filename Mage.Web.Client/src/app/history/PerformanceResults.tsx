@@ -1,14 +1,17 @@
+import { displayArchetype } from '../decks/displayArchetype';
+import { Percentage } from './Percentage';
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
+import { CardPreviewName } from '../ui/CardMarkdown';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useT, formatNumber } from '../i18n';
-import { sample, rate, type Outcome, type Performance } from './performance';
+import { sample, type Outcome, type Performance } from './performance';
 import styles from './DeckAnalysis.module.css';
 
 function Headline({ label, outcome, primary }: { label: string; outcome: Outcome; primary?: boolean }) {
   const t = useT();
   return <section aria-label={label} className={styles.headline} data-primary={primary}>
-    <h2>{label}</h2><strong>{rate(outcome.wins, outcome.total)}</strong>
+    <h2>{label}</h2><strong><Percentage count={outcome.wins} total={outcome.total} /></strong>
     <span>{sample(outcome.wins, outcome.total)} · {t('perf.record', { wins: outcome.wins, losses: outcome.losses, draws: outcome.draws })}</span>
   </section>;
 }
@@ -62,8 +65,8 @@ function ResultsTable({ title, caption, dimension, rows, losses = false, sortabl
         {ordered.map(({ label, games, gameIds }) => {
           const count = numerator(games);
           return <tr key={label}><th scope="row">
-            {label}{!!gameIds?.length && <CardReplays card={label} ids={gameIds} />}
-          </th><td>{sample(count, games.total)}</td><td>{rate(count, games.total)}</td></tr>;
+            {gameIds ? <CardPreviewName card={{ name: label }} /> : label}{!!gameIds?.length && <CardReplays card={label} ids={gameIds} />}
+          </th><td>{sample(count, games.total)}</td><td><Percentage count={count} total={games.total} /></td></tr>;
         })}
       </tbody></table>}
   </section>;
@@ -108,7 +111,7 @@ function OpeningHands({ data }: { data: Performance }) {
           active={sort?.key === key} ascending={!!sort?.ascending}
           onSort={() => setSort({ key, ascending: sort?.key === key && !sort.ascending })} />)}
       </tr></thead><tbody>{cards.map(({ card, games, without }) => <tr key={card}>
-        <th scope="row">{card}</th><td><Fraction outcome={games} /></td><td><Fraction outcome={without} /></td>
+        <th scope="row"><CardPreviewName card={{ name: card }} /></th><td><Fraction outcome={games} /></td><td><Fraction outcome={without} /></td>
       </tr>)}</tbody></table>}
   </section>;
 }
@@ -123,7 +126,7 @@ export function MulliganResults({ data }: { data: Performance }) {
 }
 
 function Fraction({ outcome }: { outcome: Outcome }) {
-  return <>{rate(outcome.wins, outcome.total)} <small>({sample(outcome.wins, outcome.total)})</small></>;
+  return <><Percentage count={outcome.wins} total={outcome.total} /> <small>({sample(outcome.wins, outcome.total)})</small></>;
 }
 
 export function MatchupResults({ data, bo1 }: { data: Performance; bo1: boolean }) {
@@ -135,7 +138,7 @@ export function MatchupResults({ data, bo1 }: { data: Performance; bo1: boolean 
         <table aria-label={t('perf.vsArchetypes')}><thead><tr><th scope="col">{t('perf.opponent')}</th>
           <th scope="col">{t('perf.matchesWon')}</th>{!bo1 && <th scope="col">{t('perf.gamesWon')}</th>}
         </tr></thead><tbody>{data.matchups.map((item) => <tr key={JSON.stringify(item.archetype)}>
-          <th scope="row">{item.archetype ?? t('perf.unclassified')}</th><td><Fraction outcome={item.matches} /></td>
+          <th scope="row">{displayArchetype(t, item.archetype)}</th><td><Fraction outcome={item.matches} /></td>
           {!bo1 && <td><Fraction outcome={item.games} /></td>}
         </tr>)}</tbody></table>}
     </section>
@@ -145,7 +148,7 @@ export function MatchupResults({ data, bo1 }: { data: Performance; bo1: boolean 
         <table aria-label={t('perf.rivalMulligans')}><thead><tr><th scope="col">{t('perf.opponent')}</th>
           <th scope="col">{t('perf.yours')}</th><th scope="col">{t('perf.theirs')}</th></tr></thead>
           <tbody>{data.matchups.map(({ archetype, mulligans }) => <tr key={JSON.stringify(archetype)}>
-            <th scope="row">{archetype ?? t('perf.unclassified')}</th>
+            <th scope="row">{displayArchetype(t, archetype)}</th>
             <td>{mulligans.known ? sample(mulligans.taken, mulligans.known) : '—'}</td>
             <td>{mulligans.opponentKnown ? sample(mulligans.opponentTaken, mulligans.opponentKnown) : '—'}</td>
           </tr>)}</tbody></table>}

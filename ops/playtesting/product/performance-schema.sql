@@ -30,3 +30,5 @@ CREATE TABLE IF NOT EXISTS game_performance_cards (
   PRIMARY KEY (game_id, engine_key, evidence, card_name),
   FOREIGN KEY (game_id, engine_key) REFERENCES game_performance_evidence(game_id, engine_key) ON DELETE CASCADE
 );
+
+ALTER TABLE game_players ADD COLUMN IF NOT EXISTS archetype text;

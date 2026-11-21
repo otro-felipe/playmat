@@ -16,6 +16,8 @@ Private Playmat participants can revisit a completed encounter, inspect the evid
 
 - **PM-REVIEW-CAPTURE-5** Supported shared engine prompts emit a normalized selection with their semantic kind and committed answer. A replay can explain choices for unrelated cards that use the same prompt, including modes, targets, card selections, and optional effects. When a committed move already owns the corresponding choice, review preserves the course of the move without counting a second independent decision. Protected options remain scoped to the choosing seat or authorized full view.
 
+- **PM-REVIEW-CAPTURE-6** Either agent may attach a short shareable gameplay explanation to a line. The replay records it with the first committed decision, its acting seat and the captured board position. A participant can show or hide explanations in the authorized completed-match review. Public playback, live state and exports keep these explanations private.
+
 ## Evidence and saved analysis
 
 - **PM-REVIEW-API-1** An authenticated participant can read review capabilities for an authorized match or game and query page-sized evidence by cursor or turn. Cursors remain stable across projections. Evidence explicitly identifies the archive version, coverage and whether an action was directly recorded or reconstructed from an archive observation.
@@ -59,3 +61,7 @@ Verify API and MCP permissions with both participants and an unrelated account, 
 - `ops/playtesting/product/review-presentation.test.mjs` covers PM-REVIEW-CAPTURE-2 with a witnessed stack, recorded modes and targets, and legacy spell and discard references.
 - `Mage.Server/src/test/java/mage/server/replay/ReplayStoreTest.java` verifies protected replay fields stay out of legacy projections.
 - `Mage.Web.Client/e2e/private-replay-review.spec.ts` verifies desktop and mobile acceptance with authorized synthetic fixtures. `ReplayReview.test.tsx` and `HistoryReview.test.tsx` exercise stable cursors, authority transitions and counts.
+
+## Inspecting cards in analysis (PM-REVIEW-UI-8)
+
+A participant can inspect a named card in reviewer prose, alternatives, tradeoffs, opponent responses and visible retrospective notes by hovering, focusing or tapping its name. A card reference uses `[label](card://Card%20Name)`. Its target is the exact English card name with optional `:front` or `:back` suffix. The label can be localized. Recorded card references also enable previews for matching whole names in older plain-text annotations. Unrecognized or malformed markup remains readable and inert. Opening a preview leaves the replay cursor and perspective in place.

@@ -153,18 +153,18 @@ export function createApi(rpc: RpcCaller) {
       rpc.call('gameWatchers', gameId),
     gameWatchStop: (gameId: UUID) =>
       rpc.call('gameWatchStop', gameId, SESSION),
-    sendPlayerUUID: (gameId: UUID, data?: UUID | null, expectedPrompt?: number | null) =>
-      rpc.call('sendPlayerUUID', gameId, SESSION, data, expectedPrompt),
-    sendPlayerString: (gameId: UUID, data: string, expectedPrompt?: number | null) =>
-      rpc.call('sendPlayerString', gameId, SESSION, data, expectedPrompt),
-    sendPlayerBoolean: (gameId: UUID, data: boolean, expectedPrompt?: number | null) =>
-      rpc.call('sendPlayerBoolean', gameId, SESSION, data, expectedPrompt),
-    sendPlayerInteger: (gameId: UUID, data: number, expectedPrompt?: number | null) =>
-      rpc.call('sendPlayerInteger', gameId, SESSION, data, expectedPrompt),
-    sendPlayerManaType: (gameId: UUID, playerId: UUID, manaType: ManaType, expectedPrompt?: number | null) =>
-      rpc.call('sendPlayerManaType', gameId, playerId, SESSION, manaType, expectedPrompt),
-    sendPlayerAction: (action: PlayerAction, gameId: UUID, data?: unknown | null) =>
-      rpc.call('sendPlayerAction', action, gameId, SESSION, data),
+    sendPlayerUUID: (gameId: UUID, data?: UUID | null, expectedPrompt?: number | null, line?: unknown | null) =>
+      rpc.call('sendPlayerUUID', gameId, SESSION, data, expectedPrompt, line),
+    sendPlayerString: (gameId: UUID, data: string, expectedPrompt?: number | null, line?: unknown | null) =>
+      rpc.call('sendPlayerString', gameId, SESSION, data, expectedPrompt, line),
+    sendPlayerBoolean: (gameId: UUID, data: boolean, expectedPrompt?: number | null, line?: unknown | null) =>
+      rpc.call('sendPlayerBoolean', gameId, SESSION, data, expectedPrompt, line),
+    sendPlayerInteger: (gameId: UUID, data: number, expectedPrompt?: number | null, line?: unknown | null) =>
+      rpc.call('sendPlayerInteger', gameId, SESSION, data, expectedPrompt, line),
+    sendPlayerManaType: (gameId: UUID, playerId: UUID, manaType: ManaType, expectedPrompt?: number | null, line?: unknown | null) =>
+      rpc.call('sendPlayerManaType', gameId, playerId, SESSION, manaType, expectedPrompt, line),
+    sendPlayerAction: (action: PlayerAction, gameId: UUID, data?: unknown | null, line?: unknown | null) =>
+      rpc.call('sendPlayerAction', action, gameId, SESSION, data, line),
     cheatShow: (gameId: UUID, playerId: UUID) =>
       rpc.call('cheatShow', gameId, SESSION, playerId),
     gamePractice: (gameId: UUID, tool: string, cardName?: string | null, amount?: number | null) =>

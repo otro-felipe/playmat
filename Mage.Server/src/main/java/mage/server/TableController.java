@@ -426,7 +426,7 @@ public class TableController {
 
         //only inform human players and add them to sessionPlayerMap
         if (seat.getPlayer().isHuman()) {
-            seat.getPlayer().setUserData(user.getUserData());
+            seat.getPlayer().setUserData(user.preferencesForTable(table.getId()));
             if (!table.isTournamentSubTable()) {
                 user.addTable(player.getId(), table);
             }

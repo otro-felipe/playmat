@@ -1,3 +1,4 @@
+import { archetypeCoverage, backfillSeatArchetypes } from './archived-archetypes.mjs'
 import { authStyles } from './auth-styles.mjs'
 import { accountLimits, clientKey, createConcurrencyLimit, createLimits, productLimitGroup, productLimits } from './limits.mjs'
 import { createServer } from 'node:http'
@@ -7,13 +8,14 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import pg from 'pg'
 import { archetypesFor } from './deck-performance-identity.mjs'
-import { libraryArchetypeCoverage, migrateDeckLists, refineMigratedDeckLists } from './deck-list-migration.mjs'
+import { libraryArchetypeCoverage, migrateDeckLists, refineMigratedDeckLists, refineTournamentArchetypes } from './deck-list-migration.mjs'
 import { createArchive } from './archive.mjs'
 import { resetMatchHistory, setUnlimitedMatchHistory } from './history-retention.mjs'
 import { createTheoryStore, evaluateTheoryTactics } from './theory-store.mjs'
 import { createIdentity, identityView } from './identity.mjs'
 import { createSignup } from './signup.mjs'
 import { createTurnstile, loginChallengeAction } from './turnstile.mjs'
+import { authorizeHumanConnection, humanBrowserMayPlay, listHumanMatches, readHumanSeat, recordHumanSeat, restoreHumanSeat } from './human-seats.mjs'
 import { createInvitations } from './invitations.mjs'
 import { createMcpEvents } from './mcp-events.mjs'
 import { createOAuth } from './oauth.mjs'
@@ -134,8 +136,15 @@ export async function createProduct({
     await pool.query(await readFile(resolve(directory, 'history-retention.sql'), 'utf8'))
     await migrateDeckLists(pool)
     await refineMigratedDeckLists(pool)
-    console.info('deck_archetype_coverage', JSON.stringify(await libraryArchetypeCoverage(pool)))
     await pool.query(await readFile(resolve(directory, 'performance-schema.sql'), 'utf8'))
+    await transaction(pool, async db => {
+      await db.query("SELECT pg_advisory_xact_lock(hashtext(current_schema()),hashtext('tournament-archetypes'))")
+      const before = await archetypeCoverage(db)
+      await refineTournamentArchetypes(db)
+      await backfillSeatArchetypes(db)
+      console.info('archetype_backfill', JSON.stringify({ before, after: await archetypeCoverage(db) }))
+    })
+    console.info('deck_archetype_coverage', JSON.stringify(await libraryArchetypeCoverage(pool)))
   } catch (error) {
     await pool.end()
     throw error
@@ -277,6 +286,37 @@ export async function createProduct({
       return res.writeHead(303, { 'Set-Cookie': await id.signOut(req), Location: '/login' }).end()
     }
     if (enableInternal && path === '/internal/legacy' && req.method === 'POST') return legacy(req, res, releases)
+    if (enableInternal && path === '/internal/human-seat/restore' && req.method === 'POST') {
+      await restoreHumanSeat(pool, await body(req, 'json', 1024))
+      return send(res, 200, {})
+    }
+    if (enableInternal && path === '/internal/human-seat/manual' && req.method === 'POST') {
+      const allowed = await humanBrowserMayPlay(pool, await body(req, 'json', 1024))
+      return send(res, allowed ? 200 : 403, { allowed })
+    }
+    if (enableInternal && path === '/internal/human-seat/authorize' && req.method === 'POST') {
+      const allowed = await authorizeHumanConnection(pool, await body(req, 'json', 1024))
+      return send(res, allowed ? 200 : 403, { allowed })
+    }
+    if (enableInternal && path === '/internal/human-seat/table' && req.method === 'POST') {
+      await recordHumanSeat(pool, await body(req, 'json', 1024))
+      return send(res, 200, {})
+    }
+    if (enableInternal && path.startsWith('/internal/human-seat/') && req.method === 'POST') {
+      const actor = await id.resolve(req)
+      if (!actor?.accountAgent) throw new ProductError(403, 'The account MCP connection is required')
+      requireScope(actor, 'play')
+      if (path === '/internal/human-seat/list') return send(res, 200, await listHumanMatches(pool, actor))
+      const [, , , tableId, action] = path.split('/')
+      const seat = await readHumanSeat(pool, actor, tableId, { ownerOnly: true })
+      if (action === 'settings') return send(res, 200, seat)
+      if (action === 'invite' && seat.createdViaMcp) {
+        const input = await body(req)
+        if (input.tableId !== tableId) throw new ProductError(400, 'Table does not match')
+        return send(res, 201, await invitations.create({ ...actor, engineName: seat.humanName, agent: false, accountAgent: false }, input))
+      }
+      throw new ProductError(404, 'Human match operation unavailable')
+    }
     if (enableInternal && path === '/internal/review-capture' && req.method === 'POST') {
       return send(res, 200, await permissions.sealCapture(await body(req, 'json', 8192)))
     }
@@ -355,6 +395,10 @@ export async function createProduct({
     gateAccount(res, group, actor, releases)
     const endpoint = path.slice('/api/playtesting/'.length)
     if (endpoint === 'me' && req.method === 'GET') return send(res, 200, identityView(actor))
+    if (endpoint.startsWith('human-seat/') && req.method === 'GET') {
+      requireScope(actor, 'play')
+      return send(res, 200, await readHumanSeat(pool, actor, endpoint.slice('human-seat/'.length)))
+    }
     if (endpoint === 'player-identities' && req.method === 'GET') {
       requireScope(actor, 'play')
       return send(res, 200, await id.publicPlayers(url.searchParams.get('names')))

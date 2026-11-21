@@ -208,6 +208,11 @@ test('[PM-LINE-04] one bootstrap returns all four complete guides without openin
   assert.equal(bundle.error, false);
   assert.match(bundle.value.version, /^[a-f0-9]{64}$/);
   assert.equal(bundle.value.guides.length, 4);
+  const onboarding = bundle.value.guides.find(({ name }) => name === 'getting-started');
+  for (const term of ['Partida', 'Juego', 'Jugador Humano', 'Jugador MCP', 'Agente', 'Oponente', 'Biblioteca', 'Historial']) {
+    assert.ok(onboarding.text.includes('**' + term), term);
+  }
+  assert.match((await call(client, 'get_guide', { guideId: 'replay-analysis' })).value.text, /\*\*Biblioteca/);
   assert.deepEqual(new Set(bundle.value.guides.map(({ name }) => name)),
     new Set(['getting-started', 'card-catalog', 'turn-planning', 'rules']));
   for (const guide of bundle.value.guides) {

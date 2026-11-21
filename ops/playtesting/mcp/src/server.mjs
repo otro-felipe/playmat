@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
+import { humanMatchAccess, seatContext } from './human-matches.mjs';
 import { GameSeat, ToolError } from './game-seat.mjs';
 import { monitorSeatDecisions, registerEvents } from './events.mjs';
 import { listArchetypes, possibleResponses, searchCards } from './catalog.mjs';
@@ -14,6 +15,7 @@ import { registerTheorycraftTools } from './theorycraft.mjs';
 import { compactGameState, formatGameReceipt } from './state-view.mjs';
 
 const Uuid = z.uuid();
+const LibraryDeckId = z.string().regex(/^[a-z0-9_:.-]{1,64}$/i);
 const StringId = z.string().min(1).max(120);
 const Format = z.enum(['Standard', 'Pioneer', 'Modern']);
 const Cursor = z.number().int().nonnegative();
@@ -155,6 +157,7 @@ const LinePassPriority = z.object({ kind: z.literal('pass_priority') }).strict()
 const LineActions = z.array(z.discriminatedUnion('kind', [TurnPlay, TurnActivation, TurnChoose, TurnAttack, TurnBlock, Pace, LinePassUntil, LinePassPriority])).min(1).max(32);
 const Line = {
   gameId: Uuid, cursor: Cursor, commandId: StringId.describe('Choose a unique ID for this line. For an uncertain result, reuse this ID with the same game, cursor and actions.'),
+  reasoning: z.string().trim().min(1).max(600).optional().describe('A short, player-facing explanation for this line in the completed replay, such as the goal and one visible fact. Share only what you intend replay viewers to read.'),
   actions: z.array(z.union([TurnPlayShape, TurnActivation, TurnChooseShape, TurnAttackShape, TurnBlockShape, Pace, LinePassUntilShape, LinePassPriority])).min(1).max(32)
     .describe('Plan as far as current information justifies. Use exact choices for visible engine prompts. Put pass_until or pass_priority last.'),
   expectedStackIds: z.array(StringId).max(16).optional().describe('Exact objects already visible on the stack. For a current trigger-order prompt, use choose.adoptTriggerOrder instead.'),
@@ -209,19 +212,25 @@ function readToken(req) {
   return /^Bearer ([0-9A-Za-z._~+\/=-]{1,256})$/i.exec(req.headers.authorization ?? '')?.[1] ?? null;
 }
 
-function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedOrigins }) {
+function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedOrigins, human }) {
   function tool(name, description, inputSchema, scope, run, readOnlyHint = false) {
     if (['create_game', 'join_game', 'start_match', 'get_game_state', 'submit_decision', 'pass_until', 'advance_to_own_turn', 'play_sequence', 'submit_sequence', 'play_turn', 'play_line'].includes(name)) {
       description += ` ${guideBootstrap}`;
     }
     if (['play_sequence', 'submit_sequence'].includes(name)) description += ` ${sequenceInstructions}`;
     const scopes = scope === 'catalog' ? ['play', 'library'] : [scope === 'decks' ? 'library' : scope];
+    const gameTool = ['play', 'chat'].includes(scope) && (Object.hasOwn(inputSchema, 'gameId')
+      || ['list_recoverable_matches', 'get_recovery_status', 'recover_match'].includes(name));
+    if (gameTool) inputSchema = { ...inputSchema,
+      humanTableId: Uuid.optional().describe('Supply the opted-in table ID on every call for the Human Player. Omit to use the MCP Player.') };
     mcp.registerTool(name, { description, inputSchema, annotations: { readOnlyHint },
       _meta: { securitySchemes: scopes.map(value => ({ type: 'oauth2', scopes: [value] })) },
     }, async (args, extra) => {
       try {
         if (!actor.scopes.includes(scope)) throw new ToolError('forbidden', 'This credential lacks the required scope.');
-        const result = await run(args, extra.signal);
+        const { humanTableId, ...input } = args;
+        const result = humanTableId && gameTool
+          ? await human.select(humanTableId, () => run(input, extra.signal)) : await run(args, extra.signal);
         const response = textResult(result);
         // Rejected gameplay commands are application receipts. They carry a code,
         // stage and recovery instructions even through clients that normalize MCP errors.
@@ -325,18 +334,44 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
     'play', (args) => fromProduct('list_joinable_games', args), true);
   const playDeck = {
     deck: Deck.optional(),
-    deckId: Uuid.optional().describe('ID from list_decks. Supply this or an inline deck.'),
+    deckId: LibraryDeckId.optional().describe('ID from list_decks. Supply this or an inline deck.'),
   };
-  async function resolvePlayDeck(deck, deckId) {
+  async function resolvePlayDeck(deck, deckId, library = 'agent') {
     if (Boolean(deck) === Boolean(deckId)) throw new ToolError('invalid_deck', 'Choose one library deck ID or supply an inline deck.');
     if (!deckId) return deck;
     const saved = await fromProduct('get_deck', { deckId });
-    if (saved?.id !== deckId || saved.library !== 'agent' || !saved.data) {
-      throw new ToolError('deck_unavailable', 'Choose a saved deck from your agent library.');
+    if (saved?.id !== deckId || saved.library !== library || !saved.data) {
+      throw new ToolError('deck_unavailable', 'Choose a saved deck from the playing seat’s library.');
     }
     const { name, cards, sideboard } = saved.data;
     return { name, cards, sideboard, libraryDeckId: deckId };
   }
+  tool('list_human_matches', 'Find your waiting or in-progress opted-in Human Player tables, including browser-created tables. Returns tableId and live XMage status.', {}, 'play', () => {
+    human.requireAccount();
+    return fromProduct('list_human_matches', {});
+  }, true);
+  tool('list_human_decks', 'List personal decks that can be selected for a Human Player match.', {}, 'decks', () => {
+    human.requireAccount();
+    return fromProduct('list_human_decks', {});
+  }, true);
+  tool('create_human_match', 'Create an unrated match as the signed-in Human Player. MCP and friend matches wait for a guest and start_match. Practice and bot start immediately. humanMcpAllowed opts just this table into MCP gameplay.', {
+    mode: z.enum(['mcp', 'friend', 'practice', 'bot']), format: Format, name: z.string().trim().min(1).max(80),
+    deck: Deck.optional(), deckId: LibraryDeckId.optional(),
+    humanMcpAllowed: z.boolean().default(false), winsNeeded: z.union([z.literal(1), z.literal(2)]).default(1),
+    guestEngineName: z.string().trim().min(1).max(36).optional().describe('Optional registered guest in friend mode. Omit for an unlisted friend link.'),
+    chatMode: z.enum(['quiet', 'chatty', 'coach']).optional().describe('MCP opponent only.'),
+    botDeck: Deck.optional().describe('Bot opponent deck. Defaults to a mirror of the human deck.'),
+  }, 'play', async ({ mode, format, name, deck, deckId, humanMcpAllowed, winsNeeded, guestEngineName, chatMode, botDeck }) => {
+    human.requireAccount();
+    if (guestEngineName && mode !== 'friend' || chatMode && mode !== 'mcp' || botDeck && mode !== 'bot') {
+      throw new ToolError('invalid_input', 'Opponent options must match the selected game mode.');
+    }
+    const register = ['mcp', 'friend'].includes(mode) ? record => fromProduct('create_human_invitation', {
+      ...record, mode, ...(guestEngineName ? { guestEngineName } : {}), ...(chatMode ? { chatMode } : {}),
+    }) : undefined;
+    return human.create({ mode, format, name, humanMcpAllowed, winsNeeded, botDeck,
+      deck: await resolvePlayDeck(deck, deckId, 'personal') }, register);
+  });
   tool('create_game', 'Create a private, unrated best-of-three table as this agent seat.', {
     format: Format, name: z.string().trim().min(1).max(80), ...playDeck,
     guestEngineName: z.string().trim().min(1).max(36), ...agentRuntime,
@@ -360,8 +395,12 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
       return getSeat().engine.joinGame({ tableId, deck: await resolvePlayDeck(deck, deckId) }, invitation,
         () => fromProduct('get_game_invite', { tableId, displayName, model, reasoningEffort }));
     });
-  tool('start_match', 'Start your own private table when it is ready.', { tableId: Uuid }, 'play',
-    (args) => getSeat().engine.startMatch(args.tableId));
+  tool('start_match', 'Start a ready table as its host. For the MCP Player provide tableId. For the Human Player provide humanTableId, including to finish setup of an MCP-created table with human gameplay disabled.', {
+    tableId: Uuid.optional(), humanTableId: Uuid.optional(),
+  }, 'play', ({ tableId, humanTableId }) => {
+    if (Boolean(tableId) === Boolean(humanTableId)) throw new ToolError('invalid_input', 'Select exactly one host table.');
+    return humanTableId ? human.start(humanTableId) : getSeat().engine.startMatch(tableId);
+  });
   tool('concede', 'Surrender this game (default) or the whole match explicitly. Cancels the remaining queued plan before sending the concession; accepted earlier actions remain applied.', { gameId: Uuid, entireMatch: z.boolean().default(false) }, 'play',
     ({ gameId, entireMatch }) => { const seat = getSeat(); seat.snapshot(gameId); seat.invalidate('conceded'); return seat.engine.concede(gameId, entireMatch); });
   tool('get_sideboard_state', 'Read the private eligible card pool and state of your sideboarding step.', { gameId: Uuid.optional() }, 'play',
@@ -392,13 +431,13 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
   tool('validate_deck', 'Check the submitted list against XMage constructed rules and card implementation.', { format: Format, deck: Deck }, 'decks',
     (args) => getSeat().engine.validateDeck(args), true);
   tool('list_decks', 'List the reusable MCP opponent decks in your private account library. These appear in the web library under MCP opponent decks.', {}, 'decks', () => fromProduct('list_decks', {}), true);
-  tool('get_deck', 'Read one deck in your library.', { deckId: Uuid }, 'decks', (args) => fromProduct('get_deck', args), true);
+  tool('get_deck', 'Read one deck in your library.', { deckId: LibraryDeckId }, 'decks', (args) => fromProduct('get_deck', args), true);
   tool('list_deck_archetypes', 'List all predefined library archetypes for the format. Use one label in create_deck and update_deck.', { format: Format },
     'decks', args => fromProduct('list_deck_archetypes', args), true);
   tool('create_deck', 'Save a reusable MCP opponent deck in your private library. It remains available in later sessions and appears under MCP opponent decks on the web.', { name: z.string().min(1).max(120), format: Format, archetype: z.string().min(1).max(150), deck: Deck },
     'decks', (args) => fromProduct('create_deck', args));
   tool('update_deck', 'Save a revision if your current deck revision still matches.', {
-    deckId: Uuid, expectedRevision: z.number().int().positive(), name: z.string().min(1).max(120), format: Format, archetype: z.string().min(1).max(150), deck: Deck,
+    deckId: LibraryDeckId, expectedRevision: z.number().int().positive(), name: z.string().min(1).max(120), format: Format, archetype: z.string().min(1).max(150), deck: Deck,
   }, 'decks', (args) => fromProduct('update_deck', args));
   tool('list_matches', 'List your finished and interrupted matches, filtered by format.', {
     format: Format.optional(), cursor: z.string().max(160).optional(), limit: z.number().int().min(1).max(50).default(25),
@@ -481,7 +520,11 @@ export function createMcpServer({
     if (!release) return limited(2);
     res.once('close', release);
     const seatKey = JSON.stringify([actor.accountId, actor.engineName]);
+    const callProduct = product ? (operation, args) => product(token, operation, args) : null;
+    const human = humanMatchAccess({ actor, product: callProduct, createEngine, seats, maxSeats });
     function getSeat() {
+      const current = seatContext.getStore();
+      if (current) return current.seat;
       if (!seats.has(seatKey)) {
         if (seats.size >= maxSeats) throw new ToolError('capacity', 'The beta seat limit has been reached.');
         seats.set(seatKey, new GameSeat(createEngine(actor)));
@@ -501,11 +544,12 @@ export function createMcpServer({
       registerPostMatchReviewPrompt(mcp);
     }
     registerTools(mcp, {
-      actor, getSeat, allowedOrigins,
-      callProduct: product ? (operation, args) => product(token, operation, args) : null,
+      actor, getSeat, allowedOrigins, human, callProduct,
       reauthorize: async () => {
         const fresh = await authorize(token);
-        return fresh?.accountId === actor.accountId && fresh.engineName === actor.engineName && fresh.scopes.includes('play');
+        if (fresh?.accountId !== actor.accountId || fresh.engineName !== actor.engineName || !fresh.scopes.includes('play')) return false;
+        const current = seatContext.getStore();
+        return !current || Boolean(await human.policy(current.tableId).catch(() => false));
       },
     });
     res.once('close', () => { void mcp.close(); });

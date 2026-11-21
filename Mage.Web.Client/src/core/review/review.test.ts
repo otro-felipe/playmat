@@ -59,6 +59,7 @@ describe('post-game review', () => {
     const unspent = reviewGame(frames, 'Me').findings.find((finding) => finding.kind === 'unspentMana');
     expect(unspent).toMatchObject({ turn: 5, frame: 1 });
     expect(unspent!.detail).toContain('Hill Giant');
+    expect(unspent!.cards).toContain('Hill Giant');
   });
 
   it('finds a blocker thrown away at a high life total', () => {
@@ -73,6 +74,7 @@ describe('post-game review', () => {
     const bad = reviewGame(frames, 'Me').findings.find((finding) => finding.kind === 'badBlock');
     expect(bad).toMatchObject({ turn: 4, frame: 1 });
     expect(bad!.detail).toContain('Grizzly Bears blocked Craw Wurm');
+    expect(bad!.cards).toEqual(['Grizzly Bears', 'Craw Wurm']);
   });
 
   it('names the turning point', () => {
@@ -90,5 +92,6 @@ describe('post-game review', () => {
     expect(point).toMatchObject({ turn: 4, frame: 3 });
     expect(point!.detail).toContain('you lost 8 life');
     expect(point!.detail).toContain('you lost A, B, C');
+    expect(point!.cards).toEqual(['A', 'B', 'C']);
   });
 });

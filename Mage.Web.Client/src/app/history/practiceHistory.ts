@@ -4,6 +4,8 @@ export interface PracticePlayer {
   name: string;
   displayName?: string | null;
   isMcp?: boolean;
+  humanMcpAllowed?: boolean;
+  archetype?: string | null;
   seatId?: string;
   model?: string | null;
   reasoningEffort?: string | null;

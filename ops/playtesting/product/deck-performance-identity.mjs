@@ -5,7 +5,7 @@ import starters from './starter-archetypes.json' with { type: 'json' }
 // The Docker product service carries the same catalog the offline web builder uses.
 const packaged = new URL('./archetypes/library.mjs', import.meta.url)
 const source = new URL('../../../Mage.Web.Client/src/core/decks/archetypes/library.mjs', import.meta.url)
-export const { archetypesFor, classifyArchetype } = await import(existsSync(packaged) ? packaged : source)
+export const { archetypesFor, classifyArchetype, tournamentArchetype } = await import(existsSync(packaged) ? packaged : source)
 
 export function deckListSignature(deck) {
   if (!Array.isArray(deck?.cards) || (deck.sideboard != null && !Array.isArray(deck.sideboard))) return null
@@ -54,8 +54,14 @@ function loadPublicLists() {
         deck[entry[1] ? 'sideboard' : 'cards'].push({ name: entry[3], quantity: Number(entry[2]) })
       }
       if (!deck.cards.length) continue
-      const key = format + '/' + deckListSignature(deck)
-      examples.set(key, examples.has(key) && examples.get(key) !== label ? null : label)
+      // Sideboard edits do not change an otherwise identical, complete maindeck.
+      const signatures = [deckListSignature(deck), deckListSignature({ cards: deck.cards })]
+      for (const signature of signatures) {
+        for (const family of [format, '*']) {
+          const key = family + '/' + signature
+          examples.set(key, examples.has(key) && examples.get(key) !== label ? null : label)
+        }
+      }
     }
   }
   return examples
@@ -63,11 +69,13 @@ function loadPublicLists() {
 
 export function publicListArchetype(format, signature) {
   publicLists ??= loadPublicLists()
-  return publicLists.get(familyOf(format) + '/' + signature) ?? null
+  const family = familyOf(format)
+  return publicLists.get((family === 'Freeform' ? '*' : family) + '/' + signature) ?? null
 }
 
 /** A full main deck plus independent evidence. Titles by themselves cannot refine an old default. */
 export function verifiedListArchetype(format, name, cards, sideboard = []) {
+  if (!cards.length && !sideboard.length) return 'Empty deck'
   const size = cards.reduce((sum, card) => sum + (card.amount ?? card.quantity ?? card.count ?? 1), 0)
   if (size < (format === 'Limited' ? 40 : 60)) return null
   const registered = [...cards, ...sideboard].map(card => (typeof card === 'string' ? card : card.cardName ?? card.name).trim().toLowerCase())
@@ -79,5 +87,8 @@ export function verifiedListArchetype(format, name, cards, sideboard = []) {
   if (!/momir|commander|brawl|oathbreaker|tiny leaders/i.test(family) && registered.every(name => basicLandNames.includes(name))) {
     return 'Basic Lands Practice'
   }
-  return null
+  const published = publicListArchetype(format, deckListSignature({ cards }))
+  if (published) return published
+  const fromCards = family === 'Freeform' ? tournamentArchetype(format, cards) ?? 'Other' : classifyArchetype(format, '', cards)
+  return fromCards === 'Other' ? null : fromCards
 }

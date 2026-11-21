@@ -8,6 +8,8 @@ import { groupOf } from '../decks/deckModel';
 import { MatchScore } from '../match/MatchScore';
 import { lessonsFor, useCareerLessons } from '../stores/careerLessons';
 import { useEvents, type ConstructState } from '../stores/events';
+import { useHumanInputLock } from '../ui/humanSeat';
+import { InputLockNotice } from '../ui/InputLockNotice';
 import { useT } from '../i18n';
 import { Button } from '../ui/Button';
 import { CardFace } from '../ui/CardFace';
@@ -33,7 +35,20 @@ export function BuildScreen() {
       </div>
     );
   }
+  if (construct.kind === 'sideboard') return <Sideboard key={tableId} construct={construct} />;
   return <Builder key={`${construct.tableId}:${construct.kind}`} construct={construct} />;
+}
+
+function Sideboard({ construct }: { construct: ConstructState }) {
+  const lock = useHumanInputLock(construct.tableId);
+  const navigate = useNavigate();
+  const t = useT();
+  if (lock) return <div className={styles.screen}><div className={styles.empty}>
+    <h1>{t('match.sideboard.title')}</h1>
+    <MatchScore tableId={construct.tableId} />
+    <InputLockNotice lock={lock} onLeave={() => navigate('/')} />
+  </div></div>;
+  return <Builder construct={construct} />;
 }
 
 function Builder({ construct }: { construct: ConstructState }) {

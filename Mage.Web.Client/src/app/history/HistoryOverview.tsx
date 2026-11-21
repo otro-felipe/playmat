@@ -1,9 +1,11 @@
+import { displayArchetype } from '../decks/displayArchetype';
+import { Percentage } from './Percentage';
 import { ArrowUpRight } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Button } from '../ui/Button';
 import { useT } from '../i18n';
-import { analysisSearch, sample, rate, type Performance } from './performance';
+import { analysisSearch, sample, type Performance } from './performance';
 import styles from './DeckAnalysis.module.css';
 
 export function HistoryOverview({ data, format }: { data: Performance; format: string }) {
@@ -25,8 +27,8 @@ export function HistoryOverview({ data, format }: { data: Performance; format: s
         className={styles.card} state={{ historySearch: location.search }}
         to={'/history/analysis?' + analysisSearch(group).toString()}>
         <span className={styles.eyebrow}>{group.format === 'Unknown' ? t('history.unreported') : group.format}</span>
-        <strong className={styles.cardTitle}>{group.archetype || t('perf.unclassified')}</strong>
-        <span className={styles.cardRate}>{rate(group.matches.wins, group.matches.total)}</span>
+        <strong className={styles.cardTitle}>{displayArchetype(t, group.archetype)}</strong>
+        <span className={styles.cardRate}><Percentage count={group.matches.wins} total={group.matches.total} /></span>
         <small>{t('perf.matchSample', { sample: sample(group.matches.wins, group.matches.total) })}</small>
         <ArrowUpRight size={18} aria-hidden="true" />
       </Link>)}

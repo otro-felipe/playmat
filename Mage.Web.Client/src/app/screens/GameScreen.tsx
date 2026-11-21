@@ -1,3 +1,4 @@
+import { MatchHumanSeat, useEnabledHumanSeat } from '../ui/humanSeat';
 import { useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useStore } from 'zustand';
@@ -57,6 +58,7 @@ export function GameScreen() {
 function ConnectedStage({ gameId, leaveLabel, onLeave }: { gameId: string; leaveLabel: string; onLeave(): void }) {
   const session = useGames((state) => state.sessions[gameId])!;
   const tableId = useGames((state) => state.tables[gameId]?.tableId);
+  const enabledHuman = useEnabledHumanSeat(tableId);
   const { data: invite } = usePlaytestingInvitation(tableId);
   const seatDisplayNames = useMemo(() => invite?.mode === 'mcp' && invite.guestEngineName && invite.guestOwnerName
     ? { [invite.guestEngineName]: invite.guestOwnerName } : undefined, [invite]);
@@ -66,18 +68,18 @@ function ConnectedStage({ gameId, leaveLabel, onLeave }: { gameId: string; leave
   const serverUrl = useSession((session) => session.serverUrl);
   const loginCount = useSession((session) => session.loginCount);
   const offline = connection !== 'open';
-  useMatchSiteTools(session, !offline && phase === 'signedIn' && isSiteToolOrigin(serverUrl), {
+  useMatchSiteTools(session, !state.browserInputLock && !offline && phase === 'signedIn' && isSiteToolOrigin(serverUrl), {
     key: `${gameId}:${state.playerId}:${loginCount}`,
     isCurrent() {
       const current = useSession.getState();
-      return current.connection === 'open' && current.phase === 'signedIn'
+      return !session.getState().browserInputLock && current.connection === 'open' && current.phase === 'signedIn'
         && current.loginCount === loginCount && current.serverUrl === serverUrl
         && useGames.getState().sessions[gameId] === session;
     },
   });
   return (
     <>
-      <MatchStage session={session} state={state} seatDisplayNames={seatDisplayNames} />
+      <MatchHumanSeat.Provider value={enabledHuman}><MatchStage session={session} state={state} seatDisplayNames={seatDisplayNames} onLeave={state.browserInputLock ? onLeave : undefined} leaveLabel={leaveLabel} /></MatchHumanSeat.Provider>
       {(offline || state.resyncing) && !state.gameOver && state.mode !== 'replay' && (
         <ReconnectScrim offline={offline} onLeave={onLeave} leaveLabel={leaveLabel} />
       )}

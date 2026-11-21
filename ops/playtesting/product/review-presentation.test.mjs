@@ -300,3 +300,21 @@ test('[PM-REVIEW-CAPTURE-5] announcement choices attach to the exact committed a
   assert.equal(publicPage.events[0].hasDecisionContext, true)
   assert.equal(publicPage.events[0].decisions, undefined)
 })
+
+
+test('[PM-LINE-REPLAY-1] a frame groups both agents’ explanations according to the authorized perspective', async () => {
+  const { read, alice, bob } = fixture(({ alice, bob, frame }) => ({
+    rows: [frame(),
+      { kind: 'line', commandId: 'a', actorPlayerId: alice.playerId, reasoning: 'Hold removal.' },
+      { kind: 'line', commandId: 'a', actorPlayerId: bob.playerId, reasoning: 'Attack before casting.' }, frame(), frame({ turn: 3 })],
+  }))
+  const notes = async query => (await read({ ...query, purpose: 'replay' })).events[0].lines
+  const own = { commandId: 'a', actor: alice.name, seatId: alice.seatId, cursor: 1, reasoning: 'Hold removal.' }
+  const rival = { commandId: 'a', actor: bob.name, seatId: bob.seatId, cursor: 2, reasoning: 'Attack before casting.' }
+  assert.deepEqual(await notes({ scope: 'seat' }), [own])
+  assert.deepEqual(await notes({ scope: 'full' }), [own, rival])
+  assert.equal(await notes({ scope: 'public' }), undefined)
+  const frames = (await read({ scope: 'full', purpose: 'replay' })).events
+  assert.deepEqual(frames[1].lines, [own, rival], 'the follow-up board still shows the last explained line')
+  assert.equal(frames[2].lines, undefined, 'an unexplained later turn does not inherit an earlier plan')
+})

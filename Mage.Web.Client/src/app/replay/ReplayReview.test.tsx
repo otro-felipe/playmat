@@ -229,7 +229,8 @@ test('[PM-REVIEW-UI-4] a timeline marker opens the recorded stack and shows the 
 
   fireEvent.click(screen.getByRole('switch', { name: 'Show analysis' }));
   expect(await screen.findByRole('heading', { name: /Alice casts Burst Lightning targeting Sheoldred/ })).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Burst Lightning, show card' })).toBeTruthy();
+  const noteTitle = screen.getByRole('article').querySelector('h3')!;
+  expect(within(noteTitle).getByRole('button', { name: 'Burst Lightning, show card' })).toBeTruthy();
 });
 
 
@@ -475,4 +476,40 @@ test('[PM-REVIEW-UI-6] a forced choice names the chooser and affected seat and p
   const choices = await screen.findByRole('region', { name: 'Discard choices' });
   expect(within(choices).getByRole('button', { name: 'Duress, show card' })).toBeTruthy();
   expect(within(choices).getByRole('button', { name: 'Lightning Strike, show card' }).closest('li')?.textContent).toContain('Selected');
+});
+
+test('[PM-REVIEW-UI-8] annotation card links select a face and legacy names retain previews', async () => {
+  const previous = request.getMockImplementation()!;
+  request.mockImplementation((path, options) => path.includes('/annotations')
+    ? json({ annotations: [{ ...annotation, rationale: 'Usa [la tierra](card://Bala%20Ged%20Recovery:back), luego Sheoldred.',
+      benefit: 'No tocar [inválida](card://%zz) ni [web](javascript:alert).' }], next: null })
+    : path.includes('scryfall-links') ? json({ cards: {}, tokens: {} }) : previous(path, options));
+  openReplay('/replay/game?cursor=3');
+  fireEvent.click(await screen.findByRole('switch', { name: 'Show analysis' }));
+  const detail = await screen.findByRole('article');
+  const card = await within(detail).findByRole('button', { name: /la tierra/ });
+  expect(within(card.closest('p')!).getByRole('button', { name: /Sheoldred/ })).toBeTruthy();
+  fireEvent.click(card);
+  await waitFor(() => expect(document.body.querySelector('img[src*="face=back"]')?.getAttribute('src')).toContain('Bala+Ged+Recovery'));
+  expect(card.getAttribute('aria-expanded')).toBe('true');
+  fireEvent.keyDown(document, { key: 'Escape' });
+  await waitFor(() => expect(card.getAttribute('aria-expanded')).toBe('false'));
+  expect(detail.textContent).toContain('[inválida](card://%zz)');
+  expect(detail.querySelector('a[href^="javascript:"]')).toBeNull();
+  expect(screen.getByTestId('turn').textContent).toBe('7');
+});
+
+
+test('[PM-LINE-REPLAY-1] the viewer can hide an agent explanation independently of the analysis panel', async () => {
+  const original = request.getMockImplementation()!;
+  request.mockImplementation((path, options) => path.includes('/evidence?') && path.includes('scope=full')
+    ? json({ next: null, events: [{ cursor: 0, view, lines: [{ cursor: 1, commandId: 'a', actor: 'Alice', seatId: 'alice-seat', reasoning: 'Keep mana available.' }] }] })
+    : original(path, options));
+  openReplay();
+  expect(await screen.findByText('Keep mana available.')).toBeTruthy();
+  const toggle = screen.getByRole('switch', { name: 'Line explanations' });
+  fireEvent.click(toggle);
+  expect(screen.queryByText('Keep mana available.')).toBeNull();
+  fireEvent.click(toggle);
+  expect(screen.getByText('Keep mana available.')).toBeTruthy();
 });

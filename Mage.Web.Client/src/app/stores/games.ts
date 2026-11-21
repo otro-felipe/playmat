@@ -1,3 +1,7 @@
+import { QueryObserver } from '@tanstack/react-query';
+import { PRIVATE_PLAYTESTING } from '../playtesting';
+import { queryClient } from '../queries';
+import { humanSeatQuery, inputLockFor } from '../ui/humanSeat';
 import { create } from 'zustand';
 import { api, events, rpc } from '../connection';
 import { GameSession, type GameSessionMode } from '../../core/game/gameSession';
@@ -75,7 +79,7 @@ function watchForAttention(session: GameSession): () => void {
     if (!prompt || state.mode !== 'play' || state.gameOver) return;
     timer = setTimeout(() => {
       const now = session.getState();
-      if (now.prompt !== prompt || now.awaitingServer || now.gameOver) return;
+      if (now.browserInputLock || now.prompt !== prompt || now.awaitingServer || now.gameOver) return;
       const myTurn = !!now.playerId && now.view?.activePlayerId === now.playerId;
       attention(myTurn ? 'Your turn' : 'Your move', stripMarkup(prompt.text) || 'The game is waiting for you.', { kind: 'turn', tag: `game:${now.gameId}` });
     }, ATTENTION_DELAY_MS);
@@ -93,22 +97,47 @@ export const useGames = create<GamesState>((set, get) => ({
 
   open(gameId, playerId, mode, table) {
     const existing = get().sessions[gameId];
-    if (existing) return existing;
-    const session = new GameSession(api, events, { gameId, playerId, mode });
+    if (existing) {
+      if (table?.tableId && !get().tables[gameId]?.tableId) {
+        set((state) => ({ tables: { ...state.tables, [gameId]: table } }));
+        const { serverUrl, userName } = useSession.getState();
+        const record = openGameRecord(serverUrl, userName, gameId);
+        if (record) rememberOpenGame(serverUrl, userName, { ...record, ...table });
+      }
+      return existing;
+    }
+    const { serverUrl, userName } = useSession.getState();
+    const remembered = openGameRecord(serverUrl, userName, gameId);
+    const tableId = table?.tableId ?? remembered?.tableId ?? null;
+    const verifySeat = PRIVATE_PLAYTESTING && mode === 'play';
+    const session = new GameSession(api, events, { gameId, playerId, mode }, { browserInputLock: verifySeat ? 'pending' : null });
     const stops: (() => void)[] = [];
+    if (verifySeat) {
+      const account = () => useSession.getState().phase === 'signedIn' ? useSession.getState().userName : '';
+      const observer = new QueryObserver(queryClient, humanSeatQuery(account(), tableId));
+      const sync = () => session.store.setState({ browserInputLock: inputLockFor(account(), observer.getCurrentResult()) });
+      const refresh = () => {
+        observer.setOptions(humanSeatQuery(account(), get().tables[gameId]?.tableId ?? tableId));
+        sync();
+      };
+      stops.push(observer.subscribe(sync), useGames.subscribe((next, prev) => {
+        if (next.tables[gameId]?.tableId !== prev.tables[gameId]?.tableId) refresh();
+      }), useSession.subscribe((next, prev) => {
+        if (next.phase !== prev.phase || next.userName !== prev.userName) refresh();
+      }));
+      sync();
+    }
     if (mode === 'play') stops.push(watchForAttention(session));
     // remembered so a reload can rejoin it (replays are not worth it), until it ends: a reload then has nothing to rejoin
-    const { serverUrl, userName } = useSession.getState();
     let leadsBack: string | null | undefined;
     if (mode !== 'replay') {
       // where leaving it goes (a Career match leads back to Career) only lives in memory: it's kept with the record, and
       // a game rejoined after a reload takes it back up, rather than leading home
-      const remembered = openGameRecord(serverUrl, userName, gameId);
       const current = returnPathFor(table ?? null, get().tables);
       const returnPath = mode === 'play' ? current ?? remembered?.returnPath ?? null : null;
       if (mode === 'play') leadsBack = returnPath;
       rememberOpenGame(serverUrl, userName, {
-        gameId, playerId, mode, tableId: table?.tableId ?? null, parentTableId: table?.parentTableId ?? null, openedAt: Date.now(), returnPath,
+        gameId, playerId, mode, tableId, parentTableId: table?.parentTableId ?? null, openedAt: Date.now(), returnPath,
       });
       const unsubscribe = session.store.subscribe((state) => {
         if (!state.gameOver) return;
@@ -120,7 +149,7 @@ export const useGames = create<GamesState>((set, get) => ({
     stopWatching.set(gameId, () => stops.forEach((stop) => stop()));
     set((state) => ({
       sessions: { ...state.sessions, [gameId]: session },
-      tables: table ? { ...state.tables, [gameId]: table } : state.tables,
+      tables: table ? { ...state.tables, [gameId]: { ...table, tableId } } : state.tables,
       latestGameId: gameId,
     }));
     // a way back left over from an earlier match (a Gauntlet game, then a game against a friend) doesn't lead this one
@@ -130,6 +159,11 @@ export const useGames = create<GamesState>((set, get) => ({
 
   close(gameId) {
     const session = get().sessions[gameId];
+    if (session?.getState().browserInputLock) {
+      if (session.getState().gameOver) get().forget(gameId);
+      else if (get().latestGameId === gameId) set({ latestGameId: null });
+      return;
+    }
     if (session) {
       const { mode, gameOver, endInfo } = session.getState();
       if (gameOver && mode === 'play') useCoach.getState().gamePlayed();

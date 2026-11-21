@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 const mimeType = 'text/markdown';
 const readGuide = (name) => readFileSync(new URL(`../guides/${name}.md`, import.meta.url), 'utf8').trimEnd();
+const glossary = readGuide('glossary');
 const matchupStrategy = readGuide('matchup-strategy');
 const usesMatchupStrategy = new Set(['card-catalog', 'replay-analysis']);
 const guides = [
@@ -30,7 +31,8 @@ const guides = [
 ].map(({ name, ...metadata }) => ({
   name, ...metadata, mimeType,
   uri: `playmat://guides/${name}`,
-  text: usesMatchupStrategy.has(name) ? `${readGuide(name)}\n\n${matchupStrategy}\n` : `${readGuide(name)}\n`,
+  text: [readGuide(name), ...(['getting-started', 'replay-analysis'].includes(name) ? [glossary] : []),
+    ...(usesMatchupStrategy.has(name) ? [matchupStrategy] : [])].join('\n\n') + '\n',
 }));
 const GuideId = z.enum(guides.map(({ name }) => name));
 const guideList = guides.map(({ text, ...guide }) => guide);

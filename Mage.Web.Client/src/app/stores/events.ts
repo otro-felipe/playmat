@@ -1,3 +1,7 @@
+import { humanSeatQuery, inputLockFor } from '../ui/humanSeat';
+import { PRIVATE_PLAYTESTING } from '../playtesting';
+import { queryClient } from '../queries';
+import { useSession } from './session';
 import { create } from 'zustand';
 import type { DeckView, DraftPickView, DraftView, SimpleCardView, TournamentView } from '../../protocol/generated/views';
 import { api, events } from '../connection';
@@ -97,6 +101,11 @@ export const useEvents = create<EventsState>((set, get) => ({
   async submit(deck) {
     const construct = get().construct;
     if (!construct) return false;
+    if (PRIVATE_PLAYTESTING && construct.kind === 'sideboard') {
+      const account = useSession.getState().userName;
+      const seat = queryClient.getQueryState(humanSeatQuery(account, construct.tableId).queryKey);
+      if (inputLockFor(account, seat ?? { status: 'pending' })) return false;
+    }
     try {
       // a refused deck comes back false; the server explains why in a user message
       // the built deck's pictures download while the other players finish building

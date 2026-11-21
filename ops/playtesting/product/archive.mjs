@@ -1,3 +1,4 @@
+import { seatArchetype } from './archived-archetypes.mjs'
 import { createPerformance, historyFormatFilter } from './performance.mjs'
 import { createHash } from 'node:crypto'
 import { readdir, readFile, rename, stat, unlink } from 'node:fs/promises'
@@ -121,19 +122,25 @@ async function recordMetadata(pool, info, status, recovering = false) {
     for (const player of info.players) {
       const seat = normalize(player.name)
       if (info.gameNumber === 1 && player.human) await registerSelectedDeck(db, info.tableId, seat, player.deck)
+      const label = await seatArchetype(db, info.tableId, seat, info.format ?? info.engineFormat, player.deck, info.matchId)
       const runtime = seat === invitation?.creator_key ? [invitation.creator_model, invitation.creator_effort]
         : seat === invitation?.invitee_key ? [invitation.guest_model, invitation.guest_effort] : [null, null]
       await db.query(
-        `INSERT INTO game_players(game_id,engine_key,engine_name,human,deck_snapshot,mulligans,deck_signature,player_id,model,reasoning_effort)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(game_id,engine_key)
+        `INSERT INTO game_players(game_id,engine_key,engine_name,human,deck_snapshot,mulligans,deck_signature,player_id,model,reasoning_effort,archetype)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(game_id,engine_key)
          DO UPDATE SET mulligans=COALESCE(EXCLUDED.mulligans,game_players.mulligans),
                        deck_snapshot=COALESCE(game_players.deck_snapshot,EXCLUDED.deck_snapshot),
                        deck_signature=COALESCE(game_players.deck_signature,EXCLUDED.deck_signature),
                        player_id=COALESCE(game_players.player_id,EXCLUDED.player_id),
                        model=COALESCE(game_players.model,EXCLUDED.model),
+                       archetype=COALESCE(game_players.archetype,EXCLUDED.archetype),
                        reasoning_effort=COALESCE(game_players.reasoning_effort,EXCLUDED.reasoning_effort)`,
-        [info.gameId, seat, player.name, player.human, player.deck, player.mulligans, deckSignature(player.deck), player.playerId, ...runtime],
+        [info.gameId, seat, player.name, player.human, player.deck, player.mulligans, deckSignature(player.deck), player.playerId, ...runtime, label],
       )
+      // A recovered spool may archive game two before the opening registration.
+      if (info.gameNumber === 1 && label) await db.query(`UPDATE game_players p SET archetype=$3
+        FROM games g WHERE g.id=p.game_id AND g.match_id=$1 AND g.game_number>1
+        AND p.engine_key=$2 AND p.archetype IS DISTINCT FROM $3`, [info.matchId, seat, label])
     }
     return true
   })
@@ -197,15 +204,20 @@ function gameView(row) {
 
 const selectGame = `
   SELECT g.*, m.table_id, m.name, m.format, m.engine_format, m.status AS match_status,
-    (SELECT json_agg(json_build_object('name',p.engine_name,'human',p.human,'displayName',COALESCE(a.username,p.engine_name),
-        'isMcp',a.id IS NOT NULL,'model',p.model,'reasoningEffort',p.reasoning_effort) ORDER BY p.engine_name)
+    (SELECT json_agg(jsonb_build_object('name',p.engine_name,'human',p.human,'displayName',COALESCE(a.username,p.engine_name),
+        'isMcp',a.id IS NOT NULL,'model',p.model,'reasoningEffort',p.reasoning_effort)
+        || CASE WHEN p.engine_key=delegated_owner.username_key THEN '{"humanMcpAllowed":true}'::jsonb ELSE '{}'::jsonb END
+        || CASE WHEN m.status='completed' AND p.archetype IS NOT NULL THEN jsonb_build_object('archetype',p.archetype)
+                ELSE '{}'::jsonb END ORDER BY p.engine_name)
        FROM game_players p LEFT JOIN agent_grants seat ON p.human AND seat.engine_key=p.engine_key
        LEFT JOIN accounts a ON a.id=seat.account_id WHERE p.game_id=g.id) AS players,
     (SELECT p.engine_key FROM game_players p WHERE p.game_id=g.id AND p.engine_key=ANY($1::text[])
        ORDER BY array_position($1::text[],p.engine_key) LIMIT 1) AS viewer,
     (SELECT p.mulligans FROM game_players p WHERE p.game_id=g.id AND p.engine_key=ANY($1::text[])
        ORDER BY array_position($1::text[],p.engine_key) LIMIT 1) AS own_mulligans
-  FROM games g JOIN matches m ON m.id=g.match_id`
+  FROM games g JOIN matches m ON m.id=g.match_id
+  LEFT JOIN human_match_seats hs ON hs.table_id=m.table_id AND hs.allowed
+  LEFT JOIN accounts delegated_owner ON delegated_owner.id=hs.account_id`
 
 function cursorFrom(row) {
   return Buffer.from(JSON.stringify([row.started_at, row.id])).toString('base64url')

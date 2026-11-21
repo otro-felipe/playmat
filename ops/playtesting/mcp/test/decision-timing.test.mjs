@@ -122,7 +122,9 @@ test('a null match clock keeps a pending choice and warning visible after a wait
   assert.equal(answered.submitted, true);
   assert.equal(actions.length, 1);
   assert.equal(actions[0].method, 'sendPlayerBoolean');
-  assert.equal(actions[0].params.at(-1), 2);
+  const [, , , expectedPrompt, line] = actions[0].params;
+  assert.equal(expectedPrompt, 2);
+  assert.equal(line, null); // A standalone answer is not part of a planned line.
   await emit('GAME_OVER', { gameView: view(0), message: 'Fixture finished' });
   const finished = await call('get_game_state', { gameId });
   assert.equal(finished.decision, null);

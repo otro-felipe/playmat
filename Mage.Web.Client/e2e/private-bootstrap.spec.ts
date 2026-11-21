@@ -45,9 +45,9 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
       expect(preferences).toEqual(preferences.map(() => ({ automatic: true, restricted: true })));
       expect(starters).toEqual([]);
       expect(await page.evaluate(() => (window as unknown as { engineFormSeen: boolean }).engineFormSeen)).toBe(false);
-      await page.getByRole('button', { name: 'Rival IA · MCP', exact: true }).click();
+      await page.getByRole('button', { name: 'Jugador MCP', exact: true }).click();
       await expect(page.getByText(/Todavía no hay mazos del rival MCP/)).toBeVisible();
-      await expect(page.getByRole('button', { name: 'Rival IA · MCP', exact: true }).locator('span')).toHaveCSS('color', 'rgb(33, 18, 14)');
+      await expect(page.getByRole('button', { name: 'Jugador MCP', exact: true }).locator('span')).toHaveCSS('color', 'rgb(33, 18, 14)');
       await page.evaluate(async () => { await document.fonts.ready; });
       await page.screenshot({ path: test.info().outputPath(`private-app-${viewport.width}.png`) });
     });

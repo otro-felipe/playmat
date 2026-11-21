@@ -204,12 +204,12 @@ Generated from the server's method registry (`mage.server.websocket.api`). Do no
 | `replayPage` | `gameId: UUID`, `start: number`, `count: number` | `ReplayPage \| null` | session | Events of a recorded game, in order: board snapshots ({t, view, myHand?}) and game log lines ({t, log}). At most 200 per page; myHand is the caller's own hand in games they played. Null when there is no such replay. |
 | `gameWatchers` | `gameId: UUID` | `string[]` | session | Names of the users spectating a running game (empty when the game is over or unknown). |
 | `gameWatchStop` | `gameId: UUID`, `sessionId: string` | `boolean` | session | Stop spectating a game. |
-| `sendPlayerUUID` | `gameId: UUID`, `sessionId: string`, `data?: UUID`, `expectedPrompt?: number` | `boolean` | session | Answer a prompt with an object or player id (targets, choices, attackers, blockers). |
-| `sendPlayerString` | `gameId: UUID`, `sessionId: string`, `data: string`, `expectedPrompt?: number` | `boolean` | session | Answer a prompt with text (choices, "special" mana payment). |
-| `sendPlayerBoolean` | `gameId: UUID`, `sessionId: string`, `data: boolean`, `expectedPrompt?: number` | `boolean` | session | Answer a yes/no prompt, pass priority (false) or cancel mana payment (any value). |
-| `sendPlayerInteger` | `gameId: UUID`, `sessionId: string`, `data: number`, `expectedPrompt?: number` | `boolean` | session | Answer an amount prompt. |
-| `sendPlayerManaType` | `gameId: UUID`, `playerId: UUID`, `sessionId: string`, `manaType: ManaType`, `expectedPrompt?: number` | `boolean` | session | Pay from the mana pool with one mana type. |
-| `sendPlayerAction` | `action: PlayerAction`, `gameId: UUID`, `sessionId: string`, `data?: unknown` | `boolean` | session | Send a player action: pass modes (F-keys), concede, undo, rollback, auto-answer and trigger-order settings. |
+| `sendPlayerUUID` | `gameId: UUID`, `sessionId: string`, `data?: UUID`, `expectedPrompt?: number`, `line?: unknown` | `boolean` | session | Answer a prompt with an object or player id (targets, choices, attackers, blockers). |
+| `sendPlayerString` | `gameId: UUID`, `sessionId: string`, `data: string`, `expectedPrompt?: number`, `line?: unknown` | `boolean` | session | Answer a prompt with text (choices, "special" mana payment). |
+| `sendPlayerBoolean` | `gameId: UUID`, `sessionId: string`, `data: boolean`, `expectedPrompt?: number`, `line?: unknown` | `boolean` | session | Answer a yes/no prompt, pass priority (false) or cancel mana payment (any value). |
+| `sendPlayerInteger` | `gameId: UUID`, `sessionId: string`, `data: number`, `expectedPrompt?: number`, `line?: unknown` | `boolean` | session | Answer an amount prompt. |
+| `sendPlayerManaType` | `gameId: UUID`, `playerId: UUID`, `sessionId: string`, `manaType: ManaType`, `expectedPrompt?: number`, `line?: unknown` | `boolean` | session | Pay from the mana pool with one mana type. |
+| `sendPlayerAction` | `action: PlayerAction`, `gameId: UUID`, `sessionId: string`, `data?: unknown`, `line?: unknown` | `boolean` | session | Send a player action: pass modes (F-keys), concede, undo, rollback, auto-answer and trigger-order settings. |
 | `cheatShow` | `gameId: UUID`, `sessionId: string`, `playerId: UUID` | `boolean` | session | Test mode only: reveal a player's library. |
 | `gamePractice` | `gameId: UUID`, `sessionId: string`, `tool: string`, `cardName?: string`, `amount?: number` | `boolean` | session | Practice tools in a game against the AI only: tool HAND or BATTLEFIELD (cardName, amount cards), DRAW (amount), UNTAP_ALL, LIFE (amount). Runs the next time you are asked something; announced in the game log. |
 | `replayInit` | `gameId: UUID`, `sessionId: string` | `boolean` | session | Open a saved game for replay. |

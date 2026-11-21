@@ -1,0 +1,24 @@
+.cardName {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.15em;
+  cursor: zoom-in;
+}
+
+.cardName:focus-visible {
+  outline: 2px solid var(--decision);
+  outline-offset: 2px;
+}
+
+.preview {
+  z-index: calc(var(--z-dialog) + 2);
+  width: min(220px, 60vw);
+  max-width: calc(var(--radix-tooltip-content-available-height) * 0.71);
+}

@@ -1,3 +1,4 @@
+import { displayArchetype } from '../decks/displayArchetype';
 import { ArrowDownRight, ArrowUpRight, ChevronRight, Clapperboard, Minus } from 'lucide-react';
 import { Fragment, useId, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -20,7 +21,7 @@ export function PracticeMatchRow({ match, account, selected, onSelect }: RowProp
   const t = useT();
   const [open, setOpen] = useState(false);
   const detailId = useId();
-  const { rivals, result, score } = matchPerspective(match, account);
+  const { viewer, rivals, result, score } = matchPerspective(match, account);
   const shortDate = match.startedAt ? formatDate(match.startedAt, { day: 'numeric', month: 'short' }) : '—';
   const fullDate = match.startedAt ? formatDate(match.startedAt, { dateStyle: 'medium', timeStyle: 'short' }) : '—';
   const Icon = result === 'win' ? ArrowUpRight : result === 'loss' ? ArrowDownRight : Minus;
@@ -31,7 +32,10 @@ export function PracticeMatchRow({ match, account, selected, onSelect }: RowProp
         {rivals.length ? rivals.map((rival, index) => <Fragment key={rival.name}>
           {index > 0 && ', '}<PlayerLabel {...rival} />
         </Fragment>) : match.name}
+        {rivals.some(rival => rival.archetype) && <small>{rivals.filter(rival => rival.archetype).map(rival => displayArchetype(t, rival.archetype)).join(', ')}</small>}
+        <small className={styles.mobileArchetype}>{t('history.yourArchetype')} · {displayArchetype(t, viewer?.archetype)}</small>
       </span>
+      <span className={styles.archetype}>{displayArchetype(t, viewer?.archetype)}</span>
       <span className={styles.format}>{match.format === 'Unknown' ? t('history.unreported') : match.format}</span>
       <span className={styles.outcome} data-outcome={result}><Icon size={15} aria-hidden="true" />{t(`history.${result}`)}</span>
       <strong className={styles.score}>{score}</strong>

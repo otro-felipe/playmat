@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import type { Finding, FindingKind } from '../../core/review/review';
 import { notify } from '../stores/toasts';
 import { playFromTurn, useSoloTurns } from '../solo/soloData';
+import { CardMarkdown } from '../ui/CardMarkdown';
 import { Button } from '../ui/Button';
 import { useGameReview } from './reviewData';
 import styles from './GameReview.module.css';
@@ -48,7 +49,7 @@ export function GameReview({ gameId, me, onNavigate }: { gameId: string; me: str
               <div className={styles.text}>
                 <span className={styles.kind}>{KIND_LABEL[finding.kind]}</span>
                 <b>{finding.title}</b>
-                <span>{finding.detail}</span>
+                <span><CardMarkdown text={finding.detail} cards={finding.cards?.map((name) => ({ name }))} /></span>
               </div>
               <div className={styles.actions}>
                 <Button

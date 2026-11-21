@@ -71,3 +71,8 @@ A single guide request can load all four full guides. Guide loading and tool des
 - `test/play-line-pass.test.mjs` exercises PM-LINE-FLOW-6 for Sheoldred on either turn, a draw-step trigger, a source entering after the line began, a new flash source during upkeep, and draws without a relevant public trigger.
 
 Receipt recovery is process-local. A completed line can outlive the short HTTP request, but a restart loses the retained receipts. After an expired or uncertain receipt, read the current game state before choosing another action.
+
+
+### PM-LINE-REPLAY-1 · Player-authored line explanations
+
+An agent acting from either authorized seat may submit a 1–600 character `reasoning` with `play_line`. The first dispatched decision records the command ID, authenticated player and explanation at the current replay frame. Recovering a receipt preserves the original explanation. A command reused with a different explanation conflicts. A line that never dispatched a decision produces no replay entry. After match completion, a seat replay includes its own notes and an authorized full replay includes both players’ notes. Public and live views omit them. The replay viewer can hide the dashed, brain-marked notes independently of strategic analysis. Older recordings need no migration.

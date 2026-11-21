@@ -18,6 +18,7 @@ export interface ChatPanelProps {
   names?: readonly string[];
   lines: readonly ChatLine[];
   ready: boolean;
+  readOnly?: boolean;
   onSend(text: string): Promise<void> | void;
   /** accessible name of the chat ("Lobby chat") */
   label: string;
@@ -35,7 +36,7 @@ export interface ChatPanelProps {
 let localSeq = 0;
 
 /** A chat: lines, whispers, links to invites, and a box that understands /help, /w, /ignore and /friend. */
-export function ChatPanel({ names = [], lines, ready, onSend, label, placeholder, empty, incoming, onIncomingTaken, onLocal, className }: ChatPanelProps) {
+export function ChatPanel({ names = [], lines, ready, readOnly = false, onSend, label, placeholder, empty, incoming, onIncomingTaken, onLocal, className }: ChatPanelProps) {
   const ignored = useSocial((state) => state.ignored);
   const myName = useSession((state) => state.userName);
   const [draft, setDraft] = useState('');
@@ -135,9 +136,9 @@ export function ChatPanel({ names = [], lines, ready, onSend, label, placeholder
     <section className={[styles.chat, className ?? ''].join(' ')} aria-label={label}>
       <ol ref={list} className={styles.lines} aria-live="polite">
         {visible.length === 0 && <li className={styles.empty}>{empty ?? 'No messages yet. Type /help for commands.'}</li>}
-        {visible.map((line) => <Line key={line.key} line={line} me={myName} onWhisper={startWhisper} />)}
+        {visible.map((line) => <Line key={line.key} line={line} me={myName} onWhisper={readOnly ? undefined : startWhisper} />)}
       </ol>
-      <form
+      {!readOnly && <form
         className={styles.form}
         onSubmit={(event) => {
           event.preventDefault();
@@ -156,12 +157,12 @@ export function ChatPanel({ names = [], lines, ready, onSend, label, placeholder
           maxLength={400}
         />
         <IconButton label="Send" icon={<Send size={16} />} type="submit" disabled={!ready || !draft.trim()} />
-      </form>
+      </form>}
     </section>
   );
 }
 
-function Line({ line, me, onWhisper }: { line: ChatLine; me: string; onWhisper(name: string): void }) {
+function Line({ line, me, onWhisper }: { line: ChatLine; me: string; onWhisper?(name: string): void }) {
   const kindClass = styles[line.kind] ?? '';
   const time = new Date(line.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   if (line.kind === 'info' || line.kind === 'status' || line.kind === 'game') {
@@ -179,7 +180,7 @@ function Line({ line, me, onWhisper }: { line: ChatLine; me: string; onWhisper(n
     <li className={[styles.line, kindClass, line.who === me ? styles.mine : ''].join(' ')}>
       <time className={styles.time} dateTime={new Date(line.at).toISOString()}>{time}</time>
       {prefix && <span className={styles.whisperTag}>{prefix}</span>}
-      {other && other !== me
+      {onWhisper && other && other !== me
         ? <button type="button" className={styles.who} onClick={() => onWhisper(other)} title={`Whisper to ${playerLabelText(other)}`}><PlayerLabel name={other} /></button>
         : <span className={styles.who}><PlayerLabel name={other || 'You'} /></span>}
       <Flair name={other || me} />

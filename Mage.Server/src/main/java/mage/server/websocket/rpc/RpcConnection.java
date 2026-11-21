@@ -37,6 +37,9 @@ public interface RpcConnection {
         return null;
     }
 
+    /** Table selected by the authenticated internal human-seat transport. */
+    default String getHumanTable() { return null; }
+
     default boolean isCanonicalAgent() { return false; }
 
     default mage.server.recovery.RecoveryPrincipal getRecoveryPrincipal() { return null; }
@@ -55,6 +58,15 @@ public interface RpcConnection {
      * The player answered the open question of a game (see {@link #resendPrompt}).
      */
     default void promptAnswered(UUID gameId) {
+    }
+
+    /** Reopen an already joined shared game on this socket without disturbing the other transport. */
+    default boolean rejoinSharedGame(UUID gameId) { return false; }
+
+    /** Existing browser clients answer the most recently delivered prompt without a message ID. */
+    default boolean takeCurrentPrompt(UUID gameId) {
+        promptAnswered(gameId);
+        return true;
     }
 
     /** Atomically takes an open question if its message ID still matches. */

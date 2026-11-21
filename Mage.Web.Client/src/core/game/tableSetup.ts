@@ -109,6 +109,7 @@ export function matchOptions(input: {
   deckType: string;
   winsNeeded: number;
   playerTypes: string[];
+  humanMcpAllowed?: boolean;
   password?: string;
   advanced?: Partial<TableAdvanced>;
   /** players kept off the table and out of its games */
@@ -135,6 +136,7 @@ export function matchOptions(input: {
     minimumRating: advanced.minimumRating,
     planeChase: advanced.planeChase,
   };
+  if (input.humanMcpAllowed !== undefined) options.humanMcpAllowed = input.humanMcpAllowed;
   if (input.bannedUsers?.length) options.bannedUsers = input.bannedUsers;
   if (multiplayer) {
     options.attackOption = advanced.attackOption;

@@ -174,7 +174,7 @@ public final class RustHost {
             List<UUID> playerIds = new ArrayList<>();
             for (Map.Entry<UUID, UUID> e : userPlayerMap.entrySet()) {
                 Optional<User> user = managers.userManager().getUser(e.getKey());
-                if (!user.isPresent() || (line == null && !forUser(user.get()))) {
+                if (!user.isPresent() || (line == null && !forUser(user.get())) || !user.get().browserMayPlay(tableId)) {
                     return false;
                 }
                 users.add(user.get());

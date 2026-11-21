@@ -55,6 +55,21 @@ export function createProductClient(baseUrl, publicUrl) {
       case 'list_deck_archetypes':
         path = `${root}/deck-archetypes?format=${encode(args.format)}`;
         break;
+      case 'list_human_matches':
+        path = '/internal/human-seat/list';
+        config = { method: 'POST', body: {} };
+        break;
+      case 'human_seat_settings':
+        path = '/internal/human-seat/' + encode(args.tableId) + '/settings';
+        config = { method: 'POST', body: {} };
+        break;
+      case 'create_human_invitation':
+        path = '/internal/human-seat/' + encode(args.tableId) + '/invite';
+        config = { method: 'POST', body: args };
+        break;
+      case 'list_human_decks':
+        path = `${root}/decks?library=personal`;
+        break;
       case 'list_decks':
         path = `${root}/decks?library=agent`;
         break;
@@ -148,7 +163,7 @@ export function createProductClient(baseUrl, publicUrl) {
     if (name === 'export_matches' && typeof data.path === 'string' && data.path.startsWith('/api/playtesting/')) {
       return { ...data, ...(publicUrl ? { downloadUrl: new URL(data.path, publicUrl).href } : {}) };
     }
-    if (name === 'create_game_invite' && data.tableId === args.tableId) {
+    if (['create_game_invite', 'create_human_invitation'].includes(name) && data.tableId === args.tableId) {
       return { ...data, inviteLink: publicUrl ? new URL(`/join/${encode(args.tableId)}`, publicUrl).href : `/join/${encode(args.tableId)}` };
     }
     if (name === 'get_game_invite') return data.invite ?? data;

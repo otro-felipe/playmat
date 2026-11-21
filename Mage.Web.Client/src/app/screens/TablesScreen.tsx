@@ -1,4 +1,6 @@
+import { MatchHumanSeat, useEnabledHumanSeat, useHumanInputLock } from '../ui/humanSeat';
 import { PlayerLabel } from '../ui/PlayerLabel';
+import { Switch } from '../ui/Switch';
 import { playerLabelText } from '../ui/playerIdentity';
 import { BookOpen, Bot, Eye, Link2, Lock, MessageSquare, Plus, UserRound } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
@@ -198,12 +200,13 @@ function TableRow({ table, mcpInvite, children }: {
   mcpInvite?: PlaytestingInvitationView;
   children?: React.ReactNode;
 }) {
+  const enabledHuman = useEnabledHumanSeat(table.tableId);
   const mcpSeated = !!mcpInvite?.guestEngineName && table.seats?.some((seat) => seat.playerName === mcpInvite.guestEngineName);
   const seatStatus = mcpInvite && table.tableState === 'WAITING' ? 'Waiting for Rival MCP'
     : mcpSeated && table.tableState === 'READY_TO_START' ? 'Rival MCP ready'
       : STATE_LABEL[table.tableState ?? ''] ?? table.tableStateText;
   return (
-    <article className={styles.row}>
+    <MatchHumanSeat.Provider value={enabledHuman}><article className={styles.row}>
       <div className={styles.rowMain}>
         <h3 className={styles.tableName}>
           {table.passworded && <Lock size={14} aria-label="Password required" />}
@@ -232,7 +235,7 @@ function TableRow({ table, mcpInvite, children }: {
       </ul>
       <span className={mcpSeated && table.tableState === 'READY_TO_START' ? styles.mcpReady : styles.state} role={mcpInvite ? 'status' : undefined}>{seatStatus}</span>
       <div className={styles.rowActions}>{children}</div>
-    </article>
+    </article></MatchHumanSeat.Provider>
   );
 }
 
@@ -245,6 +248,7 @@ function MyTable({ table }: { table: TableView }) {
   // the server lists the controller first, then the other seated players: "host, guest"
   const isOwner = (table.controllerName ?? '').split(', ')[0] === userName;
   const ready = table.tableState === 'READY_TO_START';
+  const inputLock = useHumanInputLock(table.tableId);
   const { data: invitation } = usePlaytestingInvitation(table.tableId, table.tableState);
   const mcpInvite = invitation?.mode === 'mcp' ? invitation : undefined;
   async function copyInvite() {
@@ -269,29 +273,30 @@ function MyTable({ table }: { table: TableView }) {
           <IconButton label={t('mcpInvite.guide')} icon={<BookOpen size={16} />} onClick={() => navigate(`/join/${table.tableId}`)} />
         )}
         <IconButton label={chatOpen ? 'Hide table chat' : 'Table chat'} icon={<MessageSquare size={16} />} pressed={chatOpen} onClick={() => setChatOpen(!chatOpen)} />
-        {isOwner && table.tableState !== 'DUELING' && (
+        {inputLock && <span role="status">{t(`match.input.${inputLock}`)}</span>}
+        {isOwner && (table.tableState === 'WAITING' || ready) && (
           <>
-            <Button size="sm" variant="quiet" onClick={() => roomId && table.tableId && void api.tableRemove(roomId, table.tableId).finally(refreshTables)}>Close</Button>
+            {!inputLock && <Button size="sm" variant="quiet" onClick={() => roomId && table.tableId && void api.tableRemove(roomId, table.tableId).finally(refreshTables)}>Close</Button>}
             <Button size="sm" variant={ready ? 'decision' : 'print'} disabled={!ready} onClick={() => roomId && table.tableId && void api.matchStart(roomId, table.tableId)}>
               Start
             </Button>
           </>
         )}
-        {!isOwner && table.tableState === 'WAITING' && (
+        {!inputLock && !isOwner && table.tableState === 'WAITING' && (
           <Button size="sm" variant="quiet" onClick={() => roomId && table.tableId && void api.roomLeaveTableOrTournament(roomId, table.tableId).finally(refreshTables)}>Leave</Button>
         )}
       </TableRow>
-      {chatOpen && table.tableId && <TableChat tableId={table.tableId} />}
+      {chatOpen && table.tableId && <TableChat tableId={table.tableId} readOnly={!!inputLock} />}
     </>
   );
 }
 
 /** The chat of a table you sit at: talk to the others while seats fill. */
-function TableChat({ tableId }: { tableId: string }) {
+function TableChat({ tableId, readOnly }: { tableId: string; readOnly: boolean }) {
   const chat = useChatRoom(tableId, (id) => api.chatFindByTable(id));
   return (
     <div className={styles.tableChat}>
-      <ChatPanel label="Table chat" lines={chat.lines} ready={chat.ready} onSend={chat.send} empty="Say hi to the table. /help lists commands." />
+      <ChatPanel label="Table chat" lines={chat.lines} ready={chat.ready} readOnly={readOnly} onSend={chat.send} empty={readOnly ? "No messages yet." : "Say hi to the table. /help lists commands."} />
     </div>
   );
 }
@@ -316,6 +321,7 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
   const [aiSeats, setAiSeats] = useState(0);
   const [opponent, setOpponent] = useState(initialOpponent);
   const [mcpGuideOpen, setMcpGuideOpen] = useState(() => open && initialOpponent === 'mcp' && !mcpConnectionGuideHidden());
+  const [humanMcpAllowed, setHumanMcpAllowed] = useState(false);
   const [chatMode, setChatMode] = useState<McpChatMode>('quiet');
   const [password, setPassword] = useState('');
   const [guest, setGuest] = useState('');
@@ -349,6 +355,7 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
   const aiCount = PRIVATE_PLAYTESTING ? (opponent === 'ai' ? 1 : 0) : aiSeats;
 
   function closeDialog() {
+    setHumanMcpAllowed(false);
     setChatMode('quiet');
     setOpponent('friend');
     setGuest('');
@@ -374,6 +381,7 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
       const table = await api.roomCreateTable(roomId, matchOptions({
         name: name.trim() || `${userName}'s table`,
         gameType: chosenGame,
+        humanMcpAllowed: PRIVATE_PLAYTESTING ? humanMcpAllowed : undefined,
         deckType,
         // a free-for-all is one game
         winsNeeded: seatCount > 2 ? 1 : wins,
@@ -479,7 +487,7 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
             <select value={opponent} onChange={(event) => chooseOpponent(event.target.value as HostOpponent)}>
               <option value="friend">Friend</option>
               <option value="mcp">Rival MCP</option>
-              <option value="ai">XMage AI</option>
+              <option value="ai">{t('home.mode.ai')}</option>
             </select>
           </label> : <label className={styles.selectField}>
             <span>AI players</span>
@@ -511,6 +519,8 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
             <Button size="sm" variant="quiet" onClick={() => setMcpGuideOpen(true)}>{t('mcpConnection.openGuide')}</Button>
           </div>
         )}
+        {PRIVATE_PLAYTESTING && <Switch checked={humanMcpAllowed} onCheckedChange={setHumanMcpAllowed}
+          disabled={busy} label={t('home.humanMcpAllowed')} />}
         <TableAdvancedFields
           value={advanced}
           onChange={(patch) => setAdvanced((current) => ({ ...current, ...patch }))}

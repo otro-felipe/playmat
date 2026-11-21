@@ -1,6 +1,6 @@
 import catalog from './catalog.json' with { type: 'json' }
 
-const generic = ['Basic Lands Practice', 'Aggro', 'Combo', 'Control', 'Midrange', 'Ramp', 'Tempo']
+const generic = ['Empty deck', 'Basic Lands Practice', 'Aggro', 'Combo', 'Control', 'Midrange', 'Ramp', 'Tempo']
 const cache = new Map()
 const nameIndex = new Map()
 const key = text => String(text ?? '').normalize('NFKC').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
@@ -16,28 +16,83 @@ function catalogFormat(format) {
 export function archetypesFor(format) {
   const family = catalogFormat(format)
   if (!cache.has(family)) {
-    const labels = new Set([...(catalog.formats[family] ?? []), ...generic])
+    const labels = new Set([...(family === 'Freeform' ? Object.values(catalog.formats).flat() : catalog.formats[family] ?? []), ...generic])
     cache.set(family, [...labels].sort((a, b) => a.localeCompare(b, 'en')).concat('Other'))
   }
   return cache.get(family)
+}
+
+// Main-deck packages from the Pioneer MTGO Challenges documented in catalog.sources.
+// Requiring several signature cards keeps a shared staple or sideboard splash from choosing a label.
+const tournamentPackages = [
+  ['Temur Lessons', 'Gran-Gran', 'Tablet of Discovery', 'Firebending Lesson', 'Questing Druid'],
+  ['Four-Color Lessons', 'Gran-Gran', 'Tablet of Discovery', 'Firebending Lesson', 'Questing Druid', 'Jeskai Revelation'],
+  ['Rakdos Midrange', 'Bloodtithe Harvester', 'Fable of the Mirror-Breaker', 'Thoughtseize', 'Sheoldred, the Apocalypse'],
+  ['Sultai Beanstalk', 'Up the Beanstalk', 'Overlord of the Balemurk', 'Wistfulness', 'Deceit'],
+  ['Rakdos Leyline Aggro', 'Leyline of Resonance', 'Callous Sell-Sword', 'Cacophony Scamp'],
+  ['Izzet Prowess', "Stormchaser's Talent", 'Academic Dispute', 'Pompous Battlemage', 'Spirebluff Canal'],
+  ['Retraction Helix', 'Retraction Helix', 'Mox Amber', 'Rona, Herald of Invasion'],
+  ['Mono-Green Creature Toolbox', 'Fiend Artisan', 'Enduring Vitality', "Nature's Rhythm", 'Craterhoof Behemoth'],
+  ['Dimir Control', 'Drown in the Loch', 'Fatal Push', 'Spell Snare', 'Jace Beleren', 'Thoughtseize'],
+  ['Mono-Red Aggro', 'Kumano Faces Kakkazan', 'Soul-Scar Mage', 'Sunspine Lynx', 'Screaming Nemesis'],
+  ['Orzhov Ketramose', 'Ketramose, the New Dawn', 'Rest in Peace', 'Eldrazi Displacer', 'Wasteland Strangler'],
+  ['Dimir Ninjas', 'Kaito, Bane of Nightmares', 'Moon-Circuit Hacker', 'Faerie Miscreant'],
+  ['Golgari Midrange', 'Badgermole Cub', 'Graveyard Trespasser', 'Sheoldred, the Apocalypse', 'Overgrown Tomb'],
+  ['Izzet Prowess', "Stormchaser's Talent", 'Monastery Swiftspear', 'Reckless Rage', 'Spirebluff Canal'],
+  ['Izzet Cauldron', 'Vivi Ornitier', "Agatha's Soul Cauldron", "Proft's Eidetic Memory"],
+  ['Izzet Elementals', 'Hearth Elemental', 'Eddymurk Crab', 'Prismari Charm'],
+  ['Izzet Lessons', 'Gran-Gran', 'Tablet of Discovery', 'Firebending Lesson'],
+  ['Jund Sacrifice', 'Biotech Specialist', 'Shambling Ghast', 'The Sackville-Bagginses'],
+  ['Hammer Time', 'Cloud, Midgar Mercenary', 'Colossus Hammer', "Sigarda's Aid"],
+  ["Lumra's Scapeshift", 'Lumra, Bellow of the Woods', 'Scapeshift', 'Spelunking'],
+  ['Selesnya Company', 'Collected Company', 'Aven Interrupter', 'Skyclave Apparition', 'Llanowar Elves'],
+  ['Azorius Nine Lives', 'Nine Lives', 'Coveted Falcon', 'Cleansing Nova'],
+  ['Mono-Green Devotion', 'Nykthos, Shrine to Nyx', 'Kiora, Behemoth Beckoner', 'Old-Growth Troll'],
+  ['Azorius Control', 'Supreme Verdict', 'Teferi, Hero of Dominaria', "Dovin's Veto"],
+]
+
+export function tournamentArchetype(format, cards) {
+  const family = catalogFormat(format)
+  const legacyPackages = [
+    ['Beanstalk Control', 'Up the Beanstalk', 'Force of Will', 'Leyline Binding', 'Brainstorm'],
+    ['Eldrazi Stompy', 'Eldrazi Temple', 'Eye of Ugin', 'Thought-Knot Seer', 'Reality Smasher'],
+    ['Rakdos Reanimator', 'Reanimate', 'Animate Dead', 'Griselbrand', 'Faithless Looting'],
+  ]
+  const packages = !format || family === 'Freeform' ? [...tournamentPackages, ...legacyPackages]
+    : family === 'Pioneer' ? tournamentPackages : family === 'Legacy' ? legacyPackages : []
+  const names = new Set(cards.map(card => key(String(typeof card === 'string' ? card : card.cardName ?? card.name).split(/\s+\/\/?\s+/)[0])))
+  const matches = packages.filter(([, ...signature]) => signature.every(name => names.has(key(name))))
+  // A narrow splash can contain the entire core of its parent archetype. Hybrid
+  // packages without a subset relationship remain ambiguous.
+  const specific = matches.filter(([label, ...subset]) => !matches.some(([other, ...superset]) =>
+    label !== other && superset.length > subset.length && subset.every(card => superset.includes(card))))
+  const labels = new Set(specific.map(([label]) => label))
+  return labels.size === 1 ? specific[0][0] : null
 }
 
 // Older clients and imported decks may supply only a display name. Prefer complete
 // word sequences to partial text ("Land" is not a match for "Landfall").
 export function classifyArchetype(format, name, cards = []) {
   const labels = archetypesFor(format)
+  if (/^other(?: (?:aggro|control|combo))?$/.test(key(name))) return 'Other'
   const title = ' ' + key(name) + ' '
   if (!nameIndex.has(labels)) {
     // Tournament indexes use nicknames and color codes. Keep aliases only when
     // their destination is an available archetype in this format.
-    const aliases = Object.entries(catalog.aliases).filter(([, label]) => labels.includes(label))
-    const index = [...labels.map(label => [label, label]), ...aliases]
+    const family = catalogFormat(format)
+    const namedLabels = family === 'Freeform' ? [...catalog.formats.Freeform, ...generic] : labels
+    const aliases = Object.entries({ ...catalog.aliases, ...catalog.formatAliases?.[family] }).filter(([, label]) => namedLabels.includes(label))
+    const index = [...namedLabels.map(label => [label, label]), ...aliases]
       .map(([name, label]) => ({ pattern: ' ' + key(name) + ' ', label }))
       .sort((a, b) => b.pattern.length - a.pattern.length)
     nameIndex.set(labels, index)
   }
   const named = nameIndex.get(labels).find(entry => title.includes(entry.pattern))
+  const tournament = tournamentArchetype(format, cards)
+  const full = cards.reduce((count, card) => count + (card.amount ?? card.quantity ?? card.count ?? 1), 0) >= 60
+  if (full && tournament) return tournament
   if (named) return named.label
+  if (tournament) return tournament
   const names = new Set(cards.map(card => key(typeof card === 'string' ? card : card.cardName ?? card.name)))
   const signatures = [
     ['Izzet Phoenix', 'Arclight Phoenix', 'Treasure Cruise'],

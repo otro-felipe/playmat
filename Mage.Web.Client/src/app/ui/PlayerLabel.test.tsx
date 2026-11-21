@@ -41,3 +41,10 @@ describe('the public identity of a player seat', () => {
     expect(playerLabelText('mcp_legacy', 'mcp_legacy', false)).toBe('mcp_legacy');
   });
 });
+
+test('a human seat can carry match consent without changing its player identity elsewhere', () => {
+  const page = render(<><div data-testid="allowed"><PlayerLabel name="Camila" isMcp={false} humanMcpAllowed /></div>
+    <div data-testid="ordinary"><PlayerLabel name="Camila" isMcp={false} /></div></>);
+  expect(within(page.getByTestId('allowed')).getByText('MCP enabled')).toBeTruthy();
+  expect(within(page.getByTestId('ordinary')).queryByText('MCP enabled')).toBeNull();
+});

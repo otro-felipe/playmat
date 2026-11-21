@@ -114,7 +114,7 @@ function AccountHistory({ account }: { account: string }) {
         {matches.length > 0 && <>
           <div className={styles.columnHeaders} aria-hidden="true">
             <span className={styles.date}>{t('history.date')}</span><span>{t('history.rival')}</span>
-            <span className={styles.format}>{t('history.format')}</span><span>{t('history.result')}</span>
+            <span className={styles.archetype}>{t('history.yourArchetype')}</span><span className={styles.format}>{t('history.format')}</span><span>{t('history.result')}</span>
             <span className={styles.score}>{t('history.score')}</span>
           </div>
           <ul className={styles.list}>

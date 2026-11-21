@@ -131,10 +131,10 @@ export async function putDeck(pool, account, deckId, { data, name, format, arche
        MAX(archetype) FILTER (WHERE revision=$4 AND format=$5) AS previous,
        BOOL_OR(archetype_inferred) FILTER (WHERE revision=$4 AND format=$5) AS previously_inferred
        FROM deck_revisions WHERE account_id=$1 AND deck_id=$2`, [account, deckId, signature, expectedRevision, headFormat])
-    const keepPrevious = allowed.includes(identity.previous) && (identity.previous !== 'Other' || !identity.previously_inferred)
-    const archetype = requestedLabel ?? (keepPrevious ? identity.previous
-      : publicListArchetype(headFormat, signature) ?? verifiedListArchetype(headFormat, headName, cards, sideboard)
-        ?? classifyArchetype(headFormat, headName, cards))
+    const evidenced = requestedLabel === undefined && (identity.previously_inferred || !identity.previous)
+      ? publicListArchetype(headFormat, signature) ?? verifiedListArchetype(headFormat, headName, cards, sideboard) : null
+    const keepPrevious = !evidenced && allowed.includes(identity.previous) && (!['Other','Empty deck'].includes(identity.previous) || !identity.previously_inferred)
+    const archetype = requestedLabel ?? evidenced ?? (keepPrevious ? identity.previous : classifyArchetype(headFormat, headName, cards))
     const inferred = requestedLabel === undefined && (!keepPrevious || identity.previously_inferred)
     const listVersion = identity.version
     await db.query('INSERT INTO deck_revisions (account_id,deck_id,revision,name,format,metadata,archetype,list_version,list_signature,archetype_inferred) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)', [
@@ -178,15 +178,15 @@ export async function deleteDeck(db, account, deckId, expectedRevision, updatedA
 /** Own library metadata for historical attribution, including retired and restored lists. */
 export async function performanceCatalog(db, accountId) {
   const { rows } = await db.query(`SELECT DISTINCT ON (d.id, r.list_signature, r.format)
-    d.id, d.removed, head.name, head.format, head.archetype, head.list_version AS "currentVersion",
+    d.id, d.library, d.removed, head.name, head.format, head.archetype, head.list_version AS "currentVersion",
     r.revision, r.format AS "versionFormat", r.archetype AS "versionArchetype", r.list_version, r.list_signature
     FROM decks d JOIN deck_revisions head ON (d.account_id,d.id,d.head)=(head.account_id,head.deck_id,head.revision)
     JOIN deck_revisions r ON (d.account_id,d.id)=(r.account_id,r.deck_id)
     WHERE d.account_id=$1 ORDER BY d.id, r.list_signature, r.format, r.revision DESC`, [accountId])
   const families = new Map()
   for (const row of rows.sort((a, b) => b.revision - a.revision)) {
-    const { id, name, format, archetype, currentVersion, removed } = row
-    if (!families.has(id)) families.set(id, { id, name, format, archetype, currentVersion, removed, versions: [] })
+    const { id, library, name, format, archetype, currentVersion, removed } = row
+    if (!families.has(id)) families.set(id, { id, library, name, format, archetype, currentVersion, removed, versions: [] })
     families.get(id).versions.push({ version: row.list_version, signature: row.list_signature, format: row.versionFormat, archetype: row.versionArchetype })
   }
   return [...families.values()]

@@ -59,6 +59,29 @@ final class LobbyApi {
         return ctx.sessions.userName(call.sessionId()).orElseThrow(() -> RpcException.notAuthorized("Sign in first"));
     }
 
+    private static TableView createMatchTable(ApiContext ctx, mage.server.websocket.rpc.RpcCall call) throws Exception {
+        com.google.gson.JsonObject options = call.jsonObject(2);
+        com.google.gson.JsonElement setting = options.get("humanMcpAllowed");
+        boolean delegated = "create".equals(call.getConnection().getHumanTable());
+        if (setting == null && !delegated) {
+            return ctx.server.roomCreateTable(call.string(0), call.uuid(1), OptionsMapper.toMatchOptions(options));
+        }
+        mage.server.recovery.RecoveryPrincipal principal = call.getConnection().getRecoveryPrincipal();
+        if (!ProductGateway.enabled() || principal == null || !principal.seatId.equals("human:" + principal.accountId)) {
+            throw RpcException.notAuthorized("A signed-in human host is required");
+        }
+        if (setting == null || !setting.isJsonPrimitive() || !setting.getAsJsonPrimitive().isBoolean()) {
+            throw RpcException.invalidParams("humanMcpAllowed must be a boolean");
+        }
+        String owner = signedIn(ctx, call);
+        TableView table = ctx.server.roomCreateTable(call.string(0), call.uuid(1), OptionsMapper.toMatchOptions(options));
+        if (table != null && !ProductGateway.recordHumanSeat(table.getTableId(), owner, setting.getAsBoolean(), delegated)) {
+            ctx.server.tableRemove(call.string(0), call.uuid(1), table.getTableId());
+            throw new RpcException(RpcException.SERVER_ERROR, "Could not register this table's human seat");
+        }
+        return table;
+    }
+
     /** The room's users as the caller may see them (Presence.visible): staff are looked up only when someone is hidden. */
     static List<RoomUsersView> roomUsers(ApiContext ctx, mage.server.websocket.rpc.RpcCall call) throws Exception {
         java.util.UUID roomId = call.uuid(0);
@@ -193,8 +216,7 @@ final class LobbyApi {
                         .params(of("sessionId", STRING), of("roomId", UUID), object("options", "WebMatchOptions"))
                         .returns("TableView")
                         .doc("Create a match table. The creator still has to join a seat.")
-                        .handler(call -> ctx.server.roomCreateTable(call.string(0), call.uuid(1),
-                                OptionsMapper.toMatchOptions(call.jsonObject(2)))),
+                        .handler(call -> createMatchTable(ctx, call)),
 
                 RpcMethod.named("roomJoinTable")
                         .session(0)

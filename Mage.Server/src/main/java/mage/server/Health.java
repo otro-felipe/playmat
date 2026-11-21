@@ -52,6 +52,8 @@ public final class Health {
     interface Operations {
         Map<String, Object> snapshot();
 
+        Map<String, String> humanTables(String owner);
+
         /** Announces maintenance in {@code minutes}; returns when it starts (epoch millis). */
         long startMaintenance(long minutes, String message);
 
@@ -117,6 +119,21 @@ public final class Health {
             }
 
             @Override
+            public Map<String, String> humanTables(String owner) {
+                Map<String, String> result = new LinkedHashMap<>();
+                for (mage.game.Table table : managers.tableManager().getTables()) {
+                    mage.constants.TableState state = table.getState();
+                    if (state != null && state != mage.constants.TableState.FINISHED
+                            && (owner.equalsIgnoreCase(table.getControllerName()) || java.util.Arrays.stream(table.getSeats())
+                            .filter(java.util.Objects::nonNull).map(mage.game.Seat::getPlayer).filter(java.util.Objects::nonNull)
+                            .anyMatch(player -> owner.equalsIgnoreCase(player.getName())))) {
+                        result.put(table.getId().toString(), state.name());
+                    }
+                }
+                return result;
+            }
+
+            @Override
             public long startMaintenance(long minutes, String message) {
                 return Maintenance.get().announce(managers, minutes, message, false, DEPLOY_ACTOR).startsAt;
             }
@@ -139,6 +156,20 @@ public final class Health {
     static HttpServer listen(InetSocketAddress address, Operations operations) throws IOException {
         HttpServer server = HttpServer.create(address, 0);
         Gson gson = new Gson();
+        // Product-only loopback metadata. The product filters these live IDs by persisted consent.
+        server.createContext("/internal/human-tables", exchange -> {
+            try {
+                String owner = query(exchange.getRequestURI().getRawQuery()).get("owner");
+                if (!"/internal/human-tables".equals(exchange.getRequestURI().getPath()) || !"GET".equals(exchange.getRequestMethod())
+                        || owner == null || !owner.matches("[A-Za-z0-9_-]{3,24}")) {
+                    respond(exchange, 400, error("Invalid table lookup"));
+                    return;
+                }
+                respond(exchange, 200, gson.toJson(operations.humanTables(owner)));
+            } finally {
+                exchange.close();
+            }
+        });
         server.createContext("/healthz", exchange -> {
             try {
                 Map<String, Object> health;

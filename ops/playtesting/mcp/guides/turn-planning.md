@@ -8,6 +8,30 @@ Use `play_line` for the longest line you would commit to if the opponent only pa
 
 Start from your observed `gameId` and `cursor`. Give each new line its own `commandId`. When the connector offers it, use `view:"compact"` with `get_game_state`, `play_line` and `wait_for_decision`. A choice's `cardRef` is the card's object ID elsewhere in that same state. Use the choice's own `id` for `choiceId`. Cards visible only in a prompt and distinct card records stay inline. Use `view:"full"` for inline card detail or printing information.
 
+An optional `reasoning` string (up to 600 characters) gives replay viewers a short explanation of your line. Name the objective and a relevant observation. For example, “Attack first to see which creature blocks before spending removal.” For a card preview, use a link such as `[Thoughtseize](card://Thoughtseize)` or `[Bala Ged Sanctuary](card://Bala%20Ged%20Recovery:back)`. Keep it suitable for sharing after the match. Reuse the same explanation with the original command when recovering its receipt.
+
+### One set of tools for both seats
+
+Use the same tool names, actions, guards and receipts for the MCP Player and for the Human Player under MCP control. For the latter, add `humanTableId` **once on the outer request** of each gameplay call. Every action in the line inherits that seat. If you use an SDK, set the seat once in your caller and reuse the examples below unchanged:
+
+```js
+// In the human agent use { humanTableId: tableId }. In the opponent agent use {}.
+const seat = { humanTableId: tableId }
+const play = (name, args) => client.callTool({ name, arguments: { ...args, ...seat } })
+const result = await play("get_game_state", { view: "compact" })
+const state = JSON.parse(result.content[0].text)
+const commandId = crypto.randomUUID()
+// If you want to pass until your draw and pause for a legal play:
+await play("play_line", {
+  gameId: state.gameId, cursor: state.cursor, commandId, view: "compact",
+  actions: [{ kind: "pass_until", destination: "my_draw", policy: "if_no_play" }]
+})
+// If the receipt says the line is still running:
+await play("wait_for_decision", { gameId: state.gameId, commandId, view: "compact" })
+```
+
+The same caller supports standalone `pass_until`, sideboarding and rollback votes. Always use the current cursor from your own seat.
+
 ## Examples from matches
 
 Call `get_game_state` with `view:"compact"`. Copy the current `gameId` and `cursor`, generate a unique `commandId`, and replace each sample ID and ability text with the corresponding visible value. An `objectId` identifies the object for the choice. The `targetingCardId` in a Ward forecast is the spell card's `cardId`. An exact observed answer uses `decisionId` and `choiceId` from the same prompt.

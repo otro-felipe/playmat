@@ -232,7 +232,33 @@ function cardReference(card) {
     ...(typeof card.cardNumber === 'string' ? { cardNumber: card.cardNumber } : {}) }
 }
 
-function projectRow(row, seat, scope, perspectives, typed, analysis, presentation, decisionContext) {
+function replayLinesByFrame(rows, perspectives, seat, scope) {
+  const byFrame = new Map()
+  if (scope === 'public') return byFrame
+  for (const { cursor, frameCursor, event } of rows) {
+    if (event.kind !== 'line' || frameCursor === null || typeof event.reasoning !== 'string'
+      || !event.reasoning.trim() || event.reasoning.length > 600 || typeof event.commandId !== 'string'
+      || !event.commandId || event.commandId.length > 120) continue
+    const actor = perspectives.find(player => player.playerId && player.playerId === event.actorPlayerId)
+    if (!actor || scope !== 'full' && seat?.seatId !== actor.seatId) continue
+    if (!byFrame.has(frameCursor)) byFrame.set(frameCursor, [])
+    byFrame.get(frameCursor).push({ cursor, commandId: event.commandId, actor: actor.name, seatId: actor.seatId, reasoning: event.reasoning })
+  }
+  // A decision and its resulting board often occupy adjacent frames. Keep the last
+  // explained line in view through this turn until the next authored line begins.
+  let lines
+  let turn
+  for (const row of rows) {
+    if (!row.event.view) continue
+    if (row.turn !== turn) lines = undefined
+    turn = row.turn
+    lines = byFrame.get(row.cursor) ?? lines
+    if (lines) byFrame.set(row.cursor, lines)
+  }
+  return byFrame
+}
+
+function projectRow(row, seat, scope, perspectives, typed, analysis, presentation, decisionContext, lines) {
   const { event, cursor, frameCursor, turn } = row
   const base = { cursor, frameCursor, turn, timeMs: event.t }
   if (event.view) {
@@ -242,7 +268,7 @@ function projectRow(row, seat, scope, perspectives, typed, analysis, presentatio
       const hand = gameHand(event, perspective, typed)
       return hand && perspective.playerId ? [[perspective.playerId, hand]] : []
     })) : undefined
-    return { ...base, type: 'frame', view: frame.view, ...(frame.myHand ? { myHand: frame.myHand } : {}), ...(hands ? { hands } : {}),
+    return { ...base, type: 'frame', view: frame.view, ...(lines ? { lines } : {}), ...(frame.myHand ? { myHand: frame.myHand } : {}), ...(hands ? { hands } : {}),
       ...(analysis?.actual.kind === 'omission' ? { inferredDecision: analysis } : {}) }
   }
   if (event.kind === 'rollback' && Number.isSafeInteger(event.turn)) return { ...base, type: 'rollback' }
@@ -586,9 +612,10 @@ export function createPostMatchReview(pool, archive, permissions) {
       const positions = new Map(data.positions.map(position => [position.cursor, position]))
       const presentation = indexReplayPresentation(data.rows, data.positions, data.perspectives, data.capture)
       const { decisionContext } = decisionContextFor(data)
+      const lines = purpose === 'replay' ? replayLinesByFrame(data.rows, data.perspectives, seat, scope) : null
       const events = purpose === 'analysis'
         ? analysisEvidence(data, seat, { ...options, includeBefore }, presentation, decisionContext)
-        : pageRows(data.rows, options, row => projectRow(row, seat, scope, data.perspectives, data.typed, positions.get(row.cursor), presentation, decisionContext))
+        : pageRows(data.rows, options, row => projectRow(row, seat, scope, data.perspectives, data.typed, positions.get(row.cursor), presentation, decisionContext, lines.get(row.cursor)))
       return { gameId: id, matchId: game.match_id, archiveRevision, scope, purpose, ...events }
     },
     async listAnnotations(actor, id, query) {

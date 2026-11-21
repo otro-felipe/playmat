@@ -20,6 +20,7 @@ export function useGameCues(state: GameSessionState, myId: string | null, autoPa
   }, [state, myId, autoPassing]);
 
   useEffect(() => {
+    if (state.browserInputLock) return;
     function onKey(event: KeyboardEvent) {
       if (event.key !== 'm' && event.key !== 'M') return;
       if (event.metaKey || event.ctrlKey || event.altKey || ignoreMatchKey(event) || matchKeysBlocked()) return;
@@ -29,5 +30,5 @@ export function useGameCues(state: GameSessionState, myId: string | null, autoPa
     }
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, []);
+  }, [state.browserInputLock]);
 }

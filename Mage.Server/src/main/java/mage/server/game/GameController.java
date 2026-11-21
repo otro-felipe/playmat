@@ -520,7 +520,7 @@ public class GameController implements GameCallback {
                                 if (table != null) {
                                     user.ccGameStarted(table.getId(), table.getParentTableId(), session.getGameId(), player.getId());
                                     session.init();
-                                    managerFactory.gameManager().sendPlayerString(session.getGameId(), user.getId(), "");
+                                    user.resumeGamePrompt(session.getGameId(), table.getId());
                                 } else {
                                     logger.error("Can't find table on fix and re-send start game event: " + this.tableId);
                                 }

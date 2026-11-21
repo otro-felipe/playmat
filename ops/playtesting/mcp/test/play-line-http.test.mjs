@@ -36,8 +36,8 @@ async function fixture(t, { first = choice('first'), onResponse = () => {}, evid
   const engine = {
     snapshot: () => state,
     subscribe: (handler) => { listeners.add(handler); return () => listeners.delete(handler); },
-    async respond(decisionId, choiceId, value) {
-      const answer = { decisionId, choiceId, value };
+    async respond(decisionId, choiceId, value, line) {
+      const answer = { decisionId, choiceId, value, ...(line && { line }) };
       applied.push(answer);
       await onResponse(answer, update, state);
       return { submitted: true, gameId, cursor: state.cursor };
@@ -580,4 +580,16 @@ test('[PM-LINE-SEM-3] native MCP accepts the exact own-hand Ward discard guard',
   assert.equal(result.status, 'completed', JSON.stringify(result));
   assert.equal(result.state.ownHand.length, 0);
   assert.deepEqual(f.applied.map(({ choiceId }) => choiceId), ['discard-kumano']);
+});
+
+
+test('[PM-LINE-REPLAY-1] one authored explanation reaches the first decision and survives receipt recovery', async t => {
+  const f = await fixture(t, { onResponse: (_, update) => update({ decision: null, status: 'ended' }) });
+  const args = { ...f.request, reasoning: 'Save removal for the creature that can block next turn.' };
+  await f.call('play_line', args);
+  await f.call('play_line', args);
+  assert.equal(f.applied.length, 1);
+  assert.deepEqual(f.applied[0].line, { commandId: args.commandId, reasoning: args.reasoning });
+  const conflict = await f.call('play_line', { ...args, reasoning: 'Different objective' });
+  assert.equal(conflict.result.code, 'key_conflict');
 });

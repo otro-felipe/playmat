@@ -40,6 +40,42 @@ final class ConnectionState implements RpcConnection {
     private volatile String signedOnUser;
     private mage.server.recovery.RecoveryPrincipal recoveryPrincipal;
     private boolean canonicalAgent;
+    private volatile HumanTableScope humanScope;
+    private volatile HumanSeatChannel humanChannel;
+
+    void setHumanScope(HumanTableScope scope) { humanScope = scope; }
+    HumanTableScope humanScope() { return humanScope; }
+    @Override public String getHumanTable() { return humanScope == null ? null : humanScope.header(); }
+
+    void attach(HumanSeatChannel group) {
+        humanChannel = group;
+        makeHandler();
+    }
+    HumanSeatChannel humanChannel() { return humanChannel; }
+    void detach() { humanChannel = null; }
+    boolean isOpen() { return conn.isOpen(); }
+    void replaced() { conn.close(WebSocketServerImpl.CLOSE_SIGNED_IN_ELSEWHERE, "Signed in somewhere else"); }
+    boolean browserHostsGames() { return gameHost; }
+    String browserHostId() { return gameHostId; }
+
+    boolean deliver(mage.interfaces.callback.ClientCallback event) throws ClientChannel.Closed {
+        if (humanScope == null) {
+            callbackHandler.send(event);
+        } else {
+            if (!humanScope.accept(event)) return false;
+            callbackHandler.sendSeatView(event);
+        }
+        return true;
+    }
+
+    @Override public boolean rejoinSharedGame(UUID gameId) {
+        return humanChannel != null && humanScope == null && humanChannel.rejoinBrowser(this, gameId);
+    }
+
+    void forgetLocalPrompt(UUID gameId) {
+        WebSocketCallbackHandler handler = callbackHandler;
+        if (handler != null) handler.promptAnswered(gameId);
+    }
     private volatile WebSocketCallbackHandler callbackHandler;
     private final GameStates gameStates = new GameStates();
     /** one per connection, shared by its logins' handlers, so its messages keep their order */
@@ -117,6 +153,10 @@ final class ConnectionState implements RpcConnection {
 
     @Override
     public ClientChannel createChannel() {
+        return humanChannel != null ? humanChannel : makeHandler();
+    }
+
+    private WebSocketCallbackHandler makeHandler() {
         synchronized (gameStates) {
             gameStates.newSession();
         }
@@ -134,7 +174,7 @@ final class ConnectionState implements RpcConnection {
             gameStates.setEnabled(stateDiffs);
         }
         // the gateway hosts games (docs/rust/GameHost.md): believed only from a trusted proxy's address
-        gameHost = requested.contains(GAME_HOST) && trustedPeer;
+        gameHost = humanScope == null && requested.contains(GAME_HOST) && trustedPeer;
         // and the gateway's own id, so the two players of a game between people can be found on one gateway
         gameHostId = null;
         for (String c : requested) {
@@ -187,20 +227,26 @@ final class ConnectionState implements RpcConnection {
 
     @Override
     public void promptAnswered(UUID gameId) {
-        WebSocketCallbackHandler handler = callbackHandler;
-        if (handler != null) {
-            handler.promptAnswered(gameId);
-        }
+        if (humanChannel != null) humanChannel.answered(gameId);
+        else forgetLocalPrompt(gameId);
+    }
+
+    @Override
+    public boolean takeCurrentPrompt(UUID gameId) {
+        if (humanChannel != null) return humanChannel.takeCurrentPrompt(gameId);
+        return RpcConnection.super.takeCurrentPrompt(gameId);
     }
 
     @Override
     public boolean takePrompt(UUID gameId, int messageId) {
+        if (humanChannel != null) return humanChannel.takePrompt(gameId, messageId);
         WebSocketCallbackHandler handler = callbackHandler;
         return handler != null && handler.takePrompt(gameId, messageId);
     }
 
     @Override
     public boolean resendPrompt(UUID gameId) {
+        if (humanChannel != null) return humanChannel.resendPrompt(this, gameId);
         WebSocketCallbackHandler handler = callbackHandler;
         return handler != null && handler.resendPrompt(gameId);
     }

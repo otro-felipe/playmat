@@ -55,6 +55,7 @@ public class User {
     private final String host;
     private final Date connectionTime;
     private final Map<UUID, Table> tables;
+    private final Map<UUID, ClientCallback> openSeatQuestions = new ConcurrentHashMap<>();
     private final List<UUID> tablesToDelete;
     private final Map<UUID, GameSessionPlayer> gameSessions;
     private final Map<UUID, DraftSession> draftSessions;
@@ -269,7 +270,62 @@ public class User {
         return !isConnected() ? null : managerFactory.sessionManager().getSession(sessionId).map(Session::gameHostId).orElse(null);
     }
 
+    public boolean browserMayPlay(UUID tableId) {
+        mage.server.recovery.RecoveryPrincipal principal = recoveryPrincipal;
+        return !mage.server.playtesting.ProductGateway.enabled() || principal != null && principal.seatId.startsWith("agent:")
+                || mage.server.playtesting.ProductGateway.humanBrowserMayPlay(principal, tableId);
+    }
+
+    /** XMage retains this object by reference. A delegated player never shares its stop settings with the account. */
+    public UserData preferencesForTable(UUID tableId) {
+        UserData account = getUserData();
+        if (browserMayPlay(tableId)) return account;
+        UserData managed = UserData.getDefaultUserDataView();
+        managed.setAvatarId(account.getAvatarId());
+        managed.setFlagName(account.getFlagName());
+        managed.setGroupId(account.getGroupId());
+        managed.setGeneralRating(account.getGeneralRating());
+        managed.setConstructedRating(account.getConstructedRating());
+        managed.setLimitedRating(account.getLimitedRating());
+        managed.setMatchHistory(account.getMatchHistory());
+        managed.setTourneyHistory(account.getTourneyHistory());
+        managed.setMatchQuitRatio(account.getMatchQuitRatio());
+        managed.setTourneyQuitRatio(account.getTourneyQuitRatio());
+        // The same priority windows as the normal MCP seat in engine-seat.mjs.
+        managed.getUserSkipPrioritySteps().getYourTurn().setUpkeep(true);
+        managed.getUserSkipPrioritySteps().getYourTurn().setDraw(true);
+        managed.getUserSkipPrioritySteps().getYourTurn().setEndOfTurn(true);
+        managed.getUserSkipPrioritySteps().getOpponentTurn().setUpkeep(true);
+        managed.getUserSkipPrioritySteps().getOpponentTurn().setEndOfTurn(true);
+        return managed;
+    }
+
+    /** Shared preferences and destructive logout cannot change the seat while its agent has control. */
+    public boolean hasReadOnlyMatch() {
+        for (Table table : tables.values()) {
+            if (table.getState() != TableState.FINISHED && !browserMayPlay(table.getId())) return true;
+        }
+        return false;
+    }
+
+    /** A reconnect must re-emit the actual question. An empty native reply can select or pass. */
+    public void resumeGamePrompt(UUID gameId, UUID tableId) {
+        if (browserMayPlay(tableId)) {
+            managerFactory.gameManager().sendPlayerString(gameId, userId, "");
+        } else {
+            ClientCallback open = openSeatQuestions.get(gameId);
+            if (open != null) fireCallback(new ClientCallback(open.getMethod(), gameId, open.getData()));
+        }
+    }
+
     public void fireCallback(final ClientCallback call) {
+        if (mage.server.playtesting.ProductGateway.enabled() && call.getObjectId() != null) {
+            if (mage.server.websocket.WebSocketCallbackHandler.isPrompt(call.getMethod())) {
+                openSeatQuestions.put(call.getObjectId(), new ClientCallback(call.getMethod(), call.getObjectId(), call.getData()));
+            } else if (call.getMethod() == ClientCallbackMethod.GAME_OVER || call.getMethod() == ClientCallbackMethod.GAME_ROLLBACK) {
+                openSeatQuestions.remove(call.getObjectId());
+            }
+        }
         if (isConnected()) {
             managerFactory.sessionManager().getSession(sessionId).ifPresent(session
                     -> session.fireCallback(call)
@@ -393,26 +449,31 @@ public class User {
 
     public void sendPlayerUUID(final UUID gameId, final UUID data) {
         lastActivity = new Date();
+        openSeatQuestions.remove(gameId);
         managerFactory.gameManager().sendPlayerUUID(gameId, userId, data);
     }
 
     public void sendPlayerString(final UUID gameId, final String data) {
         lastActivity = new Date();
+        openSeatQuestions.remove(gameId);
         managerFactory.gameManager().sendPlayerString(gameId, userId, data);
     }
 
     public void sendPlayerManaType(final UUID gameId, final UUID playerId, final ManaType data) {
         lastActivity = new Date();
+        openSeatQuestions.remove(gameId);
         managerFactory.gameManager().sendPlayerManaType(gameId, playerId, userId, data);
     }
 
     public void sendPlayerBoolean(final UUID gameId, final Boolean data) {
         lastActivity = new Date();
+        openSeatQuestions.remove(gameId);
         managerFactory.gameManager().sendPlayerBoolean(gameId, userId, data);
     }
 
     public void sendPlayerInteger(final UUID gameId, final Integer data) {
         lastActivity = new Date();
+        openSeatQuestions.remove(gameId);
         managerFactory.gameManager().sendPlayerInteger(gameId, userId, data);
     }
 
@@ -466,7 +527,7 @@ public class User {
                 if (table != null) {
                     ccGameStarted(table.getId(), table.getParentTableId(), entry.getValue().getGameId(), entry.getKey());
                     entry.getValue().init();
-                    managerFactory.gameManager().sendPlayerString(entry.getValue().getGameId(), userId, "");
+                    resumeGamePrompt(entry.getValue().getGameId(), table.getId());
                 }
             }
         }
@@ -511,7 +572,8 @@ public class User {
     }
 
     public void removeGame(UUID playerId) {
-        gameSessions.remove(playerId);
+        GameSessionPlayer removed = gameSessions.remove(playerId);
+        if (removed != null) openSeatQuestions.remove(removed.getGameId());
     }
 
     public void addDraft(UUID playerId, DraftSession draftSession) {

@@ -1,13 +1,16 @@
 package mage.server.websocket.api;
 
 import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 import mage.constants.ManaType;
 import mage.constants.PlayerAction;
 import mage.server.game.GameController;
 import mage.server.game.PracticeTools;
 import mage.server.playtesting.ProductGateway;
+import mage.server.replay.ReplayRecorder;
 import mage.server.replay.ReplayStore;
+import mage.server.recovery.RecoveryPrincipal;
 import mage.server.websocket.rpc.RpcCall;
 import mage.server.websocket.rpc.RpcException;
 import mage.server.websocket.rpc.RpcMethod;
@@ -40,7 +43,8 @@ final class GameApi {
                         .params(of("gameId", mage.server.websocket.rpc.RpcParam.Type.UUID), of("sessionId", STRING))
                         .doc("Join a started game as a player (after START_GAME). Also used to resync after a reconnect.")
                         .handler(call -> {
-                            ctx.server.gameJoin(call.uuid(0), call.string(1));
+                            UUID gameId = call.uuid(0);
+                            if (!call.getConnection().rejoinSharedGame(gameId)) ctx.server.gameJoin(gameId, call.string(1));
                             return true;
                         }),
 
@@ -154,40 +158,40 @@ final class GameApi {
 
                 RpcMethod.named("sendPlayerUUID")
                         .session(1)
-                        .params(gameId(), of("sessionId", STRING), optional("data", mage.server.websocket.rpc.RpcParam.Type.UUID), optional("expectedPrompt", INT))
+                        .params(gameId(), of("sessionId", STRING), optional("data", mage.server.websocket.rpc.RpcParam.Type.UUID), optional("expectedPrompt", INT), optional("line", OBJECT))
                         .doc("Answer a prompt with an object or player id (targets, choices, attackers, blockers).")
                         .handler(call -> {
-                            answerPrompt(call, 3);
+                            answerPrompt(ctx, call, 3);
                             ctx.server.sendPlayerUUID(call.uuid(0), call.string(1), call.optUuid(2));
                             return true;
                         }),
 
                 RpcMethod.named("sendPlayerString")
                         .session(1)
-                        .params(gameId(), of("sessionId", STRING), of("data", STRING), optional("expectedPrompt", INT))
+                        .params(gameId(), of("sessionId", STRING), of("data", STRING), optional("expectedPrompt", INT), optional("line", OBJECT))
                         .doc("Answer a prompt with text (choices, \"special\" mana payment).")
                         .handler(call -> {
-                            answerPrompt(call, 3);
+                            answerPrompt(ctx, call, 3);
                             ctx.server.sendPlayerString(call.uuid(0), call.string(1), call.string(2));
                             return true;
                         }),
 
                 RpcMethod.named("sendPlayerBoolean")
                         .session(1)
-                        .params(gameId(), of("sessionId", STRING), of("data", BOOLEAN), optional("expectedPrompt", INT))
+                        .params(gameId(), of("sessionId", STRING), of("data", BOOLEAN), optional("expectedPrompt", INT), optional("line", OBJECT))
                         .doc("Answer a yes/no prompt, pass priority (false) or cancel mana payment (any value).")
                         .handler(call -> {
-                            answerPrompt(call, 3);
+                            answerPrompt(ctx, call, 3);
                             ctx.server.sendPlayerBoolean(call.uuid(0), call.string(1), call.bool(2));
                             return true;
                         }),
 
                 RpcMethod.named("sendPlayerInteger")
                         .session(1)
-                        .params(gameId(), of("sessionId", STRING), of("data", INT), optional("expectedPrompt", INT))
+                        .params(gameId(), of("sessionId", STRING), of("data", INT), optional("expectedPrompt", INT), optional("line", OBJECT))
                         .doc("Answer an amount prompt.")
                         .handler(call -> {
-                            answerPrompt(call, 3);
+                            answerPrompt(ctx, call, 3);
                             ctx.server.sendPlayerInteger(call.uuid(0), call.string(1), call.integer(2));
                             return true;
                         }),
@@ -195,20 +199,21 @@ final class GameApi {
                 RpcMethod.named("sendPlayerManaType")
                         .session(2)
                         .params(gameId(), of("playerId", mage.server.websocket.rpc.RpcParam.Type.UUID), of("sessionId", STRING),
-                                of("manaType", STRING).typed("ManaType"), optional("expectedPrompt", INT))
+                                of("manaType", STRING).typed("ManaType"), optional("expectedPrompt", INT), optional("line", OBJECT))
                         .doc("Pay from the mana pool with one mana type.")
                         .handler(call -> {
-                            answerPrompt(call, 4);
+                            answerPrompt(ctx, call, 4);
                             ctx.server.sendPlayerManaType(call.uuid(0), call.uuid(1), call.string(2), manaType(call, 3));
                             return true;
                         }),
 
                 RpcMethod.named("sendPlayerAction")
                         .session(2)
-                        .params(of("action", STRING).typed("PlayerAction"), gameId(), of("sessionId", STRING), optional("data", ANY))
+                        .params(of("action", STRING).typed("PlayerAction"), gameId(), of("sessionId", STRING), optional("data", ANY), optional("line", OBJECT))
                         .doc("Send a player action: pass modes (F-keys), concede, undo, rollback, auto-answer and trigger-order settings.")
                         .handler(call -> {
                             PlayerAction action = playerAction(call, 0);
+                            recordLine(ctx, call, 1, 4);
                             if (action == PlayerAction.UNDO || action == PlayerAction.CONCEDE || action.name().startsWith("PASS_PRIORITY_")) {
                                 // these answer (or replace) the open question
                                 answered(call, 1);
@@ -274,14 +279,48 @@ final class GameApi {
         call.getConnection().promptAnswered(call.uuid(gameIdIndex));
     }
 
-    private static void answerPrompt(RpcCall call, int promptIndex) throws RpcException {
-        if (!call.has(promptIndex)) {
-            answered(call, 0);
+    private static void answerPrompt(ApiContext ctx, RpcCall call, int promptIndex) throws RpcException {
+        if (call.has(promptIndex)) {
+            if (!call.getConnection().takePrompt(call.uuid(0), call.integer(promptIndex))) {
+                throw RpcException.invalidParams("The expected decision is no longer pending");
+            }
+        } else if (!call.getConnection().takeCurrentPrompt(call.uuid(0))) {
+            throw RpcException.invalidParams("The decision has already been answered");
+        }
+        recordLine(ctx, call, 0, promptIndex + 1);
+    }
+
+    /** A protected replay entry belongs to the authenticated seat submitting the first answer of the line. */
+    private static void recordLine(ApiContext ctx, RpcCall call, int gameIndex, int lineIndex) throws RpcException {
+        if (!call.has(lineIndex)) {
             return;
         }
-        if (!call.getConnection().takePrompt(call.uuid(0), call.integer(promptIndex))) {
-            throw RpcException.invalidParams("The expected decision is no longer pending");
+        RecoveryPrincipal principal = call.getConnection().getRecoveryPrincipal();
+        if (principal == null || (principal.connectionId == null && !principal.seatId.startsWith("agent:"))) {
+            throw RpcException.notAuthorized("A connected MCP seat is required");
         }
+        JsonObject line = call.jsonObject(lineIndex);
+        String commandId = lineField(line, "commandId", 120);
+        String reasoning = lineField(line, "reasoning", 600);
+        UUID gameId = call.uuid(gameIndex);
+        GameController game = ctx.managers.gameManager().getGameController().get(gameId);
+        UUID playerId = game == null ? null : ctx.managers.sessionManager().getSession(call.sessionId())
+                .map(session -> game.playerIdOf(session.getUserId())).orElse(null);
+        if (playerId == null) {
+            throw RpcException.notAuthorized("The connected seat does not play this game");
+        }
+        if (!ReplayRecorder.recordLine(gameId, playerId, commandId, reasoning)) {
+            throw RpcException.invalidParams("The replay recorder could not save this line");
+        }
+    }
+
+    private static String lineField(JsonObject line, String field, int limit) throws RpcException {
+        JsonElement value = line.get(field);
+        if (value == null || !value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()
+                || value.getAsString().trim().isEmpty() || value.getAsString().length() > limit) {
+            throw RpcException.invalidParams("Invalid replay line " + field);
+        }
+        return value.getAsString();
     }
 
     private static mage.server.websocket.rpc.RpcParam gameId() {

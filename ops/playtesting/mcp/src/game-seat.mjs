@@ -240,7 +240,7 @@ export class GameSeat {
     return { event: 'timeout', cursor: state.cursor, state };
   }
 
-  async submit(args, sequenceId) {
+  async submit(args, sequenceId, line) {
     const { gameId, decisionId, choiceId, idempotencyKey, cursor, value } = args;
     const fingerprint = JSON.stringify([gameId, decisionId, choiceId, value]);
     const known = this.#outcomes.get(idempotencyKey);
@@ -261,7 +261,7 @@ export class GameSeat {
     this.#inFlight = true;
     const outcome = (async () => {
       try {
-        return await this.engine.respond(decisionId, choiceId, value);
+        return await this.engine.respond(decisionId, choiceId, value, line);
       } catch (error) {
         if (error.code !== 'illegal_choice') this.#uncertain = decisionId;
         throw error;
@@ -274,7 +274,7 @@ export class GameSeat {
     return outcome;
   }
 
-  startSequence({ gameId, cursor, steps, expectedStackIds = [], allowPlannedCombatDamage = false, autoAdvance = false, branchContinuation = false }, authorize, responsePolicy = 'interrupt') {
+  startSequence({ gameId, cursor, steps, expectedStackIds = [], allowPlannedCombatDamage = false, autoAdvance = false, branchContinuation = false, line }, authorize, responsePolicy = 'interrupt') {
     const initial = this.snapshot(gameId);
     if (initial.cursor !== cursor || initial.status !== 'active') throw new ToolError('stale_decision', 'Plan from the latest game state.');
     if (initial.rollbackRequest) throw new ToolError('rollback_pending', 'Vote on the pending rollback before starting another line.');
@@ -305,12 +305,12 @@ export class GameSeat {
     this.#current = sequence;
     this.#sequences.set(sequence.id, sequence);
     if (this.#sequences.size > 40) this.#sequences.delete(this.#sequences.keys().next().value);
-    void this.#runSequence(sequence, initial, steps, authorize, responsePolicy, { expectedStackIds, allowPlannedCombatDamage, autoAdvance, branchContinuation });
+    void this.#runSequence(sequence, initial, steps, authorize, responsePolicy, { expectedStackIds, allowPlannedCombatDamage, autoAdvance, branchContinuation, line });
     return this.sequenceStatus({ gameId, sequenceId: sequence.id });
   }
 
   /** Compile significant intentions; ordinary priority handoffs are the executor's responsibility. */
-  startTurn({ gameId, cursor, actions, expectedStackIds, finish = 'next_turn', settle = true }, authorize) {
+  startTurn({ gameId, cursor, actions, expectedStackIds, finish = 'next_turn', settle = true, line }, authorize) {
     const initial = this.snapshot(gameId);
     if (initial.cursor !== cursor || initial.status !== 'active') throw new ToolError('stale_decision', 'Plan from the latest game state.');
     const steps = [];
@@ -440,7 +440,7 @@ export class GameSeat {
     const adopted = expectedStackIds ?? (singleObservedChoice ? [] : initial.stack.filter((card) => card.controllerId === ownId).map((card) => card.id));
     if (adopted.length > 16) throw new ToolError('bad_stack_expectation', 'A semantic turn may adopt at most sixteen visible objects.');
     return this.startSequence({ gameId, cursor, steps, autoAdvance: !singleObservedChoice, allowPlannedCombatDamage: !singleObservedChoice, branchContinuation,
-      expectedStackIds: adopted }, authorize);
+      expectedStackIds: adopted, line }, authorize);
   }
 
   sequenceStatus({ gameId, sequenceId, startCursor }) {
@@ -491,7 +491,7 @@ export class GameSeat {
     this.#current?.controller.abort(new ToolError(reason, 'The active game changed.'));
   }
 
-  async #runSequence(sequence, initial, steps, authorize, responsePolicy, { expectedStackIds, allowPlannedCombatDamage, autoAdvance, branchContinuation }) {
+  async #runSequence(sequence, initial, steps, authorize, responsePolicy, { expectedStackIds, allowPlannedCombatDamage, autoAdvance, branchContinuation, line }) {
     const { signal } = sequence.controller;
     const wallDeadline = Date.now() + this.maxSequenceWallMs;
     let deadline = Date.now() + this.sequenceTimeoutMs;
@@ -1019,7 +1019,7 @@ export class GameSeat {
       const submission = { stepIndex: sequence.completedSteps, actionIndex: sequence.actionIndex ?? null,
         dispatchedAtEpochMs: Date.now(), finishedAtEpochMs: null, acknowledged: false };
       sequence.lastSubmission = submission;
-      try { const result = await this.submit(args, sequence.id); submission.acknowledged = true; return result; }
+      try { const result = await this.submit(args, sequence.id, sequence.appliedDecisions === 0 ? line : undefined); submission.acknowledged = true; return result; }
       finally { submission.finishedAtEpochMs = Date.now(); }
     };
     const nextPredeterminedAnswer = (state) => {

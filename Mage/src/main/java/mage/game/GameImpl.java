@@ -974,9 +974,10 @@ public abstract class GameImpl implements Game {
             // stop current player dialog and execute concede
             currentPriorityPlayer.signalPlayerConcede(true);
         } else {
-            // concede for another player
-            // allow current player to continue and check concede on any next priority
-            currentPriorityPlayer.signalPlayerConcede(false);
+            // In a duel the opponent wins immediately. Wake their pending choice so the
+            // game thread can process the concession without waiting for a client answer.
+            // Multiplayer keeps the chooser's existing decision until its next response.
+            currentPriorityPlayer.signalPlayerConcede(state.getPlayers().size() == 2);
         }
 
         // game thread can call concede directly

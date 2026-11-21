@@ -31,18 +31,18 @@ async function finishedGames(pool, actor, format) {
       g.id,g.game_number,g.winner,g.start_player,g.turns,g.archive_state,g.object_key,g.checksum,
       p.engine_key,p.engine_name,p.player_id,p.mulligans,
       CASE WHEN g.game_number=1 THEN p.deck_snapshot END AS opening_deck,
-      reg.deck_id,reg.deck_name,reg.list_version,reg.archetype,reg.list_signature,
+      reg.deck_id,reg.deck_name,reg.list_version,COALESCE(NULLIF(reg.archetype,'Other'),p.archetype,reg.archetype) AS archetype,reg.list_signature,
       opponent.archetype AS opponent_archetype,opponent.mulligans AS opponent_mulligans
     FROM retained_match_history h JOIN matches m ON m.id=h.match_id
     JOIN games g ON g.match_id=m.id
     JOIN LATERAL (
-      SELECT engine_name,engine_key,player_id,mulligans,deck_snapshot
+      SELECT engine_name,engine_key,player_id,mulligans,deck_snapshot,archetype
       FROM game_players WHERE game_id=g.id AND engine_key=ANY($1::text[])
       ORDER BY array_position($1::text[],engine_key) LIMIT 1
     ) p ON TRUE
     LEFT JOIN match_deck_registrations reg ON reg.table_id=m.table_id AND reg.engine_key=p.engine_key AND reg.account_id=h.account_id
     LEFT JOIN LATERAL (
-      SELECT MAX(r.archetype) AS archetype, MAX(other.mulligans) AS mulligans
+      SELECT MAX(COALESCE(NULLIF(r.archetype,'Other'),NULLIF(other.archetype,'Other'))) AS archetype, MAX(other.mulligans) AS mulligans
       FROM game_players other LEFT JOIN match_deck_registrations r ON r.table_id=m.table_id AND r.engine_key=other.engine_key
       WHERE other.game_id=g.id AND other.engine_key<>p.engine_key HAVING COUNT(*)=1
     ) opponent ON TRUE
@@ -92,7 +92,7 @@ function identifyMatch(games, index) {
     version: null,
     deckName: deck?.name ?? null,
     signature,
-    archetype: deck && signature ? classifyArchetype(first.format, deck.name, deck.cards) : null,
+    archetype: initial[0]?.archetype ?? (deck && signature ? classifyArchetype(first.format, deck.name, deck.cards) : null),
   }
 }
 
@@ -157,7 +157,7 @@ function selectHistory({ decks, matches }, query) {
   return { selected, deckId: selectedDeck?.id ?? null, version, scope }
 }
 
-function archetypeGroups(decks, matches, query) {
+function archetypeGroups(decks, matches, query, library) {
   const groups = new Map()
   function byArchetype(format, archetype, deckId) {
     const result = group(groups, JSON.stringify([format, archetype]), () => ({
@@ -170,10 +170,11 @@ function archetypeGroups(decks, matches, query) {
     return result
   }
   for (const deck of decks) {
-    if (!deck.removed && (!query.format || deck.format === query.format)) byArchetype(deck.format, deck.archetype, deck.id)
+    if (!deck.removed && deck.library === library && (!query.format || deck.format === query.format)) byArchetype(deck.format, deck.archetype, deck.id)
   }
   for (const match of matches) {
-    const result = byArchetype(match.format, match.archetype, match.deckId)
+    const result = groups.get(JSON.stringify([match.format, match.archetype]))
+    if (!result) continue
     count(result.matches, match.winner, match.seat)
     for (const game of match.games) count(result.games, game.winner, game.engine_key)
   }
@@ -278,7 +279,7 @@ export function createPerformance(pool, readArchive) {
       query = { ...query, format }
       const data = await history(pool, actor, format || null)
       const { selected, scope, deckId, version } = selectHistory(data, query)
-      const groups = archetypeGroups(data.decks, data.matches, query)
+      const groups = archetypeGroups(data.decks, data.matches, query, actor.agent ? 'agent' : 'personal')
       const labels = (values) => [...new Set(values.filter(Boolean))].sort()
       return {
         decks: data.decks

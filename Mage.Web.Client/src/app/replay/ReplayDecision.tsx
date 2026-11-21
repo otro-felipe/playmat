@@ -1,13 +1,12 @@
 import { usePlayerNames } from '../ui/usePlayerIdentity';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import * as Tooltip from '@radix-ui/react-tooltip';
 import { Check, Star } from 'lucide-react';
-import { Fragment, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { frameIndexAt, type ReplayTimeline } from '../../core/replay/timeline';
 import { useT, type MessageKey } from '../i18n';
-import { CardFace } from '../ui/CardFace';
+import { CardMarkdown, CardPreviewName } from '../ui/CardMarkdown';
 import { cleanDecisionText, decisionFrame, decisionPresentation, replayName } from './decisionPresentation';
-import type { ReviewCategory, ReviewDecisionContext, ReviewMoment, ReviewReference } from './reviewData';
+import type { ReviewCategory, ReviewDecisionContext, ReviewMoment } from './reviewData';
 import styles from './ReplayDecision.module.css';
 
 export function ReviewRating({ category, label = false }: { category: ReviewCategory; label?: boolean }) {
@@ -37,57 +36,24 @@ export function DecisionTitle({ moment }: { moment: ReviewMoment }) {
   const t = useT();
   const formatName = usePlayerNames();
   const { fullTitle, cards } = decisionPresentation(moment, t, formatName);
-  if (!cards.length) return fullTitle;
-  const byName = new Map(cards.map((card) => [card.name, card]));
-  const alternatives = [...byName.keys()].filter(Boolean).sort((a, b) => b.length - a.length);
-  if (!alternatives.length) return fullTitle;
-  const pattern = new RegExp(`(${alternatives.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'g');
-  return (
-    <Tooltip.Provider delayDuration={160} disableHoverableContent>
-      {fullTitle.split(pattern).map((text, index) => {
-        const card = byName.get(text);
-        return <Fragment key={index}>{card ? <PreviewName card={card} /> : text}</Fragment>;
-      })}
-    </Tooltip.Provider>
-  );
-}
-
-function PreviewName({ card }: { card: ReviewReference }) {
-  const t = useT();
-  const [open, setOpen] = useState(false);
-  return (
-    <Tooltip.Root open={open} onOpenChange={setOpen}>
-      <Tooltip.Trigger asChild>
-        <button type="button" className={styles.cardName} aria-label={t('replay.showCard', { name: card.name })}
-          aria-expanded={open}
-          onClick={(event) => { event.preventDefault(); setOpen(true); }}>{card.name}</button>
-      </Tooltip.Trigger>
-      <Tooltip.Portal>
-        <Tooltip.Content className={styles.preview} side="left" align="center" sideOffset={8}
-          collisionPadding={12} onEscapeKeyDown={(event) => { event.preventDefault(); setOpen(false); }}
-          onPointerDownOutside={() => setOpen(false)}>
-          <CardFace card={{ name: card.name, expansionSetCode: card.setCode, cardNumber: card.cardNumber }} size="normal" />
-        </Tooltip.Content>
-      </Tooltip.Portal>
-    </Tooltip.Root>
-  );
+  return <CardMarkdown text={fullTitle} cards={cards} />;
 }
 
 export function RecordedDecision({ moment }: { moment: ReviewMoment }) {
   const t = useT();
   const formatName = usePlayerNames();
-  const { shortTitle, targets } = decisionPresentation(moment, t, formatName);
+  const { shortTitle, targets, cards } = decisionPresentation(moment, t, formatName);
   const modes = [moment.actual?.castMode, ...(moment.actual?.modes ?? [])].flatMap((value) => value ? [cleanDecisionText(value, t, formatName)] : []);
   const mana = Object.entries(moment.actual?.paidMana ?? {}).map(([symbol, amount]) => `${amount} ${symbol}`).join(' + ');
   return (
     <section className={styles.decision} aria-label={t('replay.decision')}>
       <div className={styles.title}>
         {moment.category && <ReviewRating category={moment.category} />}
-        <strong>{shortTitle}</strong>
+        <strong><CardMarkdown text={shortTitle} cards={cards} /></strong>
       </div>
       {(targets.length > 0 || modes.length > 0 || mana) && (
         <dl>
-          {targets.length > 0 && <div><dt>{t('replay.targets')}</dt><dd>{targets.map(({ name }) => name).join(', ')}</dd></div>}
+          {targets.length > 0 && <div><dt>{t('replay.targets')}</dt><dd><CardMarkdown text={targets.map(({ name }) => name).join(', ')} cards={targets.filter((target) => target.kind !== 'player')} /></dd></div>}
           {modes.length > 0 && <div><dt>{t('replay.choices')}</dt><dd>{modes.join(', ')}</dd></div>}
           {mana && <div><dt>{t('replay.manaPaid')}</dt><dd>{mana}</dd></div>}
         </dl>
@@ -158,28 +124,26 @@ export function DecisionContext({ context, handDecision }: {
       {prompt && <p>{prompt}</p>}
       {pass && <p>{pass}</p>}
       {outcome && <p>{outcome}</p>}
-      <Tooltip.Provider delayDuration={160} disableHoverableContent>
-        {context.sourceCard && <p>
-          {t('replay.context.source')} <PreviewName card={context.sourceCard} />
-        </p>}
-        {shownOptions > 0 && (
-          <ul className={styles.contextCards}>
-            {options.map(({ id, card, label, chosen }) => (
-              <ChoiceItem key={id} chosen={chosen}>
-                {card && <PreviewName card={card} />}
-                {card && label && label !== card.name && ' · '}
-                {label && label !== card?.name && label}
-              </ChoiceItem>
-            ))}
-            {cards.map((card, index) => (
-              <ChoiceItem key={card.id ?? index} chosen={!!card.id && selected.has(card.id)}>
-                {card.kind === 'player' ? replayName(card.name, t, formatName) : <PreviewName card={card} />}
-              </ChoiceItem>
-            ))}
-            {labels.map((label, index) => <li key={`label-${index}`}>{label}</li>)}
-          </ul>
-        )}
-      </Tooltip.Provider>
+      {context.sourceCard && <p>
+        {t('replay.context.source')} <CardPreviewName card={context.sourceCard} />
+      </p>}
+      {shownOptions > 0 && (
+        <ul className={styles.contextCards}>
+          {options.map(({ id, card, label, chosen }) => (
+            <ChoiceItem key={id} chosen={chosen}>
+              {card && <CardPreviewName card={card} />}
+              {card && label && label !== card.name && ' · '}
+              {label && label !== card?.name && label}
+            </ChoiceItem>
+          ))}
+          {cards.map((card, index) => (
+            <ChoiceItem key={card.id ?? index} chosen={!!card.id && selected.has(card.id)}>
+              {card.kind === 'player' ? replayName(card.name, t, formatName) : <CardPreviewName card={card} />}
+            </ChoiceItem>
+          ))}
+          {labels.map((label, index) => <li key={`label-${index}`}>{label}</li>)}
+        </ul>
+      )}
       {partialOptions && <p>{partialOptions}</p>}
     </section>
   );

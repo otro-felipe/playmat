@@ -13,6 +13,12 @@ describe('matchOptions', () => {
     expect(options.password).toBeUndefined();
   });
 
+  it('records both match settings and keeps standard tables compatible', () => {
+    expect(matchOptions(base).humanMcpAllowed).toBeUndefined();
+    expect(matchOptions({ ...base, humanMcpAllowed: false }).humanMcpAllowed).toBe(false);
+    expect(matchOptions({ ...base, humanMcpAllowed: true }).humanMcpAllowed).toBe(true);
+  });
+
   it('adds multiplayer and commander settings only where they apply', () => {
     const options = matchOptions({
       ...base,

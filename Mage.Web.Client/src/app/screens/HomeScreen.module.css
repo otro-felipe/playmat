@@ -133,11 +133,10 @@
   gap: 6px;
 }
 
-.modeWide {
-  grid-column: 1 / -1;
-}
-
 .mode {
+  position: relative;
+  display: grid;
+  place-items: center;
   min-height: 48px;
   padding: 0 12px;
   border: 0;
@@ -154,7 +153,22 @@
   transition: box-shadow var(--dur-quick) linear, background-color var(--dur-quick) linear, color var(--dur-quick) linear;
 }
 
-.mode:hover:not(:disabled) {
+.mode input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: inherit;
+}
+
+.mode:has(input:focus-visible) {
+  outline: 2px solid var(--decision);
+  outline-offset: 2px;
+}
+
+.mode:hover:not(:has(input:disabled)) {
   box-shadow: inset 0 0 0 1.5px var(--ink-faint);
   color: var(--ink-strong);
 }

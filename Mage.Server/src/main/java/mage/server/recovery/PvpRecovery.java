@@ -300,6 +300,9 @@ public final class PvpRecovery {
             MatchOptions options=saved.options;
             options.setPassword(UUID.randomUUID().toString()); options.setSpectatorsAllowed(false); options.setRated(false);
             tableId=server.roomCreateTable(sessionId,room,options).getTableId();
+            if (!ProductGateway.restoreHumanSeat(saved.tableId, tableId)) {
+                throw new IllegalStateException("Could not restore the original human seat policy");
+            }
             Live live=new Live(); live.originalTable=saved.tableId; live.restored=saved; live.snapshot=snapshot;
             tables.put(tableId,live);
             TableController controller=managers.tableManager().getController(tableId).orElseThrow(IllegalStateException::new);

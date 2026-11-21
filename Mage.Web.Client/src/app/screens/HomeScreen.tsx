@@ -9,7 +9,10 @@ import { metaDecksFor } from '../../core/decks/metaDecks';
 import { readJson } from '../stores/persist';
 import { useCoach } from '../stores/coach';
 import { usePlay } from '../stores/play';
-import { useT, type MessageKey } from '../i18n';
+import { HomeModes } from './HomeModes';
+import { defaultHomeMode, type HomeMode } from './playModes';
+import { Switch } from '../ui/Switch';
+import { useT } from '../i18n';
 import { PRIVATE_PLAYTESTING } from '../playtesting';
 import { Button } from '../ui/Button';
 import { DeckBox } from '../ui/DeckBox';
@@ -38,18 +41,7 @@ const MetaFormatPicker = lazy(() => import('./MetaFormatPicker'));
 
 const SupportBar = lazy(() => import('../support/SupportBar').then((module) => ({ default: module.SupportBar })));
 
-type Mode = 'ai' | 'meta' | 'practice' | 'friend' | 'mcp';
-
 export const META_FORMAT_KEY = 'playmat.metaFormat';
-
-// open tables and events have their own pages in the rail; here the only question is who you play
-const MODES: { id: Mode; label: MessageKey }[] = [
-  { id: 'ai', label: 'home.mode.ai' },
-  ...(!PRIVATE_PLAYTESTING ? [{ id: 'meta', label: 'home.mode.meta' } as const] : []),
-  { id: 'practice', label: 'home.mode.practice' },
-  { id: 'friend', label: 'home.mode.friend' },
-  ...(PRIVATE_PLAYTESTING ? [{ id: 'mcp', label: 'home.mode.mcp' } as const] : []),
-];
 
 /** Home: your deck on your mat, one decision away from a game. */
 export function HomeScreen() {
@@ -57,7 +49,8 @@ export function HomeScreen() {
   const t = useT();
   const decks = useDecks();
   const play = usePlay();
-  const [mode, setMode] = useState<Mode>('ai');
+  const [mode, setMode] = useState<HomeMode>(defaultHomeMode);
+  const [humanMcpAllowed, setHumanMcpAllowed] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   // stays mounted once opened, so it can animate closed
   const [aiLoaded, setAiLoaded] = useState(false);
@@ -105,22 +98,23 @@ export function HomeScreen() {
       .catch(() => undefined);
   }, [selectedId]);
 
-  function start() {
+  function start(deckId = selected?.id) {
+    if (busy) return;
     if (mode === 'meta') {
       if (pickedFormat) void play.playVsAi(RANDOM_META_PREFIX + pickedFormat);
       return;
     }
-    if (!selected) return;
+    if (!deckId) return;
     switch (mode) {
       case 'ai':
-        void play.playVsAi(selected.id);
+        void play.playVsAi(deckId, { humanMcpAllowed });
         break;
       case 'practice':
-        void play.playVsAi(selected.id, { practice: true });
+        void play.playVsAi(deckId, { practice: true, humanMcpAllowed });
         break;
       case 'friend':
       case 'mcp':
-        navigate('/tables', { state: { host: selected.id, opponent: mode } });
+        navigate('/tables', { state: { host: deckId, opponent: mode } });
         break;
     }
   }
@@ -145,8 +139,7 @@ export function HomeScreen() {
                 onSelect={() => decks.select(deck.id)}
                 onActivate={() => {
                   decks.select(deck.id);
-                  if (mode === 'ai') void play.playVsAi(deck.id);
-                  if (mode === 'practice') void play.playVsAi(deck.id, { practice: true });
+                  if (mode !== 'meta') start(deck.id);
                 }}
               />
             </div>
@@ -189,21 +182,9 @@ export function HomeScreen() {
               </span>
             </div>
           )}
-          <div className={styles.modes} role="radiogroup" aria-label={t('home.opponent')}>
-            {MODES.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                role="radio"
-                aria-checked={mode === item.id}
-                className={[styles.mode, mode === item.id ? styles.modeOn : '', item.id === 'mcp' ? styles.modeWide : ''].join(' ')}
-                onClick={() => setMode(item.id)}
-                disabled={busy}
-              >
-                {t(item.label)}
-              </button>
-            ))}
-          </div>
+          <HomeModes mode={mode} onChange={setMode} disabled={busy} />
+          {PRIVATE_PLAYTESTING && (mode === 'practice' || mode === 'ai') && <Switch checked={humanMcpAllowed}
+            onCheckedChange={setHumanMcpAllowed} disabled={busy} label={t('home.humanMcpAllowed')} />}
           {mode === 'ai' && (
             <button type="button" className={styles.aiSetup} onClick={() => setAiOpen(true)} disabled={busy}>
               <SlidersHorizontal size={16} aria-hidden="true" />
@@ -237,7 +218,7 @@ export function HomeScreen() {
               size="xl"
               busy={busy}
               disabled={!ready}
-              onClick={start}
+              onClick={() => start()}
               className={styles.playButton}
             >
               {t(busy ? (play.phase === 'waitingForGame' ? 'home.shuffling' : 'home.settingUp')

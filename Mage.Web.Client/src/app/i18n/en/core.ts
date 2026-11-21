@@ -3,6 +3,12 @@
  * entry chunk; screens that load later bring their own English (settings.ts, events.ts, about.ts).
  */
 export default {
+  'match.input.delegated': 'Player controlled by MCP · Read only',
+  'match.input.pending': 'Checking match permissions',
+  'match.input.unavailable': 'Match permissions unavailable',
+  'match.input.resync': 'Refresh board',
+  'match.input.back': 'Back to Play',
+  'ui.showCard': '{name}, show card',
   // app shell
   'shell.home': '{app} home',
   'shell.nav': 'Main',
@@ -132,7 +138,9 @@ export default {
   'home.notice': 'Server notice',
   'home.play': 'Play',
   'home.opponent': 'Opponent',
-  'home.mode.ai': 'The AI',
+  'home.mode.ai': 'BOT',
+  'home.humanMcpAllowed': 'Give the MCP agent my seat and watch from the browser',
+  'home.humanMcpBadge': 'MCP enabled',
   'home.firstGame.text': 'New to Magic? Play a guided first game: an easy opponent, and a tip each time something new comes up.',
   'home.firstGame.start': 'Guided game',
   'home.firstGame.skip': 'No thanks',
@@ -177,7 +185,7 @@ export default {
   'email.wrongCode': 'That code is wrong or has expired. Send a new one.',
 
   // the AI opponent (Play)
-  'ai.title': 'Playing the AI',
+  'ai.title': 'Playing the BOT',
   'ai.restore': 'Restore defaults',
   'ai.done': 'Done',
   'ai.difficulty': 'Difficulty',
@@ -230,8 +238,8 @@ export default {
   'ai.pod.seat3': 'Third AI\'s deck',
   'ai.pod.seatDetail': 'Each AI can have its own deck. A deck that isn\'t a commander deck gets a random pick instead.',
   // the one-line summary on Play: "Normal AI · random starter deck · best of one"
-  'ai.summary.one': '{difficulty} AI',
-  'ai.summary.many': '{count} {difficulty} AIs',
+  'ai.summary.one': '{difficulty} BOT',
+  'ai.summary.many': '{count} {difficulty} bots',
   'ai.summary.randomDeck': 'random starter deck',
   'ai.summary.metaDeck': "a deck from the format's pool",
   'ai.summary.bestOf1': 'best of one',
@@ -246,11 +254,11 @@ export default {
   'decks.refresh': 'Refresh',
   'decks.libraries': 'Deck libraries',
   'decks.personalLibrary': 'My decks',
-  'decks.agentLibrary': 'AI opponent · MCP',
+  'decks.agentLibrary': 'MCP Player',
   'decks.personalHint': 'Your saved decks for playing and building.',
   'decks.agentHint': 'Reusable opponent decks. Ask the MCP to create or update a deck here for your next game.',
   'decks.agentEmpty': 'No MCP opponent decks yet. Ask the MCP to save one, or move one of your existing decks here.',
-  'decks.moveToAgent': 'Move to AI opponent · MCP',
+  'decks.moveToAgent': 'Move to the MCP Player’s library',
   'decks.moveToPersonal': 'Move to my decks',
   'decks.moveFailed': 'Could not move the deck',
   'decks.copyToPersonal': 'Copy to my decks',
@@ -300,6 +308,8 @@ export default {
   'decks.tags.full': 'Up to {count} tags',
   'decks.tags.failed': "Couldn't save the deck",
   'decks.archetype': 'Archetype',
+  'decks.emptyArchetype': 'Empty deck',
+  'decks.basicLandsArchetype': 'Basic Lands Practice',
   'decks.otherArchetype': 'Other',
   'decks.draft': 'Still building (draft)',
   'decks.draft.badge': 'Draft',

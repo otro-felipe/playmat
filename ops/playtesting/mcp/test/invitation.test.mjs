@@ -12,7 +12,7 @@ test('[PM-AC-08] join_game uses a private Playmat link, validates before claim, 
   const origin = 'https://playmat.example';
   const tableId = '22222222-2222-4222-8222-222222222222';
   const deck = { name: 'Fixture deck', cards: [{ cardName: 'Forest', amount: 60 }] };
-  const deckId = '33333333-3333-4333-8333-333333333333';
+  const deckId = 'pioneer_aggro:main-1.0';
   const access = { tableId, format: 'Pioneer', mode: 'mcp' };
   const inspected = [];
   const claimed = [];

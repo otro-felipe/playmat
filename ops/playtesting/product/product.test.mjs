@@ -136,12 +136,13 @@ test('the refinement only changes evidenced migrated defaults and reports disjoi
     assert.deepEqual([after.id, after.listVersion, after.listSignature, after.revision], [before.id, before.listVersion, before.listSignature, before.revision])
     assert.equal((await read('starter')).archetype, 'Selesnya Counters')
     assert.equal((await read('renamed-example')).archetype, 'Izzet Prowess')
-    for (const id of ['selected','draft','empty','unknown','side']) assert.equal((await read(id)).archetype, 'Other')
+    assert.equal((await read('empty')).archetype, 'Empty deck')
+    for (const id of ['selected','draft','unknown','side']) assert.equal((await read(id)).archetype, 'Other')
   }
   const { libraryArchetypeCoverage } = await import('./deck-list-migration.mjs')
   const coverage = await withTestDatabase(f, libraryArchetypeCoverage)
-  assert.deepEqual(coverage.otherBreakdown, { empty: 1, basicOnly: 1, incomplete: 1, complete: 2 })
-  assert.equal(coverage.otherDecks, 5)
+  assert.deepEqual(coverage.otherBreakdown, { empty: 0, basicOnly: 1, incomplete: 1, complete: 2 })
+  assert.equal(coverage.otherDecks, 4)
 })
 
 test('refinement preserves Other after a freeze erases the safe v1 provenance boundary', { skip: !databaseUrl }, async t => {
@@ -2061,6 +2062,13 @@ test(
       JSON.stringify(await performance(bob, 'scope=all&includeCards=true')),
       /golgari|League list|Rejected/,
     )
+    await withTestDatabase(f, async db => {
+      await db.query("UPDATE decks SET library='agent' WHERE id='golgari'")
+    })
+    const agentShelf = await performance(alice, 'scope=all')
+    assert.deepEqual(agentShelf.groups, [])
+    assert.equal(agentShelf.summary.games.total, 3)
+    await withTestDatabase(f, db => db.query("UPDATE decks SET library='personal' WHERE id='golgari'"))
     const landing = await performance(alice, 'scope=all')
     assert.deepEqual(
       landing.groups.map((g) => [g.format, g.archetype, g.matches, g.games]),
@@ -2130,3 +2138,94 @@ test(
     assert.equal((await read('performance?scope=all&bestOf=3&' + query)).summary.games.total, 0)
   },
 )
+
+test('human MCP consent is immutable, table-scoped and recorded by the engine for the authenticated human', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const owner = await signIn(f, 'ConsentHost')
+  const other = await signIn(f, 'ConsentOther')
+  await f.product.provisionAgent('ConsentHost', 'ConsentRival', ['play'])
+  const principal = { accountId: (await f.path('/internal/verify', { headers: owner })).headers.get('X-Playmat-Account'), connectionId: randomUUID() }
+  const authorize = fields => f.path('/internal/human-seat/authorize', json('POST', {}, { ...principal, ...fields }))
+  await withTestDatabase(f, async db => {
+    await db.query("UPDATE agent_grants SET oauth_managed=true WHERE engine_key='consentrival'")
+    await db.query(`INSERT INTO oauth_connections(id,account_id,engine_key,client_id,audience,scopes_approved,refresh_digest,expires_at)
+      VALUES($1,$2,'consentrival','fixture-client','fixture-resource',ARRAY['play'],$3,now()+interval '1 hour')`, [principal.connectionId, principal.accountId, randomUUID()])
+  })
+  assert.equal((await authorize({})).status, 200)
+  assert.equal((await authorize({ connectionId: randomUUID() })).status, 403)
+  for (const allowed of [false, true]) {
+    const tableId = randomUUID()
+    const endpoint = '/api/playtesting/human-seat/' + tableId
+    const metadata = { tableId, humanName: 'ConsentHost', humanMcpAllowed: allowed, createdViaMcp: false }
+    assert.equal((await f.path(endpoint, json('POST', owner, metadata))).status, 404)
+    assert.equal((await f.path('/internal/human-seat/table', json('POST', {}, metadata))).status, 200)
+    assert.deepEqual(await (await f.path(endpoint, { headers: owner })).json(), metadata)
+    const manual = accountId => f.path('/internal/human-seat/manual', json('POST', {}, { accountId, tableId }))
+    assert.equal((await manual(principal.accountId)).status, allowed ? 403 : 200)
+    const restoredId = randomUUID()
+    const restore = (from, to) => f.path('/internal/human-seat/restore', json('POST', {}, {originalTableId:from, tableId:to}))
+    assert.equal((await restore(tableId, restoredId)).status, 200)
+    assert.equal((await restore(tableId, restoredId)).status, 200, 'A lost response can be retried')
+    assert.equal((await restore(randomUUID(), restoredId)).status, 409, 'A legacy source cannot target a protected seat')
+    assert.equal((await restore(randomUUID(), randomUUID())).status, 200, 'Unregistered legacy matches retain ordinary browser play')
+    assert.equal((await authorize({ tableId:restoredId })).status,allowed ? 200 : 403)
+    assert.equal((await f.path('/internal/human-seat/manual', json('POST', {}, {accountId:principal.accountId,tableId:restoredId}))).status,allowed ? 403 : 200)
+    const otherId = (await f.path('/internal/verify', { headers: other })).headers.get('X-Playmat-Account')
+    assert.equal((await manual(otherId)).status, 200)
+    assert.equal((await authorize({ tableId })).status, allowed ? 200 : 403)
+    assert.equal((await authorize({ tableId, startOnly: true })).status, 403, 'Browser-created table grants no setup-only right')
+    const mcpTable = randomUUID()
+    await f.path('/internal/human-seat/table', json('POST', {}, { ...metadata, tableId:mcpTable, createdViaMcp:true }))
+    assert.equal((await restore(mcpTable, restoredId)).status, 409, 'A different source cannot overwrite the destination')
+    assert.equal((await authorize({ tableId:mcpTable, startOnly:true })).status, 200)
+    assert.equal((await authorize({ tableId:mcpTable })).status, allowed ? 200 : 403)
+    assert.equal((await authorize({ tableId, accountId: randomUUID() })).status, 403)
+    assert.equal((await f.path(endpoint, { headers: other })).status, 404)
+    assert.equal((await f.path('/internal/human-seat/table', json('POST', {}, {...metadata, humanMcpAllowed: !allowed}))).status, 409)
+    assert.equal((await (await f.path(endpoint, { headers: owner })).json()).humanMcpAllowed, allowed)
+  }
+  await withTestDatabase(f, db => db.query('UPDATE oauth_connections SET revoked_at=now() WHERE id=$1', [principal.connectionId]))
+  assert.equal((await authorize({})).status, 403)
+})
+
+test('historical and newly archived human and MCP seats receive only evidenced archetypes after match completion', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const owner = await signIn(f, 'ArchetypeOwner')
+  await f.product.provisionAgent('ArchetypeOwner', 'ArchetypeMcp', ['play'])
+  const human = 'ArchetypeOwner', rival = 'ArchetypeMcp'
+  const cards = ['Kaito, Bane of Nightmares', 'Moon-Circuit Hacker', 'Faerie Miscreant', 'Floodpits Drowner'].map(cardName => ({ cardName, amount: 4 }))
+  const deck = { name: 'Untitled', cards: [...cards, { cardName: 'Island', amount: 44 }], sideboard: [] }
+  const match = await historyMatch(f, [human, rival], Date.now(), { active: true })
+  const id = match.games[0]
+  const sideboardGame = randomUUID()
+  await addReplay(f, match.id, sideboardGame, [human, rival])
+  const extraPath = join(f.replayDirectory, sideboardGame + '.json')
+  const extra = JSON.parse(await readFile(extraPath))
+  extra.gameNumber = 2
+  extra.players.forEach(player => { delete player.deck })
+  await writeFile(extraPath, JSON.stringify(extra))
+  const infoPath = join(f.replayDirectory, id + '.json')
+  const info = JSON.parse(await readFile(infoPath))
+  info.deckType = 'Constructed - Pioneer'
+  info.players[1].deck = deck
+  info.players[0].deck = { name: 'Dimir Ninjas', cards: [{ cardName: 'Island', amount: 1 }] }
+  await writeFile(infoPath, JSON.stringify(info))
+  await f.product.archiveGames()
+  const visible = async () => (await (await f.path('/api/playtesting/matches', { headers: owner })).json()).matches[0].games[0].players
+  assert.ok((await visible()).every(seat => !seat.archetype))
+  await writeFile(join(f.replayDirectory, match.id + '.match.json'), JSON.stringify({ matchId: match.id, endedAt: Date.now() }))
+  await f.product.archiveGames()
+  assert.equal((await visible()).find(seat => seat.name === rival).archetype, 'Dimir Ninjas')
+  const allGames = (await (await f.path('/api/playtesting/matches', { headers: owner })).json()).matches[0].games
+  assert.equal(allGames[1].players.find(seat => seat.name === rival).archetype, 'Dimir Ninjas')
+  assert.ok(!(await visible()).find(seat => seat.name === human).archetype)
+  const { backfillSeatArchetypes, archetypeCoverage } = await import('./archived-archetypes.mjs')
+  await withTestDatabase(f, async db => {
+    await db.query('UPDATE game_players SET archetype=NULL WHERE game_id=ANY($1::uuid[])', [[id, sideboardGame]])
+    await backfillSeatArchetypes(db)
+    await backfillSeatArchetypes(db)
+    const report = await archetypeCoverage(db)
+    assert.deepEqual(report.seats, { total: 4, classified: 2, pending: 2 })
+  })
+  assert.equal((await visible()).find(seat => seat.name === rival).archetype, 'Dimir Ninjas')
+})

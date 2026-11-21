@@ -22,7 +22,7 @@
 .eyebrow { font: 600 .8rem/1.2 var(--font-print); text-transform: uppercase; letter-spacing: .12em; color: var(--ink-soft); }
 .card .eyebrow, .cardTitle { grid-column: 1 / -1; padding-right: 20px; }
 .cardTitle { font: 600 1.6rem/1.12 var(--font-print); overflow-wrap: anywhere; }
-.cardRate { margin-top: 12px; color: var(--decision-strong); font: 600 2.25rem/1 var(--font-print); }
+.cardRate { margin-top: 12px; color: var(--ink-soft); font: 600 2.25rem/1 var(--font-print); }
 .card small { color: var(--ink-soft); font-size: var(--text-sm); }
 .card svg { position: absolute; inset: 14px 14px auto auto; color: var(--ink-dim); }
 .back { display: inline-flex; align-items: center; gap: 7px; color: var(--ink-soft); font-size: var(--text-sm); text-decoration: none; min-height: 32px; }
@@ -39,8 +39,7 @@
 .headline { flex: 1 1 230px; min-width: 0; padding: 18px 22px; border: 1px solid var(--ink-ghost); border-radius: 6px; background: var(--mat-800); }
 .headline h2 { color: var(--ink-soft); font-size: 1.25rem; }
 .headline strong { display: block; margin: 7px 0 4px; font: 600 4rem/1 var(--font-print); letter-spacing: -.04em; }
-.headline[data-primary='true'] strong { color: var(--decision-strong); }
-.headline span, .hint, .empty { color: var(--ink-soft); font-size: var(--text-sm); }
+.headline > span, .hint, .empty { color: var(--ink-soft); font-size: var(--text-sm); }
 .panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 24px; }
 .sections { margin-top: 22px; display: grid; gap: 26px; }
 .results { min-width: 0; }

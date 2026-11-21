@@ -112,6 +112,71 @@ public final class ProductGateway {
         }
     }
 
+    /** The registered human observes an opted-in table even when no agent is connected. */
+    public static boolean humanBrowserMayPlay(mage.server.recovery.RecoveryPrincipal principal, UUID tableId) {
+        if (!enabled() || principal == null || tableId == null
+                || !principal.seatId.equals("human:" + principal.accountId)) return false;
+        JsonObject body = new JsonObject();
+        body.addProperty("accountId", principal.accountId.toString());
+        body.addProperty("tableId", tableId.toString());
+        try {
+            return request("/internal/human-seat/manual", 2000, "", body, false).status == 200;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    /** Verify the originating OAuth play grant and, for an existing table, its human-seat opt-in. */
+    public static boolean humanSeatAuthorized(mage.server.recovery.RecoveryPrincipal principal, UUID tableId) {
+        return humanTableGrant(principal, tableId, false);
+    }
+
+    /** An MCP-created waiting table can be started after a reconnect, including when gameplay is disabled. */
+    public static boolean humanTableStartAuthorized(mage.server.recovery.RecoveryPrincipal principal, UUID tableId) {
+        return tableId != null && humanTableGrant(principal, tableId, true);
+    }
+
+    private static boolean humanTableGrant(mage.server.recovery.RecoveryPrincipal principal, UUID tableId, boolean startOnly) {
+        if (!enabled() || principal == null || principal.connectionId == null
+                || !principal.seatId.equals("human:" + principal.accountId)) return false;
+        JsonObject body = new JsonObject();
+        if (startOnly) body.addProperty("startOnly", true);
+        body.addProperty("accountId", principal.accountId.toString());
+        body.addProperty("connectionId", principal.connectionId.toString());
+        if (tableId != null) body.addProperty("tableId", tableId.toString());
+        try {
+            return request("/internal/human-seat/authorize", 2000, "", body, false).status == 200;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    /** Recovery remaps table IDs; the original seat policy must be in force before play resumes. */
+    public static boolean restoreHumanSeat(UUID original, UUID replacement) {
+        JsonObject body = new JsonObject();
+        body.addProperty("originalTableId", original.toString());
+        body.addProperty("tableId", replacement.toString());
+        try {
+            return request("/internal/human-seat/restore", 2000, "", body, false).status == 200;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    /** Called by the bridge with XMage's newly created table and its authenticated owner. */
+    public static boolean recordHumanSeat(UUID tableId, String humanName, boolean allowed, boolean createdViaMcp) {
+        JsonObject body = new JsonObject();
+        body.addProperty("tableId", tableId.toString());
+        body.addProperty("humanName", humanName);
+        body.addProperty("humanMcpAllowed", allowed);
+        body.addProperty("createdViaMcp", createdViaMcp);
+        try {
+            return request("/internal/human-seat/table", 2000, humanName, body, false).status == 200;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
     public static boolean canJoin(UUID tableId, String hostEngineName, String guestEngineName) {
         return authorizedInvitation(tableId, hostEngineName, guestEngineName, false);
     }

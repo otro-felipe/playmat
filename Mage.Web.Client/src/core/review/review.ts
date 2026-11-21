@@ -20,6 +20,7 @@ export interface Finding {
   frame: number;
   title: string;
   detail: string;
+  cards?: string[];
   /** bigger is worse: how much the moment cost */
   weight: number;
 }
@@ -163,6 +164,7 @@ export function reviewGame(frames: readonly ReviewFrame[], me: string): Review {
         const card = playable[0];
         findings.push({
           kind: 'unspentMana', turn: span.turn, frame: span.last, weight: 10 + 5 * (card.manaValue ?? 0),
+          cards: [cardName(card)],
           title: `${untapped} mana unspent on turn ${span.turn}`,
           detail: `You ended the turn with ${untapped} lands untapped and ${cardName(card)} (${card.manaValue}) in hand.`,
         });
@@ -186,6 +188,7 @@ export function reviewGame(frames: readonly ReviewFrame[], me: string): Review {
         if (blockerGone && attackerAlive && lifeBefore - hit > 8) {
           findings.push({
             kind: 'badBlock', turn: span.turn, frame: block.frame, weight: 15 + 3 * number(block.blocker.power),
+            cards: [cardName(block.blocker), cardName(block.attacker)],
             title: `A lost blocker on turn ${span.turn}`,
             detail: `${cardName(block.blocker)} blocked ${cardName(block.attacker)} and died without killing it, while you were at ${lifeBefore} life and could take ${hit}.`,
           });
@@ -204,10 +207,12 @@ export function reviewGame(frames: readonly ReviewFrame[], me: string): Review {
     const span = spans[worst.index];
     const before = scores[worst.index - 1].score;
     const after = scores[worst.index].score;
+    const swing = swingDetail(frames, spans[worst.index - 1], span, me);
     findings.push({
       kind: 'turningPoint', turn: worst.turn, frame: span.first, weight: 50 + worst.drop,
       title: `Turn ${worst.turn} turned the game`,
-      detail: `${standing(before)} going in, ${standing(after)} after it${span.active === me ? ', on your own turn' : `, on ${span.active}'s turn`}. ${swingDetail(frames, spans[worst.index - 1], span, me)}`,
+      cards: swing.cards,
+      detail: `${standing(before)} going in, ${standing(after)} after it${span.active === me ? ', on your own turn' : `, on ${span.active}'s turn`}. ${swing.detail}`,
     });
   }
 
@@ -229,7 +234,7 @@ function standing(score: number): string {
   return 'it was even';
 }
 
-function swingDetail(frames: readonly ReviewFrame[], before: TurnSpan, after: TurnSpan, me: string): string {
+function swingDetail(frames: readonly ReviewFrame[], before: TurnSpan, after: TurnSpan, me: string) {
   const start = frames[before.last].view;
   const end = frames[after.last].view;
   const parts: string[] = [];
@@ -240,9 +245,7 @@ function swingDetail(frames: readonly ReviewFrame[], before: TurnSpan, after: Tu
   const theirsBefore = opponents(start, me).flatMap((seat) => permanents(seat).filter(isCreature)).length;
   const theirsAfter = opponents(end, me).flatMap((seat) => permanents(seat).filter(isCreature)).length;
   if (theirsAfter > theirsBefore) parts.push(`they added ${theirsAfter - theirsBefore} creature${theirsAfter - theirsBefore === 1 ? '' : 's'}`);
-  if (parts.length === 0) return '';
-  const text = parts.join(', and ');
-  return `In that turn ${text}.`;
+  return { detail: parts.length ? `In that turn ${parts.join(', and ')}.` : '', cards: lost.map(cardName) };
 }
 
 function hasPermanent(view: GameView, me: string, id: string): boolean {

@@ -36,7 +36,7 @@ const castMode = {
 const title = 'Alice lanza Burst Lightning con Sheoldred, the Apocalypse como objetivo';
 const annotation = {
   gameId, cursor: 6, frameCursor: 5, seatId: 'seat-a', category: 'good', confidence: 'high', actual,
-  rationale: 'Sheoldred estaba en mesa y su disparo seguía amenazando.',
+  rationale: '[Sheoldred](card://Sheoldred%2C%20the%20Apocalypse) estaba en mesa y su disparo seguía amenazando.',
   alternatives: [{ line: 'Guardar el segundo Burst', legality: 'legal', benefit: 'Mantiene alcance', risk: 'Sheoldred sigue en mesa' }],
   evidence: { basis: 'engine_log', frameCursor: 5, turn: 9 },
   retrospective: 'Bob tenía Fatal Push en la mano.',
@@ -142,7 +142,7 @@ for (const [device, viewport] of Object.entries({ desktop: { width: 1440, height
       if (device === 'mobile') await page.keyboard.press('ArrowRight');
       await expect(page.locator('[data-replay-cursor]')).toHaveAttribute('data-replay-cursor', '6');
       await expect(page.getByRole('region', { name: 'Evidencia previa a la jugada' })).toHaveCount(0);
-      const preview = page.getByRole('button', { name: 'Burst Lightning, ver carta' });
+      const preview = page.getByRole('article').getByRole('button', { name: 'Sheoldred, ver carta', exact: true });
       await expect(preview).toHaveCSS('text-decoration-line', 'underline');
       if (device === 'desktop') await preview.hover();
       else await preview.tap();

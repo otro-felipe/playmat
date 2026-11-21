@@ -105,7 +105,7 @@ export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions
       <p>Cliente: ${escape(request.client.clientId)}<br>Destino: <strong>${escape(request.client.redirectUri)}</strong></p>
       ${new URL(request.client.redirectUri).protocol === 'http:' ? '<p>El destino es una aplicación en este dispositivo. Comprueba que abriste esta conexión desde la aplicación que quieres autorizar.</p>' : ''}
       <ul>${permissions}</ul>
-      ${request.scopes.includes('play') ? '<p>El agente puede controlar al rival cuando lo invitas a una partida MCP.</p>' : ''}
+      ${request.scopes.includes('play') ? '<p>El agente puede crear partidas en tu cuenta y jugar como Jugador MCP cuando lo invitas. También puede jugar en tu lugar en las partidas que habiliten MCP para el Jugador Humano, incluidas las que cree con ese permiso. En esas partidas verás tu mano y la mesa en el navegador, y el agente tomará las decisiones de juego.</p>' : ''}
       <form method="post" action="/oauth/authorize"><input type="hidden" name="request" value="${id}">
       <button name="decision" value="allow">Autorizar</button>
       <button name="decision" value="deny">Cancelar</button></form>`, new URL(request.client.redirectUri).origin)

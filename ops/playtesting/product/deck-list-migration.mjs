@@ -101,12 +101,31 @@ export async function libraryArchetypeCoverage(db) {
       FROM deck_revision_cards WHERE account_id=d.account_id AND deck_id=d.id AND revision=d.head) c ON r.archetype='Other'
     WHERE NOT d.removed
   ) SELECT COUNT(*)::integer AS "currentDecks",
-    COUNT(*) FILTER (WHERE archetype <> '')::integer AS "classifiedDecks",
+    COUNT(*) FILTER (WHERE archetype <> 'Other')::integer AS "classifiedDecks",
     COUNT(*) FILTER (WHERE archetype='Other')::integer AS "otherDecks",
-    (SELECT COUNT(*)::integer FROM deck_revisions WHERE archetype <> '') AS "classifiedRevisions",
+    (SELECT COUNT(*)::integer FROM deck_revisions WHERE archetype <> 'Other') AS "classifiedRevisions",
     json_build_object(
       'empty', count(*) FILTER (WHERE shape='empty'), 'basicOnly', count(*) FILTER (WHERE shape='basicOnly'),
       'incomplete', count(*) FILTER (WHERE shape='incomplete'), 'complete', count(*) FILTER (WHERE shape='complete')
     ) AS "otherBreakdown" FROM heads`, [basicLandNames])
   return counts
+}
+
+/** Revisit machine defaults using source-backed composition. Keep every explicitly chosen label and list version. */
+export async function refineTournamentArchetypes(db) {
+  const { rows } = await db.query(`SELECT account_id,deck_id,revision,format,name,list_signature FROM deck_revisions
+    WHERE archetype_inferred AND archetype IN ('Other','Aggro','Combo','Control','Midrange','Ramp','Tempo') ORDER BY account_id,deck_id,revision`)
+  for (const row of rows) {
+    const key = [row.account_id,row.deck_id,row.revision]
+    const { rows: entries } = await db.query(`SELECT zone,card_name AS "cardName",amount FROM deck_revision_cards
+      WHERE account_id=$1 AND deck_id=$2 AND revision=$3`, key)
+    const deck = { cards: [], sideboard: [] }
+    for (const entry of entries) deck[entry.zone].push(entry)
+    const label = publicListArchetype(row.format, row.list_signature) ?? verifiedListArchetype(row.format, row.name, deck.cards, deck.sideboard)
+    if (!label) continue
+    await db.query('UPDATE deck_revisions SET archetype=$4 WHERE account_id=$1 AND deck_id=$2 AND revision=$3', [...key,label])
+    await db.query('UPDATE decks SET updated_at=updated_at+1 WHERE account_id=$1 AND id=$2 AND head=$3', key)
+    await db.query(`UPDATE match_deck_registrations SET archetype=$4 WHERE account_id=$1 AND deck_id=$2 AND list_signature=$3
+      AND (archetype IS NULL OR archetype='Other')`, [row.account_id,row.deck_id,row.list_signature,label])
+  }
 }

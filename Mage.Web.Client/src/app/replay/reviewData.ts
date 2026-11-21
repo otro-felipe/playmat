@@ -134,6 +134,7 @@ export interface ReviewMoment {
 
 export interface ReviewEvent extends ReviewMoment {
   type?: string;
+  lines?: { cursor: number; commandId: string; actor: string; seatId: string; reasoning: string }[];
   actorPlayerId?: string;
   decision?: ReviewDecisionContext;
   decisions?: ReviewDecisionContext[];

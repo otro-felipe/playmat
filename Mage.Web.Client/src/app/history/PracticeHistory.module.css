@@ -40,7 +40,7 @@
 .matches h2 { font-size: 1.875rem; letter-spacing: -.014em; margin-bottom: 16px; }
 .columnHeaders, .toggle {
   display: grid;
-  grid-template-columns: minmax(145px, 1.2fr) minmax(140px, 2.1fr) minmax(86px, 1.2fr) minmax(100px, 1fr) 70px 18px;
+  grid-template-columns: minmax(100px, 1.1fr) minmax(110px, 1.5fr) minmax(110px, 1.5fr) minmax(70px, .9fr) minmax(78px, .8fr) 60px 18px;
   align-items: center;
   text-align: start;
   gap: 12px;
@@ -63,6 +63,9 @@
 .shortDate { display: none; }
 .toggle .date, .toggle .format { color: var(--ink-soft); font-size: var(--text-sm); }
 .rival { font-weight: 600; }
+.rival small { display: block; color: var(--ink-soft); font-size: var(--text-sm); font-weight: 400; overflow: hidden; text-overflow: ellipsis; }
+.rival .mobileArchetype { display: none; }
+.archetype { overflow-wrap: anywhere; }
 .outcome { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: var(--text-sm); color: var(--ink-dim); }
 .outcome[data-outcome='win'] { color: var(--decision-strong); }
 .outcome[data-outcome='loss'] { color: var(--danger-text); }
@@ -89,7 +92,8 @@
   .head h1 { font-size: 2.5rem; }
   .page { padding: 0 0 24px; scrollbar-gutter: auto; }
   .columnHeaders, .toggle { grid-template-columns: 45px minmax(0, 1fr) 80px 50px 12px; gap: 7px; padding-inline: 6px; }
-  .fullDate, .format { display: none; }
+  .rival .mobileArchetype { display: block; }
+  .fullDate, .format, .archetype { display: none; }
   .shortDate { display: inline; }
   .chevron { justify-self: end; }
   .head { margin-bottom: 14px; gap: 10px; }

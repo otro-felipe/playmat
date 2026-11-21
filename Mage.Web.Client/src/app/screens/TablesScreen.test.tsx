@@ -18,7 +18,7 @@ vi.mock('../queries', () => ({
   useTables: () => ({ data: tables }), useServerState: () => ({ data: {} }), refreshTables: vi.fn(),
 }));
 vi.mock('../stores/session', () => ({
-  useSession: Object.assign((pick: (state: object) => unknown) => pick({ userName: 'Host', roomId }), { subscribe: vi.fn() }),
+  useSession: Object.assign((pick: (state: object) => unknown) => pick({ userName: 'Host', roomId, phase: 'signedIn' }), { subscribe: vi.fn() }),
 }));
 vi.mock('../stores/decks', () => {
   const state = { selectedId: 'fixture', loaded: true, loadForPlay: async () => ({ deck }), loadList: async () => deck };
@@ -210,5 +210,34 @@ test('[PM-AC-04] the MCP alias is visible when seated and Start follows the engi
   expect(page.getByText('Felipe')).toBeTruthy();
   expect(page.getByText('MCP')).toBeTruthy();
   expect(page.queryByText('Angels')).toBeNull();
+  expect((page.getByRole('button', { name: 'Start' }) as HTMLButtonElement).disabled).toBe(false);
+});
+
+test('the host opts in to human MCP control for just this match', async () => {
+  tables = [];
+  friends = [];
+  calls.create.mockResolvedValue({ tableId });
+  calls.join.mockResolvedValue(true);
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({})));
+  const { page } = mount();
+  fireEvent.click(page.getByRole('button', { name: 'Host a table' }));
+  const dialog = within(await page.findByRole('dialog', { name: 'Host a table' }));
+  const toggle = dialog.getByRole('switch', { name: 'Give the MCP agent my seat and watch from the browser' });
+  expect(toggle.getAttribute('aria-checked')).toBe('false');
+  fireEvent.click(toggle);
+  fireEvent.click(dialog.getByRole('button', { name: /^Host$/ }));
+  await waitFor(() => expect(calls.create).toHaveBeenCalledWith(roomId, expect.objectContaining({ humanMcpAllowed: true })));
+  await waitFor(() => expect(page.queryByRole('dialog')).toBeNull());
+  fireEvent.click(page.getByRole('button', { name: 'Host a table' }));
+  expect(page.getByRole('switch', { name: 'Give the MCP agent my seat and watch from the browser' }).getAttribute('aria-checked')).toBe('false');
+});
+
+test('a delegated host can start the table while close and table chat input stay locked', async () => {
+  tables = [{ tableId, tableName: 'Delegated', controllerName: 'Host', tableState: 'READY_TO_START', seats: [{ playerName: 'Host', playerType: 'HUMAN' }] }];
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => Response.json(url.includes('/human-seat/')
+    ? { tableId, humanName: 'Host', humanMcpAllowed: true } : {})));
+  const { page } = mount();
+  await page.findByText('Player controlled by MCP · Read only');
+  expect(page.queryByRole('button', { name: 'Close' })).toBeNull();
   expect((page.getByRole('button', { name: 'Start' }) as HTMLButtonElement).disabled).toBe(false);
 });

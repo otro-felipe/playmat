@@ -29,6 +29,8 @@ public class WebSocketCallbackHandler implements ClientChannel {
             ClientCallbackMethod.GAME_PLAY_MANA, ClientCallbackMethod.GAME_PLAY_XMANA, ClientCallbackMethod.GAME_GET_AMOUNT,
             ClientCallbackMethod.GAME_GET_MULTI_AMOUNT);
 
+    public static boolean isPrompt(ClientCallbackMethod method) { return PROMPTS.contains(method); }
+
     private final WebSocket conn;
     /**
      * The last question of each game this connection has not answered yet, as sent (complete, without a state
@@ -161,6 +163,24 @@ public class WebSocketCallbackHandler implements ClientChannel {
             resendPrompt(gameId);
             return true;
         }
+    }
+
+    /** A browser may have spectator permissions. Never transfer those private hand projections to its agent. */
+    void sendSeatView(ClientCallback event) throws Closed {
+        if (!conn.isOpen()) throw new Closed("The delegated socket is closed");
+        JsonObject message = serializeTree(event);
+        removeSharedHands(message);
+        String json = JsonCodec.GSON.toJson(message);
+        BridgeMetrics.get().callback(event.getMethod().name(), json.length(), event.getObjectId());
+        WebSocketServerImpl.sendText(conn, json);
+    }
+
+    static void removeSharedHands(JsonObject message) {
+        if (!message.has("data") || !message.get("data").isJsonObject()) return;
+        JsonObject view = message.getAsJsonObject("data");
+        if (view.has("gameView") && view.get("gameView").isJsonObject()) view = view.getAsJsonObject("gameView");
+        view.remove("opponentHands");
+        view.remove("watchedHands");
     }
 
     @Override

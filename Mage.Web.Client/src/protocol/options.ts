@@ -25,6 +25,8 @@ export interface EmblemCardOption {
 }
 
 export interface WebMatchOptions {
+  /** Allow the account MCP connection to play the host seat for this match. */
+  humanMcpAllowed?: boolean;
   name?: string;
   gameType?: string;
   deckType?: string;

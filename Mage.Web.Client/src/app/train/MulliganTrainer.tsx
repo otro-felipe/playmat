@@ -1,5 +1,5 @@
 import { RotateCcw, Shuffle } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { expandDeck, shuffle } from '../../core/decks/analysis';
 import { simCard, type SimCard } from '../../core/decks/simulate';
 import type { DeckCardInfo } from '../../core/decks/types';
@@ -9,6 +9,7 @@ import { useCardInfo } from '../decks/cardInfo';
 import { entryKey } from '../decks/deckModel';
 import { readJson, writeJson } from '../stores/persist';
 import { Button } from '../ui/Button';
+import { CardPreviewName } from '../ui/CardMarkdown';
 import { CardFace } from '../ui/CardFace';
 import { DeckSelect } from './DeckSelect';
 import { useDeckList } from './trainData';
@@ -170,9 +171,9 @@ function Decision({ deal, onNext, onMulligan }: { deal: Deal; onNext(): void; on
               {decided.fish.turns.map((turn) => (
                 <tr key={turn.turn}>
                   <th scope="row">T{turn.turn}</th>
-                  <td>{turn.drew ?? '—'}</td>
-                  <td>{turn.land ?? <em>missed</em>}</td>
-                  <td>{turn.cast.length ? turn.cast.join(', ') : '—'}</td>
+                  <td>{turn.drew ? <CardPreviewName card={{ name: turn.drew }} /> : '—'}</td>
+                  <td>{turn.land ? <CardPreviewName card={{ name: turn.land }} /> : <em>missed</em>}</td>
+                  <td>{turn.cast.length ? turn.cast.map((name, index) => <Fragment key={index}>{index > 0 && ', '}<CardPreviewName card={{ name }} /></Fragment>) : '—'}</td>
                 </tr>
               ))}
             </tbody>
