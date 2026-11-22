@@ -594,3 +594,112 @@ test('[PM-AC-18] a registered OAuth client is bound to its exact callback and se
   assert.equal((await f.request('/oauth/revoke', {}, { client_id: client.clientId, token: tokens.refresh_token })).status, 200)
   assert.equal((await f.request('/internal/verify', authorization)).status, 401)
 })
+
+test('owner delegates four named players to isolated OAuth pilots with exclusive table reservations', {skip: !databaseUrl}, async t => {
+  const f = await fixture(t)
+  const owner = await f.login('Owner')
+  const other = await f.login('OtherOwner')
+  const api = '/api/playtesting/players'
+  const write = (path, headers, data, method = 'POST') => f.request(path, {...headers, 'Content-Type':'application/json'}, data, method)
+  const list = async headers => (await (await f.request(api, headers)).json()).players
+  const players = []
+  for (const displayName of ['One','Two','Three','Four']) {
+    const created = await write(api, owner, {displayName, flag:'CL', mcpEnabled:true})
+    assert.equal(created.status, 201)
+    players.push(await created.json())
+  }
+  assert.equal(new Set(players.map(p => p.engineName)).size, 4)
+  assert.equal(new Set(players.map(p => p.playerId)).size, 4)
+  assert.equal((await list(owner)).length, 4)
+  assert.equal((await list(other)).length, 0)
+  const [one, two] = players
+  assert.equal((await write(api+'/'+one.playerId, other, {displayName:'Hijack'}, 'PATCH')).status, 404)
+  assert.equal((await write(api+'/'+one.playerId, owner, {flag:'invalid'}, 'PATCH')).status, 400)
+  const changed = await write(api+'/'+one.playerId, owner, {displayName:'First pilot', flag:'us'}, 'PATCH')
+  assert.equal((await changed.json()).engineName, one.engineName)
+  const publicIds = await (await f.request('/api/playtesting/player-identities?names='+one.engineName, owner)).json()
+  assert.equal(publicIds.players[0].displayName, 'First pilot')
+  assert.equal(publicIds.players[0].flag, 'US')
+
+  async function approval(headers, profile) {
+    const consentPage = await f.request(authPath({scope:'play library history chat'}), headers)
+    const request = /name="request" value="([a-f0-9-]{36})"/.exec(await consentPage.text())?.[1]
+    assert.ok(request)
+    return f.request('/oauth/authorize', headers, {request, playerId:profile.playerId, decision:'allow'})
+  }
+  async function connect(profile) {
+    const approved = await approval(owner, profile)
+    assert.equal(approved.status, 303)
+    const code = new URL(approved.headers.get('Location')).searchParams.get('code')
+    const issued = await f.request('/oauth/token', {}, {grant_type:'authorization_code', code, client_id:clientId,
+      redirect_uri:redirect, code_verifier:verifier, resource})
+    assert.equal(issued.status, 200)
+    const tokens = await issued.json()
+    assert.ok(!tokens.scope.split(' ').includes('history'))
+    return {Authorization:'Bearer '+tokens.access_token}
+  }
+  assert.equal((await approval(other, one)).status, 404)
+  const pilots = []
+  for (const player of players) pilots.push(await connect(player))
+  const [pilot, second] = pilots
+  assert.deepEqual((await list(pilot)).map(p=>p.playerId),[one.playerId])
+  assert.equal((await write(api, pilot, {displayName:'Hidden sibling'})).status,403)
+  assert.equal((await f.request('/api/playtesting/matches',pilot)).status,403)
+  const deck = {expectedRevision:0,data:{name:'Fixture deck',format:'Pioneer',cards:[],sideboard:[]}}
+  const decks = '/api/playtesting/decks'
+  assert.equal((await write(decks+'/personal',owner,deck,'PUT')).status,200)
+  assert.equal((await write(decks+'/shared',pilot,deck,'PUT')).status,200)
+  assert.deepEqual((await (await f.request(decks,second)).json()).decks.map(d=>d.id),['shared'])
+  assert.equal((await f.request(decks+'/personal',pilot)).status,404)
+  assert.equal((await write(decks+'/personal',pilot,{...deck,expectedRevision:1},'PUT')).status,404)
+  assert.equal((await f.request(decks+'?library=personal',pilot)).status,403)
+  const tableA=randomUUID(), tableB=randomUUID()
+  assert.equal((await f.request('/api/playtesting/human-seat/'+tableA,pilot)).status,403)
+  assert.equal((await f.request('/internal/verify?scope=play',{...pilot,'X-Playmat-Client-IP':'192.0.2.1'})).status,403)
+  const reserve = (headers,id,operation,reservationId,tableId) =>
+    write('/internal/player-reservations/'+id, headers, {operation,reservationId,tableId})
+  const claims = players.map(()=>randomUUID())
+  assert.equal((await reserve(pilot,two.playerId,'reserve',randomUUID())).status,403)
+  const competing = [claims[0],randomUUID()]
+  const races = await Promise.all(competing.map(id => reserve(pilot,one.playerId,'reserve',id)))
+  assert.deepEqual(races.map(r=>r.status).sort(),[200,409])
+  claims[0] = competing[races.findIndex(r=>r.status===200)]
+  assert.equal((await reserve(pilot,one.playerId,'reserve',claims[0])).status,200)
+  const contender = await connect(one)
+  assert.equal((await reserve(contender,one.playerId,'reserve',randomUUID())).status,409)
+  assert.equal((await reserve(contender,one.playerId,'release',claims[0])).status,409)
+  assert.equal((await (await f.request('/internal/verify',contender)).json()).ownsReservation,false)
+  assert.equal((await list(contender))[0].reservationId,undefined)
+  for (let i=0;i<4;i++) {
+    const target = i<2?tableA:tableB
+    if (i) assert.equal((await reserve(pilots[i],players[i].playerId,'reserve',claims[i])).status,200)
+    assert.equal((await reserve(pilots[i],players[i].playerId,'bind',claims[i],target)).status,200)
+    assert.equal((await reserve(pilots[i],players[i].playerId,'bind',claims[i],target)).status,200)
+    assert.equal((await (await f.request('/internal/verify',pilots[i])).json()).activeTableId,target)
+  }
+  assert.equal((await reserve(second,two.playerId,'bind',claims[1],tableB)).status,409)
+  const renamed = await write(api+'/'+one.playerId,owner,{displayName:'Renamed'},'PATCH')
+  assert.equal((await renamed.json()).activeTableId,tableA)
+  const before = await (await f.request('/internal/verify',pilot)).json()
+  const principal = {accountId: before.accountId, seatId: before.recoverySeatId, connectionId: before.connectionId}
+  assert.equal((await write('/internal/recovery/validate',{},principal)).status,200)
+  const restored = randomUUID()
+  assert.equal((await write('/internal/human-seat/restore',{}, {originalTableId:tableA,tableId:restored})).status,200)
+  assert.equal((await (await f.request('/internal/verify',pilot)).json()).activeTableId,restored)
+  assert.equal((await (await f.request('/internal/verify',second)).json()).activeTableId,restored)
+  assert.equal((await (await f.request('/internal/verify',pilots[2])).json()).activeTableId,tableB)
+  assert.equal((await write(api+'/'+one.playerId,owner,{mcpEnabled:false},'PATCH')).status,200)
+  assert.equal((await f.request('/internal/verify',pilot)).status,401)
+  assert.equal((await write('/internal/recovery/validate',{},principal)).status,403)
+  assert.equal((await write(api+'/'+one.playerId,owner,{mcpEnabled:true},'PATCH')).status,200)
+  assert.equal((await f.request('/internal/verify',pilot)).status,401)
+  const renewed = await connect(one)
+  const rebound = await (await f.request('/internal/verify',renewed)).json()
+  assert.equal(rebound.reservationId,claims[0])
+  assert.equal(rebound.activeTableId,restored)
+  assert.notEqual(rebound.connectionId,before.connectionId)
+  assert.equal(rebound.displayName,'Renamed')
+  assert.equal(rebound.flag,'US')
+  assert.equal((await reserve(renewed,one.playerId,'release',claims[0])).status,200)
+  assert.equal((await (await f.request('/internal/verify',renewed)).json()).activeTableId,null)
+})

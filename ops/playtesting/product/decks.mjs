@@ -60,11 +60,11 @@ export async function listDecks(db, account, includeDeleted = false, library = n
   return rows.map(row => ({ ...deckHeader(row), deleted: row.removed }))
 }
 
-export async function getDeck(db, account, deckId, revision) {
+export async function getDeck(db, account, deckId, revision, library = null) {
   if (!isId(deckId)) return null
   const { rows: [row] } = await db.query(
-    'SELECT d.id, d.library, d.updated_at, d.removed, r.revision, r.name, r.format, r.archetype, r.list_version, r.list_signature, r.metadata FROM decks d JOIN deck_revisions r ON (r.account_id, r.deck_id) = (d.account_id, d.id) WHERE d.account_id=$1 AND d.id=$2 AND r.revision=COALESCE($3, d.head) AND ($3 IS NOT NULL OR NOT d.removed)',
-    [account, deckId, revision ?? null],
+    'SELECT d.id, d.library, d.updated_at, d.removed, r.revision, r.name, r.format, r.archetype, r.list_version, r.list_signature, r.metadata FROM decks d JOIN deck_revisions r ON (r.account_id, r.deck_id) = (d.account_id, d.id) WHERE d.account_id=$1 AND d.id=$2 AND r.revision=COALESCE($3, d.head) AND ($3 IS NOT NULL OR NOT d.removed) AND ($4::text IS NULL OR d.library=$4)',
+    [account, deckId, revision ?? null,library],
   )
   if (!row) return null
   const header = deckHeader(row)
@@ -100,7 +100,7 @@ function canonicalCards(entries) {
   }))
 }
 
-export async function putDeck(pool, account, deckId, { data, name, format, archetype: suppliedLabel, expectedRevision, updatedAt }, createdLibrary = 'personal') {
+export async function putDeck(pool, account, deckId, { data, name, format, archetype: suppliedLabel, expectedRevision, updatedAt }, createdLibrary = 'personal', requiredLibrary = null) {
   const headName = String(name ?? data?.name ?? '').trim()
   const headFormat = libraryFormat(format ?? data?.format)
   if (!isId(deckId) || !Number.isInteger(expectedRevision) || expectedRevision < 0) {
@@ -122,7 +122,7 @@ export async function putDeck(pool, account, deckId, { data, name, format, arche
       await db.query('INSERT INTO decks (account_id, id, library) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [account, deckId, createdLibrary])
     }
     const { rows: [entry] } = await db.query('SELECT head, library, updated_at, removed FROM decks WHERE account_id=$1 AND id=$2 FOR UPDATE', [account, deckId])
-    if (!entry) throw new ProductError(404, 'Deck not found')
+    if (!entry || (requiredLibrary && entry.library !== requiredLibrary)) throw new ProductError(404, 'Deck not found')
     if (entry.head !== expectedRevision || entry.removed) throw new ProductError(409, 'Deck revision has changed')
     const time = Math.max(Number(entry.updated_at) + 1, Number.isSafeInteger(updatedAt) ? updatedAt : Date.now())
     const revision = expectedRevision + 1
@@ -166,11 +166,11 @@ export async function moveDeckLibrary(db, account, deckId, library, expectedRevi
   return getDeck(db, account, deckId)
 }
 
-export async function deleteDeck(db, account, deckId, expectedRevision, updatedAt = Date.now()) {
+export async function deleteDeck(db, account, deckId, expectedRevision, updatedAt = Date.now(), library = null) {
   if (!isId(deckId) || !Number.isInteger(expectedRevision) || expectedRevision < 1) throw new ProductError(400, 'Deck revision is required')
   const { rowCount } = await db.query(
-    'UPDATE decks SET removed=TRUE, updated_at=GREATEST(updated_at+1,$4) WHERE account_id=$1 AND id=$2 AND head=$3 AND NOT removed',
-    [account, deckId, expectedRevision, updatedAt],
+    'UPDATE decks SET removed=TRUE, updated_at=GREATEST(updated_at+1,$4) WHERE account_id=$1 AND id=$2 AND head=$3 AND NOT removed AND ($5::text IS NULL OR library=$5)',
+    [account, deckId, expectedRevision, updatedAt,library],
   )
   if (!rowCount) throw new ProductError(409, 'Deck revision has changed')
 }

@@ -1,3 +1,4 @@
+import { listPlayers, profileConsent } from './players.mjs'
 import { authStyles } from './auth-styles.mjs'
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
 import { digest, ensureOAuthAgent, newToken } from './identity.mjs'
@@ -99,14 +100,17 @@ export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions
     await pool.query(`INSERT INTO oauth_consent_requests(id,browser_session,code_challenge,client_state,client_id,redirect_uri,audience,scopes_requested,expires_at)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [id, owner.browserSession, request.challenge, request.state, request.client.clientId,
       request.client.redirectUri, audience, request.scopes, deadline(consentLifetime)])
+    const profiles = (await listPlayers(pool, owner)).players.filter(player => player.mcpEnabled)
+    const selectPlayer = profiles.length ? `<label>Identidad del piloto<select name="playerId"><option value="">Jugador MCP de la cuenta</option>${profiles.map(p => `<option value="${p.playerId}">${escape(p.displayName)}${p.flag ? ' · '+escape(p.flag) : ''}</option>`).join('')}</select></label>
+      <p>Un piloto de perfil solo controla esa identidad y usa la biblioteca compartida de mazos MCP. El historial queda en la cuenta.</p>` : ''
     const permissions = request.scopes.map(scope => `<li>${scopeLabels[scope]}</li>`).join('')
     return html(res, 'Conectar tu cuenta de Thoughtseize', `
       <p>Autoriza a <strong>${escape(request.client.name)}</strong> a usar tu cuenta de Thoughtseize <strong>${escape(owner.username)}</strong> con estos permisos.</p>
       <p>Cliente: ${escape(request.client.clientId)}<br>Destino: <strong>${escape(request.client.redirectUri)}</strong></p>
       ${new URL(request.client.redirectUri).protocol === 'http:' ? '<p>El destino es una aplicación en este dispositivo. Comprueba que abriste esta conexión desde la aplicación que quieres autorizar.</p>' : ''}
       <ul>${permissions}</ul>
-      ${request.scopes.includes('play') ? '<p>El agente puede crear partidas en tu cuenta y jugar como Jugador MCP cuando lo invitas. También puede jugar en tu lugar en las partidas que habiliten MCP para el Jugador Humano, incluidas las que cree con ese permiso. En esas partidas verás tu mano y la mesa en el navegador, y el agente tomará las decisiones de juego.</p>' : ''}
-      <form method="post" action="/oauth/authorize"><input type="hidden" name="request" value="${id}">
+      ${request.scopes.includes('play') ? '<p>Con el Jugador MCP de la cuenta, el agente puede crear partidas y jugar cuando lo invitas. También puede jugar en tu lugar en las partidas que habiliten MCP para el Jugador Humano, incluidas las que cree con ese permiso. En esas partidas verás tu mano y la mesa en el navegador, y el agente tomará las decisiones de juego.</p>' : ''}
+      <form method="post" action="/oauth/authorize"><input type="hidden" name="request" value="${id}">${selectPlayer}
       <button name="decision" value="allow">Autorizar</button>
       <button name="decision" value="deny">Cancelar</button></form>`, new URL(request.client.redirectUri).origin)
   }
@@ -117,7 +121,7 @@ export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions
     const form = await body(req, 'form', 4096)
     const requestId = form.get('request')
     const decision = form.get('decision')
-    if (!owner || !isUuid(requestId) || !['allow', 'deny'].includes(decision) || form.has('seat')) {
+    if (!owner || !isUuid(requestId) || !['allow', 'deny'].includes(decision) || form.has('seat') || form.getAll('playerId').length > 1) {
       throw new ProductError(400, 'Autorización OAuth vencida')
     }
     const approved = await transaction(pool, async db => {
@@ -129,8 +133,10 @@ export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions
       const client = { ...registered, redirectUri: request.redirect_uri }
       let result = { error: 'access_denied' }
       if (decision === 'allow') {
-        const engineKey = await ensureOAuthAgent(db, owner.accountId)
-        const scopes = approvedScopes(scopesSupported, request.scopes_requested)
+        const selected = form.get('playerId')
+        const pilot = selected ? await profileConsent(db, owner, selected) : null
+        const engineKey = pilot?.engine_key ?? await ensureOAuthAgent(db, owner.accountId)
+        const scopes = approvedScopes(pilot?.scopes ?? scopesSupported, request.scopes_requested)
         if (!scopes.length) throw new ProductError(400, 'Permisos OAuth vencidos')
         const code = newToken()
         await db.query('DELETE FROM oauth_authorization_codes WHERE expires_at<=now()')
@@ -153,7 +159,7 @@ export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions
     const { rows: [grant] } = await db.query(`SELECT k.*,g.scopes AS current_scopes
       FROM oauth_authorization_codes k JOIN agent_grants g ON g.engine_key=k.engine_key AND g.account_id=k.account_id
       JOIN accounts a ON a.id=k.account_id WHERE k.digest=$1 AND k.audience=$2 AND k.client_id=$3 AND k.redirect_uri=$4
-      AND k.expires_at>now() AND a.enabled AND g.revoked_at IS NULL AND g.oauth_managed FOR UPDATE OF k`,
+      AND k.expires_at>now() AND a.enabled AND g.revoked_at IS NULL AND g.oauth_managed FOR UPDATE OF k FOR SHARE OF g`,
     [digest(code), audience, client.clientId, redirectUri])
     const actualChallenge = createHash('sha256').update(verifier).digest('base64url')
     if (!grant || !timingSafeEqual(Buffer.from(grant.code_challenge), Buffer.from(actualChallenge))) return null
@@ -163,6 +169,10 @@ export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions
     await db.query('DELETE FROM oauth_authorization_codes WHERE digest=$1', [grant.digest])
     await db.query(`INSERT INTO oauth_connections(id,account_id,engine_key,client_id,audience,scopes_approved,refresh_digest,expires_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, [id, grant.account_id, grant.engine_key, client.clientId, audience, scopes, refreshDigest, deadline(connectionLifetime)])
+    // New owner consent can resume this identity after its prior connection expired or was revoked.
+    await db.query(`UPDATE player_table_reservations r SET connection_id=$1 FROM agent_grants g,oauth_connections old
+      WHERE g.engine_key=$2 AND g.player_id=r.player_id AND old.id=r.connection_id AND (old.revoked_at IS NOT NULL OR old.expires_at<=now())`,
+      [id,grant.engine_key])
     return { id, scopes }
   }
 
@@ -288,18 +298,22 @@ export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions
   }
 
   async function resolve(accessDigest) {
-    const { rows: [row] } = await pool.query(`SELECT a.id,a.username,g.engine_name,c.id AS connection_id,
+    const { rows: [row] } = await pool.query(`SELECT a.id,a.username,g.engine_name,g.player_id,p.flag AS player_flag,p.display_name,r.reservation_id,r.table_id,r.connection_id AS lease_holder,c.id AS connection_id,
       ARRAY(SELECT legacy.engine_key FROM agent_grants legacy WHERE legacy.successor_key=g.engine_key
         AND legacy.account_id=g.account_id AND legacy.oauth_managed) AS previous_seats,
       g.scopes AS current_scopes,c.scopes_approved,c.client_id FROM oauth_access_tokens t
       JOIN oauth_connections c ON c.id=t.connection_id JOIN accounts a ON a.id=c.account_id
       JOIN agent_grants g ON g.engine_key=c.engine_key AND g.account_id=c.account_id
+      LEFT JOIN player_profiles p ON p.id=g.player_id
+      LEFT JOIN player_table_reservations r ON r.player_id=g.player_id
       WHERE t.digest=$1 AND t.expires_at>now() AND c.audience=$2 AND c.expires_at>now() AND c.revoked_at IS NULL
       AND a.enabled AND g.revoked_at IS NULL AND g.oauth_managed`, [accessDigest, audience])
     if (!row) return null
     const scopes = approvedScopes(row.current_scopes, row.scopes_approved)
     return scopes.length ? { accountId: row.id, username: row.username, engineName: row.engine_name,
-      scopes, agent: true, accountAgent: true, previousSeatNames: row.previous_seats, connectionId: row.connection_id } : null
+      scopes, agent: true, ...(row.player_id ? {playerId:row.player_id,displayName:row.display_name,flag:row.player_flag,activeTableId:row.table_id,
+        ownsReservation:!row.lease_holder || row.lease_holder === row.connection_id,
+        ...(row.lease_holder === row.connection_id ? {reservationId:row.reservation_id} : {})} : {accountAgent:true,previousSeatNames:row.previous_seats}), connectionId: row.connection_id } : null
   }
 
   return { route, resolve }

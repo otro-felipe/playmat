@@ -23,6 +23,15 @@ CREATE TABLE IF NOT EXISTS browser_sessions (
   expires_at timestamptz NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS player_profiles (
+  id uuid PRIMARY KEY,
+  account_id uuid NOT NULL REFERENCES accounts(id),
+  display_name text NOT NULL CHECK (length(display_name) BETWEEN 1 AND 40),
+  flag text CHECK (flag ~ '^[A-Z]{2}$'),
+  mcp_enabled boolean NOT NULL DEFAULT false,
+  UNIQUE (account_id,id)
+);
+
 CREATE TABLE IF NOT EXISTS agent_grants (
   digest text PRIMARY KEY,
   account_id uuid NOT NULL REFERENCES accounts(id),
@@ -36,8 +45,17 @@ CREATE TABLE IF NOT EXISTS agent_grants (
 ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS oauth_managed boolean NOT NULL DEFAULT false;
 ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS recovery_id uuid NOT NULL DEFAULT gen_random_uuid();
 CREATE UNIQUE INDEX IF NOT EXISTS agent_grants_recovery_id ON agent_grants(recovery_id);
-CREATE UNIQUE INDEX IF NOT EXISTS agent_grants_account_oauth
-  ON agent_grants(account_id) WHERE oauth_managed AND revoked_at IS NULL;
+ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS player_id uuid;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='agent_grants'::regclass AND conname='agent_grants_profile_owner') THEN
+    ALTER TABLE agent_grants ADD CONSTRAINT agent_grants_profile_owner
+      FOREIGN KEY (account_id,player_id) REFERENCES player_profiles(account_id,id);
+  END IF;
+END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS agent_grants_profile ON agent_grants(player_id) WHERE player_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS agent_grants_default_oauth ON agent_grants(account_id)
+  WHERE oauth_managed AND revoked_at IS NULL AND player_id IS NULL;
+DROP INDEX IF EXISTS agent_grants_account_oauth;
 
 CREATE TABLE IF NOT EXISTS decks (
   account_id uuid NOT NULL REFERENCES accounts(id),

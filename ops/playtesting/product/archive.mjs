@@ -205,13 +205,14 @@ function gameView(row) {
 
 const selectGame = `
   SELECT g.*, m.table_id, m.name, m.format, m.engine_format, m.status AS match_status,
-    (SELECT json_agg(jsonb_build_object('name',p.engine_name,'human',p.human,'displayName',COALESCE(a.username,p.engine_name),
+    (SELECT json_agg(jsonb_build_object('name',p.engine_name,'human',p.human,'displayName',COALESCE(profile.display_name,a.username,p.engine_name),
         'isMcp',a.id IS NOT NULL,'model',p.model,'reasoningEffort',p.reasoning_effort)
+        || CASE WHEN profile.id IS NOT NULL THEN jsonb_build_object('profileId',profile.id,'flag',profile.flag) ELSE '{}'::jsonb END
         || CASE WHEN p.engine_key=delegated_owner.username_key THEN '{"humanMcpAllowed":true}'::jsonb ELSE '{}'::jsonb END
         || CASE WHEN m.status='completed' AND p.archetype IS NOT NULL THEN jsonb_build_object('archetype',p.archetype)
                 ELSE '{}'::jsonb END ORDER BY p.engine_name)
        FROM game_players p LEFT JOIN agent_grants seat ON p.human AND seat.engine_key=p.engine_key
-       LEFT JOIN accounts a ON a.id=seat.account_id WHERE p.game_id=g.id) AS players,
+       LEFT JOIN accounts a ON a.id=seat.account_id LEFT JOIN player_profiles profile ON profile.id=seat.player_id WHERE p.game_id=g.id) AS players,
     (SELECT p.engine_key FROM game_players p WHERE p.game_id=g.id AND p.engine_key=ANY($1::text[])
        ORDER BY array_position($1::text[],p.engine_key) LIMIT 1) AS viewer,
     (SELECT p.mulligans FROM game_players p WHERE p.game_id=g.id AND p.engine_key=ANY($1::text[])
@@ -272,7 +273,9 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
         const raw = JSON.parse(await readFile(join(stage, file), 'utf8'))
         if (variant === '.match') {
           if (raw.matchId === id && Number.isSafeInteger(raw.endedAt)) {
-            const saved = await pool.query('UPDATE matches SET status=\'completed\', ended_at=$2, winner=$3 WHERE id=$1', [id, raw.endedAt, raw.winner ?? null])
+            const saved = await pool.query(`WITH finished AS (UPDATE matches SET status='completed', ended_at=$2, winner=$3 WHERE id=$1 RETURNING table_id),
+              released AS (DELETE FROM player_table_reservations WHERE table_id IN (SELECT table_id FROM finished))
+              SELECT table_id FROM finished`, [id, raw.endedAt, raw.winner ?? null])
             if (saved.rowCount || await wasPurged(pool, id)) await unlink(join(stage, file))
           }
           continue

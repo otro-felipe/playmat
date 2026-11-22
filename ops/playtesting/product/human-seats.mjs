@@ -22,6 +22,7 @@ export async function recordHumanSeat(pool, input) {
 }
 
 export async function readHumanSeat(pool, actor, tableId, { ownerOnly = false } = {}) {
+  if (actor.playerId) throw new ProductError(403,'This pilot cannot control the human seat')
   if (!isUuid(tableId)) throw missing()
   const { rows: [row] } = await pool.query(`SELECT h.*, a.username, i.chat_mode FROM human_match_seats h
     JOIN accounts a ON a.id=h.account_id
@@ -40,7 +41,7 @@ export async function authorizeHumanConnection(pool, input) {
   const { rowCount } = await pool.query(`SELECT 1 FROM oauth_connections c
     JOIN accounts a ON a.id=c.account_id AND a.enabled
     JOIN agent_grants g ON g.engine_key=c.engine_key AND g.account_id=c.account_id
-    WHERE c.id=$1 AND c.account_id=$2 AND g.oauth_managed AND g.revoked_at IS NULL AND 'play'=ANY(g.scopes)
+    WHERE c.id=$1 AND c.account_id=$2 AND g.oauth_managed AND g.player_id IS NULL AND g.revoked_at IS NULL AND 'play'=ANY(g.scopes)
       AND c.revoked_at IS NULL AND c.expires_at>now() AND 'play'=ANY(c.scopes_approved)
       AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM human_match_seats h
         WHERE h.table_id=$3 AND h.account_id=c.account_id AND (CASE WHEN $4 THEN h.created_via_mcp ELSE h.allowed END)))`,

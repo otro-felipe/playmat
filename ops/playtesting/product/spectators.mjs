@@ -55,7 +55,9 @@ export function spectatorStorage(pool, archive) {
           WHERE h.table_id=$1 AND h.allowed) AS delegated,
         (SELECT invitee_key FROM invitations WHERE table_id=$1 AND mode='mcp' AND claimed_at IS NOT NULL) AS guest,
         (SELECT guest_display_name FROM invitations WHERE table_id=$1 AND mode='mcp' AND claimed_at IS NOT NULL) AS alias,
-        ARRAY(SELECT engine_key FROM agent_grants WHERE engine_key=ANY($2::text[])) AS agents`,[tableId,names])
+        ARRAY(SELECT engine_key FROM agent_grants WHERE engine_key=ANY($2::text[])) AS agents,
+        (SELECT json_object_agg(g.engine_key,json_build_object('displayName',p.display_name,'flag',p.flag))
+         FROM agent_grants g JOIN player_profiles p ON p.id=g.player_id WHERE g.engine_key=ANY($2::text[])) AS profiles`,[tableId,names])
       return row
     },
     // After an engine restart, the same link identifies only the latest game of its own completed match.
@@ -134,8 +136,9 @@ export function createSpectators({storage, readEngine=engine}) {
           const gamePlayer=view?.players.find(item=>item.playerId===player.playerId)
           const control=roles.delegated && name===normalize(roles.delegated) ? 'human-mcp'
             : roles.agents.includes(name) || roles.guest===name ? 'mcp' : gamePlayer?.isHuman===false ? 'bot' : 'human'
-          const displayName=roles.guest===name ? roles.alias : null
-          return {...player,control,...(displayName?{displayName}:{})}
+          const profile=roles.profiles?.[name]
+          const displayName=profile?.displayName ?? (roles.guest===name ? roles.alias : null)
+          return {...player,control,...(displayName?{displayName}:{}),...(profile?.flag ? {flag:profile.flag} : {})}
         })
         return {...data,view,players,...(roles.delegated?{humanMcpName:roles.delegated}:{})}
       })()}

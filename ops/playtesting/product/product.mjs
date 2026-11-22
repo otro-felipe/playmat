@@ -10,6 +10,8 @@ import pg from 'pg'
 import { archetypesFor } from './deck-performance-identity.mjs'
 import { libraryArchetypeCoverage, migrateDeckLists, refineMigratedDeckLists, refineTournamentArchetypes } from './deck-list-migration.mjs'
 import { excludeAsParticipant } from './match-statistics.mjs'
+import { listPlayers, createPlayer, updatePlayer } from './players.mjs'
+import { changeReservation, restorePlayerReservations } from './player-reservations.mjs'
 import { createArchive } from './archive.mjs'
 import { resetMatchHistory, setUnlimitedMatchHistory } from './history-retention.mjs'
 import { createTheoryStore, evaluateTheoryTactics } from './theory-store.mjs'
@@ -291,7 +293,11 @@ export async function createProduct({
     }
     if (enableInternal && path === '/internal/legacy' && req.method === 'POST') return legacy(req, res, releases)
     if (enableInternal && path === '/internal/human-seat/restore' && req.method === 'POST') {
-      await restoreHumanSeat(pool, await body(req, 'json', 1024))
+      const input = await body(req, 'json', 1024)
+      await transaction(pool, async db => {
+        await restoreHumanSeat(db,input)
+        await restorePlayerReservations(db,input.originalTableId,input.tableId)
+      })
       return send(res, 200, {})
     }
     if (enableInternal && path === '/internal/human-seat/manual' && req.method === 'POST') {
@@ -305,6 +311,10 @@ export async function createProduct({
     if (enableInternal && path === '/internal/human-seat/table' && req.method === 'POST') {
       await recordHumanSeat(pool, await body(req, 'json', 1024))
       return send(res, 200, {})
+    }
+    if (enableInternal && path.startsWith('/internal/player-reservations/') && req.method === 'POST') {
+      const actor = await id.resolve(req)
+      return send(res, 200, await changeReservation(pool,actor,path.slice('/internal/player-reservations/'.length),await body(req,'json',1024)))
     }
     if (enableInternal && path.startsWith('/internal/human-seat/') && req.method === 'POST') {
       const actor = await id.resolve(req)
@@ -385,7 +395,8 @@ export async function createProduct({
     }
     if (enableInternal && path === '/internal/verify' && req.method === 'GET') {
       if (url.searchParams.get('scope') === 'play') requireScope(actor, 'play')
-      const canonicalAgent = actor.accountAgent === true && normalize(actor.engineName) === 'mcp_' + normalize(actor.username)
+      if (actor.playerId && proxied && url.searchParams.get('scope') === 'play') throw new ProductError(403,'Use the profile MCP seat')
+      const canonicalAgent = !!actor.playerId || (actor.accountAgent === true && normalize(actor.engineName) === 'mcp_' + normalize(actor.username))
       if (canonicalAgent) {
         res.setHeader('X-Playmat-Canonical-Agent', '1')
       }
@@ -398,6 +409,13 @@ export async function createProduct({
     }
     gateAccount(res, group, actor, releases)
     const endpoint = path.slice('/api/playtesting/'.length)
+    if (endpoint === 'players') {
+      if (req.method === 'GET') return send(res,200,await listPlayers(pool,actor))
+      if (req.method === 'POST') return send(res,201,await createPlayer(pool,actor,await body(req,'json',2048)))
+    }
+    if (req.method === 'PATCH' && /^players\/[^/]+$/.test(endpoint)) {
+      return send(res,200,await updatePlayer(pool,actor,endpoint.slice('players/'.length),await body(req,'json',2048)))
+    }
     if (endpoint === 'me' && req.method === 'GET') return send(res, 200, identityView(actor))
     if (endpoint.startsWith('human-seat/') && req.method === 'GET') {
       requireScope(actor, 'play')
@@ -423,7 +441,8 @@ export async function createProduct({
     }
     if (endpoint === 'decks' && req.method === 'GET') {
       requireScope(actor, 'library')
-      const library = url.searchParams.get('library')
+      const library = url.searchParams.get('library') ?? (actor.playerId ? 'agent' : null)
+      if (actor.playerId && library !== 'agent') throw new ProductError(403,'Pilots use the shared MCP library')
       if (library !== null && !['personal', 'agent'].includes(library)) throw new ProductError(400, 'Invalid deck library')
       return send(res, 200, { decks: await listDecks(pool, actor.accountId, url.searchParams.get('deleted') === '1', library) })
     }
@@ -446,12 +465,12 @@ export async function createProduct({
       if (req.method === 'GET') {
         const revision = url.searchParams.get('revision')
         if (revision && !/^\d{1,8}$/.test(revision)) throw new ProductError(400, 'Invalid revision')
-        return send(res, 200, rejectMissing(await getDeck(pool, actor.accountId, deckId, revision), 'Deck not found'))
+        return send(res, 200, rejectMissing(await getDeck(pool, actor.accountId, deckId, revision, actor.playerId ? 'agent' : null), 'Deck not found'))
       }
-      if (req.method === 'PUT') return send(res, 200, await putDeck(pool, actor.accountId, deckId, await body(req), actor.agent ? 'agent' : 'personal'))
+      if (req.method === 'PUT') return send(res, 200, await putDeck(pool, actor.accountId, deckId, await body(req), actor.agent ? 'agent' : 'personal', actor.playerId ? 'agent' : null))
       if (req.method === 'DELETE') {
         const data = await body(req)
-        await deleteDeck(pool, actor.accountId, deckId, data.expectedRevision)
+        await deleteDeck(pool, actor.accountId, deckId, data.expectedRevision, undefined, actor.playerId ? 'agent' : null)
         return send(res, 200, { deleted: true })
       }
     }

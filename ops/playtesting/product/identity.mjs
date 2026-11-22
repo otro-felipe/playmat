@@ -98,7 +98,7 @@ export async function ensureOAuthAgent(db, accountId) {
   const { rows: [account] } = await db.query('SELECT username FROM accounts WHERE id=$1 AND enabled FOR SHARE', [accountId])
   if (!account) throw new ProductError(401, 'Inicia sesión en Thoughtseize')
   const { rows: [existing] } = await db.query(`SELECT engine_key FROM agent_grants
-    WHERE account_id=$1 AND oauth_managed AND revoked_at IS NULL`, [accountId])
+    WHERE account_id=$1 AND oauth_managed AND revoked_at IS NULL AND player_id IS NULL`, [accountId])
   if (existing) return existing.engine_key
   const engineName = 'mcp_' + account.username
   const engineKey = normalize(engineName)
@@ -277,10 +277,12 @@ export function createIdentity(pool, insecureCookie, resolveOAuth = async () => 
     const session = sessionDigest(req)
     if (!session) return null
     const { rows: [row] } = await pool.query(
-      'SELECT a.id, a.username FROM browser_sessions s JOIN accounts a ON a.id=s.account_id WHERE s.digest=$1 AND s.expires_at>now() AND a.enabled',
+      `SELECT a.id, a.username, ARRAY(SELECT g.engine_key FROM agent_grants g WHERE g.account_id=a.id
+        AND g.player_id IS NOT NULL ORDER BY g.created_at,g.engine_key) AS profile_seats
+       FROM browser_sessions s JOIN accounts a ON a.id=s.account_id WHERE s.digest=$1 AND s.expires_at>now() AND a.enabled`,
       [session],
     )
-    return row ? { ...actor(row.id, row.username, row.username, allScopes), browserSession: session } : null
+    return row ? { ...actor(row.id, row.username, row.username, allScopes), browserSession: session, ownedProfileSeats: row.profile_seats } : null
   }
 
   async function fromEngine(name) {
@@ -288,10 +290,10 @@ export function createIdentity(pool, insecureCookie, resolveOAuth = async () => 
     const { rows: [human] } = await pool.query('SELECT id, username FROM accounts WHERE username_key=$1 AND enabled', [normalize(name)])
     if (human) return actor(human.id, human.username, human.username, allScopes)
     const { rows: [agent] } = await pool.query(
-      'SELECT a.id,a.username,g.engine_name,g.scopes FROM agent_grants g JOIN accounts a ON a.id=g.account_id WHERE g.engine_key=$1 AND g.revoked_at IS NULL AND a.enabled',
+      'SELECT a.id,a.username,g.engine_name,g.scopes,g.player_id FROM agent_grants g JOIN accounts a ON a.id=g.account_id WHERE g.engine_key=$1 AND g.revoked_at IS NULL AND a.enabled',
       [normalize(name)],
     )
-    return agent ? actor(agent.id, agent.username, agent.engine_name, agent.scopes, true) : null
+    return agent ? { ...actor(agent.id, agent.username, agent.engine_name, agent.scopes, true), ...(agent.player_id ? {playerId:agent.player_id} : {}) } : null
   }
 
   async function publicPlayers(requested) {
@@ -299,12 +301,13 @@ export function createIdentity(pool, insecureCookie, resolveOAuth = async () => 
     if (!names?.length || names.length > 50 || !names.every(validEngineName)) {
       throw new ProductError(400, 'Supply up to 50 valid player names')
     }
-    const { rows } = await pool.query(`SELECT username AS name, username AS "displayName", false AS "isMcp"
-      FROM accounts WHERE username_key=ANY($1::text[])
+    const { rows } = await pool.query(`SELECT username AS name, username AS "displayName", false AS "isMcp",
+        NULL::uuid AS "playerId", NULL::text AS flag FROM accounts WHERE username_key=ANY($1::text[])
       UNION ALL
-      SELECT g.engine_name, a.username, true FROM agent_grants g JOIN accounts a ON a.id=g.account_id
+      SELECT g.engine_name, COALESCE(p.display_name,a.username), true, p.id, p.flag
+      FROM agent_grants g JOIN accounts a ON a.id=g.account_id LEFT JOIN player_profiles p ON p.id=g.player_id
       WHERE g.engine_key=ANY($1::text[])`, [names.map(normalize)])
-    return { players: rows }
+    return { players: rows.map(({playerId,flag,...identity}) => playerId ? {...identity,playerId,flag} : identity) }
   }
 
   async function recoveryPrincipal(actor) {
@@ -326,15 +329,15 @@ export function createIdentity(pool, insecureCookie, resolveOAuth = async () => 
     const match = /^agent:([\da-f-]{36})$/i.exec(principal.seatId)
     if (!match) return false
     const { rows: [grant] } = await pool.query(
-      "SELECT engine_key,oauth_managed FROM agent_grants WHERE account_id=$1 AND recovery_id=$2 AND revoked_at IS NULL AND 'play'=ANY(scopes)",
+      "SELECT engine_key,oauth_managed,player_id FROM agent_grants WHERE account_id=$1 AND recovery_id=$2 AND revoked_at IS NULL AND 'play'=ANY(scopes)",
       [principal.accountId, match[1]],
     )
     if (!grant) return false
     if (!grant.oauth_managed) return true
     if (!/^[\da-f-]{36}$/i.test(principal.connectionId ?? '')) return false
     const { rowCount } = await pool.query(
-      "SELECT 1 FROM oauth_connections WHERE id=$1 AND account_id=$2 AND engine_key=$3 AND revoked_at IS NULL AND expires_at>now() AND 'play'=ANY(scopes_approved)",
-      [principal.connectionId, principal.accountId, grant.engine_key],
+      "SELECT 1 FROM oauth_connections WHERE id=$1 AND account_id=$2 AND engine_key=$3 AND revoked_at IS NULL AND expires_at>now() AND 'play'=ANY(scopes_approved) AND ($4::uuid IS NULL OR NOT EXISTS (SELECT 1 FROM player_table_reservations WHERE player_id=$4 AND connection_id<>$1))",
+      [principal.connectionId, principal.accountId, grant.engine_key, grant.player_id],
     )
     return rowCount === 1
   }
@@ -348,11 +351,12 @@ function actor(accountId, username, engineName, scopes, agent = false) {
 }
 
 export function viewerNames(actor) {
-  return [...new Set([actor.engineName, ...(actor.previousSeatNames ?? []), actor.username].map(normalize))]
+  if (actor.playerId) return [normalize(actor.engineName)]
+  return [...new Set([actor.engineName, ...(actor.previousSeatNames ?? []), actor.username, ...(actor.ownedProfileSeats ?? [])].map(normalize))]
 }
 
 export function identityView(actor) {
   const { accountId, engineName, scopes, agent, connectionId, accountAgent, username } = actor
-  return { accountId, engineName, scopes, agent, ...(connectionId ? { connectionId } : {}),
+  return { accountId, engineName, scopes, agent, ...(actor.playerId ? {playerId:actor.playerId, displayName:actor.displayName, flag:actor.flag, activeTableId:actor.activeTableId, ownsReservation:actor.ownsReservation, ...(actor.reservationId ? {reservationId:actor.reservationId} : {})} : {}), ...(connectionId ? { connectionId } : {}),
     ...(accountAgent ? { accountAgent, username } : {}) }
 }

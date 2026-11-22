@@ -9,7 +9,7 @@ DECLARE
 BEGIN
   FOR seat IN SELECT g.engine_key, g.account_id, g.scopes, g.recovery_id, a.username
     FROM agent_grants g JOIN accounts a ON a.id=g.account_id
-    WHERE g.oauth_managed AND g.revoked_at IS NULL AND g.engine_key <> 'mcp_' || a.username_key
+    WHERE g.oauth_managed AND g.player_id IS NULL AND g.revoked_at IS NULL AND g.engine_key <> 'mcp_' || a.username_key
     ORDER BY g.account_id FOR UPDATE OF g
   LOOP
     wanted := lower('mcp_' || seat.username);
@@ -39,3 +39,13 @@ ALTER TABLE invitations
 ALTER TABLE game_players
   ADD COLUMN IF NOT EXISTS model text,
   ADD COLUMN IF NOT EXISTS reasoning_effort text;
+
+
+CREATE TABLE IF NOT EXISTS player_table_reservations (
+  player_id uuid PRIMARY KEY REFERENCES player_profiles(id),
+  reservation_id uuid UNIQUE NOT NULL,
+  connection_id uuid NOT NULL REFERENCES oauth_connections(id),
+  table_id uuid,
+  original_table_id uuid
+);
+CREATE INDEX IF NOT EXISTS player_reservations_table ON player_table_reservations(table_id);

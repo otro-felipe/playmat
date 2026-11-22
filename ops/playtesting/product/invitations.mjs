@@ -1,3 +1,4 @@
+import { checkInvitationReservation } from './player-reservations.mjs'
 import { isUuid, normalize, normalizeFormat, ProductError, transaction } from './decks.mjs'
 
 const CHAT_MODES = new Set(['quiet', 'chatty', 'coach'])
@@ -81,6 +82,7 @@ export function createInvitations(pool, identity, events) {
     }
     const ownerAccountId = mode === 'mcp' ? actor.accountId : null
     return transaction(pool, async db => {
+      await checkInvitationReservation(db,actor,data.tableId)
       const invitee = friend?.engineName ?? null
       const { rows: [invite] } = await db.query(`INSERT INTO invitations(
         table_id,room_id,format,creator_key,invitee_key,invitee_name,table_password,expires_at,mode,chat_mode,owner_account_id,unlisted,creator_model,creator_effort
@@ -90,7 +92,7 @@ export function createInvitations(pool, identity, events) {
       if (!invite) throw new ProductError(409, 'This table already has an invitation')
       if (ownerAccountId) {
         const { rows: [agent] } = await db.query(`SELECT engine_name FROM agent_grants
-          WHERE account_id=$1 AND oauth_managed AND revoked_at IS NULL AND 'play'=ANY(scopes)`, [ownerAccountId])
+          WHERE account_id=$1 AND oauth_managed AND player_id IS NULL AND revoked_at IS NULL AND 'play'=ANY(scopes)`, [ownerAccountId])
         if (agent) await events.enqueue(db, {
           accountId: ownerAccountId, engineName: agent.engine_name, name: INVITATION_EVENT, key: invite.table_id,
           data: { tableId: invite.table_id, format },
@@ -112,21 +114,24 @@ export function createInvitations(pool, identity, events) {
 
   async function claim(actor, tableId, data) {
     const runtime = agentRuntime(actor, data)
-    const alias = displayName(data?.displayName)
+    const alias = actor.playerId ? actor.displayName : displayName(data?.displayName)
     const key = normalize(actor.engineName)
     const fallback = actor.accountAgent === true ? 'Rival MCP' : actor.engineName
     // The claim chooses the authenticated engine identity once. Retries by that identity keep the same alias.
-    const { rows: [invite] } = await pool.query(`UPDATE invitations SET
-      guest_model=CASE WHEN claimed_at IS NULL THEN $8 ELSE guest_model END,
-      guest_effort=CASE WHEN claimed_at IS NULL THEN $9 ELSE guest_effort END,
-      claimed_at=COALESCE(claimed_at,now()), invitee_key=COALESCE(invitee_key,$2), invitee_name=COALESCE(invitee_name,$3),
-      guest_display_name=CASE WHEN mode='mcp' THEN COALESCE(guest_display_name,$4,$7) ELSE guest_display_name END
-      WHERE table_id=$1 AND creator_key<>$2 AND expires_at>now()
-        AND (owner_account_id IS NULL OR owner_account_id=$6) AND (
-        (mode='friend' AND (invitee_key=$2 OR (unlisted AND invitee_key IS NULL AND NOT $5)))
-        OR (mode='mcp' AND $5 AND (invitee_key IS NULL OR invitee_key=$2))
-      ) RETURNING *, ${guestOwner}`, [tableId, key, actor.engineName, alias, actor.agent, rivalAccount(actor), fallback, ...runtime])
-    return { ...invitationView(invite), password: invite.table_password }
+    return transaction(pool,async db => {
+      await checkInvitationReservation(db,actor,tableId)
+      const { rows: [invite] } = await db.query(`UPDATE invitations SET
+        guest_model=CASE WHEN claimed_at IS NULL THEN $8 ELSE guest_model END,
+        guest_effort=CASE WHEN claimed_at IS NULL THEN $9 ELSE guest_effort END,
+        claimed_at=COALESCE(claimed_at,now()), invitee_key=COALESCE(invitee_key,$2), invitee_name=COALESCE(invitee_name,$3),
+        guest_display_name=CASE WHEN $10 THEN $4 WHEN mode='mcp' THEN COALESCE(guest_display_name,$4,$7) ELSE guest_display_name END
+        WHERE table_id=$1 AND creator_key<>$2 AND expires_at>now()
+          AND (owner_account_id IS NULL OR owner_account_id=$6) AND (
+          (mode='friend' AND (invitee_key=$2 OR (unlisted AND invitee_key IS NULL AND NOT $5)))
+          OR (mode='mcp' AND $5 AND (invitee_key IS NULL OR invitee_key=$2))
+        ) RETURNING *, ${guestOwner}`, [tableId, key, actor.engineName, alias, actor.agent, rivalAccount(actor), fallback, ...runtime, !!actor.playerId])
+      return { ...invitationView(invite), password: invite.table_password }
+    })
   }
 
   async function admit(tableId, host, guest) {
