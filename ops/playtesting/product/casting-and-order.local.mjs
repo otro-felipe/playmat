@@ -12,6 +12,7 @@ const printings = {
   'Monastery Swiftspear': ['KTK', '118'],
   Guttersnipe: ['M19', '145'],
   Shock: ['M19', '156'],
+  'Falkenrath Reaver': ['EMN', '127'],
   'Kumano Faces Kakkazan': ['NEO', '152'],
   "Urza's Saga": ['MH2', '259'],
 }
@@ -324,4 +325,102 @@ export async function verifyCastingCosts(fixture) {
 export async function verifyTriggerOrder(fixture) {
   await verifyCastOrder(fixture)
   await verifySagaOrder(fixture)
+}
+
+// Read the published example through the same MCP as the pilot. Bind only the current public target,
+// the pilot's own observed card and its legal red source. The browser fixture controls the other seat.
+export async function verifyCardToStep(fixture) {
+  const { call, ownPlayer, rivalPlayer, startFixture, setRivalSetup, playLineWithPeer, waitNextOwn } = fixture
+  const guide = await call('get_guide', { guideId: 'turn-planning' })
+  const sample = [...guide.text.matchAll(/```json\n([\s\S]*?)\n```/g)].map(([, json]) => JSON.parse(json))
+    .find(line => line.commandId === 'shock-to-combat-001')
+  assert.ok(sample)
+  const basic = 'Mountain', spell = 'Shock', creature = 'Falkenrath Reaver'
+  const burn = deck('Seeded Shock', [[basic, 56], [spell, 4]])
+  const mana = view => ownPlayer(view).battlefield.filter(card => card.name === basic && !card.tapped)
+  const landChoice = view => view.decision.choices.find(choice => choice.canPlayLand && choice.card?.name === basic)
+  for (const scenario of ['both-pass', 'rival-spell', 'mandatory-attack']) {
+    const mandatory = scenario === 'mandatory-attack'
+    let responding = false, responded = false, peerReady = false, castTurn
+    const subjectDeck = mandatory ? deck('Seeded Shock and attacker', [[basic, 52], [spell, 4], [creature, 4]]) : burn
+    setRivalSetup(peer => {
+      const { decision } = peer
+      peerReady = mana(peer).length > 0 && peer.ownHand.some(card => card.name === spell)
+      if (scenario !== 'rival-spell') return
+      if (decision.kind === 'payMana') return decision.choices.find(choice => mana(peer).some(land => land.id === choice.objectId))
+      if (decision.kind === 'target' && peer.step !== 'CLEANUP') return decision.choices.find(choice => choice.objectId === rivalPlayer(peer).id)
+      if (decision.kind !== 'priority') return
+      if (responding && !responded && peer.stack.some(card => card.name === spell && card.controllerId === rivalPlayer(peer).id)) {
+        const choice = decision.choices.find(item => item.card?.name === spell)
+        if (choice) { responded = true; return choice }
+      }
+      return landChoice(peer)
+    })
+    try {
+      let state = await startFixture('Isolated card to own step', subjectDeck, 77, scenario === 'rival-spell' ? burn : undefined, 'Pioneer', 1)
+      state = await setup(fixture, state, { basic, landLimit: 2,
+        choose: view => {
+          if (!ownMain(view, ownPlayer)) return
+          if (mandatory && castTurn === undefined && mana(view).length >= 2) {
+            const choice = view.decision.choices.find(item => item.card?.name === creature)
+            if (choice) { castTurn = view.turn; return choice }
+          }
+          // Spend this turn's land drop so the normal pass policy has no unrelated legal land.
+          return landChoice(view)
+        },
+        ready: view => ownMain(view, ownPlayer) && !view.stack.length && mana(view).length > 0
+          && view.decision.choices.some(choice => choice.card?.name === spell)
+          && !landChoice(view) && (mandatory || view.ownHand.filter(card => card.name === spell).length === 1 || mana(view).length === 1)
+          && (scenario !== 'rival-spell' || peerReady)
+          && (!mandatory || view.turn > castTurn && ownPlayer(view).battlefield.some(card => card.name === creature)),
+      })
+      const shock = state.ownHand.find(card => card.name === spell)
+      const before = rivalPlayer(state).life
+      const request = structuredClone(sample)
+      request.gameId = state.gameId
+      request.cursor = state.cursor
+      request.commandId = randomUUID()
+      request.actions[0].select.objectId = shock.id
+      request.actions[0].targets[0].select.objectId = rivalPlayer(state).id
+      request.actions[0].payWith = [mana(state)[0].id]
+      if (mandatory) {
+        request.actions[1].step = 'POSTCOMBAT_MAIN'
+        request.actions[1].policy = 'decline_optional'
+      }
+      responding = true
+      const receipt = await playLineWithPeer(request, bound(state))
+      assert.ok(receipt.state.cursor > request.cursor)
+      assert.equal(receipt.planOwnsExecution, false)
+      if (scenario === 'rival-spell') {
+        assert.ok(responded && ['opponent_action','opponent_state_changed'].includes(receipt.reason), receipt.reason)
+        let observed = receipt.state
+        if (!observed.decision?.choices?.length || observed.decision.kind === 'waiting') observed = await waitNextOwn()
+        assert.ok(observed.decision?.id && observed.cursor >= receipt.state.cursor)
+        assert.ok(observed.stack.some(card => card.name === spell && card.controllerId === ownPlayer(observed).id))
+        assert.ok(observed.stack.some(card => card.name === spell && card.controllerId === rivalPlayer(observed).id))
+        const continuation = await playLineWithPeer({ gameId: observed.gameId, cursor: observed.cursor,
+          commandId: randomUUID(), expectedStackIds: observed.stack.map(card => card.id),
+          actions: [request.actions[1]] }, bound(observed))
+        assert.equal(continuation.lastDestination?.step, 'BEGIN_COMBAT', continuation.reason)
+        assert.equal(rivalPlayer(continuation.state).life, before-2)
+      } else {
+        assert.equal(rivalPlayer(receipt.state).life, before-2)
+        assert.equal(ownPlayer(receipt.state).graveyard.filter(card => card.name === spell).length, 1)
+        assert.equal(receipt.needsAgent, true)
+        if (mandatory) {
+          assert.equal(receipt.reason, 'response_available')
+          assert.equal(receipt.state.decision.kind, 'declareAttackers')
+          assert.ok(receipt.state.decision.choices.some(choice => choice.card?.name === creature || choice.cardRef))
+          assert.equal(receipt.lastDestination, undefined)
+        } else {
+          assert.equal(receipt.status, 'completed', receipt.reason)
+          assert.equal(receipt.lastDestination.step, 'BEGIN_COMBAT')
+          assert.equal(receipt.state.priority, 'self')
+        }
+      }
+      console.log(JSON.stringify({ scenario: 'card-to-step', case: scenario, status: receipt.status, reason: receipt.reason,
+        step: receipt.state.step, currentDecision: receipt.state.decision?.kind, cursorAdvanced: true }))
+      await call('concede', { gameId: state.gameId, entireMatch: true })
+    } finally { setRivalSetup(undefined) }
+  }
 }

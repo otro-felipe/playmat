@@ -365,6 +365,7 @@ try {
     ['labeled-questions', './casting-and-order.local.mjs', 'verifyLabeledQuestions'],
     ['order', './casting-and-order.local.mjs', 'verifyTriggerOrder'],
     ['visible-response', './casting-and-order.local.mjs', 'verifyVisibleResponse'],
+    ['card-to-step', './casting-and-order.local.mjs', 'verifyCardToStep'],
     ['activation', './creature-land-activation.local.mjs', 'verifyCreatureLandActivation'],
     ['combat', './combat-destinations.local.mjs', 'verifyPlaneswalkerCombat'],
     ['saga-entry', './saga-entry.local.mjs', 'verifySagaEntry'],

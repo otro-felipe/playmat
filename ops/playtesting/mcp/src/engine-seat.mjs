@@ -8,7 +8,7 @@ import { TableConversation } from './table-conversation.mjs';
 
 const ROLLBACK_VOTE = 'ADD_PERMISSION_TO_ROLLBACK_TURN';
 // Use the normal XMage defaults for the managed MCP identity, with distinct
-// upkeep on either turn, plus own draw and both end-step windows.
+// upkeep on either turn, own draw and beginning of combat, and both end steps.
 const MCP_USER_DATA = {
   confirmEmptyManaPool: true,
   manaPoolAutomatic: true,
@@ -17,7 +17,7 @@ const MCP_USER_DATA = {
   autoTargetLevel: 1,
   useSameSettingsForReplacementEffects: true,
   userSkipPrioritySteps: {
-    yourTurn: { upkeep: true, draw: true, endOfTurn: true },
+    yourTurn: { upkeep: true, draw: true, beforeCombat: true, endOfTurn: true },
     opponentTurn: { upkeep: true, endOfTurn: true },
   },
 };

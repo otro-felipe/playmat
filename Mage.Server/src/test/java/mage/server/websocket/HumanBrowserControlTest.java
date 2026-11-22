@@ -29,6 +29,8 @@ class HumanBrowserControlTest {
 
     @Test void aDelegatedSeatHasIndependentPriorityAndManaPreferences() {
         mage.players.net.UserData browser = mage.players.net.UserData.getDefaultUserDataView();
+        browser.getUserSkipPrioritySteps().getYourTurn().setBeforeCombat(false);
+        browser.getUserSkipPrioritySteps().getOpponentTurn().setBeforeCombat(true);
         browser.setManaPoolAutomatic(false);
         browser.setPassPriorityActivation(true);
         mage.server.User user = new mage.server.User(null, "Alice", "localhost", null) {
@@ -37,12 +39,16 @@ class HumanBrowserControlTest {
         };
         mage.players.net.UserData delegated = user.preferencesForTable(table);
         assertThat(delegated).isNotSameAs(browser);
+        assertThat(delegated.getUserSkipPrioritySteps().getYourTurn().isBeforeCombat()).isTrue();
+        assertThat(delegated.getUserSkipPrioritySteps().getOpponentTurn().isBeforeCombat()).isFalse();
         assertThat(delegated.getUserSkipPrioritySteps().getYourTurn().isDraw()).isTrue();
         assertThat(delegated.getUserSkipPrioritySteps().getOpponentTurn().isUpkeep()).isTrue();
         assertThat(delegated.getUserSkipPrioritySteps().getOpponentTurn().isEndOfTurn()).isTrue();
         assertThat(delegated.isManaPoolAutomaticRestricted()).isTrue();
         assertThat(delegated.isPassPriorityActivation()).isFalse();
         assertThat(user.preferencesForTable(other)).isSameAs(browser);
+        assertThat(browser.getUserSkipPrioritySteps().getYourTurn().isBeforeCombat()).isFalse();
+        assertThat(browser.getUserSkipPrioritySteps().getOpponentTurn().isBeforeCombat()).isTrue();
         assertThat(browser.isManaPoolAutomatic()).isFalse();
         assertThat(browser.getUserSkipPrioritySteps().getYourTurn().isDraw()).isFalse();
     }

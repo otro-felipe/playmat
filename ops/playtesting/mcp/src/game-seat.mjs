@@ -9,6 +9,8 @@ const RESPONSE_TIMEOUT_MS = 18_000;
 const SEQUENCE_TIMEOUT_MS = 60_000;
 const MAX_SEQUENCE_WALL_MS = 15 * 60_000;
 const MAX_OUTCOMES = 256;
+const TURN_STEPS = ['UNTAP', 'UPKEEP', 'DRAW', 'PRECOMBAT_MAIN', 'BEGIN_COMBAT', 'DECLARE_ATTACKERS',
+  'DECLARE_BLOCKERS', 'FIRST_COMBAT_DAMAGE', 'COMBAT_DAMAGE', 'END_COMBAT', 'POSTCOMBAT_MAIN', 'END_TURN', 'CLEANUP'];
 const PERMANENT_SPELL_TYPES = new Set(['ARTIFACT', 'BATTLE', 'CREATURE', 'ENCHANTMENT', 'PLANESWALKER']);
 
 export class ToolError extends Error {
@@ -1524,9 +1526,15 @@ export class GameSeat {
               const id = card.id ?? card.cardId;
               return id && !handBeforePass.has(id);
             });
+          const requestedStep = TURN_STEPS.indexOf(step.step);
+          const startingStep = TURN_STEPS.indexOf(state.step);
+          const approachingStep = startingStep >= 0 && startingStep <= requestedStep;
           const inspectEndpoint = (view) => {
             if (step.kind === 'advance_to_own_turn') return nextOwnTurn(view) ? 'reached' : null;
-            if (step.destination === 'current_turn') return view.turn !== turn ? 'skipped' : reaches(view, step) ? 'reached' : null;
+            if (step.destination === 'current_turn') {
+              if (view.turn !== turn || (approachingStep && TURN_STEPS.indexOf(view.step) > requestedStep)) return 'skipped';
+              return reaches(view, step) ? 'reached' : null;
+            }
             if (step.destination === 'end_step') {
               if (view.turn !== turn || view.step === 'CLEANUP') return 'skipped';
               return view.step === 'END_TURN' ? 'reached' : null;

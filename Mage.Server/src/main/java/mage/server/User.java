@@ -294,6 +294,7 @@ public class User {
         // The same priority windows as the normal MCP seat in engine-seat.mjs.
         managed.getUserSkipPrioritySteps().getYourTurn().setUpkeep(true);
         managed.getUserSkipPrioritySteps().getYourTurn().setDraw(true);
+        managed.getUserSkipPrioritySteps().getYourTurn().setBeforeCombat(true);
         managed.getUserSkipPrioritySteps().getYourTurn().setEndOfTurn(true);
         managed.getUserSkipPrioritySteps().getOpponentTurn().setUpkeep(true);
         managed.getUserSkipPrioritySteps().getOpponentTurn().setEndOfTurn(true);

@@ -390,6 +390,21 @@ test('[PM-LINE-02] missing a current-turn destination never passes into a new tu
   assert.deepEqual(table.applied.map(([id]) => id), ['end']);
 });
 
+for (const [wanted, previous, actual] of [
+  ['BEGIN_COMBAT', 'PRECOMBAT_MAIN', 'POSTCOMBAT_MAIN'],
+  ['POSTCOMBAT_MAIN', 'END_COMBAT', 'END_TURN'],
+]) {
+  test(`[PM-LINE-02] skipped ${wanted} leaves the first later visible priority untouched`, async t => {
+    const table = game(t, { before: { step: actual, decision: priority('later') } },
+      { ...upkeep, step: previous, decision: priority('before') });
+    const receipt = await table.submit([{ kind: 'pass_until', destination: 'current_turn',
+      step: wanted, priority: 'self', policy: 'decline_optional' }]);
+    assert.equal(receipt.reason, 'destination_skipped');
+    assert.equal(receipt.lastDestination.step, actual);
+    assert.deepEqual(table.applied.map(([id]) => id), ['before']);
+  });
+}
+
 test('[PM-LINE-02] a current-turn destination requires a phase, step or priority', async (t) => {
   const table = game(t, {});
   await assert.rejects(table.submit([{ kind: 'pass_until', destination: 'current_turn' }]), { code: 'bad_sequence' });
