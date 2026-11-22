@@ -621,14 +621,14 @@ test('owner delegates four named players to isolated OAuth pilots with exclusive
   assert.equal(publicIds.players[0].displayName, 'First pilot')
   assert.equal(publicIds.players[0].flag, 'US')
 
-  async function approval(headers, profile) {
-    const consentPage = await f.request(authPath({scope:'play library history chat'}), headers)
+  async function approval(headers, profile, scope = 'play library history chat') {
+    const consentPage = await f.request(authPath({scope}), headers)
     const request = /name="request" value="([a-f0-9-]{36})"/.exec(await consentPage.text())?.[1]
     assert.ok(request)
     return f.request('/oauth/authorize', headers, {request, playerId:profile.playerId, decision:'allow'})
   }
-  async function connect(profile) {
-    const approved = await approval(owner, profile)
+  async function connect(profile, scope) {
+    const approved = await approval(owner, profile, scope)
     assert.equal(approved.status, 303)
     const code = new URL(approved.headers.get('Location')).searchParams.get('code')
     const issued = await f.request('/oauth/token', {}, {grant_type:'authorization_code', code, client_id:clientId,
@@ -678,6 +678,17 @@ test('owner delegates four named players to isolated OAuth pilots with exclusive
     assert.equal((await (await f.request('/internal/verify',pilots[i])).json()).activeTableId,target)
   }
   assert.equal((await reserve(second,two.playerId,'bind',claims[1],tableB)).status,409)
+  const legacy = new pg.Client({connectionString:databaseUrl,options:'-c search_path='+f.schema})
+  await legacy.connect()
+  try {
+    await legacy.query(`INSERT INTO invitations(table_id,room_id,format,creator_key,table_password,expires_at,mode)
+      VALUES($1,$2,'Pioneer','legacy-fixture','fixture',now()+interval '1 hour','mcp')`,[tableA, randomUUID()])
+  } finally {
+    await legacy.end()
+  }
+  const genericInvite = '/api/playtesting/invites/'+tableA
+  assert.equal((await f.request(genericInvite,pilot)).status,404)
+  assert.equal((await write(genericInvite+'/claim',pilot,{})).status,404)
   const renamed = await write(api+'/'+one.playerId,owner,{displayName:'Renamed'},'PATCH')
   assert.equal((await renamed.json()).activeTableId,tableA)
   const before = await (await f.request('/internal/verify',pilot)).json()
@@ -693,6 +704,8 @@ test('owner delegates four named players to isolated OAuth pilots with exclusive
   assert.equal((await write('/internal/recovery/validate',{},principal)).status,403)
   assert.equal((await write(api+'/'+one.playerId,owner,{mcpEnabled:true},'PATCH')).status,200)
   assert.equal((await f.request('/internal/verify',pilot)).status,401)
+  const readOnly = await connect(one,'library')
+  assert.equal((await (await f.request('/internal/verify',readOnly)).json()).ownsReservation,false)
   const renewed = await connect(one)
   const rebound = await (await f.request('/internal/verify',renewed)).json()
   assert.equal(rebound.reservationId,claims[0])

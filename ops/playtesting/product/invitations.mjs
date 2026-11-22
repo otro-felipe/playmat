@@ -107,8 +107,9 @@ export function createInvitations(pool, identity, events) {
       AND (creator_key=$2
         OR (owner_account_id IS NULL AND (invitee_key=$2 OR (invitee_key IS NULL AND (
           (unlisted AND NOT $3) OR (mode='mcp' AND $3)))))
-        OR (owner_account_id=$4 AND (invitee_key IS NULL OR invitee_key=$2)))`,
-    [tableId, normalize(actor.engineName), actor.agent, rivalAccount(actor)])
+        OR (owner_account_id=$4 AND (invitee_key IS NULL OR invitee_key=$2)))
+      AND (NOT $5 OR creator_key=$2 OR invitee_key=$2)`,
+    [tableId, normalize(actor.engineName), actor.agent, rivalAccount(actor), !!actor.playerId])
     return invitationView(invite)
   }
 
@@ -126,7 +127,7 @@ export function createInvitations(pool, identity, events) {
         claimed_at=COALESCE(claimed_at,now()), invitee_key=COALESCE(invitee_key,$2), invitee_name=COALESCE(invitee_name,$3),
         guest_display_name=CASE WHEN $10 THEN $4 WHEN mode='mcp' THEN COALESCE(guest_display_name,$4,$7) ELSE guest_display_name END
         WHERE table_id=$1 AND creator_key<>$2 AND expires_at>now()
-          AND (owner_account_id IS NULL OR owner_account_id=$6) AND (
+          AND (owner_account_id IS NULL OR owner_account_id=$6) AND (NOT $10 OR invitee_key=$2) AND (
           (mode='friend' AND (invitee_key=$2 OR (unlisted AND invitee_key IS NULL AND NOT $5)))
           OR (mode='mcp' AND $5 AND (invitee_key IS NULL OR invitee_key=$2))
         ) RETURNING *, ${guestOwner}`, [tableId, key, actor.engineName, alias, actor.agent, rivalAccount(actor), fallback, ...runtime, !!actor.playerId])

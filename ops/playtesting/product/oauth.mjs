@@ -170,10 +170,12 @@ export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions
     await db.query('DELETE FROM oauth_authorization_codes WHERE digest=$1', [grant.digest])
     await db.query(`INSERT INTO oauth_connections(id,account_id,engine_key,client_id,audience,scopes_approved,refresh_digest,expires_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, [id, grant.account_id, grant.engine_key, client.clientId, audience, scopes, refreshDigest, deadline(connectionLifetime)])
-    // New owner consent can resume this identity after its prior connection expired or was revoked.
-    await db.query(`UPDATE player_table_reservations r SET connection_id=$1 FROM agent_grants g,oauth_connections old
-      WHERE g.engine_key=$2 AND g.player_id=r.player_id AND old.id=r.connection_id AND (old.revoked_at IS NOT NULL OR old.expires_at<=now())`,
-      [id,grant.engine_key])
+    // A fresh play consent can resume this identity after its prior connection expired or was revoked.
+    if (scopes.includes('play')) {
+      await db.query(`UPDATE player_table_reservations r SET connection_id=$1 FROM agent_grants g,oauth_connections old
+        WHERE g.engine_key=$2 AND g.player_id=r.player_id AND old.id=r.connection_id AND (old.revoked_at IS NOT NULL OR old.expires_at<=now())`,
+        [id,grant.engine_key])
+    }
     return { id, scopes }
   }
 
