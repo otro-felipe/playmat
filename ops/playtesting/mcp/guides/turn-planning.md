@@ -102,6 +102,35 @@ When the receipt has `planOwnsExecution:true`, call `wait_for_decision` with the
 }
 ```
 
+### Cast one card and stop at your combat priority
+
+In your first main phase, you have played your land, the stack is empty, Shock is playable from your hand, and you have one untapped Mountain. You want to deal 2 to your opponent, then decide how to attack at beginning of combat. Send one `play_line` with the observed IDs. `priority:"self"` leaves the matching window in your hands.
+
+```json
+{
+  "gameId": "00000000-0000-4000-8000-000000000001",
+  "cursor": 4102,
+  "commandId": "shock-to-combat-001",
+  "view": "compact",
+  "waitMs": 25000,
+  "actions": [
+    {
+      "kind": "play",
+      "select": {"objectId": "<shock-in-hand-id>", "zone": "hand"},
+      "targets": [{"role": 0, "select": {"objectId": "<opposing-player-id>"}}],
+      "payWith": ["<untapped-mountain-id>"]
+    },
+    {"kind":"pass_until","destination":"current_turn","step":"BEGIN_COMBAT","priority":"self","policy":"if_no_play"}
+  ]
+}
+```
+
+To stop in second main instead, use `"step":"POSTCOMBAT_MAIN"`. Keep `if_no_play` for normal advancement. Choose `"policy":"decline_optional"` only when you have deliberately decided to pass every intervening optional play. With creatures able to attack, predeclare known attackers or expect the declaration to return to you. If your objective ends immediately after the card itself, finish the line with the card and omit the terminal pass.
+
+- **Both players pass.** Check `status:"completed"`, the requested `lastDestination.step`, and `state.priority:"self"`. Continue from that cursor. While `planOwnsExecution:true`, wait using the same game and command IDs.
+- **The opponent responds.** The line stops on the public action or changed opposing state. Read the returned cursor, decision and stack. If a decision is still pending delivery, wait from `state.cursor`. Reassess the response; when you want the observed stack to resolve, use a fresh line with the exact visible `expectedStackIds`. A spell already on the stack stays there. Recasting it would duplicate the intention.
+- **XMage requests a choice.** For an unplanned required target, cost, or attacker declaration, inspect the active `state.decision`, reply from that cursor and continue only the outstanding part of the plan. Both policies preserve required choices, new information and the opposing human’s priority.
+
 ### Recover after an unavailable land drop
 
 At main-phase priority, a Mountain in hand can start a land play only if its current choice carries `canPlayLand:true`. A line starting at an earlier prompt can still include a known, later land drop. The executor checks that land's choice when the play is due.

@@ -113,12 +113,16 @@ test('[PM-LINE-MCP-2] the turn guide examples pass the published native MCP inpu
   const commandIds = new Set(lines.map(line => line.commandId));
   for (const id of ['rage-lethal-001', 'skip-unavailable-land-001', 'resolve-visible-response-001',
     'animate-and-attack-001', 'burn-and-land-001', 'order-triggers-001',
-    'land-cast-attack-001', 'burst-at-own-nemesis-001', 'rage-valiant-001', 'saga-entry-001', 'opening-land-after-bottom', 'pass-to-own-draw-001', 'opening-upkeep-draw-001']) {
+    'land-cast-attack-001', 'burst-at-own-nemesis-001', 'rage-valiant-001', 'saga-entry-001', 'opening-land-after-bottom', 'pass-to-own-draw-001', 'opening-upkeep-draw-001', 'shock-to-combat-001']) {
     assert.ok(commandIds.has(id), `Missing guide example ${id}`);
   }
   assert.equal(examples[0].commandId, 'rage-lethal-001', 'The XMage fixture binds the first JSON example');
   assert.equal(examples[0].actions[0].select.objectId, '<rage-object-id>');
   const passToEnd = [{ kind: 'pass_until', destination: 'end_step', policy: 'if_no_play' }];
+  const combat = lines.find(line => line.commandId === 'shock-to-combat-001');
+  assert.deepEqual(combat.actions.map(action => action.kind), ['play', 'pass_until']);
+  assert.deepEqual(combat.actions[1], { kind: 'pass_until', destination: 'current_turn', step: 'BEGIN_COMBAT', priority: 'self', policy: 'if_no_play' });
+  assert.ok(combat.actions[0].targets?.length === 1 && combat.actions[0].payWith?.length === 1);
   const withoutLand = lines.find(line => line.commandId === 'skip-unavailable-land-001');
   assert.deepEqual(withoutLand.actions, passToEnd, 'Recover from an unavailable land without queuing it again');
   const continuation = lines.find(line => line.commandId === 'resolve-visible-response-001');
