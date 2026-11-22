@@ -68,8 +68,8 @@ Send this to `play_line`.
       "kind": "play",
       "select": {"objectId": "<rage-object-id>", "zone": "hand"},
       "targets": [
-        {"role": 0, "targetZone": "BATTLEFIELD", "select": {"objectId": "<trespasser-id>"}},
-        {"role": 1, "targetZone": "BATTLEFIELD", "select": {"objectId": "<nemesis-id>"}}
+        {"role": 0, "select": {"objectId": "<trespasser-id>", "zone": "battlefield"}},
+        {"role": 1, "select": {"objectId": "<nemesis-id>", "zone": "battlefield"}}
       ],
       "payWith": ["<red-source-id>"],
       "expectTargetTriggers": [
@@ -209,7 +209,7 @@ An opposing Fatal Push interrupted your line. After reviewing its target, you wa
 }
 ```
 
-At your own priority, `state.decision.visibleStackArgs` can supply the exact IDs already on the stack. If you have decided to let all those visible objects resolve, copy those arguments into the next `play_line` alongside your chosen pass destination. To respond first, include your response in the same line. A later spell, mandatory choice or newly revealed information still interrupts execution.
+When you accept the visible stack and intend to reach a later phase, copy `state.decision.visibleStackArgs` and send one `play_line` with a terminal `pass_until` to that phase. For example, use `actions:[{kind:"pass_until",destination:"end_step",policy:"if_no_play"}]` to preserve optional responses before the end step. Use `pass_priority` when your intent is to hand off priority exactly once. To respond first, include your response in the same line. A later spell, mandatory choice or newly revealed information still interrupts execution.
 
 `expectedStackIds` replaces the default list of your own visible stack objects. If the stack has changed since you planned the line, use the latest cursor and rebuild the list from the objects still present whose resolution you intend to accept. Include any remaining opposing response you plan to pass through and each of your own remaining objects the line expects to resolve.
 
@@ -225,7 +225,7 @@ The opponent cast a pump spell on a creature with two toughness. You have priori
   "expectedStackIds":["<opposing-pump-stack-id>"],
   "actions":[
     {"kind":"play","when":"priority","select":{"objectId":"<shock-id>","zone":"hand"},
-     "targets":[{"role":0,"targetZone":"BATTLEFIELD","select":{"objectId":"<target-creature-id>"}}],
+     "targets":[{"role":0,"select":{"objectId":"<target-creature-id>","zone":"battlefield"}}],
      "payWith":[{"sourceId":"<red-source-id>","color":"R"}]},
     {"kind":"pass_until","destination":"end_step","policy":"if_no_play"}
   ],
@@ -409,7 +409,7 @@ Emberheart Challenger is on your battlefield. With priority in your main phase, 
     {
       "kind": "play",
       "select": {"objectId": "<rage-id>", "zone": "hand"},
-      "targets": [{"role": 0, "targetZone": "BATTLEFIELD", "select": {"objectId": "<challenger-id>"}}],
+      "targets": [{"role": 0, "select": {"objectId": "<challenger-id>", "zone": "battlefield"}}],
       "payWith": ["<red-source-id>"],
       "expectTriggers": [
         {"sourceId": "<challenger-id>", "abilityText": "<full-prowess-text>"},
@@ -551,7 +551,7 @@ Use `{"kind":"choose","decisionId":"<observed prompt>","choiceId":"<legal option
 - **Modes and special actions.** The XMage ability picker has kind `panel`. On `play`, use `mode` for an exact modal option, its printed flavor name, or a cast face. For Unholy Annex // Ritual Chamber, set `mode:"Unholy Annex"` or `mode:"Cast Unholy Annex"` and include the exact `payWith` in that same `play`. For example, choose `{sourceId:"<blooming-marsh-id>",color:"B"}` for black mana from Blooming Marsh. Use `modeId` for an observed option ID or `spellAbilityId` for a legal spell option from `spellAbilities`. When the priority decision shows only one legal cast option, the executor can select the matching typed face. A future panel can be guarded by `sourceObjectId` with `select.abilityId`. Plot uses `expectCast:false` on the opening `play`.
 - **Activate a permanent.** Send `{kind:"activate",sourceId,abilityId,abilityText,payWith:[manaSourceId]}` for a visible own non-mana ability such as Mutavault's animation or Fel's loyalty ability. Copy the legal ID and full rule from the same `nonManaAbilities` entry on the priority choice. Include known `targets` in engine order and `when:"priority"` if responding on the stack. The executor verifies the picker or stack identity and the payment's source.
 - **Optional casting costs.** Queue a separate guarded `choose` for an announced kicker, buyback or similar question, with `guard:{kind:"question",sourceObjectId, instruction}` and `select:{answer:true}` or `{answer:false}`. For Burst Lightning, declare the cast first, then the exact kicker question, then the target and each guarded `payMana` choice. Targets and payments on `play` are expanded immediately after the cast, so put them in separate guarded choices when a cost question must come first. The engine can omit a question when the cost is unavailable. Replan if the observed order, source or payment changes.
-- **Targets.** Give a `play.targets` entry as `{select:{objectId:"<visible object>"},role:0,targetZone:"BATTLEFIELD"}` using the engine's zero-based role within the selected mode. The executor checks the source and live legal target. An exact `instruction` guard also works. Use `Select a player` for Thoughtseize and `Select an opponent` for Duress when those are the published prompts. Include known targets and mana in the initial line and reconsider once the hand is revealed. To resume an unpaid spell at its observed casting prompt, use a `choose` with the exact target guard, then guarded `payMana` choices. Reckless Rage needs the opponent's creature and your creature in the order XMage asks for each role. If a mode comes first, follow the published prompt order. An engine-selected target is accepted when the exact spell instance records it in the declared target role. A changed target or unverified role needs a fresh decision.
+- **Targets.** For a creature on the battlefield, use `{role:0,select:{objectId:"<visible creature>",zone:"battlefield"}}`. The role is zero-based within the chosen mode. The optional outer `targetZone` guards the set of eligible zones reported by XMage. A spell that can target a creature or a player can report `ALL` even when you choose a creature on the battlefield. Omit the outer guard unless you observed its value. The executor checks the source and live legal target. An exact `instruction` guard also works. Use `Select a player` for Thoughtseize and `Select an opponent` for Duress when those are the published prompts. Include known targets and mana in the initial line and reconsider once the hand is revealed. To resume an unpaid spell at its observed casting prompt, use a `choose` with the exact target guard, then guarded `payMana` choices. Reckless Rage needs the opponent's creature and your creature in the order XMage asks for each role. If a mode comes first, follow the published prompt order. An engine-selected target is accepted when the exact spell instance records it in the declared target role. A changed target or unverified role needs a fresh decision.
 - **Predictable triggers and Ward.** Declare an own trigger with `expectTriggers` using its visible source ID and exact public ability text. Opposing Ward uses `expectTargetTriggers` with the public Ward source ID, your spell's `targetingCardId` and the exact public Ward text. Queue a guarded answer to the Ward question and a guarded choice of the exact card to discard or cost to pay. For Ward discard use `guard:{kind:"target",instruction:"Select a card (discard cost)",targetZone:"HAND"}` and select the own hand card by object ID. A different source, trigger, prompt or illegal cost returns control.
 - **Simultaneous combat triggers.** Set `expectTriggers` on the attack and add the known trigger-order decision and public graveyard choices in engine order. A `pickCards` decision with `triggerOrder:true` can identify a visible source with `select.objectId` from the option's `triggerSourceId`. Include the exact label to distinguish multiple abilities from that source. When the trigger-order prompt is already visible, add `adoptTriggerOrder:true` to an exact `choose` to follow the selected own trigger and the forced final option when two remain. The executor checks their IDs, sources, ability text and order on the stack. An unknown target still needs a fresh decision.
 - **Specific cards and combat.** Use IDs to distinguish copies or opposing objects with the same name. Hand selectors refer to your own visible hand. Graveyard and exile casts use a visible `cardId` without a hand zone when XMage permits the play. `attack` accepts `attackers:"all"` or selected attacker IDs. To name a destination per attacker, use `{kind:"attack",assignments:[{attackerId,defenderId}]}` with the observed player, planeswalker or battle ID. Use `{"kind":"block","assignments":[{"blockerId":"<your creature>","attackerId":"<attacking creature>"}]}` to declare and confirm exact blocks. An empty list explicitly confirms no blockers. Use an observed `choose` for additional decisions such as blocker ordering or damage allocation.

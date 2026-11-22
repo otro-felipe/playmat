@@ -211,7 +211,7 @@ function plannedChoice(state, decision, step) {
     : state.players?.flatMap((player) => player[zone] ?? []);
   const matches = decision.choices.filter((choice) => {
     if (step.playAs === 'land' && choice.canPlayLand !== true) return false;
-    if (zone && !cards?.some((card) => card.id === choice.card?.id)) return false;
+    if (zone && !cards?.some((card) => card.id === (choice.card?.id ?? choice.objectId))) return false;
     if (step.semanticSpellOption && choice.abilityType !== 'SPELL') return false;
     if (step.semanticMode && (choice.type !== 'option' || !choice.abilityId || ['Done', 'Cancel'].includes(choice.label))) return false;
     const sourceAbilities = decision.kind === 'payMana' ? choice.manaAbilities ?? [] : [choice];

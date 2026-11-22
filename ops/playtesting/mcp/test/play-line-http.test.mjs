@@ -140,6 +140,13 @@ test('[PM-LINE-MCP-2] the turn guide examples pass the published native MCP inpu
   }
   assert.equal(examples[0].commandId, 'rage-lethal-001', 'The XMage fixture binds the first JSON example');
   assert.equal(examples[0].actions[0].select.objectId, '<rage-object-id>');
+  for (const id of ['rage-lethal-001', 'respond-with-shock-001', 'rage-valiant-001']) {
+    const cast = lines.find(line => line.commandId === id).actions.find(action => action.targets);
+    for (const target of cast.targets) {
+      assert.equal(target.select.zone, 'battlefield');
+      assert.equal(target.targetZone, undefined, 'the card location does not establish the prompt domain');
+    }
+  }
   const passToEnd = [{ kind: 'pass_until', destination: 'end_step', policy: 'if_no_play' }];
   const combat = lines.find(line => line.commandId === 'shock-to-combat-001');
   assert.deepEqual(combat.actions.map(action => action.kind), ['play', 'pass_until']);
@@ -662,8 +669,10 @@ async function activationFixture(t, { name, text }, variant) {
     { id: 'make-mana', type: 'option', label: '{T}: Add {C}.', abilityType: 'ACTIVATED_MANA', abilityId: 'mana-id' },
     variant === 'changed-option' ? { ...animation, abilityId: 'different-ability-id' } : animation,
   ] };
-  const targeted = variant === 'targeted-ability';
-  const target = { id: 'target', kind: 'target', targetSourceId: land.id, targetRole: 0, targetZone: 'BATTLEFIELD',
+  const anyTarget = variant === 'any-target-ability';
+  const targeted = variant === 'targeted-ability' || anyTarget;
+  if (anyTarget) rival.battlefield.push({ id: 'public-creature', name: 'Test creature', types: ['CREATURE'] });
+  const target = { id: 'target', kind: 'target', targetSourceId: land.id, targetRole: 0, targetZone: anyTarget ? 'ALL' : 'BATTLEFIELD',
     choices: [{ id: 'choose-creature', type: 'object', objectId: 'public-creature' }] };
   const pay = { id: 'cost', kind: 'payMana', paymentSourceId: variant === 'changed-payment' ? 'other' : land.id,
     choices: [{ id: 'tap-source', type: 'manaAbility', objectId: mana.id, card: mana,
@@ -675,7 +684,8 @@ async function activationFixture(t, { name, text }, variant) {
   if (variant === 'copied-summary' || variant === 'ambiguous-summary') abilityText = projected.label;
   const requestAction = { kind: 'activate', sourceId: first.choices[0].objectId,
     abilityId: variant === 'unavailable-ability' ? animation.abilityId : projected.abilityId, abilityText,
-    ...(targeted ? { targets: [{ select: { objectId: 'public-creature' }, targetZone: 'BATTLEFIELD', role: 0 }] } : {}),
+    ...(targeted ? { targets: [anyTarget ? { select: { objectId: 'public-creature', zone: 'battlefield' }, role: 0 }
+      : { select: { objectId: 'public-creature' }, targetZone: 'BATTLEFIELD', role: 0 }] } : {}),
     ...(variant === 'unwitnessed-activation' ? {} : { payWith: [{ sourceId: mana.id, color: 'R' }] }) };
   const f = await fixture(t, {
     first, initial: { players: [own, rival] },
@@ -756,11 +766,12 @@ for (const [variant, applied] of [
   ['direct', ['object-creature-land', 'tap-source', 'pass']],
   ['legacy-unique-summary', ['object-creature-land', 'animate', 'tap-source', 'pass']],
   ['targeted-ability', ['object-creature-land', 'animate', 'choose-creature', 'tap-source', 'pass']],
+  ['any-target-ability', ['object-creature-land', 'animate', 'choose-creature', 'tap-source', 'pass']],
 ]) {
   test(`[PM-LINE-SEM-5] native activation handles ${variant}`, async (t) => {
-    const input = variant !== 'targeted-ability' ? landActivations[0] : {
-      name: 'Targeted fixture permanent', text: '{1}: Target creature gets +1/+1 until end of turn.',
-    };
+    const input = variant === 'any-target-ability' ? { name: 'Targeted fixture permanent', text: '{1}: This permanent deals 1 damage to any target.' }
+      : variant === 'targeted-ability' ? { name: 'Targeted fixture permanent', text: '{1}: Target creature gets +1/+1 until end of turn.' }
+      : landActivations[0];
     const f = await activationFixture(t, input, variant);
     const { result } = await f.call('play_line', { ...f.request, actions: f.actions });
     assert.equal(result.status, 'completed', JSON.stringify(result));

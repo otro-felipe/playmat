@@ -85,7 +85,7 @@ const DecisionGuard = z.object({
   modePicker: z.literal(true).optional(),
 }).strict();
 const PlannedTargets = z.array(z.object({ select: ChoiceSelector, instruction: z.string().min(1).max(2000).optional(),
-  targetZone: TargetZone.optional(), role: z.number().int().nonnegative().max(32).optional()
+  targetZone: TargetZone.optional().describe('Advanced guard for the observed prompt’s eligible zone (which can be ALL). Use select.zone for the chosen object’s location.'), role: z.number().int().nonnegative().max(32).optional()
     .describe('Zero-based target role from the engine. Supply a role or exact target instruction.'),
 }).strict()).max(8).describe('Known targets in engine prompt order, using visible object IDs.');
 const TurnActivation = z.object({
