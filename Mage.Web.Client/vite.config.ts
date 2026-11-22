@@ -74,7 +74,7 @@ export default defineConfig({
     manifest: true,
     // Keep the same reachable-JS budget while compressing the existing and new lazy screens more tightly.
     minify: 'terser',
-    terserOptions: { compress: { passes: 2 } },
+    terserOptions: { compress: { passes: 3 } },
     rollupOptions: {
       input: {
         main: 'index.html',

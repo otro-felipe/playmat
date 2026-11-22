@@ -25,8 +25,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function mount(chatMode?: 'quiet' | 'chatty' | 'coach') {
-  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ tableId, mode: 'mcp', chatMode })));
+function mount(chatMode?: 'quiet' | 'chatty' | 'coach', recipient = {}) {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ tableId, mode: 'mcp', chatMode, ...recipient })));
   return render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <MemoryRouter initialEntries={[invitePath]}>
@@ -77,4 +77,17 @@ test('[PM-AC-04] existing invites use Quiet and instructions can be copied manua
   const instructions = await page.findByRole('textbox', { name: 'Agent instructions' }) as HTMLTextAreaElement;
   expect(instructions.readOnly).toBe(true);
   expect(instructions.value).toContain(`${window.location.origin}${invitePath}`);
+});
+
+test.each([
+  [{ guestAccountName: 'GuestAccount' }, 'GuestAccount'],
+  [{ guestPlayerId: '00000000-0000-4000-8000-000000000007', guestOwnerName: 'GuestAccount' }, '00000000-0000-4000-8000-000000000007'],
+])('directs the pilot to the invited account or exact profile', async (recipient, expected) => {
+  const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined);
+  const page = mount('quiet', recipient);
+  fireEvent.click(await page.findByRole('button', { name: 'Copy agent instructions' }));
+  await page.findByText('Agent instructions copied');
+  const [instructions] = writeText.mock.calls[0];
+  for (const detail of ['GuestAccount', expected, 'playerId', 'list_joinable_games', tableId]) expect(instructions).toContain(detail);
+  expect(instructions).not.toContain('same account that created');
 });

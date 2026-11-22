@@ -1,5 +1,6 @@
 import { SpectatorBroadcast } from '../spectator/SpectatorScreen';
 import { MatchHumanSeat, useEnabledHumanSeat } from '../ui/humanSeat';
+import { invitedPlayerLabel } from '../playtesting';
 import { useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useStore } from 'zustand';
@@ -61,8 +62,11 @@ function ConnectedStage({ gameId, leaveLabel, onLeave }: { gameId: string; leave
   const tableId = useGames((state) => state.tables[gameId]?.tableId);
   const enabledHuman = useEnabledHumanSeat(tableId);
   const { data: invite } = usePlaytestingInvitation(tableId);
-  const seatDisplayNames = useMemo(() => invite?.mode === 'mcp' && invite.guestEngineName && invite.guestOwnerName
-    ? { [invite.guestEngineName]: invite.guestOwnerName } : undefined, [invite]);
+  const seatDisplayNames = useMemo(() => {
+    if (invite?.mode !== 'mcp' || !invite.guestEngineName) return;
+    const label = invitedPlayerLabel(invite);
+    if (label) return { [invite.guestEngineName]: label };
+  }, [invite]);
   const state = useStore(session.store);
   const connection = useSession((session) => session.connection);
   const phase = useSession((session) => session.phase);

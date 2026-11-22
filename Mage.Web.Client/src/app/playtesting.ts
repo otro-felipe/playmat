@@ -27,8 +27,14 @@ export interface PlaytestingInvitationView {
   unlisted?: true;
   guestEngineName: string | null;
   guestDisplayName: string | null;
+  guestPlayerId?: string;
+  guestAccountName?: string;
   guestOwnerName?: string | null;
   chatMode?: McpChatMode;
+}
+
+export function invitedPlayerLabel(invite: PlaytestingInvitationView) {
+  return (invite.guestPlayerId && invite.guestDisplayName) || invite.guestOwnerName;
 }
 
 async function sendInviteRequest(path: string, input?: Record<string, unknown>, signal?: AbortSignal): Promise<Response> {

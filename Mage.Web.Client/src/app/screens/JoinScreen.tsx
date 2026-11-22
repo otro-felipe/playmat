@@ -12,7 +12,7 @@ import messages from '../i18n/en/social';
 import { McpConnectionEndpoint } from '../mcp/McpConnection';
 import { mcpEndpoint } from '../mcp/connectionGuide';
 import { useTables } from '../queries';
-import { claimPlaytestingInvite, PRIVATE_PLAYTESTING, type McpChatMode } from '../playtesting';
+import { claimPlaytestingInvite, PRIVATE_PLAYTESTING, type PlaytestingInvitationView } from '../playtesting';
 import { useDecks } from '../stores/decks';
 import { useDeckRoster } from '../stores/useDeckRoster';
 import { useSession } from '../stores/session';
@@ -51,17 +51,20 @@ const MCP_GUIDES = [
   'playmat://guides/rules',
 ];
 
-function McpInviteGuide({ tableId, name, chatMode = 'quiet' }: { tableId: string; name?: string | null; chatMode?: McpChatMode }) {
+function McpInviteGuide({ tableId, name, invitation }: { tableId: string; name?: string | null; invitation: PlaytestingInvitationView }) {
   const navigate = useNavigate();
   const t = useT();
   const [copyStatus, setCopyStatus] = useState<'copied' | 'manual' | null>(null);
-  const origin = window.location.origin;
+  const { chatMode = 'quiet', guestPlayerId, guestAccountName, guestOwnerName } = invitation;
+  const account = guestAccountName || guestOwnerName;
   const endpoint = mcpEndpoint();
   const instructions = [
     t('mcpInvite.instructions.connect', { app: APP_NAME, endpoint }),
+    ...(account ? [t('mcpInvite.invitedAccount', { name: account })] : []),
+    ...(guestPlayerId ? [`playerId: ${guestPlayerId}`] : []),
     t('mcpInvite.instructions.read'),
     ...MCP_GUIDES.map((uri) => `- ${uri}`),
-    t('mcpInvite.instructions.join', { link: inviteLink(origin, tableId) }),
+    t('mcpInvite.instructions.join', { link: inviteLink(window.location.origin, tableId), tableId }),
     t('mcpInvite.instructions.chat', { mode: t(`mcpInvite.chat.${chatMode}`), description: t(`mcpInvite.chat.${chatMode}.description`) }),
     ...(chatMode === 'coach' ? [t('mcpInvite.instructions.coach')] : []),
   ].join('\n');
@@ -201,7 +204,7 @@ export function JoinScreen() {
   if (invitation?.mode === 'mcp') {
     return (
       <div className={styles.page}>
-        <McpInviteGuide key={tableId} tableId={tableId} name={table.tableName} chatMode={invitation.chatMode} />
+        <McpInviteGuide key={tableId} tableId={tableId} name={table.tableName} invitation={invitation} />
       </div>
     );
   }

@@ -31,7 +31,7 @@ import { joinTable } from './joinTable';
 import { TableAdvancedFields } from './TableAdvancedFields';
 import styles from './TablesScreen.module.css';
 import { PUBLIC_ORIGIN } from '../brand';
-import { createPlaytestingInvite, mcpOpponent, MCP_CHAT_MODES, PRIVATE_PLAYTESTING, type McpChatMode, type PlaytestingInvitationView } from '../playtesting';
+import { createPlaytestingInvite, invitedPlayerLabel, mcpOpponent, MCP_CHAT_MODES, PRIVATE_PLAYTESTING, type McpChatMode, type PlaytestingInvitationView } from '../playtesting';
 import { usePlaytestingInvitation } from '../usePlaytestingInvitation';
 import { registerMessages, useT } from '../i18n';
 import messages from '../i18n/en/social';
@@ -241,7 +241,7 @@ function TableRow({ table, mcpInvite, children }: {
       <ul className={styles.seats} aria-label="Seats">
         {(table.seats ?? []).map((seat, index) => {
           const mcpSeat = mcpInvite && (!seat.playerName || seat.playerName === mcpInvite.guestEngineName);
-          const owner = mcpSeat ? mcpInvite.guestOwnerName : undefined;
+          const owner = mcpSeat ? invitedPlayerLabel(mcpInvite) : undefined;
           const label = seat.playerName ? playerLabelText(seat.playerName, owner, mcpSeat || undefined) : (mcpSeat ? 'Rival MCP' : 'Open');
           return (
             <li key={index} className={seat.playerName ? styles.seatTaken : styles.seatOpen} title={seat.playerName ? label : 'Open seat'}>

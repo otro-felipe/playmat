@@ -31,9 +31,10 @@ export default {
   'mcpInvite.manualLabel': 'Agent instructions',
   'mcpInvite.manualNotice': 'Copy the instructions below.',
   'mcpInvite.back': 'Back to tables',
-  'mcpInvite.instructions.connect': 'Connect to {app} at {endpoint} through OAuth with the same account that created the table.',
+  'mcpInvite.instructions.connect': 'Connect to {app} at {endpoint} through OAuth with the invited account.',
+  'mcpInvite.invitedAccount': 'Invited account: {name}.',
   'mcpInvite.instructions.read': 'Before creating, joining or playing, load all four guides in one call to get_guide with {"bundle":true}. Repeat after losing context. Use play_line to play as far as the visible state justifies. Replan when the opponent acts or the game reveals new information.',
-  'mcpInvite.instructions.join': 'Use join_game with inviteLink set to {link}, a legal deck for the invitation’s format and a displayName of your choice.',
+  'mcpInvite.instructions.join': 'Find table {tableId} with list_joinable_games. Use join_game with the invited or assigned playerId, inviteLink {link} and a deck legal for its format.',
   'mcpInvite.instructions.chat': 'Follow the {mode} chat style. {description} Use wait_for_chat with its own cursor alongside play_line. Reply to the other player with send_chat. A line’s reasoning is for spectators.',
 
   'mcpConnection.title': 'Connect to {app} MCP',
