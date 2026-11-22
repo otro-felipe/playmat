@@ -266,3 +266,14 @@ ALTER TABLE spectator_links
   ADD COLUMN IF NOT EXISTS table_name text,
   ADD COLUMN IF NOT EXISTS live_table_id uuid;
 CREATE UNIQUE INDEX IF NOT EXISTS spectator_live_table ON spectator_links(live_table_id) WHERE live_table_id IS NOT NULL;
+
+ALTER TABLE player_profiles
+  ADD COLUMN IF NOT EXISTS creation_request uuid,
+  ADD COLUMN IF NOT EXISTS creation_signature text;
+CREATE UNIQUE INDEX IF NOT EXISTS player_slot_request ON player_profiles(account_id,creation_request);
+ALTER TABLE invitations
+  ADD COLUMN IF NOT EXISTS recipient_account_id uuid REFERENCES accounts(id),
+  ADD COLUMN IF NOT EXISTS broadcast_on_assignment boolean NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS table_name text;
+CREATE INDEX IF NOT EXISTS invitations_for_recipient ON invitations(recipient_account_id,expires_at DESC)
+  WHERE recipient_account_id IS NOT NULL;

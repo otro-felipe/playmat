@@ -10,7 +10,7 @@ const consentLifetime = 10 * 60
 const codeLifetime = 90
 const accessLifetime = 15 * 60
 const connectionLifetime = 30 * 24 * 60 * 60
-const scopeLabels = { play: 'juego e invitaciones', chat: 'chat de partida', library: 'mazos de la cuenta', history: 'historial de la cuenta' }
+const scopeLabels = { play: 'juego e invitaciones', chat: 'chat de partida', library: 'mazos de la cuenta', history: 'historial de la cuenta', 'players:manage': 'crear jugadores MCP persistentes en tu cuenta' }
 const scopesSupported = Object.keys(scopeLabels)
 const defaultScopes = ['play', 'library', 'chat']
 const tokenPattern = /^[a-zA-Z0-9_-]{43}$/
@@ -78,7 +78,7 @@ async function authRequest(params, audience, registry) {
   const requested = params.get('scope')?.trim()
   const scopes = requested ? [...new Set(requested.split(/ +/))] : defaultScopes
   if (scopes.some(scope => !scopesSupported.includes(scope))) return { client, state, error: 'invalid_scope' }
-  return { client, state, challenge, scopes }
+  return { client, state, challenge, scopes, allowOptionalManagement:!params.has('scope') }
 }
 
 export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions }) {
@@ -98,9 +98,9 @@ export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions
     }
     const id = randomUUID()
     await pool.query('DELETE FROM oauth_consent_requests WHERE expires_at<=now()')
-    await pool.query(`INSERT INTO oauth_consent_requests(id,browser_session,code_challenge,client_state,client_id,redirect_uri,audience,scopes_requested,expires_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [id, owner.browserSession, request.challenge, request.state, request.client.clientId,
-      request.client.redirectUri, audience, request.scopes, deadline(consentLifetime)])
+    await pool.query(`INSERT INTO oauth_consent_requests(id,browser_session,code_challenge,client_state,client_id,redirect_uri,audience,scopes_requested,expires_at,allow_optional_management)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [id, owner.browserSession, request.challenge, request.state, request.client.clientId,
+      request.client.redirectUri, audience, request.scopes, deadline(consentLifetime),request.allowOptionalManagement])
     const profiles = (await listPlayers(pool, owner)).players.filter(player => player.mcpEnabled)
     const selectPlayer = profiles.length ? `<label>Acceso de la conexión<select name="playerId"><option value="">Cuenta y jugadores MCP habilitados</option>${profiles.map(p => `<option value="${p.playerId}">${escape(p.displayName)}${p.flag ? ' · '+escape(p.flag) : ''}</option>`).join('')}</select></label>
       <p>Si eliges un jugador por nombre, esta conexión solo podrá controlar a ese jugador y usar la biblioteca MCP compartida.</p>` : ''
@@ -112,6 +112,7 @@ export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions
       <ul>${permissions}</ul>
       ${request.scopes.includes('play') ? '<p>Con acceso a la cuenta, una misma conexión puede jugar con cada jugador que habilites en Administrar jugadores. También puede controlar tu asiento humano en las mesas donde permitas ese acceso.</p>' : ''}
       <form method="post" action="/oauth/authorize"><input type="hidden" name="request" value="${id}">${selectPlayer}
+      ${request.allowOptionalManagement ? '<label><input type="checkbox" name="manageSlots" value="yes">Permitir a la conexión de cuenta crear nuevos jugadores MCP</label>' : ''}
       <button name="decision" value="allow">Autorizar</button>
       <button name="decision" value="deny">Cancelar</button></form>`, new URL(request.client.redirectUri).origin)
   }
@@ -137,7 +138,15 @@ export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions
         const selected = form.get('playerId')
         const pilot = selected ? await profileConsent(db, owner, selected) : null
         const engineKey = pilot?.engine_key ?? await ensureOAuthAgent(db, owner.accountId)
-        const scopes = approvedScopes(pilot?.scopes ?? scopesSupported, request.scopes_requested)
+        const canonical=!pilot && engineKey==='mcp_'+owner.username.toLowerCase()
+        const allowed=pilot?.scopes ?? (canonical ? scopesSupported : scopesSupported.filter(scope=>scope!=='players:manage'))
+        const requested=canonical && request.allow_optional_management && form.get('manageSlots')==='yes'
+          ? [...request.scopes_requested,'players:manage'] : request.scopes_requested
+        const scopes = approvedScopes(allowed, requested)
+        // Consent raises the ceiling only on this account grant. Existing connections keep their approved scopes.
+        if (canonical && scopes.includes('players:manage')) {
+          await db.query("UPDATE agent_grants SET scopes=array_append(scopes,'players:manage') WHERE engine_key=$1 AND NOT ('players:manage'=ANY(scopes))",[engineKey])
+        }
         if (!scopes.length) throw new ProductError(400, 'Permisos OAuth vencidos')
         const code = newToken()
         await db.query('DELETE FROM oauth_authorization_codes WHERE expires_at<=now()')

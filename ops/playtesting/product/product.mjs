@@ -10,7 +10,7 @@ import pg from 'pg'
 import { archetypesFor } from './deck-performance-identity.mjs'
 import { libraryArchetypeCoverage, migrateDeckLists, refineMigratedDeckLists, refineTournamentArchetypes } from './deck-list-migration.mjs'
 import { excludeAsParticipant } from './match-statistics.mjs'
-import { listPlayers, createPlayer, updatePlayer } from './players.mjs'
+import { listPlayers, createPlayer, createPlayerSlot, updatePlayer } from './players.mjs'
 import { changeReservation, restorePlayerReservations } from './player-reservations.mjs'
 import { createArchive } from './archive.mjs'
 import { resetMatchHistory, setUnlimitedMatchHistory } from './history-retention.mjs'
@@ -411,8 +411,9 @@ export async function createProduct({
     }
     gateAccount(res, group, actor, releases)
     const endpoint = path.slice('/api/playtesting/'.length)
+    if (endpoint === 'player-slots' && req.method === 'POST') return send(res,201,await createPlayerSlot(pool,actor,await body(req,'json',2048)))
     if (endpoint === 'players') {
-      if (req.method === 'GET') return send(res,200,await listPlayers(pool,actor))
+      if (req.method === 'GET') return send(res,200,await listPlayers(pool,actor,url.searchParams.get('availableOnly')==='true'))
       if (req.method === 'POST') return send(res,201,await createPlayer(pool,actor,await body(req,'json',2048)))
     }
     if (req.method === 'PATCH' && /^players\/[^/]+$/.test(endpoint)) {
@@ -478,7 +479,7 @@ export async function createProduct({
     }
     if (endpoint === 'invites') {
       requireScope(actor, 'play')
-      if (req.method === 'GET') return send(res, 200, await invitations.list(actor, url.searchParams.get('limit')))
+      if (req.method === 'GET') return send(res, 200, await invitations.list(actor, url.searchParams.get('limit'),url.searchParams.get('tableId')))
       if (req.method === 'POST') return send(res, 201, await invitations.create(actor, await body(req), {trustedPilot:!proxied}))
     }
     if (endpoint.startsWith('invites/')) {

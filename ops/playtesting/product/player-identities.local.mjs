@@ -18,7 +18,8 @@ export async function verifyPlayerIdentities({ base, issuer, Cookie, authorizePi
     pilots.push({ ...profile, deck:{ name:'Basics '+i, cards:[{cardName:basics[i],amount:60}],sideboard:[] } })
   }
   const hidden = await createProfile('Disabled pilot',null,false)
-  const foreign = await createProfile('Other owner',null,true,await foreignCookie())
+  const peerCookie=await foreignCookie()
+  const foreign = await createProfile('Other owner',null,true,peerCookie)
   const allowed = async () => (await call('list_players')).players
   const ids = rows => rows.map(row=>row.playerId).sort()
   assert.deepEqual(ids(await allowed()),ids(pilots),'One canonical bearer lists all four enabled account profiles')
@@ -169,6 +170,31 @@ export async function verifyPlayerIdentities({ base, issuer, Cookie, authorizePi
   await call('get_game_state',{humanTableId:human.tableId},'human_seat_forbidden')
   await as(1,'get_game_state',{humanTableId:human.tableId},'player_forbidden')
   await browser.api.tableRemove(room,human.tableId)
+  const peer=await connect('other-owner-coordinator',await authorizePilot(undefined,peerCookie,true))
+  const request={requestId:randomUUID(),displayName:'Visitor',flag:'ES'}
+  const visitor=await peer('create_player_slot',request)
+  assert.equal((await peer('create_player_slot',request)).playerId,visitor.playerId)
+  assert.equal((await call('list_players')).players.some(p=>p.playerId===visitor.playerId),false)
+  const peerName=(await (await fetch(base+'/api/playtesting/me',{headers:{Cookie:peerCookie}})).json()).engineName
+  const exact=await call('create_human_match',{mode:'mcp',humanMcpAllowed:true,format:'Pioneer',name:'External named player',
+    deck:first.deck,guestPlayerId:visitor.playerId})
+  const own=pilots[1]
+  async function playExternal(tableId,start,player) {
+    const available=(await peer('list_players',{availableOnly:true})).players
+    assert.ok(available.some(p=>p.playerId===player.playerId))
+    await peer('join_game',{tableId,playerId:player.playerId,deck:pilots[2].deck})
+    await start()
+    const gameId=await until(async()=> (await peer('get_game_state',{playerId:player.playerId})).gameId,'authorized external seat to start')
+    await peer('concede',{playerId:player.playerId,gameId,entireMatch:true})
+    await until(async()=> (await peer('list_players',{availableOnly:true})).players.some(p=>p.playerId===player.playerId),'external slot to be available after archival')
+  }
+  const exactInvites=await peer('list_joinable_games',{})
+  assert.ok(exactInvites.invites.some(i=>i.tableId===exact.tableId && i.guestPlayerId===visitor.playerId))
+  await peer('join_game',{playerId:foreign.playerId,tableId:exact.tableId,deck:first.deck},'not_found')
+  await playExternal(exact.tableId,()=>call('start_match',{humanTableId:exact.tableId}),visitor)
+  const assigned=await call('create_game',{playerId:own.playerId,name:'External account assignment',format:'Pioneer',deck:own.deck,guestAccountName:peerName})
+  assert.ok((await peer('list_joinable_games',{})).invites.some(i=>i.tableId===assigned.tableId && i.requiresPlayerAssignment))
+  await playExternal(assigned.tableId,()=>call('start_match',{playerId:own.playerId,tableId:assigned.tableId}),foreign)
   await revokeCanonical()
   await assert.rejects(()=>call('list_players'),/401|unauthoriz/i)
   console.log('Verified a single canonical OAuth bearer and MCP session for four profiles, interleaved games and receipts, owner-only human control and live revocation.')

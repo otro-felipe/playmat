@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from 'node:crypto'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { isUuid, normalize, ProductError, transaction } from './decks.mjs'
 
 const profileScopes = ['play', 'library', 'chat']
@@ -31,7 +31,7 @@ export async function selectOAuthPlayer(pool, actor, playerId) {
     WHERE s.connection_id=$1 AND s.account_id=$2 AND s.player_id=$3 AND s.delegated`,[actor.connectionId,actor.accountId,playerId])
   if (!row) throw new ProductError(403,'This connection cannot select that player')
   return {accountId:actor.accountId,username:actor.username,agent:true,connectionId:actor.connectionId,
-    playerId:row.id,engineName:row.engine_name,displayName:row.display_name,flag:row.flag,
+    accountSelected:true,playerId:row.id,engineName:row.engine_name,displayName:row.display_name,flag:row.flag,
     scopes:profileScopes.filter(scope => actor.scopes.includes(scope) && row.scopes.includes(scope)),
     activeTableId:row.table_id,ownsReservation:!row.connection_id || row.connection_id === actor.connectionId,
     ...(row.connection_id === actor.connectionId ? {reservationId:row.reservation_id,reservationStarted:row.started,reservationCancelPending:row.cancel_pending} : {})}
@@ -50,28 +50,55 @@ function fields(input, current = {}) {
 
 function view(row, actor) {
   const {connection_id,reservation_id,...profile} = row
-  return {...profile,...(actor.playerId && connection_id === actor.connectionId ? {reservationId:reservation_id} : {})}
+  const availability=!profile.mcpEnabled ? 'disabled' : !reservation_id ? 'available' : profile.activeTableId ? 'occupied' : 'reserved'
+  return {...profile,availability,...(actor.playerId && connection_id === actor.connectionId ? {reservationId:reservation_id} : {})}
 }
 
-export async function listPlayers(pool, actor) {
+export async function listPlayers(pool, actor, availableOnly=false) {
   if (canonicalAccountScope(actor,'play')) {
     const {rows} = await pool.query(profileQuery+` WHERE EXISTS (SELECT 1 FROM playable_oauth_seats s
       WHERE s.player_id=p.id AND s.connection_id=$1 AND s.delegated) ORDER BY p.display_name,p.id`,[actor.connectionId])
-    return {players:rows.map(row => view(row,actor))}
+    return {players:rows.map(row => view(row,actor)).filter(p=>!availableOnly || p.availability==='available')}
   }
   if (!actor?.playerId) owner(actor)
   const {rows} = await pool.query(profileQuery+` WHERE p.account_id=$1 AND ($2::uuid IS NULL OR p.id=$2) ORDER BY p.display_name,p.id`,
     [actor.accountId,actor.playerId ?? null])
-  return {players:rows.map(row => view(row,actor))}
+  return {players:rows.map(row => view(row,actor)).filter(p=>!availableOnly || p.availability==='available')}
 }
 
 export async function createPlayer(pool, actor, input) {
   owner(actor)
-  const [name,flag,enabled] = fields(input)
+  return insertPlayer(pool,actor,fields(input))
+}
+
+export async function createPlayerSlot(pool,actor,input) {
+  if (!canonicalAccountScope(actor,'players:manage')) throw new ProductError(403,'Account consent to manage player slots is required')
+  const {requestId,displayName,flag,...extra}=input??{}
+  if (!isUuid(requestId) || Object.keys(extra).length) throw new ProductError(400,'Provide a request ID and player settings')
+  return insertPlayer(pool,actor,fields({displayName,flag,mcpEnabled:true}),requestId)
+}
+
+async function insertPlayer(pool,actor,[name,flag,enabled],requestId=null) {
+  const signature=requestId ? createHash('sha256').update(JSON.stringify([name,flag])).digest('hex') : null
   return transaction(pool, async db => {
+    if (requestId) {
+      const {rowCount}=await db.query(`SELECT 1 FROM oauth_connections c
+        JOIN accounts a ON a.id=c.account_id AND a.enabled
+        JOIN agent_grants g ON g.engine_key=c.engine_key AND g.account_id=a.id
+        WHERE c.id=$1 AND c.account_id=$2 AND c.expires_at>now() AND c.revoked_at IS NULL
+          AND g.oauth_managed AND g.player_id IS NULL AND g.revoked_at IS NULL AND g.engine_key='mcp_' || a.username_key
+          AND 'players:manage'=ANY(c.scopes_approved) AND 'players:manage'=ANY(g.scopes) FOR SHARE OF c,g,a`,[actor.connectionId,actor.accountId])
+      if (!rowCount) throw new ProductError(403,'Player management consent is inactive')
+    }
     const id = randomUUID()
     const engine = 'mcp_p' + id.replaceAll('-','').slice(0,18)
-    await db.query('INSERT INTO player_profiles(id,account_id,display_name,flag,mcp_enabled) VALUES($1,$2,$3,$4,$5)', [id,actor.accountId,name,flag,enabled])
+    const inserted=await db.query(`INSERT INTO player_profiles(id,account_id,display_name,flag,mcp_enabled,creation_request,creation_signature)
+      VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (account_id,creation_request) DO NOTHING`,[id,actor.accountId,name,flag,enabled,requestId,signature])
+    if (!inserted.rowCount) {
+      const {rows:[prior]}=await db.query(profileQuery+' WHERE p.account_id=$1 AND p.creation_request=$2 AND p.creation_signature=$3',[actor.accountId,requestId,signature])
+      if (!prior) throw new ProductError(409,'This request ID already belongs to different player settings')
+      return view(prior,actor)
+    }
     await db.query(`INSERT INTO agent_grants(player_id,digest,account_id,engine_name,engine_key,scopes,oauth_managed,revoked_at)
       VALUES($1,$2,$3,$4,$4,$5,true,CASE WHEN $6 THEN NULL ELSE now() END)`,
       [id,randomBytes(32).toString('hex'),actor.accountId,engine,profileScopes,enabled])

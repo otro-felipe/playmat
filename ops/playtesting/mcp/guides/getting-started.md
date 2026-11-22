@@ -79,6 +79,34 @@ Only one table can reserve each player. On `player_busy`, inspect the profile's 
 
 After an uncertain create or join, call `get_player_reservation({"playerId":"<your-profile-uuid>"})`. A `reserved` phase means the engine submission has yet to begin. To abandon that setup, pass its `reservationId` to `cancel_player_reservation`. To withdraw an unclaimed waiting table you host, also pass its observed `tableId`. A phase of `uncertain` with no identified table requires reconciliation before another creation. For an already closed match, the same connection can retrieve its retained terminal progress with the original `gameId` and `commandId`.
 
+## Create a player slot and accept external invitations
+
+An account connection with `players:manage` can create a persistent player slot. A fixed-profile connection cannot create slots. When a client opens OAuth without an explicit scope list, the owner can select the account connection and check **Permitir a la conexión de cuenta crear nuevos jugadores MCP**. The checkbox starts empty. An explicitly requested scope list must include `players:manage` to get this permission. Existing play-only grants can use the owner's enabled slots. Reauthorization is needed only to add permission to create slots.
+
+The following calls use independent authenticated clients for the host and guest. Save the request UUID before creating the slot and reuse it if a response is lost. Changing the requested name or flag requires a fresh request UUID.
+
+```js
+const requestId = crypto.randomUUID();
+const visitor = await guestCall("create_player_slot", { requestId, displayName: "Visita", flag: "CL" });
+const { players } = await guestCall("list_players", { availableOnly: true });
+```
+
+`available` means no reservation exists, `reserved` means setup has begun before a table is bound, and `occupied` means a table is bound. Availability is observed at the time of the list call. The server reserves the selected slot atomically at create or join. Other owners cannot enumerate your slots. Share the exact `visitor.playerId` if you want a specific player to receive an invitation.
+
+```js
+const { tableId } = await hostCall("create_game", {
+  playerId: host.playerId, guestPlayerId: visitor.playerId,
+  name: "Pioneer test", format: "Pioneer", deckId: hostDeckId
+});
+const { invites } = await guestCall("list_joinable_games", { playerId: visitor.playerId });
+await guestCall("join_game", { playerId: visitor.playerId, tableId, deckId: visitorDeckId });
+await hostCall("start_match", { playerId: host.playerId, tableId });
+```
+
+The account dispatcher can call `list_joinable_games({})` before choosing or creating a slot. This includes unexpired incoming invitations to the account and its enabled players, even when every slot is occupied. If you have the table ID, use `list_joinable_games({tableId})` to look it up directly, including on a busy account. An empty result means the connection has no visible invitation for that table. Check `tableId`, `format` and `claimed`. An exact `guestPlayerId` requires that same player. For `requiresPlayerAssignment:true`, `guestAccountName` identifies the recipient account and its owner can assign an available slot.
+
+A human host may invite the same slot using `create_human_match({mode:"mcp", name:"Pioneer test", format:"Pioneer", deckId:personalDeckId, guestPlayerId:visitor.playerId})`. The owner starts that match with `start_match({humanTableId:tableId})`. To let the receiving owner choose a slot instead, replace `guestPlayerId` with `guestAccountName:"GuestAccount"`. On their account connection they call `list_joinable_games({})`, choose an available player and call `join_game({tableId,playerId:chosen.playerId,deckId:visitorDeckId})`. Only the first authorized assignment succeeds. The table ID alone never authorizes entry.
+
 ## Sideboard between games
 
 Read `get_sideboard_state` anew at **each** window. At the start of the normal G3 window, its `deck` is the G2 list. Read it together with the new `decisionId`. A recovered window uses the distribution XMage restored for this seat. A cached G1 list can still be perfectly legal and submitting it will undo your earlier swaps. A deliberate return to G1 is legal too. State the intended moves from the current distribution before submitting. Check copies by card and printing in both zones, including a zero difference in each when keeping. Keep the decision and the receipt private to your seat.

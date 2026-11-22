@@ -47,11 +47,15 @@ export async function changeReservation(pool, actor, playerId, input) {
       if (tableId !== held.table_id) throw new ProductError(409,'The waiting table changed')
       await lockWaitingTable(db,actor,held)
     } else if ((operation === 'release' || operation === 'cancel') && held) {
-      await assertNoActiveMatch(db,held)
+      let lostClaim=false
       if (operation === 'release' && held.table_id) {
-        const {rowCount} = await db.query('SELECT 1 FROM invitations WHERE table_id=$1 AND claimed_at IS NOT NULL FOR SHARE',[held.table_id])
-        if (rowCount) throw new ProductError(409,'The claimed table must finish before releasing this player')
+        const {rows:[claimed]} = await db.query('SELECT creator_key,invitee_key FROM invitations WHERE table_id=$1 AND claimed_at IS NOT NULL FOR SHARE',[held.table_id])
+        if (claimed && [claimed.creator_key,claimed.invitee_key].includes(normalize(actor.engineName)))
+          throw new ProductError(409,'The claimed table must finish before releasing this player')
+        lostClaim=Boolean(claimed)
       }
+      // A losing candidate was never admitted to this table and can release its own setup.
+      if (!lostClaim) await assertNoActiveMatch(db,held)
       if (operation === 'cancel') {
         if (held.table_id ? !held.cancel_pending || held.table_id !== tableId : held.started || tableId !== undefined)
           throw new ProductError(409,'The engine must confirm this waiting table before cancellation')
@@ -68,7 +72,9 @@ export async function changeReservation(pool, actor, playerId, input) {
 
 export async function checkInvitationReservation(db, actor, tableId) {
   if (!actor.playerId) return
-  const {rowCount} = await db.query('SELECT 1 FROM player_table_reservations WHERE player_id=$1 AND connection_id=$2 AND table_id=$3 AND NOT cancel_pending FOR SHARE',
+  const {rowCount} = await db.query(`SELECT 1 FROM player_table_reservations r JOIN playable_oauth_seats seat ON seat.player_id=r.player_id AND seat.connection_id=r.connection_id
+    JOIN player_profiles p ON p.id=r.player_id JOIN agent_grants g ON g.engine_key=seat.engine_key JOIN oauth_connections c ON c.id=r.connection_id
+    WHERE r.player_id=$1 AND r.connection_id=$2 AND r.table_id=$3 AND NOT r.cancel_pending FOR SHARE OF p,g,c,r`,
     [actor.playerId,actor.connectionId,tableId])
   if (!rowCount) throw new ProductError(403,'This pilot has no reservation for that table')
 }

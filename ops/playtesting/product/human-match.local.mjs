@@ -35,15 +35,15 @@ const openBrowserSeat = () => new PlaymatEngineSeat({ engineUrl: 'ws://127.0.0.1
 let browser = openBrowserSeat()
 const clientId = 'https://fixture.invalid/client'
 const callback = 'https://fixture.invalid/callback'
-async function authorizePilot(playerId) {
+async function authorizePilot(playerId,ownerCookie=Cookie,manageSlots=false) {
   const verifier = randomBytes(48).toString('base64url')
   const params = new URLSearchParams({ response_type: 'code', client_id: clientId, redirect_uri: callback, resource: issuer+'/mcp',
     code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256', state: randomUUID() })
-  const page = await fetch(base + '/oauth/authorize?' + params, { headers: { Cookie }, redirect:'manual' })
+  const page = await fetch(base + '/oauth/authorize?' + params, { headers: { Cookie:ownerCookie }, redirect:'manual' })
   assert.equal(page.status, 200)
   const request = /name="request" value="([a-f0-9-]{36})"/.exec(await page.text())?.[1]
   assert.ok(request)
-  const approved = await form('/oauth/authorize', { request, decision: 'allow', ...(playerId && {playerId}) }, { Cookie, Origin: issuer })
+  const approved = await form('/oauth/authorize', { request, decision: 'allow', ...(playerId && {playerId}), ...(manageSlots && {manageSlots:'yes'}) }, { Cookie:ownerCookie, Origin: issuer })
   assert.equal(approved.status, 303)
   const redirect = new URL(approved.headers.get('location'))
   assert.equal(redirect.origin + redirect.pathname, callback)

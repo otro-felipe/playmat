@@ -60,3 +60,4 @@ CREATE INDEX IF NOT EXISTS oauth_access_tokens_connection ON oauth_access_tokens
 UPDATE oauth_connections c SET revoked_at=now()
 FROM agent_grants g
 WHERE c.engine_key=g.engine_key AND NOT g.oauth_managed AND c.revoked_at IS NULL;
+ALTER TABLE oauth_consent_requests ADD COLUMN IF NOT EXISTS allow_optional_management boolean NOT NULL DEFAULT false;

@@ -243,7 +243,7 @@ function registerTools(mcp, { contextFor, allowedOrigins }) {
         const humanRoute = args.humanTableId && (gameTool || name === 'start_match');
         if (args.humanTableId && !humanRoute) throw new ToolError('player_forbidden', 'Use the opted-in Human Player tools for this table.');
         if (actor.playerSelectionEnabled && ['play', 'chat'].includes(scope)
-            && !['list_players', 'list_human_matches', 'create_human_match'].includes(name)
+            && !['list_players','list_joinable_games', 'list_human_matches', 'create_human_match'].includes(name)
             && !humanRoute && !(gameTool && ownsLegacyGame(args.gameId))) {
           throw new ToolError('player_required', 'Choose a playerId from list_players and supply it on every seat call.');
         }
@@ -383,12 +383,15 @@ function registerTools(mcp, { contextFor, allowedOrigins }) {
     model: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9.:/_+-]{0,95}$/).optional().describe('Your actual playing model ID if known.'),
     reasoningEffort: z.string().regex(/^[a-z][a-z0-9_-]{0,23}$/).optional().describe('Your configured reasoning effort if known, such as high.'),
   };
-  tool('list_players', 'List the persistent Thoughtseize player identities authorized for this connection, with their public name, flag and active table.', {}, 'play', async () => {
-    const { players } = await fromProduct('list_players', {});
-    return { players: players.map(({ playerId, displayName, flag, engineName, mcpEnabled, activeTableId }) =>
-      ({ playerId, displayName, flag, engineName, mcpEnabled, activeTableId })) };
+  tool('create_player_slot', 'Create one enabled persistent player in your own account. Requires explicit account consent to manage slots. Reuse the requestId when retrying.', {
+    requestId:Uuid, displayName:z.string().trim().min(1).max(40), flag:z.string().regex(/^[A-Za-z]{2}$/).optional(),
+  }, 'players:manage', args => fromProduct('create_player_slot',args));
+  tool('list_players', 'List your authorized persistent players. Availability distinguishes available, reserved before binding, and occupied at a table.', {availableOnly:z.boolean().optional()}, 'play', async args => {
+    const { players } = await fromProduct('list_players', args);
+    return { players: players.map(({ playerId, displayName, flag, engineName, mcpEnabled, activeTableId, availability }) =>
+      ({ playerId, displayName, flag, engineName, mcpEnabled, activeTableId, availability })) };
   }, true);
-  tool('list_joinable_games', 'List only tables with an available invitation for this account.', { limit: z.number().int().min(1).max(50).default(25) },
+  tool('list_joinable_games', 'List this account’s incoming invitations, including its enabled profiles. Optionally check one exact table before selecting a slot.', { tableId:Uuid.optional(), limit: z.number().int().min(1).max(50).default(25) },
     'play', (args) => fromProduct('list_joinable_games', args), true);
   const playDeck = {
     deck: Deck.optional(),
@@ -424,31 +427,39 @@ function registerTools(mcp, { contextFor, allowedOrigins }) {
     current().human.requireAccount();
     return fromProduct('list_human_decks', {});
   }, true);
+  const recipientFields = {
+    guestPlayerId:Uuid.optional().describe('Exact player UUID voluntarily supplied by the guest.'),
+    guestAccountName:z.string().trim().min(3).max(24).optional().describe('Recipient account. Its owner selects one enabled player when claiming.'),
+    guestEngineName:z.string().trim().min(1).max(36).optional().describe('Exact registered engine seat.'),
+  };
+  const recipientCount = (...values) => values.filter(value => value !== undefined).length;
   tool('create_human_match', 'Create an unrated match as the signed-in Human Player. MCP and friend matches wait for a guest and start_match. Practice and bot start immediately. humanMcpAllowed opts just this table into MCP gameplay.', {
     mode: z.enum(['mcp', 'friend', 'practice', 'bot']), format: Format, name: z.string().trim().min(1).max(80),
     deck: Deck.optional(), deckId: LibraryDeckId.optional(),
     humanMcpAllowed: z.boolean().default(false), winsNeeded: z.union([z.literal(1), z.literal(2)]).default(1),
-    guestEngineName: z.string().trim().min(1).max(36).optional().describe('Optional registered guest in friend mode. Omit for an unlisted friend link.'),
+    ...recipientFields,
     chatMode: z.enum(['quiet', 'chatty', 'coach']).optional().describe('MCP opponent only.'),
     botDeck: Deck.optional().describe('Bot opponent deck. Defaults to a mirror of the human deck.'),
-  }, 'play', async ({ mode, format, name, deck, deckId, humanMcpAllowed, winsNeeded, guestEngineName, chatMode, botDeck }) => {
+  }, 'play', async ({ mode, format, name, deck, deckId, humanMcpAllowed, winsNeeded, guestEngineName, guestPlayerId, guestAccountName, chatMode, botDeck }) => {
     current().human.requireAccount();
-    if (guestEngineName && mode !== 'friend' || chatMode && mode !== 'mcp' || botDeck && mode !== 'bot') {
+    const count=recipientCount(guestPlayerId,guestEngineName,guestAccountName);
+    if (count>1 || (count && !['friend','mcp'].includes(mode)) || guestEngineName && mode !== 'friend' || chatMode && mode !== 'mcp' || botDeck && mode !== 'bot') {
       throw new ToolError('invalid_input', 'Opponent options must match the selected game mode.');
     }
     const register = ['mcp', 'friend'].includes(mode) ? record => fromProduct('create_human_invitation', {
-      ...record, mode, ...(guestEngineName ? { guestEngineName } : {}), ...(chatMode ? { chatMode } : {}),
+      ...record, mode, ...(guestPlayerId && {guestPlayerId}), ...(guestAccountName && {guestAccountName}), ...(guestEngineName ? { guestEngineName } : {}), ...(chatMode ? { chatMode } : {}),
     }) : undefined;
     return current().human.create({ mode, format, name, humanMcpAllowed, winsNeeded, botDeck,
       deck: await resolvePlayDeck(deck, deckId, 'personal') }, register);
   });
   tool('create_game', 'Create a private, unrated best-of-three table as this agent seat.', {
     format: Format, name: z.string().trim().min(1).max(80), ...playDeck,
-    guestEngineName: z.string().trim().min(1).max(36), ...agentRuntime,
-  }, 'play', async ({ guestEngineName, model, reasoningEffort, deck, deckId, ...args }) => {
+    ...recipientFields, ...agentRuntime,
+  }, 'play', async ({ guestPlayerId, guestAccountName, guestEngineName, model, reasoningEffort, deck, deckId, ...args }) => {
+    if (recipientCount(guestPlayerId,guestAccountName,guestEngineName)!==1) throw new ToolError('invalid_input','Choose exactly one guest player, account, or engine name.');
     const selectedDeck = await resolvePlayDeck(deck, deckId);
     return withTableReservation(undefined, (engine, lease) => engine.createGame({ ...args, deck: selectedDeck },
-      record => fromProduct('create_game_invite', { ...record, tableName: args.name, guestEngineName, model, reasoningEffort }), lease));
+      record => fromProduct('create_game_invite', { ...record, tableName: args.name, guestEngineName, guestPlayerId, guestAccountName, model, reasoningEffort }), lease));
   });
   tool('join_game', 'Join a private table from its Thoughtseize invite link or table ID. Use a legal deck and an optional seat display name.', {
     tableId: Uuid.optional(), inviteLink: z.url().max(2048).optional(),

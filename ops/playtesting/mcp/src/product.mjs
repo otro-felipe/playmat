@@ -40,7 +40,11 @@ export function createProductClient(baseUrl, publicUrl) {
     let config;
     switch (name) {
       case 'list_players':
-        path = root + '/players';
+        path = root + '/players'+(args.availableOnly?'?availableOnly=true':'');
+        break;
+      case 'create_player_slot':
+        path = root + '/player-slots';
+        config = { method:'POST', body:args };
         break;
       case 'player_reservation': {
         const { playerId, ...body } = args;
@@ -49,7 +53,7 @@ export function createProductClient(baseUrl, publicUrl) {
         break;
       }
       case 'list_joinable_games':
-        path = `${root}/invites?limit=${args.limit}`;
+        path = `${root}/invites?limit=${args.limit}`+(args.tableId?'&tableId='+encode(args.tableId):'');
         break;
       case 'inspect_game_invite':
         path = `${root}/invites/${encode(args.tableId)}`;
