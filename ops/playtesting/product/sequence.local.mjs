@@ -357,9 +357,10 @@ try {
   assert.ok(JSON.stringify(discovered.tools.find(tool => tool.name === 'play_sequence').inputSchema).includes('allowPlannedResolutions'))
   await warmDeckValidation()
   const fixture = { startFixture, ownPlayer, rivalPlayer, answer, waitNextOwn,
-    playLineWithPeer, call, gameClock, setRivalSetup }
+    playLineWithPeer, drivePeerDuring, call, gameClock, setRivalSetup }
   const pioneerScenarios = [
     ['mulligan', './london-mulligan.local.mjs', 'verifyLondonMulligan'],
+    ['line-waits', './london-mulligan.local.mjs', 'verifyLineWaits'],
     ['casting', './casting-and-order.local.mjs', 'verifyCastingCosts'],
     ['labeled-questions', './casting-and-order.local.mjs', 'verifyLabeledQuestions'],
     ['order', './casting-and-order.local.mjs', 'verifyTriggerOrder'],

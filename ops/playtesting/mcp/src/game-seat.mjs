@@ -467,8 +467,8 @@ export class GameSeat {
       : [...this.#sequences.values()].reverse().find((item) => item.gameId === gameId && item.startCursor === startCursor);
     if (!sequence || sequence.gameId !== gameId) throw new ToolError('unknown_sequence', 'This seat does not have that sequence.');
     if (startCursor !== undefined && sequence.startCursor !== startCursor) throw new ToolError('unknown_sequence', 'The plan does not match that starting cursor.');
-    const { controller, finishListeners, id, ...status } = sequence;
-    return { sequenceId: id, ...status };
+    const { controller, finishListeners, sampleTime, id, ...status } = sequence;
+    return { sequenceId: id, ...status, executionTime: sampleTime() };
   }
 
   async waitSequenceStatus(args, timeoutMs, signal) {
@@ -511,15 +511,30 @@ export class GameSeat {
 
   async #runSequence(sequence, initial, steps, authorize, responsePolicy, { expectedStackIds, allowPlannedCombatDamage, autoAdvance, branchContinuation, line }) {
     const { signal } = sequence.controller;
-    const wallDeadline = Date.now() + this.maxSequenceWallMs;
-    let deadline = Date.now() + this.sequenceTimeoutMs;
-    let suspendedAt = null;
-    const opponentWaiting = (state) => state.priority === 'opponent' && !visibleDecision(state);
+    const wallDeadline = sequence.startedAtEpochMs + this.maxSequenceWallMs;
+    let deadline = sequence.startedAtEpochMs + this.sequenceTimeoutMs;
+    let waitingForOpeningTurn = false;
+    let acknowledgedKeepId;
+    const waitingReason = (state) => {
+      if (state.gameId !== initial.gameId || state.epoch !== initial.epoch || state.status !== 'active' || state.rollbackRequest) return null;
+      const decision = visibleDecision(state);
+      if (!decision && state.priority === 'opponent') return 'opponent';
+      if (waitingForOpeningTurn && acknowledgedKeepId && (!decision || decision.id === acknowledgedKeepId)
+        && !state.step && (state.turn == null || state.turn === 0 || state.turn === 1)) return 'opening_turn';
+      return null;
+    };
+    const time = { activeMs: 0, opponentPriorityMs: 0, openingTurnMs: 0 };
+    const bucket = () => sequence.waitingFor === 'opponent' ? 'opponentPriorityMs'
+      : sequence.waitingFor === 'opening_turn' ? 'openingTurnMs' : 'activeMs';
+    let observedAt = sequence.startedAtEpochMs;
+    sequence.sampleTime = () => ({ ...time, [bucket()]: time[bucket()] + Math.max(0, Date.now() - observedAt) });
     const accountTime = (state) => {
       const now = Date.now();
-      if (suspendedAt !== null) deadline = Math.min(wallDeadline, deadline + now - suspendedAt);
-      suspendedAt = opponentWaiting(state) ? now : null;
-      sequence.waitingFor = suspendedAt !== null ? 'opponent' : null;
+      const delta = Math.max(0, now - observedAt);
+      time[bucket()] += delta;
+      if (sequence.waitingFor) deadline = Math.min(wallDeadline, deadline + delta);
+      observedAt = now;
+      sequence.waitingFor = waitingReason(state);
     };
     accountTime(initial);
     const publicCardState = ({ hints: _derivedHints, ...card }) => card;
@@ -566,7 +581,6 @@ export class GameSeat {
     const resolvingPlanned = new Set();
     let advancingOwnTurn = false;
     let crossingTurnBoundary = false;
-    let waitingForOpeningTurn = false;
     let requestedPassBoundary;
     const validEvidence = (evidence) => evidence && typeof evidence.epoch === 'string'
       && Number.isSafeInteger(evidence.resolutionRevision) && evidence.resolutionRevision >= 0
@@ -937,7 +951,7 @@ export class GameSeat {
     const stateForStep = async () => {
       signal.throwIfAborted();
       accountTime(this.snapshot());
-      if (Date.now() >= wallDeadline || (!opponentWaiting(this.snapshot()) && Date.now() >= deadline)) {
+      if (Date.now() >= wallDeadline || Date.now() >= deadline) {
         throw new ToolError('timeout', 'The sequence ran out of active time or reached its maximum waiting lifetime.');
       }
       if (!await authorize()) throw new ToolError('authorization_expired', 'The seat authorization expired.');
@@ -956,9 +970,9 @@ export class GameSeat {
         const state = await stateForStep();
         const matched = condition(state);
         if (matched) return matched;
-        const waiting = opponentWaiting(state);
+        const waiting = waitingReason(state);
         const observed = await waitFor(this.engine, (updated) =>
-          condition(updated) || (opponentWaiting(updated) !== waiting ? updated : null),
+          condition(updated) || (waitingReason(updated) !== waiting ? updated : null),
         Math.max(1, (waiting ? wallDeadline : Math.min(deadline, wallDeadline)) - Date.now()), signal);
         if (!observed) return null;
       }
@@ -1329,16 +1343,19 @@ export class GameSeat {
           }
           if (decision.kind === 'declareAttackers') attackDeclarationPending = true;
           // A planned Keep can be reached after bottoming already-visible cards.
-          if (step.actionIndex !== undefined && !state.step && (state.turn == null || state.turn === 0 || state.turn === 1)
-            && decision.kind === 'mulligan' && choice.type === 'button' && choice.label === 'Keep') {
-            waitingForOpeningTurn = true;
-          }
+          const keepingOpeningHand = step.actionIndex !== undefined && !state.step && (state.turn == null || state.turn === 0 || state.turn === 1)
+            && decision.kind === 'mulligan' && choice.type === 'button' && choice.label === 'Keep';
+          if (keepingOpeningHand) waitingForOpeningTurn = true;
           const optionalAnswer = optionalEffectAnswer(state, step);
           const paidOptionalCost = approvedHandCost(state, step);
           await submit({
             gameId: sequence.gameId, cursor: state.cursor, decisionId: decision.id, choiceId: choice.id,
             idempotencyKey: `${sequence.id}:${sequence.completedSteps}`, value: step.value,
           });
+          if (keepingOpeningHand && waitingForOpeningTurn && !signal.aborted) {
+            acknowledgedKeepId = decision.id;
+            accountTime(this.snapshot());
+          }
           if (optionalAnswer?.accepted === false) resolvingInformation.delete(optionalAnswer.object.id);
           if (optionalAnswer?.accepted && optionalInformationEffect(optionalAnswer.object)?.oneHandDiscard) {
             approvedOptionalCosts.add(optionalAnswer.object.id);
@@ -1626,6 +1643,9 @@ export class GameSeat {
       sequence.cursor = latest.cursor;
     } finally {
       unwatch();
+      const finalTime = sequence.sampleTime();
+      sequence.sampleTime = () => finalTime;
+      sequence.waitingFor = null;
       if (this.#current === sequence) this.#current = null;
       for (const finish of sequence.finishListeners) finish();
     }

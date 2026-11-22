@@ -64,7 +64,8 @@ async function fixture(t, { first = choice('first'), onResponse = () => {}, evid
       { kind: 'choose', decisionId: first.id, choiceId: first.choices[0].id, value: 2 },
     ],
   };
-  return { call, request, applied, update, listTools: () => client.listTools() };
+  return { call, request, applied, update, listTools: () => client.listTools(),
+    rawCall: (name, args) => client.callTool({ name, arguments: args }) };
 }
 
 test('[PM-LINE-MCP-1] a cross-field schema rejection returns the failing action without starting the line', async (t) => {
@@ -112,7 +113,7 @@ test('[PM-LINE-MCP-2] the turn guide examples pass the published native MCP inpu
   const commandIds = new Set(lines.map(line => line.commandId));
   for (const id of ['rage-lethal-001', 'skip-unavailable-land-001', 'resolve-visible-response-001',
     'animate-and-attack-001', 'burn-and-land-001', 'order-triggers-001',
-    'land-cast-attack-001', 'burst-at-own-nemesis-001', 'rage-valiant-001', 'saga-entry-001', 'opening-land-after-bottom']) {
+    'land-cast-attack-001', 'burst-at-own-nemesis-001', 'rage-valiant-001', 'saga-entry-001', 'opening-land-after-bottom', 'pass-to-own-draw-001', 'opening-upkeep-draw-001']) {
     assert.ok(commandIds.has(id), `Missing guide example ${id}`);
   }
   assert.equal(examples[0].commandId, 'rage-lethal-001', 'The XMage fixture binds the first JSON example');
@@ -138,6 +139,44 @@ test('[PM-LINE-MCP-2] the turn guide examples pass the published native MCP inpu
   const { result } = await f.call('wait_for_decision', recover);
   assert.equal(result.code, 'unknown_command');
   assert.deepEqual(f.applied, []);
+});
+
+test('[PM-LINE-WAIT-1] published command waits and skipped opening draw run through native HTTP', async t => {
+  const openingPhase = { turn: 1, phase: 'BEGINNING', step: 'UPKEEP', priority: 'self' };
+  const f = await fixture(t, {
+    first: readyToPass('upkeep'), initial: openingPhase,
+    onResponse: (_answer, update) => update({ phase: 'PRECOMBAT_MAIN', step: 'PRECOMBAT_MAIN', decision: readyToPass('main') }),
+  });
+  const { result: { text } } = await f.call('get_guide', { guideId: 'turn-planning' });
+  const examples = [...text.matchAll(/```json\n([\s\S]*?)\n```/g)].map(([, json]) => JSON.parse(json));
+  const opening = examples.find(args => args.commandId === 'opening-upkeep-draw-001');
+  const { result: skipped } = await f.call('play_line', { ...opening, cursor: f.request.cursor });
+  assert.equal(skipped.reason, 'destination_skipped');
+  assert.equal(skipped.lastDestination.step, 'PRECOMBAT_MAIN');
+  assert.equal(skipped.needsAgent, true);
+  assert.equal(f.applied.length, 1);
+  const [line, wait] = examples.filter(args => args.commandId === 'pass-to-own-draw-001');
+  assert.equal(line.waitMs, 0);
+  assert.deepEqual(wait, { gameId: line.gameId, commandId: line.commandId, timeoutMs: 25000, view: 'compact' });
+  f.update({ priority: 'opponent', decision: null });
+  const { result: first } = await f.call('play_line', { ...line, cursor: skipped.state.cursor + 1 });
+  assert.equal(first.waitingFor, 'opponent');
+  const bad = await f.rawCall('wait_for_decision', { ...wait, timeoutMs: 45000 });
+  assert.equal(bad.isError, true);
+  assert.match(bad.content[0].text, /timeoutMs/);
+  assert.match(bad.content[0].text, /25000/);
+  const pending = f.call('wait_for_decision', wait);
+  f.update({ sequenceEvidence: { epoch: 'fixture', resolutionRevision: 0, resolutions: {},
+    publicActions: { pilot: 0, rival: 1 }, informationRevision: 0, combatRevision: 0, combatDamage: [] } });
+  const { result: stopped } = await pending;
+  assert.equal(stopped.sequenceId, first.sequenceId);
+  assert.equal(stopped.reason, 'opponent_action');
+  assert.equal(stopped.needsAgent, false);
+  const cursorWait = examples.find(args => args.afterCursor === 982);
+  f.update({ priority: 'self', decision: readyToPass('fresh') });
+  const { result: fresh } = await f.call('wait_for_decision', { ...cursorWait, afterCursor: stopped.state.cursor });
+  assert.equal(fresh.state.decision.id, 'fresh');
+  assert.equal(f.applied.length, 1);
 });
 
 test('the London guide answers each observed decision with the current cursor and choice', async (t) => {

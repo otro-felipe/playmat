@@ -79,3 +79,14 @@ Receipt recovery is process-local. A completed line can outlive the short HTTP r
 ### PM-LINE-REPLAY-1 · Player-authored line explanations
 
 An agent acting from either authorized seat may submit a 1–600 character `reasoning` with `play_line`. The first dispatched decision records the command ID, authenticated player and explanation at the current replay frame. Recovering a receipt preserves the original explanation. A command reused with a different explanation conflicts. A line that never dispatched a decision produces no replay entry. After match completion, a seat replay includes its own notes and an authorized full replay includes both players’ notes. Public and live views omit them. The replay viewer can hide the dashed, brain-marked notes independently of strategic analysis. Older recordings need no migration.
+
+
+### PM-LINE-WAIT-1 · Command delivery and destination
+
+A zero-duration initial receipt followed by a bounded wait for the same game and command authorizes the same actions and destination as a single long initial wait. A command waiter wakes when its line stops, even before another own prompt. The terminal receipt reports execution ownership, the current seat decision, the witnessed destination or interruption and the frozen executor timing. A rollback takes precedence. Each HTTP wait can expire while the command remains running.
+
+### PM-LINE-WAIT-2 · Opening transition and active execution time
+
+Explicit opponent priority without an own prompt suspends the active budget. A successful acknowledgement of an exact own opening Keep permits waiting for the first turn within the same game and epoch. A fresh own prompt restores active accounting and uses the usual guards. A first opposing turn, new information or a changed epoch interrupts before a queued land. Generic absence of a prompt consumes active time. All sequences retain their maximum wall lifetime. The receipt exposes time under opponent priority, the acknowledged opening transition and other active execution. These observations do not identify a player's thinking time.
+
+`test/line-wait-contract.test.mjs` instruments both client delivery patterns, slow opening, unknown waits and lifetime limits. `product/london-mulligan.local.mjs` compares the two deliveries for the same seeded Pioneer turn via native MCP and isolated Java XMage.

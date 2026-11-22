@@ -474,6 +474,60 @@ Check `state.rollbackRequest` first. A pending vote returns `event:"rollback"` e
 
 Read `status`, `reason`, `appliedDecisions` and any error alongside the returned `state`. Replan from that state and carry forward only unreached intentions that still make sense. If `planOwnsExecution:true`, use `wait_for_decision` with the same `gameId` and `commandId`. Omit both `afterCursor` and `afterDecisionId` for a command wait. For an unknown command, read the current state and check which actions applied before submitting a fresh command. After a line stops, an ordinary wait can use the last `state.cursor`. A timeout includes the current state. `waitMs` bounds the first response wait. The game clocks keep running.
 
+### While the opponent holds priority
+
+If the opponent only passes, and your next decision is what to do after drawing, submit this to `play_line` from your current cursor. It passes only your own legal priority windows. Use `my_upkeep` instead when you intend to act before your draw. A single deliberate pass uses `pass_priority`; that action returns control after one pass. The destination determines which actions you authorize.
+
+```json
+{
+  "gameId": "00000000-0000-4000-8000-000000000001",
+  "cursor": 975,
+  "commandId": "pass-to-own-draw-001",
+  "actions": [{"kind":"pass_until","destination":"my_draw","policy":"if_no_play"}],
+  "waitMs": 0,
+  "view": "compact"
+}
+```
+
+For an immediate receipt use `waitMs:0`. When it says `planOwnsExecution:true`, immediately call `wait_for_decision` once with the same IDs. It returns early on a stop or rollback. If it expires while the line still owns execution, issue the same bounded wait again. Alternatively set `waitMs:25000` on the original line to receive an early terminal result in one call. Both patterns execute the same actions. The initial `waitMs` range is 0–25000 ms. A command wait accepts `timeoutMs` from 100–25000 ms. A request with `timeoutMs:45000` is invalid. Correct that field and keep the original IDs.
+
+```json
+{
+  "gameId": "00000000-0000-4000-8000-000000000001",
+  "commandId": "pass-to-own-draw-001",
+  "timeoutMs": 25000,
+  "view": "compact"
+}
+```
+
+A running receipt with `waitingFor:"opponent"` has explicit opponent priority. `waitingFor:"opening_turn"` means your Keep was acknowledged and the opening transition is still pending. Null on a running receipt means the cause is unknown. `executionTime.activeMs`, `opponentPriorityMs` and `openingTurnMs` measure elapsed executor time in these states. They do not measure thinking time or attribute a delay to a player.
+
+When the line stops, inspect its returned state and cursor. Handle a pending rollback first. With `needsAgent:true`, act on your current decision even in the opponent’s turn. Reevaluate a new bottoming choice, draw, or meaningful opponent action before spending another resource. For this pass line, `status:"completed"` and `lastDestination` identify the observed destination. With `reason:"destination_skipped"`, inspect the actual step in `lastDestination`: the first player can skip their opening draw and already be in main phase. If the line stopped before any legal prompt and `needsAgent:false`, wait for a fresh decision using its last visible cursor. Replace 982 with `state.cursor` from that stopped receipt.
+
+```json
+{
+  "gameId": "00000000-0000-4000-8000-000000000001",
+  "afterCursor": 982,
+  "timeoutMs": 25000,
+  "view": "compact"
+}
+```
+
+**Opening draw example.** You are the starting player in a two-player game. You reach your first `UPKEEP` with priority and plan to reconsider after drawing. Use that upkeep’s cursor:
+
+```json
+{
+  "gameId": "00000000-0000-4000-8000-000000000001",
+  "cursor": 116,
+  "commandId": "opening-upkeep-draw-001",
+  "actions": [{"kind":"pass_until","destination":"my_draw","policy":"if_no_play"}],
+  "waitMs": 25000,
+  "view": "compact"
+}
+```
+
+XMage skips the starting player’s draw and presents first main. Expect `status:"interrupted"`, `reason:"destination_skipped"`, `lastDestination.turn:1` and `lastDestination.step:"PRECOMBAT_MAIN"`. Use the returned main-phase cursor to plan your land and spells.
+
 A `status:"rejected"` line receipt means that submission applied zero decisions. Read `stage`, `code`, `message`, and `recovery` in the structured result or its text copy. A `schema` receipt gives `issues[].path` and the zero-based `actionIndex` for cross-field constraints. A `preflight` receipt may give the latest state for your seat in that game. Use its cursor when `recovery` says `replan_from_state`. For `recover_running_command` or `recover_original_command`, recover the existing line first. It can still own execution. An accepted line can return `stage:"execution"` with an interruption and some applied decisions. Clients can also reject a request before delivering it to Thoughtseize. Read the client validation detail and check the tool's current schema when this happens.
 
 If the transport drops the receipt, repeat the identical `play_line` command ID and payload to recover in-process progress. When the engine acknowledgement itself is uncertain, reconcile the current game before any new command. A restart can expire the receipt. Unknown is not proof that nothing happened. Keep the decision loop active while waiting. Use `concede` when the position is lost and there are no plausible outs. The tool cancels the unapplied remainder before sending the concession.

@@ -22,16 +22,19 @@ function requiresDecision(state) {
   ));
 }
 
-async function lineResult(seat, { gameId, commandId, sequenceId }, timeoutMs, signal) {
+async function lineResult(seat, { gameId, commandId, sequenceId }, timeoutMs, signal, awaitNextPrompt = false) {
   const deadline = performance.now() + timeoutMs;
-  const receipt = await seat.waitSequenceStatus({ gameId, sequenceId }, timeoutMs, signal);
+  const key = { gameId, sequenceId };
+  await seat.waitSequenceStatus(key, timeoutMs, signal);
+  let receipt = seat.sequenceStatus(key);
   let state = receipt.reason === 'authorization_expired' ? null : currentGameState(seat, gameId);
   const remainingMs = Math.floor(deadline - performance.now());
   // An information update can stop execution just before the next legal prompt.
   // Observe that prompt within the original wait budget without submitting another action.
-  if (receipt.status === 'interrupted' && receipt.reason !== 'conceded'
+  if (awaitNextPrompt && receipt.status === 'interrupted' && receipt.reason !== 'conceded'
     && state?.status === 'active' && !requiresDecision(state) && remainingMs > 0) {
     await seat.wait({ gameId, afterCursor: state.cursor, timeoutMs: remainingMs }, signal);
+    receipt = seat.sequenceStatus(key);
     state = currentGameState(seat, gameId);
   }
   const planOwnsExecution = receipt.status === 'running';
@@ -59,7 +62,7 @@ export function playLine(seat, { gameId, cursor, commandId, actions, expectedSta
       error.lineRejection = 'recover_original_command';
       throw error;
     }
-    return lineResult(seat, known, waitMs, signal);
+    return lineResult(seat, known, waitMs, signal, true);
   }
   let started;
   try {
@@ -80,7 +83,7 @@ export function playLine(seat, { gameId, cursor, commandId, actions, expectedSta
   const command = { gameId, commandId, sequenceId: started.sequenceId, fingerprint };
   commands.set(commandId, command);
   if (commands.size > maxCommandsPerSeat) commands.delete(commands.keys().next().value);
-  return lineResult(seat, command, waitMs, signal);
+  return lineResult(seat, command, waitMs, signal, true);
 }
 
 export function waitForLine(seat, { gameId, commandId, timeoutMs = 18_000 }, signal) {
