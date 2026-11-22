@@ -1222,3 +1222,83 @@ for (const variant of ['declared', 'ambiguous', 'announced-question', 'unannounc
     assert.equal(f.applied.length, paid.length);
   });
 }
+
+for (const kind of ['mulligan', 'mulliganBottom', 'target', 'question']) {
+  test(`[PM-LINE-CHOICE] ${kind} exposes an exact action for each visible option and rejects an obsolete prompt without acting`, async t => {
+    const type = ['target', 'mulliganBottom'].includes(kind) ? 'object' : 'button';
+    const decision = { id: 'current-prompt', kind, choices: [
+      { id: 'visible-first', type, label: 'First option' }, { id: 'visible-second', type, label: 'Second option' },
+    ] };
+    const f = await fixture(t, { first: decision, initial: { priority: 'none' }, onResponse: (_answer, update) =>
+      update({ decision: { id: 'next-prompt', kind: 'question', choices: [{ id: 'yes', type: 'button', label: 'Yes' }] } }) });
+    const expected = decision.choices.map(({id}) => ({kind:'choose', decisionId:decision.id, choiceId:id}));
+    const read = await f.call('get_game_state', {gameId, view:'compact'});
+    const wait = await f.call('wait_for_decision', { gameId, view:'full' });
+    assert.deepEqual(read.result.decision.choices.map(c => c.playLineAction), expected);
+    assert.deepEqual(wait.result.state.decision.choices.map(c => c.playLineAction), expected);
+    const old = await f.call('play_line', { ...f.request, actions:[{...expected[0], decisionId:'obsolete-prompt'}] });
+    assert.equal(old.result.status,'rejected');
+    assert.equal(old.result.stage,'preflight');
+    assert.equal(old.result.code,'stale_decision');
+    assert.equal(old.result.appliedDecisions,0);
+    assert.equal(old.result.actionIndex,0);
+    assert.deepEqual(old.result.issues[0].path,['actions',0,'decisionId']);
+    assert.equal(old.result.state.cursor,42);
+    assert.deepEqual(old.result.state.decision.choices.map(c=>c.playLineAction),expected);
+    assert.equal(f.applied.length,0);
+    const chosen = old.result.state.decision.choices[1].playLineAction;
+    const applied = await f.call('play_line', {gameId,cursor:old.result.state.cursor,commandId:'chosen',actions:[chosen],waitMs:500,view:'compact'});
+    assert.equal(applied.result.appliedDecisions,1);
+    assert.deepEqual(f.applied.map(a=>a.choiceId),['visible-second']);
+    assert.deepEqual(applied.result.state.decision.choices[0].playLineAction,{kind:'choose',decisionId:'next-prompt',choiceId:'yes'});
+    const recovered = await f.call('wait_for_decision',{gameId,commandId:'chosen',view:'compact'});
+    assert.deepEqual(recovered.result.state.decision,applied.result.state.decision);
+    assert.equal(f.applied.length,1);
+  });
+}
+
+test('[PM-LINE-CHOICE] ordinary priority, unfilled numeric values and rollback never advertise executable choices', async t => {
+  const f=await fixture(t,{ first:{id:'p',kind:'priority',choices:[{id:'pass',type:'pass'}]} });
+  for (const patch of [null,{decision:choice('quantity')},{decision:{id:'v',kind:'question',choices:[{id:'yes',type:'button'}]},rollbackRequest:{id:'vote'}}]){
+    if(patch)f.update(patch);
+    const read=await f.call('get_game_state',{gameId});
+    assert.ok(read.result.decision.choices.every(c=>!c.playLineAction));
+  }
+});
+
+test('[PM-LINE-CHOICE] an obsolete second exact choice preserves the applied first choice and offers the actual next decision', async t => {
+  const first={id:'question-a',kind:'question',choices:[{id:'yes-a',type:'button'}]};
+  const next={id:'question-b',kind:'question',choices:[{id:'no-b',type:'button'}]};
+  const f=await fixture(t,{first,onResponse:(_answer,update)=>update({decision:next})});
+  const answer={kind:'choose',decisionId:first.id,choiceId:'yes-a'};
+  const {result}=await f.call('play_line',{...f.request,actions:[answer,answer],waitMs:500});
+  assert.equal(result.status,'interrupted');
+  assert.equal(result.reason,'stale_decision');
+  assert.equal(result.actionIndex,1);
+  assert.equal(result.error.field,'decisionId');
+  assert.equal(result.appliedDecisions,1);
+  assert.deepEqual(f.applied.map(a=>a.choiceId),['yes-a']);
+  assert.deepEqual(result.state.decision.choices[0].playLineAction,{kind:'choose',decisionId:next.id,choiceId:'no-b'});
+});
+
+test('[PM-LINE-CHOICE] running lines and other game IDs cannot produce new actionable options', async t => {
+  const first={id:'reserve-choice',kind:'question',choices:[{id:'answer',type:'button'}]};
+  let acknowledge;
+  const accepted=new Promise(resolve=>{acknowledge=resolve});
+  const f=await fixture(t,{first,async onResponse(_answer,update){
+    await accepted;update({decision:{...first,id:'next-question'}});
+  }});
+  try {
+    const {result}=await f.call('play_line',{...f.request,actions:[{kind:'choose',decisionId:first.id,choiceId:'answer'}],waitMs:0});
+    assert.equal(result.planOwnsExecution,true);
+    assert.ok(result.state.decision.choices.every(c=>!c.playLineAction));
+    const read=await f.call('get_game_state',{gameId,view:'compact'});
+    assert.ok(read.result.decision.choices.every(c=>!c.playLineAction));
+    const other=await f.call('get_game_state',{gameId:otherGame});
+    assert.equal(other.isError,true);
+    assert.ok(!JSON.stringify(other.result).includes('reserve-choice'));
+  } finally {
+    acknowledge();
+  }
+  await f.call('wait_for_decision',{gameId,commandId:f.request.commandId,timeoutMs:500});
+});

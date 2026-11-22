@@ -206,7 +206,9 @@ test('[PM-VIEW-02] compact choices keep inline cards when a visible reference wo
   assert.deepEqual(options[3].cards.map(({ id }) => id), [revealed.id, hidden.id]);
   assert.equal(options[3].cards[0].manaCost, push.manaCost);
   assert.equal(options[3].cards[0].setCode, undefined);
-  assert.deepEqual(options.slice(4), choices.slice(4));
+  assert.deepEqual(options.slice(4), choices.slice(4).map(choice => ({ ...choice,
+    playLineAction: { kind: 'choose', decisionId: 'picker', choiceId: choice.id },
+  })));
 });
 
 test('[PM-VIEW-03] compact wait keeps rollback state and rejects incompatible command filters', async (t) => {

@@ -470,6 +470,19 @@ When the current mulligan decision offers Keep and you know your opening line, y
 
 In this XMage version, taking a London mulligan draws a fresh seven. In a two-player Pioneer game, XMage asks you to put one card on the bottom **before** it offers Keep or Mulligan again. If you mulligan a second time, inspect the new seven and answer two successive bottom-card prompts. You then decide whether to keep five.
 
+For an observed mulligan, bottom-card, starting-player or target prompt, each discrete legal option can include a copyable `playLineAction`. Choose the option using its label or visible object, then use its action and the cursor from that same receipt. For example, once you decide to keep this hand:
+
+```js
+const state = receipt.state;
+const keep = state.decision.choices.find(choice => choice.label === "Keep");
+const args = {
+  gameId: state.gameId, cursor: state.cursor, commandId: crypto.randomUUID(),
+  actions: [keep.playLineAction], waitMs: 25000, view: "compact"
+};
+```
+
+On a named seat include your assigned outer `playerId`. If the server returns `stale_decision`, check the current prompt and applied count before choosing again. A later prompt may offer different options.
+
 Here are three separate `play_line` calls for one mulligan. At each prompt, read the current `state.cursor`, `decision.kind`, `decision.id` and legal `choices`. Copy the selected **choice ID**, including when several copies of a card have the same name. The cursors and IDs below are examples.
 
 1. The opening decision has kind `mulligan`. To redraw this hand, choose its Mulligan button.

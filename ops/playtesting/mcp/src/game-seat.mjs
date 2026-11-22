@@ -12,6 +12,8 @@ const MAX_OUTCOMES = 256;
 const TURN_STEPS = ['UNTAP', 'UPKEEP', 'DRAW', 'PRECOMBAT_MAIN', 'BEGIN_COMBAT', 'DECLARE_ATTACKERS',
   'DECLARE_BLOCKERS', 'FIRST_COMBAT_DAMAGE', 'COMBAT_DAMAGE', 'END_COMBAT', 'POSTCOMBAT_MAIN', 'END_TURN', 'CLEANUP'];
 const TURN_PHASES = ['BEGINNING', 'PRECOMBAT_MAIN', 'COMBAT', 'POSTCOMBAT_MAIN', 'END'];
+const DISCRETE_PROMPTS = new Set(['startingPlayer', 'mulligan', 'mulliganBottom', 'question', 'target', 'pickCards', 'panel']);
+const DISCRETE_CHOICES = new Set(['button', 'object', 'option', 'pile']);
 const WINDOW_ACTIONS = new Set(['play', 'activate', 'choose', 'attack', 'block']);
 const DECLARATION_STEP = { attack: 'DECLARE_ATTACKERS', block: 'DECLARE_BLOCKERS' };
 function intermediateWindow(action, next) {
@@ -27,10 +29,11 @@ function intermediateWindow(action, next) {
 const PERMANENT_SPELL_TYPES = new Set(['ARTIFACT', 'BATTLE', 'CREATURE', 'ENCHANTMENT', 'PLANESWALKER']);
 
 export class ToolError extends Error {
-  constructor(code, message, { actionIndex } = {}) {
+  constructor(code, message, { actionIndex, field } = {}) {
     super(message);
     this.code = code;
     if (actionIndex !== undefined) this.actionIndex = actionIndex;
+    if (field !== undefined) this.field = field;
   }
 }
 
@@ -242,6 +245,17 @@ export class GameSeat {
 
   snapshot(gameId) { return gameState(this.engine, gameId); }
 
+  withChoiceActions(state) {
+    const decision = state?.decision;
+    if (state?.status !== 'active' || state.rollbackRequest || this.#current || this.#inFlight
+      || !decision?.id || !DISCRETE_PROMPTS.has(decision.kind) || this.#uncertain === decision.id
+      || !decision.choices?.some(choice => DISCRETE_CHOICES.has(choice.type))) return state;
+    const choices = decision.choices.map(choice => DISCRETE_CHOICES.has(choice.type) && choice.id
+      ? { ...choice, playLineAction: { kind: 'choose', decisionId: decision.id, choiceId: choice.id } }
+      : choice);
+    return { ...state, decision: { ...decision, choices } };
+  }
+
   async wait(args, signal, predicate) {
     const initial = this.snapshot(args.gameId);
     const gameId = args.gameId ?? initial.gameId;
@@ -338,6 +352,12 @@ export class GameSeat {
   startTurn({ gameId, cursor, actions, expectedStackIds, finish = 'next_turn', settle = true, line }, authorize) {
     const initial = this.snapshot(gameId);
     if (initial.cursor !== cursor || initial.status !== 'active') throw new ToolError('stale_decision', 'Plan from the latest game state.');
+    const first = actions[0];
+    const decision = visibleDecision(initial);
+    if (!this.#current && !initial.rollbackRequest && DISCRETE_PROMPTS.has(decision?.kind)
+      && first?.kind === 'choose' && first.decisionId && first.decisionId !== decision.id) {
+      throw new ToolError('stale_decision', 'The first choice refers to a different decisionId. Use the current cursor and the selected option from state.decision.', { actionIndex: 0, field: 'decisionId' });
+    }
     const steps = [];
     const terminalPass = (action) => ['pass_until', 'pass_priority'].includes(action?.kind);
     const finalPass = terminalPass(actions.at(-1));
@@ -1186,6 +1206,9 @@ export class GameSeat {
             if (!decision || decision.id === previousDecisionId) {
               if (!await waitForNext()) throw new ToolError('timeout', 'The next intended decision did not arrive.');
             } else {
+              if (step.kind === 'answer' && step.decisionId && step.decisionId !== decision.id && DISCRETE_PROMPTS.has(decision.kind)) {
+                throw new ToolError('stale_decision', 'The next choice refers to a different decisionId. Replan the remaining actions from this decision.', { field: 'decisionId' });
+              }
               if (step.semanticPlay && decision.kind === 'priority' && state.stack.length === 0 && (step.window || ['PRECOMBAT_MAIN', 'POSTCOMBAT_MAIN'].includes(state.step)) && state.priority === 'self') {
                 if (step.playAs === 'land') {
                   throw new ToolError('land_play_unavailable', 'No current land choice matches this selector. Use a choice marked canPlayLand:true or replan without this land.');
@@ -1670,6 +1693,7 @@ export class GameSeat {
       sequence.reason = reason?.code ?? 'action_failed';
       const latest = this.snapshot();
       sequence.error = { code: sequence.reason, message: reason instanceof ToolError ? reason.message : 'The engine could not verify this step; inspect the fresh state before retrying.',
+        ...(reason?.field ? { field: reason.field } : {}),
         stepIndex: sequence.completedSteps, actionIndex: sequence.actionIndex ?? null, expectedDecisionKind: steps[sequence.completedSteps]?.guard?.kind ?? null,
         actualDecisionKind: latest.decision?.kind ?? null,
         mismatchedGuardFields: Object.entries(steps[sequence.completedSteps]?.guard ?? {}).filter(([key, value]) => value !== undefined

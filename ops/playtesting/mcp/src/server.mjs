@@ -190,6 +190,12 @@ function textResult(value, isError = false) {
   return { content: [{ type: 'text', text: JSON.stringify(value) }], isError };
 }
 
+function decisionReceipt(seat, receipt, view) {
+  const state = receipt.state;
+  if (state && !receipt.planOwnsExecution) return formatGameReceipt({ ...receipt, state: seat.withChoiceActions(state) }, view);
+  return formatGameReceipt(receipt, view);
+}
+
 function rejectedLine({ gameId, cursor, commandId, view }, rejection) {
   return formatGameReceipt({
     status: 'rejected', gameId, cursor, commandId,
@@ -302,7 +308,11 @@ function registerTools(mcp, { contextFor, allowedOrigins }) {
     return callProduct(operation, args);
   };
   tool('get_game_state', 'Read the public battlefield and your own seat, hand, current decision and timing. secondsRemaining is a last reported cumulative match clock, not an inactivity countdown. A null clock or unknown inactivity deadline never means unlimited decision time; answer pending legal choices promptly.', { gameId: Uuid.optional(), view: StateView },
-    'play', ({ gameId, view }) => view === 'compact' ? compactGameState(getSeat().snapshot(gameId)) : getSeat().snapshot(gameId), true);
+    'play', ({ gameId, view }) => {
+      const seat = getSeat();
+      const state = seat.withChoiceActions(seat.snapshot(gameId));
+      return view === 'compact' ? compactGameState(state) : state;
+    }, true);
   tool('list_recoverable_matches', 'List matches reserved to this exact account or agent grant, with stable participant links and confirmed boundaries.', {},
     'play', () => getSeat().engine.recoveryList(), true);
   tool('get_recovery_status', 'Read only the confirmed recovery boundary and current engine ID mapping; no hidden checkpoint state.', { matchId: Uuid },
@@ -319,7 +329,10 @@ function registerTools(mcp, { contextFor, allowedOrigins }) {
     commandId: StringId.optional().describe('Wait for this gameId and commandId from play_line. Omit afterCursor and afterDecisionId.'),
     timeoutMs: z.number().int().min(100).max(25_000).optional(), view: StateView,
   }, 'play', async (args, signal) => {
-    if (args.commandId === undefined) return formatGameReceipt(await getSeat().wait(args, signal), args.view);
+    if (args.commandId === undefined) {
+      const seat = getSeat();
+      return decisionReceipt(seat, await seat.wait(args, signal), args.view);
+    }
     const invalidField = !args.gameId ? 'gameId' : args.afterCursor !== undefined ? 'afterCursor'
       : args.afterDecisionId !== undefined ? 'afterDecisionId' : null;
     if (invalidField) {
@@ -329,7 +342,8 @@ function registerTools(mcp, { contextFor, allowedOrigins }) {
         commandId: args.commandId, recovery: 'correct_arguments', issues: [{ path: [invalidField], code: 'custom', message }],
       };
     }
-    return formatGameReceipt(await waitForLine(getSeat(), args, signal), args.view);
+    const seat = getSeat();
+    return decisionReceipt(seat, await waitForLine(seat, args, signal), args.view);
   }, true);
   tool('get_player_reservation', 'Inspect your named player reservation after a lost acknowledgement. Reports only this connection’s reservation and any identifiable owned waiting table.', {},
     'play', () => inspectPlayerReservation(current().actor, () => getSeat().engine), true);
@@ -358,16 +372,19 @@ function registerTools(mcp, { contextFor, allowedOrigins }) {
   tool('advance_to_own_turn', 'Pass only when the current engine offers no non-mana optional play, stopping before your next turn or any useful legal play, mandatory decision, public opponent action or missing causal evidence. Zero mana is never evidence that no action exists.', { gameId: Uuid, cursor: Cursor },
     'play', ({ gameId, cursor }) => getSeat().startSequence({ gameId, cursor, steps: [{ kind: 'advance_to_own_turn' }] }, current().reauthorize));
   const playSequence = (args) => getSeat().startSequence(args, current().reauthorize);
-  tool('play_line', 'Submit the longest justified line of plays, activations, choices, attacks and passes from the current cursor, on either turn. Ordinary handoffs are automatic. The line stops on new information, rival actions or a required choice it cannot answer. Returns applied progress and seat-visible game state. Check status, code and recovery when a line is rejected. For an exact choice use its current decisionId and choiceId. Read the turn-planning guide for complete JSON examples, including two targets, Ward, activation, combat and command recovery.', Line, 'play', async (args, signal) => {
+  tool('play_line', 'Submit the longest justified line of plays, activations, choices, attacks and passes from the current cursor, on either turn. Ordinary handoffs are automatic. The line stops on new information, rival actions or a required choice it cannot answer. Returns applied progress and seat-visible game state. Check status, code and recovery when a line is rejected. For a discrete prompt, an option’s playLineAction contains its exact current decisionId and choiceId. Read the turn-planning guide for complete JSON examples, including two targets, Ward, activation, combat and command recovery.', Line, 'play', async (args, signal) => {
     const actions = LineActions.safeParse(args.actions);
     if (!actions.success) return lineArgumentRejection(args, actions.error);
+    const seat = getSeat();
     try {
-      return formatGameReceipt(await playLine(getSeat(), { ...args, actions: actions.data }, current().reauthorize, signal), args.view);
+      return decisionReceipt(seat, await playLine(seat, { ...args, actions: actions.data }, current().reauthorize, signal), args.view);
     } catch (error) {
       if (!(error instanceof ToolError) || !error.lineRejection) throw error;
       return rejectedLine(args, {
         stage: 'preflight', code: error.code, message: error.message, recovery: error.lineRejection,
-        actionIndex: error.actionIndex ?? null, ...(error.state ? { state: error.state } : {}),
+        actionIndex: error.actionIndex ?? null,
+        ...(error.field ? { issues: [{ path: ['actions', error.actionIndex, error.field], code: error.code, message: error.message }] } : {}),
+        ...(error.state ? { state: seat.withChoiceActions(error.state) } : {}),
       });
     }
   });
