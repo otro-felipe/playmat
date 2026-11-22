@@ -363,6 +363,70 @@ test('[PM-AC-20] DCR supports unnamed public web clients and matches their full 
   assert.equal(token.status, 200)
 })
 
+test('[PM-AC-20] public clients register slot management and reauthorize only with owner consent', { skip: !databaseUrl }, async t => {
+  const destination = 'https://slot-client.example/callback'
+  const metadataId = 'https://slot-client.example/client.json'
+  const narrowMetadataId = 'https://slot-client.example/play-only.json'
+  const scopes = 'play library chat players:manage'
+  const metadata = { client_name: 'Slot manager', redirect_uris: [destination], token_endpoint_auth_method: 'none', scope: scopes }
+  const f = await fixture(t, [], { fetch: async url => Response.json({
+    ...metadata, client_id: url, scope: url === narrowMetadataId ? 'play' : scopes,
+  }) })
+  const owner = await f.login('Owner')
+  for (const path of ['/.well-known/oauth-authorization-server', '/.well-known/oauth-protected-resource/mcp']) {
+    assert.ok((await (await f.request(path)).json()).scopes_supported.includes('players:manage'))
+  }
+  const register = async scope => {
+    const response = await f.request('/oauth/register', { 'Content-Type': 'application/json' }, { ...metadata, scope })
+    assert.equal(response.status, 201, 'DCR must accept its advertised scopes')
+    const registered = await response.json()
+    assert.equal(registered.scope, scope)
+    return registered.client_id
+  }
+  async function connect(id, requested, manageSlots, expectCheckbox) {
+    const fields = { client_id: id, redirect_uri: destination, ...(requested && { scope: requested }) }
+    const consentPage = await f.request(authPath(fields), owner)
+    assert.equal(consentPage.status, 200)
+    const page = await consentPage.text()
+    assert.equal(page.includes('name="manageSlots"'), expectCheckbox)
+    const request = /name="request" value="([a-f0-9-]{36})"/.exec(page)?.[1]
+    assert.ok(Boolean(request))
+    const approved = await f.request('/oauth/authorize', owner, { request, decision: 'allow', ...(manageSlots && { manageSlots: 'yes' }) })
+    assert.equal(approved.status, 303)
+    const code = new URL(approved.headers.get('location')).searchParams.get('code')
+    const response = await f.request('/oauth/token', {}, { client_id: id, redirect_uri: destination,
+      grant_type: 'authorization_code', code_verifier: verifier, code, resource })
+    assert.equal(response.status, 200)
+    return response.json()
+  }
+  const create = (token, displayName) => f.request('/api/playtesting/player-slots',
+    { Authorization: 'Bearer ' + token.access_token, 'Content-Type': 'application/json' }, { requestId: randomUUID(), displayName })
+  const dcrId = await register(scopes)
+  for (const id of [dcrId, metadataId]) {
+    const previous = await connect(id, undefined, false, true)
+    assert.equal((await create(previous, 'Unapproved')).status, 403)
+    const approved = await connect(id, undefined, true, true)
+    assert.ok(approved.scope.split(' ').includes('players:manage'))
+    assert.equal((await create(approved, 'Approved')).status, 201)
+    const oldRefresh = await f.request('/oauth/token', {}, { client_id: id, grant_type: 'refresh_token', refresh_token: previous.refresh_token })
+    assert.equal(oldRefresh.status, 200)
+    assert.equal((await create(await oldRefresh.json(), 'Old grant')).status, 403)
+  }
+  const declined = await connect(dcrId, 'play players:manage', false, true)
+  assert.equal(declined.scope, 'play')
+  const explicit = await connect(dcrId, 'play players:manage', true, true)
+  assert.equal(explicit.scope, 'play players:manage')
+  assert.equal((await create(explicit, 'Explicit consent')).status, 201)
+  for (const narrowId of [await register('play'), narrowMetadataId]) {
+    const narrow = await connect(narrowId, undefined, true, false)
+    assert.equal(narrow.scope, 'play')
+    assert.equal((await create(narrow, 'Not registered')).status, 403)
+    const denied = await f.request(authPath({ client_id: narrowId, redirect_uri: destination, scope: 'play players:manage' }), owner)
+    assert.equal(denied.status, 303)
+    assert.equal(new URL(denied.headers.get('location')).searchParams.get('error'), 'invalid_scope')
+  }
+})
+
 test('[PM-AC-20] invalid DCR and CIMD never issue grants or redirect to unchecked destinations', { skip: !databaseUrl }, async t => {
   const badId = 'https://unconfigured-client.example/client.json'
   let document = { client_id: 'https://different.example/client.json', client_name: 'Impersonation', redirect_uris: ['https://evil.example/callback'] }
@@ -471,6 +535,8 @@ test('[PM-AC-20] the official MCP SDK discovers, registers, authorizes and refre
     assert.equal(callback.origin + callback.pathname, provider.redirectUrl.href)
     assert.equal(await auth(provider, { ...options, authorizationCode: callback.searchParams.get('code') }), 'AUTHORIZED')
     const first = tokens
+    assert.ok(authorization.searchParams.get('scope').split(' ').includes('players:manage'), 'SDK requests scopes advertised by the protected resource')
+    assert.equal(first.scope.split(' ').includes('players:manage'), false, 'Authorizing play without checking management must not grant it')
     assert.equal((await f.request('/internal/verify', { Authorization: 'Bearer ' + first.access_token })).status, 200)
     assert.equal(await auth(provider, options), 'AUTHORIZED')
     assert.notEqual(tokens.refresh_token, first.refresh_token)
@@ -1093,7 +1159,7 @@ test('owners create persistent slots by explicit consent and assign foreign invi
   const forged=await authorizePilot(f,b,'play',undefined,true)
   assert.equal((await write(slots,forged,request)).status,403)
   const manager=await authorizePilot(f,b,undefined,undefined,true)
-  const optedIn=await authorizePilot(f,b,'play players:manage')
+  const optedIn=await authorizePilot(f,b,'play players:manage',undefined,true)
   assert.ok((await (await f.request('/internal/verify',optedIn)).json()).scopes.includes('players:manage'))
   const writes=await Promise.all([write(slots,manager,request),write(slots,manager,request)])
   for (const r of writes) assert.ok([200,201].includes(r.status))
@@ -1101,7 +1167,7 @@ test('owners create persistent slots by explicit consent and assign foreign invi
   assert.equal(guest.playerId,retry.playerId)
   assert.equal(guest.availability,'available')
   assert.equal((await write(slots,manager,{...request,displayName:'different'})).status,409)
-  const fixed=await authorizePilot(f,b,'play players:manage',guest.playerId)
+  const fixed=await authorizePilot(f,b,'play players:manage',guest.playerId,true)
   assert.equal((await write(slots,fixed,{...request,requestId:randomUUID()})).status,403)
   assert.equal((await write(slots,sharedB,{...request,requestId:randomUUID()})).status,403)
   const slot=async (cookies,displayName)=>(await (await write(profiles,cookies,{displayName,mcpEnabled:true})).json())

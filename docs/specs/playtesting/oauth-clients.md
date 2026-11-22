@@ -9,6 +9,7 @@ Playmat SHALL accept compatible public clients through HTTPS Client ID Metadata 
 ### Scenario: PM-AC-20 — Standard client discovery and exact grant binding
 
 - An unconfigured public client can discover the authorization server and use CIMD or RFC 7591 registration.
+- Both discovery documents and the public client registry support `players:manage`. A client that registers a limited scope list can request only that subset. The owner must check the slot-management option during initial consent or later authorization for the same connector, including when an SDK requests every advertised scope. Refreshing an older grant preserves its original permissions.
 - DCR registrations survive a new provider instance. HTTP loopback callbacks infer a native application when `application_type` is omitted; CIMD native clients explicitly declare it.
 - HTTPS callbacks match exactly, including fixed queries. Native loopback registrations permit changing only the port, on the same hostname/path/query. `localhost`, `127.0.0.1` and `[::1]` are distinct callback hosts.
 - Consent displays the client identifier and complete callback. A local application destination is identified as such. Untrusted client names are escaped.

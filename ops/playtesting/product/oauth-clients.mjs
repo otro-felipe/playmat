@@ -1,6 +1,7 @@
 import { generateKeyPairSync } from 'node:crypto'
 import { request as httpsRequest } from 'node:https'
 import { Provider, errors } from 'oidc-provider'
+import { scopesSupported } from './oauth-scopes.mjs'
 import { resolveWebhookTarget } from './mcp-events-webhook.mjs'
 
 const loopbacks = new Set(['localhost', '127.0.0.1', '[::1]'])
@@ -102,7 +103,7 @@ export function createClientRegistry(pool, issuer, clients = [], { fetch = metad
     adapter: ClientAdapter, clients: configured, fetch,
     jwks: { keys: [{ ...privateKey.export({ format: 'jwk' }), kid: 'client-registry-only', use: 'sig', alg: 'EdDSA' }] },
     clientDefaults: { token_endpoint_auth_method: 'none', id_token_signed_response_alg: 'EdDSA' },
-    clientAuthMethods: ['none'], responseTypes: ['code'], scopes: ['play', 'library', 'chat', 'history'],
+    clientAuthMethods: ['none'], responseTypes: ['code'], scopes: scopesSupported,
     issueRefreshToken: () => true,
     features: {
       devInteractions: { enabled: false },
@@ -139,7 +140,8 @@ export function createClientRegistry(pool, issuer, clients = [], { fetch = metad
         const client = await provider.Client.find(id)
         if (!client) return undefined
         publicClient(client.metadata())
-        return { clientId: client.clientId, name: client.clientName, allows: uri => client.redirectUriAllowed(uri) }
+        const scopes = client.scope ? client.scope.split(' ').filter(scope => scopesSupported.includes(scope)) : scopesSupported
+        return { clientId: client.clientId, name: client.clientName, scopes, allows: uri => client.redirectUriAllowed(uri) }
       } catch (error) {
         if (error instanceof errors.OIDCProviderError) return undefined
         throw error

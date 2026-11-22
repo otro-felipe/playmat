@@ -5,14 +5,12 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
 import { digest, ensureOAuthAgent, newToken } from './identity.mjs'
 import { isUuid, ProductError, transaction } from './decks.mjs'
 import { createClientRegistry } from './oauth-clients.mjs'
+import { defaultScopes, scopeLabels, scopesSupported } from './oauth-scopes.mjs'
 
 const consentLifetime = 10 * 60
 const codeLifetime = 90
 const accessLifetime = 15 * 60
 const connectionLifetime = 30 * 24 * 60 * 60
-const scopeLabels = { play: 'juego e invitaciones', chat: 'chat de partida', library: 'mazos de la cuenta', history: 'historial de la cuenta', 'players:manage': 'crear jugadores MCP persistentes en tu cuenta' }
-const scopesSupported = Object.keys(scopeLabels)
-const defaultScopes = ['play', 'library', 'chat']
 const tokenPattern = /^[a-zA-Z0-9_-]{43}$/
 const verifierPattern = /^[a-zA-Z0-9_.~-]{43,128}$/
 const statePattern = /^[\x21-\x7e]{1,1024}$/
@@ -76,9 +74,12 @@ async function authRequest(params, audience, registry) {
     return { client, state, error: 'invalid_request' }
   }
   const requested = params.get('scope')?.trim()
-  const scopes = requested ? [...new Set(requested.split(/ +/))] : defaultScopes
-  if (scopes.some(scope => !scopesSupported.includes(scope))) return { client, state, error: 'invalid_scope' }
-  return { client, state, challenge, scopes, allowOptionalManagement:!params.has('scope') }
+  const scopes = params.has('scope') ? [...new Set(requested.split(/ +/))] : defaultScopes.filter(scope => client.scopes.includes(scope))
+  const allowOptionalManagement = client.scopes.includes('players:manage') && (!params.has('scope') || scopes.includes('players:manage'))
+  if ((!scopes.length && !allowOptionalManagement) || scopes.some(scope => !client.scopes.includes(scope))) {
+    return { client, state, error: 'invalid_scope' }
+  }
+  return { client, state, challenge, scopes, allowOptionalManagement }
 }
 
 export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions }) {
@@ -104,7 +105,7 @@ export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions
     const profiles = (await listPlayers(pool, owner)).players.filter(player => player.mcpEnabled)
     const selectPlayer = profiles.length ? `<label>Acceso de la conexión<select name="playerId"><option value="">Cuenta y jugadores MCP habilitados</option>${profiles.map(p => `<option value="${p.playerId}">${escape(p.displayName)}${p.flag ? ' · '+escape(p.flag) : ''}</option>`).join('')}</select></label>
       <p>Si eliges un jugador por nombre, esta conexión solo podrá controlar a ese jugador y usar la biblioteca MCP compartida.</p>` : ''
-    const permissions = request.scopes.map(scope => `<li>${scopeLabels[scope]}</li>`).join('')
+    const permissions = request.scopes.filter(scope => scope !== 'players:manage').map(scope => `<li>${scopeLabels[scope]}</li>`).join('')
     return html(res, 'Conectar tu cuenta de Thoughtseize', `
       <p>Autoriza a <strong>${escape(request.client.name)}</strong> a usar tu cuenta de Thoughtseize <strong>${escape(owner.username)}</strong> con estos permisos.</p>
       <p>Cliente: ${escape(request.client.clientId)}<br>Destino: <strong>${escape(request.client.redirectUri)}</strong></p>
@@ -140,9 +141,9 @@ export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions
         const engineKey = pilot?.engine_key ?? await ensureOAuthAgent(db, owner.accountId)
         const canonical=!pilot && engineKey==='mcp_'+owner.username.toLowerCase()
         const allowed=pilot?.scopes ?? (canonical ? scopesSupported : scopesSupported.filter(scope=>scope!=='players:manage'))
-        const requested=canonical && request.allow_optional_management && form.get('manageSlots')==='yes'
-          ? [...request.scopes_requested,'players:manage'] : request.scopes_requested
-        const scopes = approvedScopes(allowed, requested)
+        const requested = request.scopes_requested.filter(scope => scope !== 'players:manage')
+        if (canonical && request.allow_optional_management && form.get('manageSlots') === 'yes') requested.push('players:manage')
+        const scopes = approvedScopes(allowed.filter(scope => client.scopes.includes(scope)), requested)
         // Consent raises the ceiling only on this account grant. Existing connections keep their approved scopes.
         if (canonical && scopes.includes('players:manage')) {
           await db.query("UPDATE agent_grants SET scopes=array_append(scopes,'players:manage') WHERE engine_key=$1 AND NOT ('players:manage'=ANY(scopes))",[engineKey])
@@ -173,7 +174,7 @@ export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions
     [digest(code), audience, client.clientId, redirectUri])
     const actualChallenge = createHash('sha256').update(verifier).digest('base64url')
     if (!grant || !timingSafeEqual(Buffer.from(grant.code_challenge), Buffer.from(actualChallenge))) return null
-    const scopes = approvedScopes(grant.current_scopes, grant.scopes_approved)
+    const scopes = approvedScopes(grant.current_scopes.filter(scope => client.scopes.includes(scope)), grant.scopes_approved)
     if (!scopes.length) return null
     const id = randomUUID()
     await db.query('DELETE FROM oauth_authorization_codes WHERE digest=$1', [grant.digest])
@@ -196,8 +197,9 @@ export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions
       WHERE c.refresh_digest=$3 AND c.audience=$4 AND c.client_id=$5 AND c.expires_at>now() AND c.revoked_at IS NULL
       AND c.engine_key=g.engine_key AND c.account_id=g.account_id AND a.enabled AND g.revoked_at IS NULL AND g.oauth_managed
       AND g.scopes && c.scopes_approved AND (NOT ('play'=ANY(c.scopes_approved)) OR 'play'=ANY(g.scopes))
+      AND c.scopes_approved <@ $6::text[]
       RETURNING c.id,c.scopes_approved,g.scopes AS current_scopes`,
-    [refreshDigest, deadline(connectionLifetime), digest(token), audience, client.clientId])
+    [refreshDigest, deadline(connectionLifetime), digest(token), audience, client.clientId, client.scopes])
     return connection ? { id: connection.id, scopes: approvedScopes(connection.current_scopes, connection.scopes_approved) } : null
   }
 
