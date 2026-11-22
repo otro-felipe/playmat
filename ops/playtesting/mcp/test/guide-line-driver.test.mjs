@@ -60,3 +60,19 @@ for (const receipt of [
     assert.deepEqual(await driver()(client, { playerId: 'player' }, state, actions, 'planned'), receipt);
   });
 }
+
+test('the published full turn retains a chosen cast, combat and postcombat timing in one submission', () => {
+  const examples = [...guide.matchAll(/```json\n([\s\S]*?)\n```/g)].map(([, block]) => JSON.parse(block));
+  const turn = examples.find(example => example.commandId === 'red-full-turn-001');
+  assert.ok(turn, 'Include an example with precombat and postcombat spells');
+  const [land, burn, attackers, secondMain, creature, finish] = turn.actions;
+  assert.equal(land.playAs, 'land');
+  assert.equal(burn.targets[0].select.objectId, '<opponent-id>');
+  assert.equal(burn.expectTriggers[0].sourceId, attackers.attackers[0]);
+  assert.deepEqual(secondMain, { kind: 'pass_until', destination: 'current_turn', step: 'POSTCOMBAT_MAIN', priority: 'self', policy: 'decline_optional' });
+  assert.equal(creature.kind, 'play');
+  assert.notEqual(burn.payWith[0], creature.payWith[0]);
+  assert.deepEqual(finish, { kind: 'pass_until', destination: 'my_draw', policy: 'if_no_play' });
+  assert.equal(turn.actions.length, 6);
+  assert.equal(turn.waitMs, 25000);
+});

@@ -6,7 +6,7 @@ Play to win from your seat's view. Compare credible lines using your hand, avail
 
 Use `play_line` for the longest line you would commit to if the opponent only passes. It can begin in either player's turn. Include land drops, spells, known modes, targets and costs, combat, postcombat plays and your intended stopping point in one call. The executor supplies routine priority handoffs and checks each intention against the live XMage choice. Open opposing mana shapes your strategy. Once you pick a line, ordinary passes and expected resolutions can happen without another decision from you.
 
-Plan the whole known turn from the decision in your last receipt. Start with the [land, spell and attack example](#land-spell-attack-and-stop-after-the-next-draw). Include a postcombat play after the attack when it is already decided. Use a guarded `choose` for a predictable cost, mode or target. If a blocker, trigger or draw could change the plan, the executor stops at that event. For a deliberate priority stop, see [Shock to beginning of combat](#cast-one-card-and-stop-at-your-combat-priority).
+Plan the whole known turn from the decision in your last receipt. Start with the [full-turn example](#play-before-and-after-combat-in-one-line). Include a postcombat play after the attack when it is already decided. Use a guarded `choose` for a predictable cost, mode or target. If a blocker, trigger or draw could change the plan, the executor stops at that event. For a deliberate priority stop, see [Shock to beginning of combat](#cast-one-card-and-stop-at-your-combat-priority).
 
 | What the receipt shows | Next action |
 | --- | --- |
@@ -109,6 +109,33 @@ When the receipt has `planOwnsExecution:true`, call `wait_for_decision` with the
   "timeoutMs": 5000
 }
 ```
+
+### Play before and after combat in one line
+
+You have two untapped Mountains, a Swiftspear ready to attack, and another Mountain, Shock and Soul-Scar Mage in hand. You have decided to play the land, Shock the opponent to trigger prowess, attack with Swiftspear, then cast the Mage in your second main phase. You want to keep your other resources available during the opponent's turn. Copy the object IDs from your seat and the prowess text from Swiftspear. Use this single `play_line`:
+
+```json
+{
+  "gameId": "00000000-0000-4000-8000-000000000001",
+  "cursor": 1780,
+  "commandId": "red-full-turn-001",
+  "view": "compact",
+  "waitMs": 25000,
+  "actions": [
+    {"kind":"play","playAs":"land","select":{"objectId":"<mountain-in-hand-id>","zone":"hand"}},
+    {"kind":"play","select":{"objectId":"<shock-id>","zone":"hand"},
+     "targets":[{"role":0,"select":{"objectId":"<opponent-id>"}}],
+     "payWith":["<first-mountain-id>"],
+     "expectTriggers":[{"sourceId":"<swiftspear-id>","abilityText":"<full-visible-prowess-text>"}]},
+    {"kind":"attack","attackers":["<swiftspear-id>"]},
+    {"kind":"pass_until","destination":"current_turn","step":"POSTCOMBAT_MAIN","priority":"self","policy":"decline_optional"},
+    {"kind":"play","select":{"objectId":"<soul-scar-mage-id>","zone":"hand"},"payWith":["<second-mountain-id>"]},
+    {"kind":"pass_until","destination":"my_draw","policy":"if_no_play"}
+  ]
+}
+```
+
+The first pass authorizes declining optional plays on the way to your second main phase. The cast is bound to that window. A new opposing spell or unexpected block returns the changed board before the cast. The last pass preserves opportunities to respond. When there is a legal option you already decided to pass, deliberately name the next window and use `decline_optional`. At a new draw, use the actual card to plan again.
 
 ### Cast one card and stop at your combat priority
 
@@ -415,7 +442,7 @@ When a creature could attack but you intend to keep it back, include `{"kind":"a
 
 When the current mulligan decision offers Keep and you know your opening line, you can submit that exact Keep with the first land and a terminal pass. The executor returns control at an unplanned bottom prompt or when the opponent starts. When you play first and skip the draw, a terminal `my_draw` after the land aims for your next turn. Use `pass_priority` if you intend to cede just once after the land. Replan after any actual draw.
 
-`current_turn` requires at least one exact `phase`, `step` or `priority` condition. Multiple conditions must all match. `priority:"self"` alone means any position where you currently have it, which may already be true. Use `pass_priority` for one handoff or `pass_until` for a named boundary. A line accepts at most one of these terminal pass actions, as its final action.
+`current_turn` requires at least one exact `phase`, `step` or `priority` condition. Multiple conditions must all match. `priority:"self"` alone means any position where you currently have it, which may already be true. Use `pass_priority` for one handoff or `pass_until` for a named boundary. For a play at a specific window, put `pass_until` with `destination:"current_turn"`, an explicit step or phase, and `priority:"self"` immediately before that action. Use `if_no_play` to preserve optional priority on the way or `decline_optional` when you deliberately yield it. Use `pass_priority`, `end_step`, `my_upkeep` or `my_draw` at the end of a line.
 
 ## London mulligan
 
