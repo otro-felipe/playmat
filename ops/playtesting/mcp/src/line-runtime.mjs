@@ -93,3 +93,24 @@ export function waitForLine(seat, { gameId, commandId, timeoutMs = 18_000 }, sig
   }
   return lineResult(seat, command, timeoutMs, signal);
 }
+
+// After archival, retain terminal progress only. No current projection, hand or game action
+// is needed to acknowledge a command that has already stopped.
+export function closedPlayerReceipts(seat) {
+  const state = seat.snapshot();
+  if (state.status !== 'match_over') return [];
+  const results = [];
+  for (const command of commandsBySeat.get(seat)?.values() ?? []) {
+    if (state.gameId !== command.gameId) continue;
+    let line;
+    try { line = seat.sequenceStatus(command); }
+    catch (error) { if (error.code === 'unknown_sequence') continue; throw error; }
+    if (line.status === 'running') continue;
+    results.push({ gameId: command.gameId, commandId: command.commandId, sequenceId: line.sequenceId,
+      status: line.status, reason: line.reason, stage: 'execution', event: line.status === 'ended' ? line.reason : 'line_stopped',
+      appliedDecisions: line.appliedDecisions, completedSteps: line.completedSteps, cursor: line.cursor,
+      planOwnsExecution: false, needsAgent: false,
+      state: { gameId: state.gameId, tableId: state.tableId, status: state.status, cursor: state.cursor, score: state.score } });
+  }
+  return results;
+}

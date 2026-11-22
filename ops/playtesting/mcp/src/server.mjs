@@ -10,10 +10,10 @@ import { listArchetypes, possibleResponses, searchCards } from './catalog.mjs';
 import { guideBootstrap, guideInstructions, registerGuides, sequenceInstructions } from './guides.mjs';
 import { registerMatchReviewPrompt, scoredPositions } from './match-review.mjs';
 import { registerPostMatchReviewPrompt, reviewManifestInput, reviewEvidenceInput, reviewAnnotationsInput, saveReviewAnnotationsInput } from './postmatch-review.mjs';
-import { playLine, waitForLine } from './line-runtime.mjs';
+import { closedPlayerReceipts, playLine, waitForLine } from './line-runtime.mjs';
 import { registerTheorycraftTools } from './theorycraft.mjs';
 import { compactGameState, formatGameReceipt } from './state-view.mjs';
-import { checkPlayerSelection, playerLease, requirePlayerControl, samePlayerControl } from './player-seats.mjs';
+import { cancelPlayerReservation, checkPlayerSelection, inspectPlayerReservation, playerLease, requirePlayerControl, samePlayerControl } from './player-seats.mjs';
 
 const Uuid = z.uuid();
 const LibraryDeckId = z.string().regex(/^[a-z0-9_:.-]{1,64}$/i);
@@ -213,7 +213,7 @@ function readToken(req) {
   return /^Bearer ([0-9A-Za-z._~+\/=-]{1,256})$/i.exec(req.headers.authorization ?? '')?.[1] ?? null;
 }
 
-function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedOrigins, human }) {
+function registerTools(mcp, { actor, getSeat, terminalReceipt, callProduct, reauthorize, allowedOrigins, human }) {
   function tool(name, description, inputSchema, scope, run, readOnlyHint = false) {
     if (['create_game', 'join_game', 'start_match', 'get_game_state', 'submit_decision', 'pass_until', 'advance_to_own_turn', 'play_sequence', 'submit_sequence', 'play_turn', 'play_line'].includes(name)) {
       description += ` ${guideBootstrap}`;
@@ -234,16 +234,27 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
         const { playerId, ...selected } = args;
         const { humanTableId, ...input } = selected;
         const execute = async () => {
+          if (actor.playerId && name === 'wait_for_decision' && input.gameId && input.commandId
+              && input.afterCursor === undefined && input.afterDecisionId === undefined) {
+            const receipt = terminalReceipt(input);
+            if (receipt) return receipt;
+          }
           if (actor.playerId && (gameTool || name === 'start_match')) {
             requirePlayerControl(actor);
-            if (!actor.activeTableId || !actor.reservationId || (name === 'start_match' && input.tableId !== actor.activeTableId)) {
+            if (!actor.activeTableId || !actor.reservationId || actor.reservationCancelPending || (name === 'start_match' && input.tableId !== actor.activeTableId)) {
               throw new ToolError('player_table_required', 'This connection has no reservation for that table.');
             }
             await getSeat().engine.open();
           }
           const result = await run(gameTool ? input : selected, extra.signal);
           if (actor.playerId && ['play_line', 'wait_for_decision', 'wait_until', 'wait_for_chat'].includes(name)
-              && !await reauthorize(scope)) throw new ToolError('forbidden', 'The player reservation changed during this call.');
+              && !await reauthorize(scope)) {
+            if (input.gameId && input.commandId && await reauthorize(scope, true)) {
+              const receipt = terminalReceipt(input);
+              if (receipt) return receipt;
+            }
+            throw new ToolError('forbidden', 'The player reservation changed during this call.');
+          }
           if (actor.scopes.includes('chat') && ['get_game_state','wait_for_decision','play_line'].includes(name)) {
             const cursor = getSeat().engine.chatCursor?.(result.gameId ?? result.state?.gameId);
             if (cursor) return { ...result, chatCursor: cursor };
@@ -303,6 +314,11 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
     }
     return formatGameReceipt(await waitForLine(getSeat(), args, signal), args.view);
   }, true);
+  tool('get_player_reservation', 'Inspect your named player reservation after a lost acknowledgement. Reports only this connection’s reservation and any identifiable owned waiting table.', {},
+    'play', () => inspectPlayerReservation(actor, () => getSeat().engine), true);
+  tool('cancel_player_reservation', 'Cancel your unsubmitted reservation or an unclaimed waiting table that you host. Copy the reservationId and, for a table, the exact tableId from get_player_reservation. An active match cannot be cancelled here.', {
+    reservationId: Uuid, tableId: Uuid.optional(),
+  }, 'play', args => cancelPlayerReservation(actor, args, fromProduct, () => getSeat().engine));
   tool('wait_until', 'Observe a phase, step or priority destination without passing or modifying play.', {
     gameId: Uuid, ...GameCondition, afterCursor: Cursor.optional(),
     timeoutMs: z.number().int().min(100).max(25_000).optional(),
@@ -522,6 +538,36 @@ export function createMcpServer({
 }) {
   const seats = new Map();
   const seatWatchers = new Map();
+  const terminal = new Map();
+  const activeReaders = new WeakMap();
+  const receiptKey = (accountId, playerId, connectionId, gameId, commandId) =>
+    JSON.stringify([accountId, playerId, connectionId, gameId, commandId]);
+  function retire(key, seat) {
+    if (seat.engine.profileId) {
+      const [accountId] = JSON.parse(key);
+      for (const receipt of closedPlayerReceipts(seat)) {
+        terminal.set(receiptKey(accountId, seat.engine.profileId, seat.engine.profileConnectionId, receipt.gameId, receipt.commandId), receipt);
+        if (terminal.size > 1024) terminal.delete(terminal.keys().next().value);
+      }
+    }
+    seat.invalidate('seat_retired');
+    seatWatchers.get(key)?.();
+    seatWatchers.delete(key);
+    seat.engine.close?.();
+    seats.delete(key);
+  }
+  function makeRoom() {
+    if (seats.size < maxSeats) return;
+    for (const [key, seat] of seats) {
+      if (!seat.engine.profileId || activeReaders.get(seat)) continue;
+      const state = seat.snapshot();
+      if (state.status === 'match_over' || (state.status === 'lobby' && !state.tableId && !seat.engine.profileTableId)) {
+        retire(key, seat);
+        return;
+      }
+    }
+    throw new ToolError('capacity', 'The beta seat limit has been reached.');
+  }
   const rate = createLimits({
     ingress: { client: 240, total: 2400, window: 60_000 },
     account: { client: 150, total: 2000, window: 60_000 },
@@ -568,6 +614,15 @@ export function createMcpServer({
       : JSON.stringify([actor.accountId, actor.engineName]);
     const callProduct = product ? (operation, args) => product(token, operation, args) : null;
     const human = humanMatchAccess({ actor, product: callProduct, createEngine, seats, maxSeats });
+    const used = new Set();
+    function terminalReceipt({ gameId, commandId }) {
+      const saved = terminal.get(receiptKey(actor.accountId, actor.playerId, actor.connectionId, gameId, commandId));
+      if (saved) return saved;
+      const seat = seats.get(seatKey);
+      if (seat?.engine.profileConnectionId === actor.connectionId && seat.engine.profileId === actor.playerId) {
+        return closedPlayerReceipts(seat).find(receipt => receipt.gameId === gameId && receipt.commandId === commandId);
+      }
+    }
     function getSeat(newReservation = false) {
       requirePlayerControl(actor);
       const current = seatContext.getStore();
@@ -577,17 +632,18 @@ export function createMcpServer({
         if (!newReservation && !actor.reservationId) {
           throw new ToolError('player_busy', 'Reserve this player before replacing its existing connection.');
         }
-        prior.invalidate('player_control_changed');
-        prior.engine.close?.();
-        seatWatchers.get(seatKey)?.();
-        seatWatchers.delete(seatKey);
-        seats.delete(seatKey);
+        retire(seatKey, prior);
       }
       if (!seats.has(seatKey)) {
-        if (seats.size >= maxSeats) throw new ToolError('capacity', 'The beta seat limit has been reached.');
+        makeRoom();
         seats.set(seatKey, new GameSeat(createEngine(actor)));
       }
       const seat = seats.get(seatKey);
+      if (actor.playerId && !used.has(seat)) {
+        used.add(seat);
+        activeReaders.set(seat, (activeReaders.get(seat) ?? 0) + 1);
+        res.once('close', () => activeReaders.set(seat, activeReaders.get(seat) - 1));
+      }
       if (publishSeatEvent && actor.scopes.includes('play') && !seatWatchers.has(seatKey)) {
         seatWatchers.set(seatKey, monitorSeatDecisions(seat.engine, actor, publishSeatEvent));
       }
@@ -602,11 +658,12 @@ export function createMcpServer({
       registerPostMatchReviewPrompt(mcp);
     }
     registerTools(mcp, {
-      actor, getSeat, allowedOrigins, human, callProduct,
-      reauthorize: async (scope = 'play') => {
+      actor, getSeat, terminalReceipt, allowedOrigins, human, callProduct,
+      reauthorize: async (scope = 'play', completedReceipt = false) => {
         const fresh = await authorize(token);
-        if (fresh?.accountId !== actor.accountId || fresh.engineName !== actor.engineName || !fresh.scopes.includes(scope)
-          || !samePlayerControl(actor, fresh)) return false;
+        if (fresh?.accountId !== actor.accountId || fresh.engineName !== actor.engineName || !fresh.scopes.includes(scope)) return false;
+        if (completedReceipt) return fresh.playerId === actor.playerId && fresh.connectionId === actor.connectionId;
+        if (!samePlayerControl(actor, fresh)) return false;
         const current = seatContext.getStore();
         return !current || Boolean(await human.policy(current.tableId).catch(() => false));
       },

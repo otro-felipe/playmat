@@ -21,6 +21,7 @@ test('four profile-bound pilot connections share a library and keep two simultan
   let race;
 
   const server = createMcpServer({
+    maxSeats: 4,
     authorize: async token => {
       const identity = grants.get(token);
       if (!identity) return null;
@@ -64,8 +65,17 @@ test('four profile-bound pilot connections share a library and keep two simultan
     },
     createEngine: actor => {
       let tableId = actor.activeTableId ?? null;
+      let ended = false;
+      const listeners = new Set();
       const engine = {
-        open: async () => {}, close() { closed.push(actor.connectionId); }, subscribe: () => () => {},
+        profileId: actor.playerId, profileConnectionId: actor.connectionId,
+        open: async () => {}, close() { closed.push(actor.connectionId); },
+        subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener); },
+        async respond() {
+          ended = true;
+          for (const listener of listeners) listener();
+          return { submitted:true };
+        },
         matchesPlayerGrant: current => current.connectionId === actor.connectionId && (current.activeTableId ?? null) === tableId,
         async createGame(args, register, lease) {
           assert.deepEqual(args.deck, { ...deck, libraryDeckId: 'shared' });
@@ -82,7 +92,7 @@ test('four profile-bound pilot connections share a library and keep two simultan
           return { tableId };
         },
         snapshot: () => ({ gameId: tables.get(tableId)?.gameId, tableId, ownHand: [actor.engineName],
-          cursor: 1, status: 'active', decision: { id: 'choice', kind: 'priority', choices: [{ id: 'pass', type: 'pass' }] } }),
+          cursor: ended ? 2 : 1, status: ended ? 'match_over' : 'active', stack: [], players: [], priority:'self', turn:1, epoch:'test', decision: ended ? null : { id: 'choice', kind: 'priority', choices: [{ id: 'pass', type: 'pass' }] } }),
         listChat: async gameId => ({ gameId, reader: actor.playerId }),
       };
       seats.set(actor.playerId, engine);
@@ -150,4 +160,20 @@ test('four profile-bound pilot connections share a library and keep two simultan
   assert.equal((await second('get_game_state')).code, 'player_busy');
   assert.equal((await second('get_card', { name: 'Forest' })).code, 'player_busy');
   assert.equal((await second('get_deck', { deckId: 'shared' })).id, 'shared');
+  const gameId = tables.get(tableIds[0]).gameId;
+  const commandId = 'end-match';
+  const line = await calls[0]('play_line',{ gameId, cursor:1, commandId, waitMs:100,
+    actions:[{kind:'choose',decisionId:'choice',choiceId:'pass'}] });
+  assert.equal(line.state?.status, 'match_over');
+  leases.delete(identities[0].playerId); // Product archived the match before receipt recovery.
+  const recover = () => calls[0]('wait_for_decision',{gameId,commandId});
+  assert.equal((await recover()).event,'match_over');
+  assert.equal((await second('wait_for_decision',{gameId,commandId})).state,undefined);
+  const fifth = { ...identities[0], token:'fixture-fifth', playerId:randomUUID(), connectionId:randomUUID(), engineName:'Fixture5' };
+  grants.set(fifth.token,fifth);
+  const newPilot = await connect(fifth.token);
+  assert.ok((await newPilot('create_game',{ name:'Next',format:'Pioneer',deckId:'shared',guestEngineName:identities[1].engineName })).tableId);
+  assert.equal((await recover()).event,'match_over','The connection still recovers its terminal receipt after eviction');
+  assert.ok(!('ownHand' in (await recover()).state));
+  assert.equal((await calls[1]('get_game_state')).ownHand[0], identities[1].engineName);
 });

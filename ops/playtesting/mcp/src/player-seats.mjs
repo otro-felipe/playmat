@@ -48,8 +48,50 @@ export function playerLease(actor, product, joinTableId) {
       if (!acquired && tableId === actor.activeTableId) return;
       await change('bind', tableId);
     },
+    async begin() { await change('begin'); },
     async release() {
       if (acquired) await change('release');
     },
   };
+}
+
+export async function inspectPlayerReservation(actor, engine) {
+  if (!actor.playerId) throw forbidden();
+  requirePlayerControl(actor);
+  const { playerId, reservationId, activeTableId: tableId } = actor;
+  if (!reservationId) return { playerId, phase: 'available' };
+  if (tableId) return { playerId, reservationId, tableId, phase: actor.reservationCancelPending ? 'cancelling' : 'bound' };
+  if (!actor.reservationStarted) return { playerId, reservationId, phase: 'reserved' };
+  return { playerId, reservationId, phase: 'uncertain', waitingTableIds: await engine().ownedWaitingTables() };
+}
+
+export async function cancelPlayerReservation(actor, { reservationId, tableId }, product, engine) {
+  if (!actor.playerId) throw forbidden();
+  requirePlayerControl(actor);
+  if (!actor.reservationId) return { playerId: actor.playerId, phase: 'available' };
+  if (actor.reservationId !== reservationId || actor.activeTableId && actor.activeTableId !== tableId) {
+    throw new ToolError('reservation_changed', 'Inspect this player’s current reservation and table before cancelling.');
+  }
+  const change = (operation, id) => product('player_reservation', { playerId: actor.playerId, reservationId, operation,
+    ...(id && { tableId: id }) });
+  if (!actor.activeTableId && !actor.reservationStarted) {
+    if (tableId) throw new ToolError('reservation_changed', 'This reservation has no table.');
+    await change('cancel');
+  } else {
+    if (!tableId) throw new ToolError('reservation_uncertain', 'Keep the reservation until XMage identifies the waiting table.');
+    const seat = engine();
+    if (!actor.activeTableId) {
+      const candidates = await seat.ownedWaitingTables();
+      if (candidates.length !== 1 || candidates[0] !== tableId) throw new ToolError('reservation_uncertain', 'XMage could not confirm one owned waiting table.');
+      await change('bind', tableId);
+    }
+    const status = await seat.waitingProfileTable(tableId);
+    if (!(actor.reservationCancelPending && status === 'missing')) {
+      if (status !== 'waiting') throw new ToolError('table_not_cancellable', 'Only an unclaimed, waiting host table may be cancelled.');
+      await change('lock_cancel', tableId);
+      await seat.removeWaitingProfileTable(tableId);
+    }
+    await change('cancel', tableId);
+  }
+  return { playerId: actor.playerId, phase: 'available' };
 }

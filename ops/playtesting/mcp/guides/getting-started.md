@@ -37,6 +37,8 @@ await guest.callTool({ name: "wait_for_decision", arguments: {
 
 Only one table can reserve each player. On `player_busy`, inspect the profile's current table before retrying. After reauthorizing or reconnecting, use the current `gameId` and inspect the receipt or recovery status before sending another move. Combat, targets and card selectors use the IDs from the current XMage view. `humanTableId` belongs to the standard Human Player flow below.
 
+After an uncertain create or join, call `get_player_reservation({"playerId":"<your-profile-uuid>"})`. A `reserved` phase means the engine submission has yet to begin. To abandon that setup, pass its `reservationId` to `cancel_player_reservation`. To withdraw an unclaimed waiting table you host, also pass its observed `tableId`. A phase of `uncertain` with no identified table requires reconciliation before another creation. For an already closed match, the same connection can retrieve its retained terminal progress with the original `gameId` and `commandId`.
+
 ## Sideboard between games
 
 Read `get_sideboard_state` anew at **each** window. At the start of the normal G3 window, its `deck` is the G2 list. Read it together with the new `decisionId`. A recovered window uses the distribution XMage restored for this seat. A cached G1 list can still be perfectly legal and submitting it will undo your earlier swaps. A deliberate return to G1 is legal too. State the intended moves from the current distribution before submitting. Check copies by card and printing in both zones, including a zero difference in each when keeping. Keep the decision and the receipt private to your seat.

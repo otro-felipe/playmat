@@ -370,6 +370,7 @@ export class PlaymatEngineSeat {
       await lease?.release();
       throw error;
     }
+    await lease?.begin();
     const table = await this.api.roomCreateTable(this.#roomId, {
       name, gameType: 'Two Player Duel', deckType: formatTag(format), playerTypes: ['HUMAN', computer ? 'COMPUTER_MAD' : 'HUMAN'],
       ...(this.humanTableId ? { humanMcpAllowed } : {}),
@@ -422,6 +423,7 @@ export class PlaymatEngineSeat {
     }
     if (lease) {
       await lease.bind(tableId);
+      await lease.begin();
       this.profileTableId = tableId;
     }
     let grant;
@@ -476,6 +478,30 @@ export class PlaymatEngineSeat {
     }
     rejectOnFalse(await this.api.matchStart(this.#roomId, tableId), 'table_not_ready', 'Both seats must be ready.');
     return { tableId, started: true };
+  }
+
+  async ownedWaitingTables() {
+    await this.open();
+    const tables = await this.api.roomGetAllTables(this.#roomId);
+    return tables.filter(table => table.controllerName === this.engineName && table.tableState === 'WAITING').map(table => table.tableId);
+  }
+
+  async waitingProfileTable(tableId) {
+    await this.open();
+    const table = await this.api.roomGetTableById(this.#roomId, tableId);
+    if (table === null) return 'missing';
+    if (!table || table.tableId !== tableId || table.tableState !== 'WAITING' || !Array.isArray(table.seats)
+        || table.seats.some(seat => seat.playerName && seat.playerName !== this.engineName)
+        || !await this.api.tableIsOwner(this.#roomId, tableId)) return 'occupied';
+    return 'waiting';
+  }
+
+  async removeWaitingProfileTable(tableId) {
+    // Product has locked the unclaimed invitation and reservation. Recheck XMage
+    // after that lock, then confirm removal independently of the RPC acknowledgement.
+    if (await this.waitingProfileTable(tableId) !== 'waiting') throw new ToolError('table_not_cancellable', 'The waiting table changed.');
+    await this.api.tableRemove(this.#roomId, tableId);
+    if (await this.waitingProfileTable(tableId) !== 'missing') throw new ToolError('reservation_uncertain', 'XMage has not confirmed table removal.');
   }
 
   async recoveryList() {

@@ -17,6 +17,16 @@ export async function verifyPlayerIdentities({ base, issuer, Cookie, authorizePi
     assert.deepEqual(players.map(p=>[p.playerId,p.flag]),[[profile.playerId,flag]])
     pilots.push({ ...profile, call, deck:{ name:'Basics '+i, cards:[{cardName:lands[i],amount:60}], sideboard:[] } })
   }
+  // The first host abandons a waiting, unclaimed table before using the same
+  // identity in the two live pairings. Never cancel a match as fixture cleanup.
+  const first = pilots[0]
+  const abandoned = await first.call('create_game',{ playerId:first.playerId,name:'Unclaimed fixture',format:'Pioneer',
+    guestEngineName:pilots[1].engineName,deck:first.deck })
+  const reservation = await first.call('get_player_reservation',{playerId:first.playerId})
+  assert.equal(reservation.tableId,abandoned.tableId)
+  const cancel = {playerId:first.playerId,reservationId:reservation.reservationId,tableId:abandoned.tableId}
+  assert.equal((await first.call('cancel_player_reservation',cancel)).phase,'available')
+  assert.equal((await first.call('cancel_player_reservation',cancel)).phase,'available')
   const tables = await Promise.all([0,2].map(async i => {
     const host=pilots[i], guest=pilots[i+1]
     const { tableId } = await host.call('create_game',{ playerId:host.playerId, name:'Isolated pair '+i,
