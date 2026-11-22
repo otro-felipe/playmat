@@ -4,6 +4,8 @@ import { randomUUID } from 'node:crypto'
 
 const printings = {
   Mountain: ['DMU', '271'],
+  Swamp: ['DMU', '268'],
+  'Fatal Push': ['AER', '57'],
   Island: ['DMU', '265'],
   'Burst Lightning': ['FDN', '192'],
   'Mystic Speculation': ['FUT', '41'],
@@ -133,6 +135,82 @@ async function verifyCastOrder(fixture) {
   assert.equal(Number(board(receipt.state).find(card => card.id === swift.id).power), 2)
   console.log(JSON.stringify({ phase: 'PM-LINE-FLOW-5 real Java', sources: setupCards }))
   await call('concede', { gameId: state.gameId, entireMatch: true })
+}
+
+// Both scripted seats use the same isolated match runner and only their own projected choices.
+export async function verifyVisibleResponse(fixture) {
+  const { startFixture, ownPlayer, rivalPlayer, answer, waitNextOwn, call, setRivalSetup, playLineWithPeer } = fixture
+  const oneLand = (state, name) => state.decision.choices.find(choice => choice.canPlayLand && choice.card?.name === name)
+  const swift = 'Monastery Swiftspear', burn = 'Burst Lightning', removal = 'Fatal Push'
+  let responseReady = false
+  let targetId
+  setRivalSetup(peer => {
+    const { decision } = peer
+    const swamps = ownPlayer(peer).battlefield.filter(card => card.name === 'Swamp' && !card.tapped)
+    responseReady = swamps.length > 0 && peer.ownHand.some(card => card.name === removal)
+    if (decision.kind === 'payMana') return decision.choices.find(choice => swamps.some(card => card.id === choice.objectId))
+    if (decision.kind === 'target' && peer.step !== 'CLEANUP') return decision.choices.find(choice => choice.objectId === targetId)
+    if (decision.kind === 'priority') {
+      if (targetId && peer.stack.length === 2 && peer.stack.some(card => card.name === burn)
+        && peer.stack.some(card => card.sourceId === targetId)) {
+        return decision.choices.find(choice => choice.card?.name === removal)
+      }
+      return oneLand(peer, 'Swamp')
+    }
+    if (peer.step === 'CLEANUP') return decision.choices.find(choice => choice.card?.name === 'Swamp')
+  })
+  try {
+    let state = await startFixture('Isolated observed response', deck('Red prowess',
+      [['Mountain', 52], [swift, 4], [burn, 4]]), 77, deck('Black removal', [['Swamp', 56], [removal, 4]]), 'Pioneer', 1)
+    const swiftInPlay = view => ownPlayer(view).battlefield.find(card => card.name === swift)
+    state = await setup(fixture, state, { basic: 'Mountain', landLimit: 1,
+      choose: view => ownMain(view, ownPlayer) && !swiftInPlay(view)
+        ? view.decision.choices.find(choice => choice.card?.name === swift) : undefined,
+      ready: view => responseReady && ownMain(view, ownPlayer) && !view.stack.length && swiftInPlay(view)
+        && view.ownHand.some(card => card.name === burn) && view.ownHand.filter(card => card.name === 'Mountain').length >= 2
+        && oneLand(view, 'Mountain'),
+    })
+    await answer(state, oneLand(state, 'Mountain'))
+    state = await waitNextOwn(state.decision.id)
+    const extra = state.ownHand.find(card => card.name === 'Mountain')
+    assert.ok(extra && !oneLand(state, 'Mountain'), 'The second Mountain remains in hand after the land drop')
+    const unavailable = await runLine(fixture, state, [{ ...actionForCard(extra), playAs: 'land' }, endStep])
+    assert.equal(unavailable.reason, 'land_play_unavailable')
+    assert.equal(unavailable.appliedDecisions, 0)
+    state = unavailable.state
+    const badPass = await runLine(fixture, state, [{ kind: 'pass_priority' }, endStep])
+    assert.equal(badPass.code, 'bad_sequence')
+    assert.equal(badPass.appliedDecisions, 0)
+    const creature = swiftInPlay(state)
+    targetId = creature.id
+    const spell = state.ownHand.find(card => card.name === burn)
+    const source = ownPlayer(state).battlefield.find(card => card.name === 'Mountain' && !card.tapped)
+    const rival = rivalPlayer(state)
+    const cast = await runLine(fixture, state, [
+      { ...actionForCard(spell), expectTriggers: [{ sourceId: creature.id, abilityText: creature.rules.find(rule => /^Prowess\b/i.test(rule)) }] },
+      { kind: 'choose', guard: { kind: 'question', sourceObjectId: spell.id, instruction: 'Pay Kicker {4} ?' }, select: { answer: false } },
+      { kind: 'choose', guard: { kind: 'target', targetRole: 0, targetSourceId: spell.id }, select: { objectId: rival.id } },
+      { kind: 'choose', guard: { kind: 'payMana' }, select: { objectId: source.id, zone: 'battlefield' } },
+      endStep,
+    ])
+    assert.equal(cast.reason, 'opponent_action', cast.reason)
+    state = await waitNextOwn()
+    assert.equal(state.stack.length, 3, 'Observe the complete announced spell, own trigger and opposing response')
+    assert.ok(state.stack.some(card => card.name === removal && card.controllerId === rival.id))
+    assert.ok(state.stack.some(card => card.name === burn && card.controllerId === ownPlayer(state).id))
+    assert.ok(state.stack.some(card => card.sourceId === creature.id && card.abilityType?.startsWith('TRIGGERED')))
+    const adopted = await playLineWithPeer({ gameId: state.gameId, cursor: state.cursor, commandId: randomUUID(),
+      expectedStackIds: state.stack.map(card => card.id), actions: [endStep] }, bound(state))
+    assert.equal(adopted.status, 'completed', adopted.reason)
+    assert.equal(adopted.lastDestination.step, 'END_TURN')
+    assert.equal(adopted.state.stack.length, 0)
+    assert.equal(rivalPlayer(adopted.state).life, rival.life - 2)
+    assert.ok(ownPlayer(adopted.state).graveyard.some(card => card.name === swift))
+    console.log('Real XMage verified the second land, double pass, rival response and three adopted resolutions.')
+    await call('concede', { gameId: state.gameId, entireMatch: true })
+  } finally {
+    setRivalSetup(undefined)
+  }
 }
 
 async function verifySagaOrder(fixture) {

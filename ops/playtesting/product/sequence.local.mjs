@@ -363,6 +363,7 @@ try {
     ['casting', './casting-and-order.local.mjs', 'verifyCastingCosts'],
     ['labeled-questions', './casting-and-order.local.mjs', 'verifyLabeledQuestions'],
     ['order', './casting-and-order.local.mjs', 'verifyTriggerOrder'],
+    ['visible-response', './casting-and-order.local.mjs', 'verifyVisibleResponse'],
     ['activation', './creature-land-activation.local.mjs', 'verifyCreatureLandActivation'],
     ['combat', './combat-destinations.local.mjs', 'verifyPlaneswalkerCombat'],
     ['saga-entry', './saga-entry.local.mjs', 'verifySagaEntry'],
