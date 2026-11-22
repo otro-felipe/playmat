@@ -193,7 +193,10 @@ export async function verifyVisibleResponse(fixture) {
       { kind: 'choose', guard: { kind: 'payMana' }, select: { objectId: source.id, zone: 'battlefield' } },
       endStep,
     ])
-    assert.equal(cast.reason, 'opponent_action', cast.reason)
+    // XMage may publish the changed hand or mana source before its spell-cast event.
+    assert.equal(cast.status, 'interrupted')
+    assert.ok(['opponent_action', 'opponent_state_changed'].includes(cast.reason), cast.reason)
+    assert.ok(cast.appliedDecisions >= 4, 'The pilot announced Burst, declined kicker, targeted and paid')
     state = await waitNextOwn()
     assert.equal(state.stack.length, 3, 'Observe the complete announced spell, own trigger and opposing response')
     assert.ok(state.stack.some(card => card.name === removal && card.controllerId === rival.id))
@@ -206,6 +209,7 @@ export async function verifyVisibleResponse(fixture) {
     assert.equal(adopted.state.stack.length, 0)
     assert.equal(rivalPlayer(adopted.state).life, rival.life - 2)
     assert.ok(ownPlayer(adopted.state).graveyard.some(card => card.name === swift))
+    assert.ok(adopted.state.sequenceEvidence.publicActions[rival.id] > (unavailable.state.sequenceEvidence.publicActions[rival.id] ?? 0))
     console.log('Real XMage verified the second land, double pass, rival response and three adopted resolutions.')
     await call('concede', { gameId: state.gameId, entireMatch: true })
   } finally {
