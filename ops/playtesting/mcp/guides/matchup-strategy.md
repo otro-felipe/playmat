@@ -38,6 +38,8 @@ Check permanent types, mana values, protection and return effects before committ
 
 ## Account for animated mana sources before combat
 
+Before spending mana to animate a land for an attack, check when you gained control of that permanent and whether it will have haste. A Mutavault played this turn can produce mana as a land. Animating it does not grant haste. A Mutavault you have controlled since your turn began can animate and attack if it stays untapped. Den of the Bugbear follows the same control requirement. [Creature-land rulings](https://magic.wizards.com/en/news/feature/edge-of-eternities-release-notes)
+
 Before attacking with animated mana sources, count the spells they could fund. With a Badgermole Cub and two untapped earthbent lands that each tap for black, their combined mana is enough for Sheoldred. Compare casting a stabilizer against pressure from those attackers. Damage to a planeswalker matters more when it kills the planeswalker or delays a decisive ultimate. Against known removal or a near-lethal opponent, the attack may have more value. [Badgermole Cub rules notes](https://magic.wizards.com/en/news/feature/avatar-the-last-airbender-release-notes)
 
 ## Pioneer example: Izzet Prowess vs Golgari Midrange
