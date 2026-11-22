@@ -7,8 +7,8 @@ import { splitRules } from './glossary';
 import { isTriggerOrderPrompt } from './autoAnswer';
 
 /** An allowlisted view of a card for both MCP transports. Face-down cards keep their public object ID. */
-function cardOnBoard(card: CardView, id: string | undefined) {
-  const { tapped, damage } = card as PermanentView;
+function cardOnBoard(card: CardView, id: string | undefined, ownBattlefield = false) {
+  const { tapped, damage, enteringSpellId } = card as PermanentView;
   if (card.faceDown || card.hideInfo) return { id, faceDown: true, name: 'Face-down card', tapped: !!tapped };
   const text = splitRules(card);
   const source = (card as StackAbilityView).sourceCard;
@@ -19,6 +19,7 @@ function cardOnBoard(card: CardView, id: string | undefined) {
     cardId: card.cardId,
     name: card.name ?? card.displayName ?? 'Unnamed card',
     controllerId: card.controllerId,
+    ...(ownBattlefield && enteringSpellId ? { enteringSpellId } : {}),
     ...(publicAbility ? {
       abilityType: card.abilityType,
       sourceId: source?.id,
@@ -41,8 +42,8 @@ function cardOnBoard(card: CardView, id: string | undefined) {
   };
 }
 
-function cardsOnBoard(cards: Record<string, CardView> | undefined) {
-  return Object.entries(cards ?? {}).flatMap(([id, card]) => card ? [cardOnBoard(card, id)] : []);
+function cardsOnBoard(cards: Record<string, CardView> | undefined, ownBattlefield = false) {
+  return Object.entries(cards ?? {}).flatMap(([id, card]) => card ? [cardOnBoard(card, id, ownBattlefield)] : []);
 }
 
 /** Explicit projection: future diagnostic/private engine fields never enter the agent contract. */
@@ -104,7 +105,7 @@ export function visibleAgentGame(state: GameSessionState | undefined) {
       libraryCount: player.libraryCount,
       topCard: player.topCard ? cardOnBoard(player.topCard, player.topCard.id) : undefined,
       wins: player.wins,
-      battlefield: cardsOnBoard(player.battlefield),
+      battlefield: cardsOnBoard(player.battlefield, !!state?.playerId && player.playerId === state.playerId),
       graveyard: cardsOnBoard(player.graveyard),
       exile: cardsOnBoard(player.exile),
       manaPool: player.playerId === state?.playerId ? player.manaPool : undefined,

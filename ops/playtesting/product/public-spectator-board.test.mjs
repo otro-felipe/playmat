@@ -6,7 +6,7 @@ import { publicSpectatorBoard } from './public-spectator-board.mjs'
 const tableId=randomUUID(), gameId=randomUUID(), playerId=randomUUID()
 const privateText='PRIVATE FIXTURE MARKER'
 const visible={id:randomUUID(),name:'Grizzly Bears',expansionSetCode:'LEA',cardNumber:'197',cardTypes:['CREATURE'],power:'2',toughness:'2',
-  rules:[privateText],original:{name:privateText},settings:{secret:privateText}}
+  enteringSpellId:privateText,rules:[privateText],original:{name:privateText},settings:{secret:privateText}}
 const hidden={id:randomUUID(),cardId:randomUUID(),faceDown:true,name:privateText,imageFileName:privateText,expansionSetCode:'LEA',cardNumber:'197',
   original:{name:privateText},cardTypes:['LEGENDARY'],tapped:true,power:'9',targets:[privateText],extra:{privateText}}
 function frame(status='playing', id=gameId) {

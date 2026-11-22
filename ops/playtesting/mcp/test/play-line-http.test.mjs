@@ -1680,3 +1680,33 @@ test('[PM-LINE-COPY] choosing one of two visible spell abilities selects only th
   assert.deepEqual(f.applied.map(a => a.choiceId), ['spell', 'second-face']);
   assert.equal(receipt.state.decision.id, 'choose-cost');
 });
+
+for (const [name, types, manaCost, immediatelyPlayable] of [
+  ['Gut Shot', ['INSTANT'], '{R/P}', true],
+  ['Ornithopter', ['ARTIFACT', 'CREATURE'], '{0}', false],
+  ['Mountain', ['LAND'], '', false],
+]) {
+  test('PM-LINE-IMPULSE a voluntary decline on Valiant returns the newly exiled ' + name + ' before passing the underlying spell', async (t) => {
+    const trigger = { id: 'valiant', sourceId: 'challenger', controllerId: 'pilot', abilityType: 'TRIGGERED_NONMANA',
+      abilityText: 'Whenever this creature becomes the target of a spell or ability you control for the first time each turn, exile the top card of your library. You may play that card this turn.' };
+    const rage = { id: 'rage', controllerId: 'pilot', types: ['INSTANT'], rules: ['Target creature gets +1/+0 until end of turn.'] };
+    const card = { id: 'exiled', cardId: 'formerly-unknown', name, types, manaCost };
+    const first = readyToPass('before-exile');
+    const f = await fixture(t, { first, initial: { stack: [trigger, rage] },
+      onResponse: ({ decisionId }, update, state) => {
+        assert.equal(decisionId, first.id, 'No pass is authorized on the next priority');
+        const decision = readyToPass('after-exile');
+        if (immediatelyPlayable) decision.choices.push({ id: 'alternate-life-payment', type: 'object', objectId: card.id, card });
+        update({ stack: [rage], decision, players: state.players.map(player => player.yourSeat ? { ...player, exile: [card] } : player),
+          sequenceEvidence: { ...state.sequenceEvidence, resolutionRevision: 1, resolutions: { valiant: 1 } } });
+      } });
+    const result = (await f.call('play_line', { ...f.request, expectedStackIds: [trigger.id, rage.id], actions: [
+      { kind: 'pass_until', destination: 'end_step', policy: 'decline_optional', declineFromDecisionId: first.id },
+    ] })).result;
+    assert.equal(result.reason, 'new_information');
+    assert.equal(result.state.players.find(player => player.yourSeat).exile[0].name, name);
+    assert.deepEqual(result.state.stack.map(object => object.id), [rage.id]);
+    assert.equal(result.state.decision.id, 'after-exile');
+    assert.deepEqual(f.applied.map(action => action.decisionId), [first.id]);
+  });
+}

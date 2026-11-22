@@ -30,6 +30,11 @@ import mage.players.Player;
  */
 public class PermanentCard extends PermanentImpl {
 
+    // Preserve the pre-field serialization identity for saved games.
+    private static final long serialVersionUID = 7575097411029117472L;
+    private UUID enteringSpellId;
+    private UUID enteringSpellController;
+
     // blueprint e.g. a copy of the original card that was cast
     // (this is not the original card, so it's possible to change some attribute before it enters the battlefield)
     // TODO: wtf, it modified on getCard/getBasicMageObject/getMainCard() and other places, e.g. on bestow -- must be fixed!
@@ -118,10 +123,22 @@ public class PermanentCard extends PermanentImpl {
     protected PermanentCard(final PermanentCard permanent) {
         super(permanent);
         this.card = permanent.card.copy();
+        this.enteringSpellId = permanent.enteringSpellId;
+        this.enteringSpellController = permanent.enteringSpellController;
         this.maxLevelCounters = permanent.maxLevelCounters;
         this.zoneChangeCounter = permanent.zoneChangeCounter;
         this.originalColor = permanent.originalColor.copy();
         this.originalFrameColor = permanent.originalFrameColor.copy();
+    }
+
+    public void recordEnteringSpell(UUID spellId, UUID controllerId) {
+        this.enteringSpellId = spellId;
+        this.enteringSpellController = controllerId;
+    }
+
+    public UUID getEnteringSpellIdFor(UUID viewer) {
+        return viewer != null && viewer.equals(enteringSpellController) && viewer.equals(getControllerId())
+                ? enteringSpellId : null;
     }
 
     @Override

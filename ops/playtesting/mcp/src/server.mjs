@@ -119,7 +119,7 @@ const TurnChooseShape = z.object({ kind: z.literal('choose'),
   select: ChoiceSelector.optional().describe('For a planned prompt, uniquely identify the legal option by object ID or exact option label.'),
   decisionId: StringId.optional().describe('Copy decision.id from the same observed state as the choice.'),
   guard: DecisionGuard.optional(),
-  adoptTriggerOrder: z.literal(true).optional().describe('Follow the exact visible trigger selected from a trigger-order prompt and the final forced option when two remain. Confirm both on the stack before resolving.'),
+  adoptTriggerOrder: z.literal(true).optional().describe('Follow the selected own trigger and the final forced trigger when two remain. A forecast before a reveal must name both own triggers, then select the first by source and exact label. The engine confirms the pair and stack order.'),
   value: Value.optional(), reevaluateAfter: z.boolean().optional(), expectCast: z.boolean().optional(), expectAbility: OwnActivation.optional(), skipIfTargetedBy: StringId.optional(), expectTriggers: z.array(OwnTrigger).max(4).optional(), expectTargetTriggers: z.array(TargetTrigger).max(2).optional(),
 }).strict();
 const TurnChoose = TurnChooseShape.refine(({ choiceId, select }) => !!choiceId !== !!select, 'Use one exact choiceId or one semantic select, as with submit_decision.')

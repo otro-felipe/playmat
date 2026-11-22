@@ -398,7 +398,7 @@ The XMage prompt order observed here was kicker, spell target, payment and then 
 
 ### End the line at Emberheart Challenger's unknown exile
 
-Emberheart Challenger is on your battlefield. With priority in your main phase, cast Monstrous Rage on it for the first time this turn. Prowess is predictable. Valiant determines a new playable card, and that card can change your land drop, combat or next spell. Submit the target and payment together. Leave combat for the receipt that exposes the card. If XMage asks you to order the triggers, use the observed trigger-order choice as in the earlier example. Continue from the resulting state when the card becomes visible.
+With Challenger and Monstrous Rage in hand and three untapped Mountains, cast Challenger, then target that copy with Rage. Use the exact hand object ID for this single-faced creature. The line verifies that its own cast produced the permanent before committing Rage. Put Prowess on the stack first so Valiant resolves first. A different pair or an opposing response needs a fresh decision. Inspect the exiled card before passing Rage or attacking. An alternate-cost instant may already be playable, and a land or zero-cost creature may become playable when the stack clears.
 
 ```json
 {
@@ -409,20 +409,30 @@ Emberheart Challenger is on your battlefield. With priority in your main phase, 
   "actions": [
     {
       "kind": "play",
+      "select": {"objectId": "<challenger-id>", "zone": "hand"},
+      "payWith": ["<mountain-A-id>", "<mountain-B-id>"]
+    },
+    {
+      "kind": "play",
       "select": {"objectId": "<rage-id>", "zone": "hand"},
       "targets": [{"role": 0, "select": {"objectId": "<challenger-id>", "zone": "battlefield"}}],
-      "payWith": ["<red-source-id>"],
+      "payWith": ["<mountain-C-id>"],
       "expectTriggers": [
         {"sourceId": "<challenger-id>", "abilityText": "<full-prowess-text>"},
         {"sourceId": "<challenger-id>", "abilityText": "<full-valiant-text>"}
       ],
       "reevaluateAfter": true
+    },
+    {
+      "kind": "choose", "adoptTriggerOrder": true,
+      "guard": {"kind": "pickCards", "instruction": "Pick triggered ability (goes to the stack first)"},
+      "select": {"objectId": "<challenger-id>", "label": "Emberheart Challenger — <full-prowess-text>"}
     }
   ]
 }
 ```
 
-If the rest of the position includes a justified land drop and casting Challenger, put those before Rage in the same request when you can identify the target and payment from your seat. A preflight `reevaluation_required` with `appliedDecisions:0` allows a corrected line from the returned state. An execution interruption can include already accepted costs and plays.
+If Challenger is already on the battlefield, omit its cast and use its current battlefield ID throughout. A preflight `reevaluation_required` with `appliedDecisions:0` allows a corrected line from the returned state. An execution interruption can include already accepted costs and plays.
 
 ### Cast a Saga and resolve its first chapter
 

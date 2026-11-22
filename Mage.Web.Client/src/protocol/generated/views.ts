@@ -1826,6 +1826,7 @@ export interface PermanentView extends CardView {
     copy?: boolean;
     damage?: number;
     disguised?: boolean;
+    enteringSpellId?: string;
     flipped?: boolean;
     manifested?: boolean;
     morphed?: boolean;

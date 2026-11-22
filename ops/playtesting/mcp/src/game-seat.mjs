@@ -114,7 +114,7 @@ function sameTriggerText(actual, declared) {
 }
 
 // A transforming spell and its permanent can have different public object IDs.
-function observeCastEntry(entry, state, ownPlayerId) {
+function observeCastEntry(entry, state, ownPlayerId, requireSpellIdentity = false) {
   const own = state.players?.find((player) => player.id === ownPlayerId);
   const copies = own?.battlefield?.filter((card) => card.cardId === entry.spell.cardId) ?? [];
   if (!copies.length) {
@@ -123,6 +123,7 @@ function observeCastEntry(entry, state, ownPlayerId) {
   }
   const [permanent] = copies;
   if (copies.length !== 1 || !permanent.id || permanent.faceDown || (permanent.controllerId && permanent.controllerId !== ownPlayerId)
+    || requireSpellIdentity && permanent.enteringSpellId !== entry.spell.id
     || permanent.name !== entry.spell.name || (entry.permanentId && permanent.id !== entry.permanentId)) return null;
   return { spell: entry.spell, permanentId: permanent.id };
 }
@@ -177,6 +178,15 @@ function resumesObservedCast(state, actions, ownId, expectedStackIds) {
     && first.guard.kind === decision.kind && reaches(state, first.guard)
     && (decision.kind === 'payMana' && first.guard.instruction === undefined || first.guard.instruction === decision.instruction)
     && !!plannedChoice(state, decision, first);
+}
+
+function forecastsTriggerOrder(action, order) {
+  return action.expectTriggers?.length === 2 && action.expectTriggers.every(trigger => (trigger.count ?? 1) === 1)
+    && order?.kind === 'choose' && order.adoptTriggerOrder && order.guard?.kind === 'pickCards'
+    && order.guard.instruction && order.select?.objectId && order.select.label && !order.decisionId
+    && !order.expectAbility && !order.expectCast && !order.expectTriggers && !order.expectTargetTriggers
+    && order.value === undefined && !order.skipIfTargetedBy
+    && action.expectTriggers.some(trigger => trigger.sourceId === order.select.objectId);
 }
 
 function guardedCostChoice(step) {
@@ -448,13 +458,18 @@ export class GameSeat {
     let reevaluate = resolvingInformation;
     let beforeInformation = resolvingInformation && !answeringObservedInformation;
     let branchContinuation = resolvingBranch || passingObservedStack;
+    let forecastPair;
+    const priorPermanentCasts = new Map();
     for (const [actionIndex, action] of actions.entries()) {
       const tail = actions.slice(actionIndex + 1);
       const selectedCard = planCard(initial, action);
       const plannedBranch = plansInformationBranch(selectedCard, action, tail, visibleDecision(initial));
       branchContinuation ||= plannedBranch;
       const terminal = !plannedBranch && declaredInformation({ ...action, expectCast: action.kind === 'play' ? action.playAs !== 'land' && action.expectCast !== false : action.expectCast }, initial);
-      if (terminal && tail.some((next) => !guardedCostChoice(next) || declaredInformation(next, initial))) throw new ToolError('reevaluation_required', 'An information-changing intention must be last except for guarded casting costs/modes/targets. Inspect its actual result before planning the remainder.', { actionIndex });
+      const orderingBeforeReveal = terminal && tail.length === 1 && forecastsTriggerOrder(action, tail[0])
+        && !declaredInformation(tail[0], initial);
+      if (orderingBeforeReveal) forecastPair = action.expectTriggers;
+      if (terminal && !orderingBeforeReveal && tail.some((next) => !guardedCostChoice(next) || declaredInformation(next, initial))) throw new ToolError('reevaluation_required', 'End at the information-changing intention. Only its guarded casting choices or the exact announced trigger pair can precede the reveal.', { actionIndex });
       const trackedEffect = action.kind === 'activate' || action.expectAbility || (action.kind === 'play' ? action.expectCast !== false : action.expectCast)
         && selectedCard?.cardId && Array.isArray(selectedCard.types) && !selectedCard.types.includes('LAND') && !selectedCard.faceDown;
       if (action.reevaluateAfter && actionIndex !== actions.length - 1 && !trackedEffect) throw new ToolError('reevaluation_required', 'An untracked terminal choice must be last; no later choice can be assumed to precede its unknown outcome.', { actionIndex });
@@ -506,7 +521,7 @@ export class GameSeat {
         const select = action.select;
         const payment = payPrompt && select?.objectId && (select.abilityId || select.manaColor)
           ? { sourceId: select.objectId, abilityId: select.abilityId, color: select.manaColor } : undefined;
-        steps.push({ ...action, kind: 'answer', payment, resumeCastId: resumingCast ? initial.stack[0].id : undefined });
+        steps.push({ ...action, kind: 'answer', payment, forecastPair, resumeCastId: resumingCast ? initial.stack[0].id : undefined });
       } else if (action.kind === 'attack') {
         if (action.assignments) {
           for (const attackAssignment of action.assignments) {
@@ -540,6 +555,21 @@ export class GameSeat {
         steps.push({ kind: 'pass_to_boundary', destination, phase, step, priority, intermediate: tail.length > 0,
           skipOptionalResponses: action.policy === 'decline_optional', knownOptions });
       } else steps.push(action);
+      // A target or trigger of a card just cast by this line depends on that
+      // exact spell entering the battlefield and staying there through the choice.
+      const referenceIds = new Set([
+        ...(action.targets ?? []).map(target => target.select.objectId ?? target.select.cardId),
+        ...(action.expectTriggers ?? []).map(trigger => trigger.sourceId),
+        ...(action.adoptTriggerOrder ? [action.select?.objectId] : []),
+      ]);
+      const requiredEntries = [...referenceIds].map(id => priorPermanentCasts.get(id)).filter(Boolean);
+      if (requiredEntries.length) for (const step of steps.slice(firstStep)) step.requiredEntries = requiredEntries;
+      if (action.kind === 'play' && action.expectCast !== false && (action.select.objectId || action.select.cardId)
+        && selectedCard?.types?.some(type => PERMANENT_SPELL_TYPES.has(type))) {
+        const dependency = { id: selectedCard.id, castAction: actionIndex };
+        priorPermanentCasts.set(selectedCard.id, dependency);
+        if (selectedCard.cardId) priorPermanentCasts.set(selectedCard.cardId, dependency);
+      }
       const window = actions[actionIndex - 1];
       const followsWindow = intermediateWindow(window, action);
       if (followsWindow && !DECLARATION_STEP[action.kind]) steps[firstStep].window = { phase: window.phase, step: window.step };
@@ -734,6 +764,8 @@ export class GameSeat {
     const allowPlannedResolutions = autoAdvance || expectedStackIds.length > 0 || steps.some((step) => step.allowPlannedResolutions === true);
     let pendingCast = null;
     const castingSources = new Map();
+    const requiredCasts = new Set(steps.flatMap(step => (step.requiredEntries ?? []).map(entry => entry.castAction)));
+    const witnessedEntries = new Map();
     const observedSpellOptions = new Map();
     const handledSpellModes = new Set();
     let pendingTriggers = [];
@@ -830,6 +862,9 @@ export class GameSeat {
         const object = state.stack.find((card) => card.id === id) ?? expectedStackCards.find((card) => card.id === id);
         closeCastEntry();
         castEntry = entryForSpell(object);
+        if (castEntry) for (const index of requiredCasts) {
+          if (castingSources.get(index)?.stackId === id) witnessedEntries.set(index, castEntry);
+        }
         if (explicitInformationObjects.has(id) || needsStackReevaluation(object, ownPlayerId)) {
           resolvingInformation.set(id, object ?? { id });
         }
@@ -940,6 +975,9 @@ export class GameSeat {
       awaitingOwnCombatWitness = deferOwnCombatWitness;
       awaitingCombatTerminal = deferCombatTerminal;
       if (deferOwnCombatWitness || deferCombatTerminal) return;
+      for (const [index, entry] of witnessedEntries) {
+        if (entry) witnessedEntries.set(index, observeCastEntry(entry, state, ownPlayerId, true));
+      }
       if (castEntry) {
         const observed = observeCastEntry(castEntry, state, ownPlayerId);
         if (observed) castEntry = observed;
@@ -1300,6 +1338,9 @@ export class GameSeat {
           checkActionWindow(state, step);
           requireBeforeInformation(state, step);
           const decision = state.decision;
+          if (step.requiredEntries?.some(({ id, castAction }) => witnessedEntries.get(castAction)?.permanentId !== id)) {
+            throw new ToolError('state_changed', 'The earlier cast did not produce the same continuously observed own permanent. Inspect before committing this action.');
+          }
           if (step.resumeCastId && (state.stack[0]?.id !== step.resumeCastId || state.stack[0].unpaid !== true)) {
             throw new ToolError('response_available', 'The spell is no longer awaiting the resumed casting choices.');
           }
@@ -1365,6 +1406,11 @@ export class GameSeat {
             const canAdopt = (option) => option?.triggerSourceId && option.card?.sourceId === option.triggerSourceId
               && option.card.id === option.objectId && option.card.abilityType === 'TRIGGERED_NONMANA'
               && option.card.controllerId === ownPlayerId && option.card.abilityText && !plannedStackIds.has(option.objectId);
+            if (step.forecastPair && (options.length !== 2 || !step.forecastPair.every(trigger =>
+              options.filter(option => option.triggerSourceId === trigger.sourceId
+                && sameTriggerText(option.card?.abilityText, trigger.abilityText)).length === 1))) {
+              throw new ToolError('response_available', 'The engine offered a different trigger pair. Inspect the actual ordering decision.');
+            }
             if (!decision.triggerOrder || orderedTriggers.length || options.length < 2 || !options.includes(choice) || !ordered.every(canAdopt)) {
               throw new ToolError('response_available', 'Following the trigger order requires exact visible own trigger instances from the current prompt.');
             }

@@ -216,3 +216,47 @@ test('read ahead can forecast chapter I while an adopted Saga is already resolvi
   assert.equal(receipt.status, 'completed', JSON.stringify(receipt.error));
   assert.deepEqual(applied, [['read-ahead', 'amount'], ['chapter', 'pass'], ['after', 'pass']]);
 });
+
+for (const failure of ['verified entry', 'replacement', 'blink', 'blink in one frame', 'different cast of same card', 'control change', 'counter', 'rival action']) {
+  test('[PM-LINE-IMPULSE] protect the next spell when its earlier cast target has a ' + failure, async (t) => {
+    const challenger = { id: 'first', cardId: 'first', name: 'Emberheart Challenger', types: ['CREATURE'], controllerId: pilot.id };
+    const other = { ...challenger, id: 'second', cardId: 'second' };
+    const rage = { id: 'rage', cardId: 'rage', name: 'Monstrous Rage', types: ['INSTANT'], rules: ['Target creature gets +2/+0 until end of turn.'] };
+    const spell = { ...challenger, id: 'cast-challenger' };
+    const board = { ...pilot, battlefield: [other, { ...challenger, enteringSpellId: spell.id }] };
+    const initial = { ownHand: [challenger, rage], players: [{ ...pilot, battlefield: [other] }, rival],
+      decision: priority('cast', selection('cast-this-challenger', challenger)) };
+    const sequencing = { stack: [], sequenceEvidence: resolved(spell.id), players: [board, rival],
+      decision: priority('next', selection('cast-rage', rage)) };
+    const absent = { ...sequencing, players: [{ ...pilot, battlefield: [other], exile: [challenger] }, rival] };
+    const lost = { ...sequencing, players: [{ ...pilot, battlefield: [other] }, { ...rival, battlefield: [{ ...challenger, controllerId: rival.id }] }] };
+    const transitions = {
+      cast: { ownHand: [rage], stack: [spell], decision: priority('resolve') },
+      resolve: failure === 'blink in one frame' ? [sequencing, { ...sequencing,
+        players: [{ ...pilot, battlefield: [other, { ...challenger, enteringSpellId: undefined }] }, rival] }]
+        : failure === 'verified entry' ? sequencing : failure === 'different cast of same card' ? { ...sequencing,
+          players: [{ ...pilot, battlefield: [other, { ...challenger, enteringSpellId: 'other-spell' }] }, rival] }
+        : failure === 'blink' ? [sequencing, absent, sequencing]
+        : failure === 'replacement' ? absent : failure === 'control change' ? lost : failure === 'counter'
+          ? { ...absent, sequenceEvidence: evidence }
+          : { ...sequencing, sequenceEvidence: { ...sequencing.sequenceEvidence, publicActions: { [rival.id]: 1 } } },
+      next: { ownHand: [], stack: [{ ...rage, id: 'cast-rage', controllerId: pilot.id }], decision: {
+        id: 'target', kind: 'target', targetRole: 0, targetSourceId: rage.id,
+        choices: [selection('other-copy', other), selection('first-copy', challenger)] } },
+      target: { decision: priority('chosen'), stack: [{ ...rage, id: 'cast-rage', controllerId: pilot.id, targets: [challenger.id] }] },
+    };
+    const { receipt, applied } = await execute(t, initial, transitions, [
+      { kind: 'play', select: { objectId: challenger.id, zone: 'hand' } },
+      { kind: 'play', select: { objectId: rage.id, zone: 'hand' },
+        targets: [{ role: 0, select: { objectId: challenger.id, zone: 'battlefield' } }] },
+    ]);
+    const casting = [['cast', 'cast-this-challenger'], ['resolve', 'pass']];
+    if (failure === 'verified entry') {
+      assert.deepEqual(applied, [...casting, ['next', 'cast-rage'], ['target', 'first-copy']]);
+      assert.equal(receipt.status, 'completed');
+    } else {
+      assert.equal(receipt.status, 'interrupted');
+      assert.deepEqual(applied, casting, 'Do not announce Rage or retarget another copy after the dependent permanent was lost');
+    }
+  });
+}

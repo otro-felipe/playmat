@@ -5,6 +5,7 @@ import mage.cards.RoomCard;
 import mage.game.Game;
 import mage.game.permanent.Permanent;
 import mage.game.permanent.PermanentToken;
+import mage.game.permanent.PermanentCard;
 import mage.players.Player;
 import mage.util.CardUtil;
 
@@ -20,6 +21,7 @@ public class PermanentView extends CardView {
     private static final long serialVersionUID = 1L;
 
     private boolean tapped;
+    private final UUID enteringSpellId;
     private final boolean flipped;
     private final boolean phasedIn;
     private final boolean summoningSickness;
@@ -49,6 +51,8 @@ public class PermanentView extends CardView {
     public PermanentView(Permanent permanent, Card card, UUID createdForPlayerId, Game game) {
         super(permanent, game, CardUtil.canShowAsControlled(permanent, createdForPlayerId));
         this.controlled = permanent.getControllerId() != null && permanent.getControllerId().equals(createdForPlayerId);
+        this.enteringSpellId = !permanent.isFaceDown(game) && !permanent.isCopy() && permanent instanceof PermanentCard
+                ? ((PermanentCard) permanent).getEnteringSpellIdFor(createdForPlayerId) : null;
         this.tapped = permanent.isTapped();
         this.flipped = permanent.isFlipped();
         this.phasedIn = permanent.isPhasedIn();
@@ -140,6 +144,8 @@ public class PermanentView extends CardView {
     public PermanentView(PermanentView permanentView, Card card, UUID createdForPlayerId, Game game) {
         super(permanentView);
         this.controlled = permanentView.controlled;
+        this.enteringSpellId = createdForPlayerId != null && createdForPlayerId.equals(permanentView.getControllerId())
+                && !permanentView.isFaceDown() ? permanentView.enteringSpellId : null;
         this.tapped = permanentView.isTapped();
         this.flipped = permanentView.isFlipped();
         this.phasedIn = permanentView.isPhasedIn();
@@ -178,6 +184,10 @@ public class PermanentView extends CardView {
         this.roomRightDoor = permanentView.roomRightDoor;
         this.roomLeftUnlocked = permanentView.roomLeftUnlocked;
         this.roomRightUnlocked = permanentView.roomRightUnlocked;
+    }
+
+    public UUID getEnteringSpellId() {
+        return enteringSpellId;
     }
 
     public boolean isTapped() {

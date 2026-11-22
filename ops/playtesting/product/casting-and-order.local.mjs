@@ -29,7 +29,7 @@ const bound = (state) => ({ gameId: state.gameId, turn: state.turn, activePlayer
 const ownMain = (state, ownPlayer) => state.decision.kind === 'priority'
   && state.step === 'PRECOMBAT_MAIN' && ownPlayer(state)?.id === state.activePlayerId
 
-async function setup(fixture, state, config) {
+export async function setup(fixture, state, config) {
   const { ownPlayer, answer, waitNextOwn, gameClock } = fixture
   while (gameClock.hasTime()) {
     const decision = state.decision

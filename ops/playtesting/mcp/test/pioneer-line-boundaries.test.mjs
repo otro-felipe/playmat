@@ -494,3 +494,70 @@ for (const variant of ['saga', 'spell', 'reordered', 'wrong-ability', 'extra', '
     }
   });
 }
+
+for (const variant of ['announced pair', 'different ability', 'additional trigger', 'rival response', 'mandatory choice']) {
+  test('[PM-LINE-IMPULSE] casting and ordering an exact pair before Valiant resolves: ' + variant, async (t) => {
+    const prowess = 'Prowess (Whenever you cast a noncreature spell, this creature gets +1/+1 until end of turn.)';
+    const valiant = 'Whenever this creature becomes the target of a spell you control for the first time each turn, exile the top card of your library. You may play that card this turn.';
+    const ember = { id: 'ember', cardId: 'ember', name: 'Emberheart Challenger', rules: [prowess, valiant] };
+    const rage = { id: 'rage', cardId: 'rage', name: 'Monstrous Rage', types: ['INSTANT'], rules: ['Target creature gets +2/+0 until end of turn.'] };
+    const spell = { ...rage, id: 'cast-rage', controllerId: pilot.id };
+    const own = { ...pilot, battlefield: [ember] };
+    const entries = [['prowess', { ...ember, rules: [prowess] }], ['valiant', { ...ember,
+      rules: [variant === 'different ability' ? 'When this creature becomes tapped, draw a card.' : valiant] }]];
+    if (variant === 'additional trigger') entries.push(['extra', { ...ember, rules: ['Whenever you cast a spell, gain 1 life.'] }]);
+    const order = triggerOrderDecision(entries);
+    const abilities = order.choices.map(option => option.card).reverse();
+    const origin = { kind: 'play', reevaluateAfter: true, select: { objectId: rage.id, zone: 'hand' },
+      expectTriggers: [prowess, valiant].map(abilityText => ({ sourceId: ember.id, abilityText })) };
+    const ordered = { kind: 'choose', guard: { kind: 'pickCards', instruction: triggerInstruction },
+      select: { objectId: ember.id, label: ember.name + ' — ' + prowess }, adoptTriggerOrder: true };
+    const { run, applied } = fixture(t, { players: [own, opponent], ownHand: [rage], decision: priority('main', object('cast', rage)) },
+      (id, selected, update) => {
+        if (id === 'main') return update({ ownHand: [], stack: [spell], decision: order });
+        if (id === order.id) {
+          assert.ok(!['different ability', 'additional trigger'].includes(variant), 'Do not submit when the pair is different');
+          assert.equal(selected, 'object-prowess');
+          if (variant === 'rival response') return update({ stack: [...abilities, spell], decision: priority('rival-responded'),
+            sequenceEvidence: { ...evidence, publicActions: { [opponent.id]: 1 } } });
+          if (variant === 'mandatory choice') return update({ stack: [...abilities, spell],
+            decision: { id: 'target', kind: 'target', instruction: 'Choose a target', choices: [object('target-ember', ember)] } });
+          return update({ stack: [...abilities, spell], decision: priority('resolve-valiant') });
+        }
+        assert.equal(id, 'resolve-valiant', 'No further pass after the first newly visible card');
+        assert.equal(selected, 'pass');
+        update({ decision: priority('revealed'), players: [{ ...own, exile: [{ id: 'land', name: 'Mountain' }] }, opponent],
+          stack: [abilities[1], spell], sequenceEvidence: { ...evidence, resolutions: { valiant: 1 }, resolutionRevision: 1 } });
+      });
+    if (variant === 'announced pair') {
+      await assert.rejects(() => run([origin, ordered, { kind: 'attack', attackers: [ember.id] }]), { code: 'reevaluation_required' });
+      assert.deepEqual(applied, [], 'An attack after the forecast is rejected before casting');
+    }
+    const result = await run([origin, ordered]);
+    if (['different ability', 'additional trigger'].includes(variant)) {
+      assert.equal(result.reason, 'response_available');
+      assert.deepEqual(applied, [['main', 'cast']]);
+    } else if (['rival response', 'mandatory choice'].includes(variant)) {
+      assert.equal(result.reason, variant === 'rival response' ? 'opponent_action' : 'response_available');
+      assert.deepEqual(applied, [['main', 'cast'], [order.id, 'object-prowess']]);
+    } else {
+      assert.equal(result.reason, 'new_information');
+      assert.equal(result.state.players[0].exile[0].name, 'Mountain');
+      assert.deepEqual(applied, [['main', 'cast'], [order.id, 'object-prowess'], ['resolve-valiant', 'pass']]);
+    }
+  });
+}
+
+test('[PM-LINE-IMPULSE] the cast witness belongs to the visible permanent of the viewing seat', () => {
+  const permanent = { name: 'Emberheart Challenger', cardId: 'physical', enteringSpellId: 'visible-cast' };
+  const players = [
+    { playerId: 'own', battlefield: { own: permanent, hidden: { ...permanent, faceDown: true } } },
+    { playerId: 'other', battlefield: { other: { ...permanent, enteringSpellId: 'rival-cast' } } },
+  ];
+  const yours = visibleAgentGame({ playerId: 'own', view: { players } });
+  assert.equal(yours.players[0].battlefield[0].enteringSpellId, 'visible-cast');
+  assert.equal(yours.players[0].battlefield[1].enteringSpellId, undefined);
+  assert.equal(yours.players[1].battlefield[0].enteringSpellId, undefined);
+  const spectator = visibleAgentGame({ view: { players } });
+  assert.ok(spectator.players.every(player => player.battlefield.every(card => !card.enteringSpellId)));
+});

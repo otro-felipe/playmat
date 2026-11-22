@@ -438,6 +438,9 @@ public final class ZonesHandler {
                     Spell spell = game.getStack().getSpell(event.getTargetId());
                     if (spell != null) {
                         permanent.setPrototyped(spell.isPrototyped());
+                        if (permanent instanceof PermanentCard && !spell.isCopy() && !spell.isFaceDown(game)) {
+                            ((PermanentCard) permanent).recordEnteringSpell(spell.getId(), spell.getControllerId());
+                        }
                     }
                 }
 
