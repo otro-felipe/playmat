@@ -1,6 +1,7 @@
 package mage.server.game;
 
 import mage.view.GameEventView;
+import mage.view.SequenceImpulseExileView;
 import mage.view.SequenceEvidenceView;
 import mage.view.SequenceCombatDamageView;
 import mage.game.events.PublicActionObservations;
@@ -39,6 +40,7 @@ public final class GameEventFeed {
     private final Map<UUID, Long> combatExileReplacements = new LinkedHashMap<>();
     private final Map<UUID, Long> newInformation = new LinkedHashMap<>();
     private long publicInformationRevision;
+    private final Map<UUID, SequenceImpulseExileView> ownImpulseExiles = new LinkedHashMap<>();
     static final int RESOLUTION_CAPACITY = 32;
 
     private GameEventFeed(UUID gameId) {
@@ -92,11 +94,24 @@ public final class GameEventFeed {
         else if (player != null) newInformation.merge(player, 1L, Long::sum);
     }
 
+    public synchronized void objectMoved(UUID objectId) {
+        ownImpulseExiles.values().removeIf(event -> event.getSourceId().equals(objectId) || event.getCardId().equals(objectId));
+    }
+
+    public synchronized void libraryCardExiled(UUID owner, UUID stackId, UUID sourceId, UUID cardId) {
+        publicInformationRevision++;
+        if (owner != null && stackId != null && sourceId != null && cardId != null
+                && resolutions.getOrDefault(stackId, -1L) == resolutionRevision) {
+            ownImpulseExiles.put(owner, new SequenceImpulseExileView(stackId, sourceId, cardId,
+                    publicInformationRevision + newInformation.getOrDefault(owner, 0L)));
+        }
+    }
+
     public synchronized SequenceEvidenceView sequenceEvidence(UUID viewerId) {
         if (!PublicActionObservations.isObserved(gameId)) return null;
         return new SequenceEvidenceView(evidenceEpoch, publicActions, resolutions, resolutionRevision,
                 new ArrayList<>(combatDamage), combatRevision, publicInformationRevision + (viewerId == null ? 0 : newInformation.getOrDefault(viewerId, 0L)),
-                combatExileReplacements);
+                combatExileReplacements, ownImpulseExiles.get(viewerId));
     }
 
     private static final class Entry {

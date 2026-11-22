@@ -1,3 +1,5 @@
+import { ToolError } from './errors.mjs';
+import { planImpulseWaiver, ImpulseWaiver } from './impulse-waiver.mjs';
 import { isDeepStrictEqual } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { publicActivationText } from '../dist/engine-core.mjs';
@@ -6,7 +8,7 @@ import { priorityChoiceActions, visiblePlaySource } from './priority-choice-acti
 import { absentPaymentIndex, paymentOptions } from './payment-sources.mjs';
 import { observedAttacks, observedBlocks, PlannedDefenderCombat, PlannedPermanentCombat } from './planned-combat.mjs';
 import { canCallCoin, drawTriggerSources, guardsEffectQuestion, needsEffectReevaluation, needsSpellReevaluation,
-  needsStackReevaluation, optionalInformationEffect, plansInformationBranch, triggeredEffect } from './effect-boundaries.mjs';
+  needsStackReevaluation, optionalInformationEffect, plansInformationBranch, sameTriggerText, triggeredEffect } from './effect-boundaries.mjs';
 
 const RESPONSE_TIMEOUT_MS = 18_000;
 const SEQUENCE_TIMEOUT_MS = 60_000;
@@ -31,15 +33,7 @@ function intermediateWindow(action, next) {
 }
 const PERMANENT_SPELL_TYPES = new Set(['ARTIFACT', 'BATTLE', 'CREATURE', 'ENCHANTMENT', 'PLANESWALKER']);
 
-export class ToolError extends Error {
-  constructor(code, message, { actionIndex, field, paymentIndex } = {}) {
-    super(message);
-    this.code = code;
-    if (actionIndex !== undefined) this.actionIndex = actionIndex;
-    if (field !== undefined) this.field = field;
-    if (paymentIndex !== undefined) this.paymentIndex = paymentIndex;
-  }
-}
+export { ToolError } from './errors.mjs';
 
 /** The engine ended this game while the plan was executing. Queued steps remain unplayed. */
 class GameEnded extends Error {
@@ -104,13 +98,6 @@ function stackIdentity(stack) {
 function sameTargetGroup(actual, expected) {
   return Array.isArray(actual) && actual.length === expected.length && new Set(expected).size === expected.length
     && expected.every((id) => id && actual.includes(id));
-}
-
-function sameTriggerText(actual, declared) {
-  // The battlefield capitalizes the first character of a rule. The raw stack
-  // rule can preserve a lowercase keyword or introductory word.
-  return actual === declared || typeof actual === 'string' && typeof declared === 'string'
-    && actual[0]?.toLowerCase() === declared[0]?.toLowerCase() && actual.slice(1) === declared.slice(1);
 }
 
 // A transforming spell and its permanent can have different public object IDs.
@@ -369,7 +356,7 @@ export class GameSeat {
     return outcome;
   }
 
-  startSequence({ gameId, cursor, steps, expectedStackIds = [], allowPlannedCombatDamage = false, autoAdvance = false, branchContinuation = false, line }, authorize, responsePolicy = 'interrupt') {
+  startSequence({ gameId, cursor, steps, expectedStackIds = [], allowPlannedCombatDamage = false, autoAdvance = false, branchContinuation = false, impulsePlan, line }, authorize, responsePolicy = 'interrupt') {
     const initial = this.snapshot(gameId);
     if (initial.cursor !== cursor || initial.status !== 'active') throw new ToolError('stale_decision', 'Plan from the latest game state.');
     if (initial.rollbackRequest) throw new ToolError('rollback_pending', 'Vote on the pending rollback before starting another line.');
@@ -400,12 +387,12 @@ export class GameSeat {
     this.#current = sequence;
     this.#sequences.set(sequence.id, sequence);
     if (this.#sequences.size > 40) this.#sequences.delete(this.#sequences.keys().next().value);
-    void this.#runSequence(sequence, initial, steps, authorize, responsePolicy, { expectedStackIds, allowPlannedCombatDamage, autoAdvance, branchContinuation, line });
+    void this.#runSequence(sequence, initial, steps, authorize, responsePolicy, { expectedStackIds, allowPlannedCombatDamage, autoAdvance, branchContinuation, impulsePlan, line });
     return this.sequenceStatus({ gameId, sequenceId: sequence.id });
   }
 
   /** Compile significant intentions; ordinary priority handoffs are the executor's responsibility. */
-  startTurn({ gameId, cursor, actions, expectedStackIds, finish = 'next_turn', settle = true, line }, authorize) {
+  startTurn({ gameId, cursor, actions, expectedStackIds, declineExiledCard, finish = 'next_turn', settle = true, line }, authorize) {
     const initial = this.snapshot(gameId);
     if (initial.cursor !== cursor || initial.status !== 'active') throw new ToolError('stale_decision', 'Plan from the latest game state.');
     const first = actions[0];
@@ -429,8 +416,9 @@ export class GameSeat {
     const prematurePassIndex = actions.slice(0, -1).findIndex((action, index) => terminalPass(action) && !intermediateWindow(action, actions[index + 1]));
     if (prematurePassIndex !== -1) throw new ToolError('bad_sequence', 'An intermediate pass needs a current_turn step or phase at self priority. Before attack or block, name BEGIN_COMBAT or its matching declaration step. Use at most one terminal pass (pass_priority or pass_until) and put it last.', { actionIndex: prematurePassIndex });
     const ownId = initial.players?.find((player) => player.yourSeat)?.id;
+    const impulsePlan = planImpulseWaiver(declineExiledCard, initial, actions, expectedStackIds, forecastsTriggerOrder);
     const informationalStack = initial.stack.filter((card) =>
-      (card.controllerId === ownId || expectedStackIds?.includes(card.id)) && needsStackReevaluation(card, ownId));
+      card.id !== impulsePlan?.stackId && (card.controllerId === ownId || expectedStackIds?.includes(card.id)) && needsStackReevaluation(card, ownId));
     const resolvingBranch = informationalStack.length === 1
       && actions.some((action) => guardsEffectQuestion(action, informationalStack[0], visibleDecision(initial)));
     const resolvingInformation = informationalStack.length > 0 && !resolvingBranch;
@@ -465,7 +453,10 @@ export class GameSeat {
       const selectedCard = planCard(initial, action);
       const plannedBranch = plansInformationBranch(selectedCard, action, tail, visibleDecision(initial));
       branchContinuation ||= plannedBranch;
-      const terminal = !plannedBranch && declaredInformation({ ...action, expectCast: action.kind === 'play' ? action.playAs !== 'land' && action.expectCast !== false : action.expectCast }, initial);
+      const waivedOrigin = actionIndex === impulsePlan?.originIndex;
+      if (waivedOrigin) forecastPair = action.expectTriggers;
+      const observedTriggers = waivedOrigin ? action.expectTriggers.filter(trigger => !sameTriggerText(trigger.abilityText, impulsePlan.abilityText)) : action.expectTriggers;
+      const terminal = !plannedBranch && declaredInformation({ ...action, expectTriggers: observedTriggers, expectCast: action.kind === 'play' ? action.playAs !== 'land' && action.expectCast !== false : action.expectCast }, initial);
       const orderingBeforeReveal = terminal && tail.length === 1 && forecastsTriggerOrder(action, tail[0])
         && !declaredInformation(tail[0], initial);
       if (orderingBeforeReveal) forecastPair = action.expectTriggers;
@@ -593,7 +584,7 @@ export class GameSeat {
     const adopted = expectedStackIds ?? (singleObservedChoice ? [] : initial.stack.filter((card) => card.controllerId === ownId).map((card) => card.id));
     if (adopted.length > 16) throw new ToolError('bad_stack_expectation', 'A semantic turn may adopt at most sixteen visible objects.');
     return this.startSequence({ gameId, cursor, steps, autoAdvance: !singleObservedChoice, allowPlannedCombatDamage: !singleObservedChoice, branchContinuation,
-      expectedStackIds: adopted, line }, authorize);
+      expectedStackIds: adopted, impulsePlan, line }, authorize);
   }
 
   sequenceStatus({ gameId, sequenceId, startCursor }) {
@@ -644,7 +635,7 @@ export class GameSeat {
     this.#current?.controller.abort(new ToolError(reason, 'The active game changed.'));
   }
 
-  async #runSequence(sequence, initial, steps, authorize, responsePolicy, { expectedStackIds, allowPlannedCombatDamage, autoAdvance, branchContinuation, line }) {
+  async #runSequence(sequence, initial, steps, authorize, responsePolicy, { expectedStackIds, allowPlannedCombatDamage, autoAdvance, branchContinuation, impulsePlan, line }) {
     const { signal } = sequence.controller;
     const wallDeadline = sequence.startedAtEpochMs + this.maxSequenceWallMs;
     let deadline = sequence.startedAtEpochMs + this.sequenceTimeoutMs;
@@ -703,6 +694,7 @@ export class GameSeat {
     let evidenceRevision = initialEvidence?.resolutionRevision;
     let combatRevision = initialEvidence?.combatRevision;
     const informationRevision = initialEvidence?.informationRevision;
+    const impulse = impulsePlan && new ImpulseWaiver(impulsePlan, initial);
     const plannedAttackers = new Set((initial.combat ?? []).flatMap((group) => group.attackers ?? []).filter((card) => card.controllerId === ownPlayerId
       || initial.players?.some((player) => player.yourSeat && player.battlefield?.some((own) => own.id === card.id))).map((card) => card.id));
     let attackDeclarationPending = false;
@@ -810,7 +802,8 @@ export class GameSeat {
         }
         if (informationRevision !== undefined) {
           if (!Number.isSafeInteger(evidence.informationRevision) || evidence.informationRevision < informationRevision) throw new ToolError('evidence_unavailable', 'Information evidence is unavailable or moved backwards.');
-          if (evidence.informationRevision !== informationRevision) reportInformation(state, 'New information became visible to this seat. Inspect it before continuing.');
+          impulse?.observe(state, informationRevision, plannedStackIds);
+          if (evidence.informationRevision !== (impulse?.revision ?? informationRevision)) reportInformation(state, 'New information became visible to this seat. Inspect it before continuing.');
         }
       }
       if (attackDeclarationPending) {
@@ -865,7 +858,7 @@ export class GameSeat {
         if (castEntry) for (const index of requiredCasts) {
           if (castingSources.get(index)?.stackId === id) witnessedEntries.set(index, castEntry);
         }
-        if (explicitInformationObjects.has(id) || needsStackReevaluation(object, ownPlayerId)) {
+        if (id !== impulse?.stackId && (explicitInformationObjects.has(id) || needsStackReevaluation(object, ownPlayerId))) {
           resolvingInformation.set(id, object ?? { id });
         }
         settlingResolution = true;
@@ -965,7 +958,7 @@ export class GameSeat {
         for (const card of visibleCards) {
           const cardId = card.cardId ?? card.id;
           if (!cardId || card.faceDown || card.isToken || initiallyKnownCards.has(cardId)) continue;
-          if (preparedFromKnownObject(card)) initiallyKnownCards.add(cardId);
+          if (impulse?.cardId && card.id === impulse.cardId || preparedFromKnownObject(card)) initiallyKnownCards.add(cardId);
           else reportInformation(state, 'A newly visible card needs a fresh plan.');
         }
       }
@@ -1035,6 +1028,7 @@ export class GameSeat {
         if (expected.length > 1 || expected.length === 0 && !orderedIds.has(item.id)) {
           throw new ToolError('state_changed', 'An unexpected or ambiguous stack object needs a fresh plan.');
         }
+        if (expected[0]?.waiveImpulse) impulse.bind(item);
         if (expected[0]?.information) explicitInformationObjects.add(item.id);
         if (expected[0]) expected[0].remaining--;
       }
@@ -1192,6 +1186,11 @@ export class GameSeat {
       if (awaitingOwnCombatWitness || awaitingCombatTerminal || pendingCombatDamage.size || permanentCombat.pending || defenderCombat.pending) throw new ToolError('opponent_state_changed', 'Combat damage has not produced its exact witnessed changes; read a fresh state.');
     };
     const submit = async (args) => {
+      const current = this.snapshot();
+      impulse?.guardSubmission(current, sequence.actionIndex);
+      if (impulse?.cardId && current.decision?.kind === 'priority' && optionalPlays(current.decision).some(choice => !impulse.declines(choice))) {
+        throw new ToolError('response_available', 'A legal option other than the waived card needs a decision.');
+      }
       requireSettledCombat();
       settlingResolution = false;
       // The engine puts entry triggers on the stack before offering priority.
@@ -1465,7 +1464,9 @@ export class GameSeat {
                 .some((item) => item.sourceId === trigger.sourceId && sameTriggerText(item.abilityText, trigger.abilityText))) {
                 throw new ToolError('ambiguous_trigger_expectation', 'Use one bounded count for each exact source and ability.');
               }
-              additions.push({ ...trigger, playerId: own.id, remaining: trigger.count ?? 1,
+              const waiveImpulse = !!impulsePlan && impulsePlan.originIndex === step.actionIndex && trigger.sourceId === impulsePlan.sourceId
+                && sameTriggerText(trigger.abilityText, impulsePlan.abilityText);
+              additions.push({ ...trigger, waiveImpulse, playerId: own.id, remaining: trigger.count ?? 1,
                 entryCastSource: casting?.id, entrySpellId: adopted?.id });
             }
             pendingTriggers.push(...additions);
@@ -1741,7 +1742,7 @@ export class GameSeat {
             if (state.decision.kind !== 'priority' || state.priority !== 'self' || !choice || pendingIntention() || state.stop) {
               throw new ToolError('response_available', 'A mandatory choice or pending action needs your decision before advancing.');
             }
-            const options = optionalPlays(state.decision);
+            const options = optionalPlays(state.decision).filter(choice => !impulse?.declines(choice));
             if (options.length && !step.skipOptionalResponses) {
               if (step.kind === 'pass_to_boundary') {
                 const { destination, phase, step: targetStep, priority } = step;

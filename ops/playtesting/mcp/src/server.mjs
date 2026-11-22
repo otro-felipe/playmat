@@ -164,6 +164,8 @@ const Line = {
   reasoning: z.string().trim().min(1).max(600).optional().describe('A brief comment for the live spectator audience and authorized replay. Describe the line’s objective and an observation. Use send_chat to speak to the opponent.'),
   actions: z.array(z.union([TurnPlayShape, TurnActivation, TurnChooseShape, TurnAttackShape, TurnBlockShape, Pace, LinePassUntilShape, LinePassPriority])).min(1).max(32)
     .describe('Plan as far as current information justifies. Use exact choices for visible engine prompts. A current_turn step or phase with priority:self may precede a planned action in that window. Before attack or block, request BEGIN_COMBAT or its exact declaration step. Use at most one terminal pass (pass_priority or pass_until) and put it last.'),
+  declineExiledCard: z.object({ sourceId: StringId, abilityText: z.string().min(1).max(2000), stackId: StringId.optional() }).strict().optional()
+    .describe('Forgo the single face-up card from this own Valiant trigger for this command, including free plays. Supply stackId if already on the stack. Only exact attackers and an end-step pass may follow.'),
   expectedStackIds: z.array(StringId).max(16).optional().describe('Exact objects already visible on the stack. For a current trigger-order prompt, use choose.adoptTriggerOrder instead.'),
   waitMs: z.number().int().min(0).max(25_000).default(5_000).describe('Bound how long this call waits for the result. If the plan still owns execution, wait_for_decision with this gameId and commandId.'),
   view: StateView,

@@ -8,7 +8,7 @@ import { isTriggerOrderPrompt } from './autoAnswer';
 
 /** An allowlisted view of a card for both MCP transports. Face-down cards keep their public object ID. */
 function cardOnBoard(card: CardView, id: string | undefined, ownBattlefield = false) {
-  const { tapped, damage, enteringSpellId } = card as PermanentView;
+  const { tapped, damage, enteringSpellId, zoneChangeCounter } = card as PermanentView;
   if (card.faceDown || card.hideInfo) return { id, faceDown: true, name: 'Face-down card', tapped: !!tapped };
   const text = splitRules(card);
   const source = (card as StackAbilityView).sourceCard;
@@ -19,6 +19,7 @@ function cardOnBoard(card: CardView, id: string | undefined, ownBattlefield = fa
     cardId: card.cardId,
     name: card.name ?? card.displayName ?? 'Unnamed card',
     controllerId: card.controllerId,
+    ...(ownBattlefield && zoneChangeCounter != null ? { zoneChangeCounter } : {}),
     ...(ownBattlefield && enteringSpellId ? { enteringSpellId } : {}),
     ...(publicAbility ? {
       abilityType: card.abilityType,
@@ -47,10 +48,17 @@ function cardsOnBoard(cards: Record<string, CardView> | undefined, ownBattlefiel
 }
 
 /** Explicit projection: future diagnostic/private engine fields never enter the agent contract. */
-function sequenceEvidence(view: GameSessionState['view'] | undefined) {
+function sequenceEvidence(view: GameSessionState['view'] | undefined, playerId?: string | null) {
   const evidence = view?.sequenceEvidence;
   if (!evidence) return null;
+  const impulse = evidence.ownImpulseExile;
+  const own = playerId && view?.players?.find(player => player.playerId === playerId);
+  const source = own && impulse?.sourceId && own.battlefield?.[impulse.sourceId];
+  const exiled = own && impulse?.cardId && own.exile?.[impulse.cardId];
   return {
+    ...(source && !source.faceDown && !source.hideInfo && exiled && !exiled.faceDown && !exiled.hideInfo && impulse ? { ownImpulseExile: {
+      stackId: impulse.stackId, sourceId: impulse.sourceId, cardId: impulse.cardId, informationRevision: impulse.informationRevision,
+    } } : {}),
     epoch: evidence.epoch,
     publicActions: evidence.publicActions ? { ...evidence.publicActions } : undefined,
     resolutions: evidence.resolutions ? { ...evidence.resolutions } : undefined,
@@ -72,7 +80,7 @@ export function visibleAgentGame(state: GameSessionState | undefined) {
     step: view?.step ?? null,
     activePlayer: view?.activePlayerName ?? null,
     activePlayerId: view?.activePlayerId ?? null,
-    sequenceEvidence: sequenceEvidence(view),
+    sequenceEvidence: sequenceEvidence(view, state?.playerId),
     priorityPlayer: view?.priorityPlayerName ?? null,
     ownHand: cardsOnBoard(view?.myHand),
     revealed: (view?.revealed ?? []).map((group) => ({ name: group.name, cards: cardsOnBoard(group.cards) })),

@@ -8,7 +8,7 @@ import java.util.List;
 import java.util.ArrayList;
 import java.util.Collections;
 
-/** Public actions and recent public stack resolutions, never private choices or card identities. */
+/** Public counters plus optional owner-scoped attribution for one already face-up exiled card. */
 public final class SequenceEvidenceView implements Serializable {
     private static final long serialVersionUID = 1L;
     private final String epoch;
@@ -18,6 +18,8 @@ public final class SequenceEvidenceView implements Serializable {
     private final long combatRevision, informationRevision;
     private final List<SequenceCombatDamageView> combatDamage;
     private final Map<UUID, Long> combatExileReplacements;
+
+    private final SequenceImpulseExileView ownImpulseExile;
 
     public SequenceEvidenceView(String epoch, Map<UUID, Long> publicActions,
             Map<UUID, Long> resolutions, long resolutionRevision) {
@@ -32,6 +34,14 @@ public final class SequenceEvidenceView implements Serializable {
     public SequenceEvidenceView(String epoch, Map<UUID, Long> publicActions, Map<UUID, Long> resolutions,
             long resolutionRevision, List<SequenceCombatDamageView> combatDamage, long combatRevision, long informationRevision,
             Map<UUID, Long> combatExileReplacements) {
+        this(epoch, publicActions, resolutions, resolutionRevision, combatDamage, combatRevision, informationRevision,
+                combatExileReplacements, null);
+    }
+
+    public SequenceEvidenceView(String epoch, Map<UUID, Long> publicActions, Map<UUID, Long> resolutions,
+            long resolutionRevision, List<SequenceCombatDamageView> combatDamage, long combatRevision, long informationRevision,
+            Map<UUID, Long> combatExileReplacements, SequenceImpulseExileView ownImpulseExile) {
+        this.ownImpulseExile = ownImpulseExile;
         this.combatExileReplacements = new LinkedHashMap<>(combatExileReplacements);
         this.epoch = epoch;
         this.publicActions = new LinkedHashMap<>(publicActions);
@@ -48,5 +58,6 @@ public final class SequenceEvidenceView implements Serializable {
     public List<SequenceCombatDamageView> getCombatDamage() { return combatDamage; }
     public long getCombatRevision() { return combatRevision; }
     public Map<UUID, Long> getCombatExileReplacements() { return combatExileReplacements; }
+    public SequenceImpulseExileView getOwnImpulseExile() { return ownImpulseExile; }
     public long getInformationRevision() { return informationRevision; }
 }

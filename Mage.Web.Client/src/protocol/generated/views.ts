@@ -1827,6 +1827,7 @@ export interface PermanentView extends CardView {
     damage?: number;
     disguised?: boolean;
     enteringSpellId?: string;
+    zoneChangeCounter?: number;
     flipped?: boolean;
     manifested?: boolean;
     morphed?: boolean;
@@ -2611,6 +2612,14 @@ export interface SequenceEvidenceView extends Serializable {
     combatRevision?: number;
     combatDamage?: SequenceCombatDamageView[];
     combatExileReplacements?: { [index: string]: number };
+    ownImpulseExile?: SequenceImpulseExileView;
+    informationRevision?: number;
+}
+
+export interface SequenceImpulseExileView extends Serializable {
+    stackId?: string;
+    sourceId?: string;
+    cardId?: string;
     informationRevision?: number;
 }
 

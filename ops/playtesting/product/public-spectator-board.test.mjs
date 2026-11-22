@@ -6,14 +6,14 @@ import { publicSpectatorBoard } from './public-spectator-board.mjs'
 const tableId=randomUUID(), gameId=randomUUID(), playerId=randomUUID()
 const privateText='PRIVATE FIXTURE MARKER'
 const visible={id:randomUUID(),name:'Grizzly Bears',expansionSetCode:'LEA',cardNumber:'197',cardTypes:['CREATURE'],power:'2',toughness:'2',
-  enteringSpellId:privateText,rules:[privateText],original:{name:privateText},settings:{secret:privateText}}
+  enteringSpellId:privateText,zoneChangeCounter:privateText,rules:[privateText],original:{name:privateText},settings:{secret:privateText}}
 const hidden={id:randomUUID(),cardId:randomUUID(),faceDown:true,name:privateText,imageFileName:privateText,expansionSetCode:'LEA',cardNumber:'197',
   original:{name:privateText},cardTypes:['LEGENDARY'],tapped:true,power:'9',targets:[privateText],extra:{privateText}}
 function frame(status='playing', id=gameId) {
   return {role:'spectator',tableId,gameId:id,status,revision:17,players:[{playerId,name:'MCP_A',control:'mcp',displayName:'Pilot A',flag:'CL',key:privateText}],
     hands:{[playerId]:{hidden}},review:{seatViews:{privateText}},chat:[{message:privateText}],lines:[{reasoning:privateText}],token:privateText,
     view:{turn:2,step:'DECLARE_ATTACKERS',phase:'COMBAT',activePlayerId:playerId,activePlayerName:'MCP_A',priorityPlayerName:'MCP_A',
-      myHand:{hidden},lookedAt:[privateText],decision:privateText,sequenceEvidence:{privateText},
+      myHand:{hidden},lookedAt:[privateText],decision:privateText,sequenceEvidence:{privateText,ownImpulseExile:{cardId:privateText}},
       players:[{playerId,name:'MCP_A',life:17,handCount:5,libraryCount:49,hasPriority:true,wins:1,winsNeeded:2,topCard:hidden,sideboard:{hidden},
         battlefield:{[visible.id]:visible,[privateText]:hidden},graveyard:{[visible.id]:visible},exile:{[hidden.id]:hidden},commandList:[visible],userData:{privateText}}],
       stack:{[hidden.id]:{...hidden,faceDown:false}},combat:[{attackers:{[hidden.id]:{...hidden,faceDown:false}},blockers:{},defenderId:playerId,comments:privateText}],

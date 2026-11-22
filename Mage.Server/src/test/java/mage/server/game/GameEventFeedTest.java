@@ -19,6 +19,29 @@ public class GameEventFeedTest {
     }
 
     @Test
+    public void oneCardWaiverWitnessBelongsToTheOwnerAndExpiresOnEitherMove() {
+        GameEventFeed feed = GameEventFeed.open(gameId);
+        UUID owner = UUID.randomUUID(), source = UUID.randomUUID(), card = UUID.randomUUID(), trigger = UUID.randomUUID();
+        feed.beginResolution(trigger);
+        feed.libraryCardExiled(owner, trigger, source, card);
+        Assert.assertEquals(card, feed.sequenceEvidence(owner).getOwnImpulseExile().getCardId());
+        Assert.assertEquals(1L, feed.sequenceEvidence(owner).getOwnImpulseExile().getInformationRevision());
+        Assert.assertNull(feed.sequenceEvidence(UUID.randomUUID()).getOwnImpulseExile());
+        Assert.assertNull(feed.sequenceEvidence().getOwnImpulseExile());
+        feed.newInformation(owner);
+        Assert.assertEquals(2L, feed.sequenceEvidence(owner).getInformationRevision());
+        Assert.assertEquals(1L, feed.sequenceEvidence(owner).getOwnImpulseExile().getInformationRevision());
+        feed.objectMoved(card);
+        Assert.assertNull(feed.sequenceEvidence(owner).getOwnImpulseExile());
+        feed.beginResolution(trigger);
+        feed.libraryCardExiled(owner, UUID.randomUUID(), source, card);
+        Assert.assertNull(feed.sequenceEvidence(owner).getOwnImpulseExile());
+        feed.libraryCardExiled(owner, trigger, source, card);
+        feed.objectMoved(source);
+        Assert.assertNull(feed.sequenceEvidence(owner).getOwnImpulseExile());
+    }
+
+    @Test
     public void sessionsReadOnlyNewerEvents() {
         GameEventFeed feed = GameEventFeed.open(gameId);
         feed.add(new GameEventView(feed.nextSeq(), GameEventKind.TAP), null);

@@ -22,6 +22,7 @@ public class PermanentView extends CardView {
 
     private boolean tapped;
     private final UUID enteringSpellId;
+    private final Integer zoneChangeCounter;
     private final boolean flipped;
     private final boolean phasedIn;
     private final boolean summoningSickness;
@@ -53,6 +54,8 @@ public class PermanentView extends CardView {
         this.controlled = permanent.getControllerId() != null && permanent.getControllerId().equals(createdForPlayerId);
         this.enteringSpellId = !permanent.isFaceDown(game) && !permanent.isCopy() && permanent instanceof PermanentCard
                 ? ((PermanentCard) permanent).getEnteringSpellIdFor(createdForPlayerId) : null;
+        this.zoneChangeCounter = this.controlled && createdForPlayerId.equals(permanent.getOwnerId()) && !permanent.isFaceDown(game)
+                ? permanent.getZoneChangeCounter(game) : null;
         this.tapped = permanent.isTapped();
         this.flipped = permanent.isFlipped();
         this.phasedIn = permanent.isPhasedIn();
@@ -146,6 +149,8 @@ public class PermanentView extends CardView {
         this.controlled = permanentView.controlled;
         this.enteringSpellId = createdForPlayerId != null && createdForPlayerId.equals(permanentView.getControllerId())
                 && !permanentView.isFaceDown() ? permanentView.enteringSpellId : null;
+        this.zoneChangeCounter = createdForPlayerId != null && createdForPlayerId.equals(permanentView.getControllerId())
+                && !permanentView.isFaceDown() ? permanentView.zoneChangeCounter : null;
         this.tapped = permanentView.isTapped();
         this.flipped = permanentView.isFlipped();
         this.phasedIn = permanentView.isPhasedIn();
@@ -185,6 +190,8 @@ public class PermanentView extends CardView {
         this.roomLeftUnlocked = permanentView.roomLeftUnlocked;
         this.roomRightUnlocked = permanentView.roomRightUnlocked;
     }
+
+    public Integer getZoneChangeCounter() { return zoneChangeCounter; }
 
     public UUID getEnteringSpellId() {
         return enteringSpellId;

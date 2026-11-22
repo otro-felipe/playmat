@@ -9,6 +9,13 @@ function spellRules(card) {
   return card.selectedModeRules?.length ? card.selectedModeRules : card.rules ?? [];
 }
 
+export function sameTriggerText(actual, declared) {
+  // The battlefield capitalizes the first character of a rule. The raw stack
+  // rule can preserve a lowercase keyword or introductory word.
+  return actual === declared || typeof actual === 'string' && typeof declared === 'string'
+    && actual[0]?.toLowerCase() === declared[0]?.toLowerCase() && actual.slice(1) === declared.slice(1);
+}
+
 export function triggeredEffect(text) {
   return text.replace(/^(?:Whenever|When|At)\b[^,.]*,\s*/i, '');
 }

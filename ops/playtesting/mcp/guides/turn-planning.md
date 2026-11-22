@@ -434,6 +434,47 @@ With Challenger and Monstrous Rage in hand and three untapped Mountains, cast Ch
 
 If Challenger is already on the battlefield, omit its cast and use its current battlefield ID throughout. A preflight `reevaluation_required` with `appliedDecisions:0` allows a corrected line from the returned state. An execution interruption can include already accepted costs and plays.
 
+To forgo the one exiled card even if it is free, submit the complete line below while Challenger and Rage are in hand, with three untapped Mountains. Copy the exact visible IDs and both full rules from Challenger. This command casts, orders the triggers, attacks with that copy and passes after damage until your own end-step priority. Another reveal, a different legal play, a rival action or an unexpected choice returns control sooner.
+
+```json
+{
+  "gameId": "00000000-0000-4000-8000-000000000001", "cursor": 4187, "commandId": "cast-valiant-attack-001",
+  "declineExiledCard": {"sourceId": "<challenger-id>", "abilityText": "<full-valiant-text>"},
+  "actions": [
+    {"kind": "play", "select": {"objectId": "<challenger-id>", "zone": "hand"}, "payWith": ["<mountain-A-id>", "<mountain-B-id>"]},
+    {
+      "kind": "play", "select": {"objectId": "<rage-id>", "zone": "hand"}, "payWith": ["<mountain-C-id>"],
+      "targets": [{"role": 0, "select": {"objectId": "<challenger-id>", "zone": "battlefield"}}],
+      "expectTriggers": [
+        {"sourceId": "<challenger-id>", "abilityText": "<full-prowess-text>"},
+        {"sourceId": "<challenger-id>", "abilityText": "<full-valiant-text>"}
+      ]
+    },
+    {"kind": "choose", "adoptTriggerOrder": true,
+     "guard": {"kind": "pickCards", "instruction": "Pick triggered ability (goes to the stack first)"},
+     "select": {"objectId": "<challenger-id>", "label": "Emberheart Challenger — <full-prowess-text>"}},
+    {"kind": "attack", "attackers": ["<challenger-id>"]},
+    {"kind": "pass_until", "destination": "end_step", "policy": "if_no_play"}
+  ]
+}
+```
+
+If Valiant is already on top of the stack, copy the actual `expectedStackIds` from `decision.visibleStackArgs` and name its stack object in the consent.
+
+```json
+{
+  "gameId": "00000000-0000-4000-8000-000000000001", "cursor": 4200, "commandId": "valiant-attack-002",
+  "expectedStackIds": ["<valiant-stack-id>", "<prowess-stack-id>", "<rage-stack-id>"],
+  "declineExiledCard": {"sourceId": "<challenger-id>", "abilityText": "<full-valiant-text>", "stackId": "<valiant-stack-id>"},
+  "actions": [
+    {"kind": "attack", "attackers": ["<challenger-id>"]},
+    {"kind": "pass_until", "destination": "end_step", "policy": "if_no_play"}
+  ]
+}
+```
+
+A new command needs its own decision about the card.
+
 ### Cast a Saga and resolve its first chapter
 
 With a Mountain available and no attackers, use Kumano's object ID from your hand in both places. Copy the complete chapter I rule from that copy's visible `rules`, including its chapter prefix. XMage identifies the front face separately once it enters. The executor follows the announced spell through its witnessed resolution to the visible permanent.

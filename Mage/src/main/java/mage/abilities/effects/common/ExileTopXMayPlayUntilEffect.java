@@ -20,12 +20,15 @@ import mage.target.targetpointer.FixedTargets;
 import mage.util.CardUtil;
 
 import java.util.Set;
+import java.util.UUID;
 
 public class ExileTopXMayPlayUntilEffect extends OneShotEffect {
 
     private final DynamicValue amount;
     private final boolean chooseOne;
     private final Duration duration;
+    // Runtime comparison only. Never copy, serialize or expose an unobserved library identity.
+    private transient UUID singleTopCard;
 
     public ExileTopXMayPlayUntilEffect(int amount, Duration duration) {
         this(amount, false, duration);
@@ -63,6 +66,9 @@ public class ExileTopXMayPlayUntilEffect extends OneShotEffect {
         }
         int resolvedAmount = amount.calculate(game, source, this);
         Cards cards = new CardsImpl(controller.getLibrary().getTopCards(game, resolvedAmount));
+        singleTopCard = getClass() == ExileTopXMayPlayUntilEffect.class && amount instanceof StaticValue
+                && ((StaticValue) amount).getValue() == 1 && !chooseOne && duration == Duration.EndOfTurn && cards.size() == 1
+                ? cards.iterator().next() : null;
         if (cards.isEmpty()) {
             return true;
         }
@@ -91,6 +97,11 @@ public class ExileTopXMayPlayUntilEffect extends OneShotEffect {
                 .setTargetPointer(new FixedTargets(cards, game)), source);
         effectCards(game, source, cards.getCards(game));
         return true;
+    }
+
+    /** Only this unmodified effect grants one unchosen card for the current turn. */
+    public boolean matchesSingleTopCardUntilEndOfTurn(UUID observedExile) {
+        return observedExile != null && observedExile.equals(singleTopCard);
     }
 
     protected void effectCards(Game game, Ability source, Set<Card> cards) {

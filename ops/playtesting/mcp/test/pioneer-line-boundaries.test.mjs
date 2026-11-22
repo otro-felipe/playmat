@@ -33,7 +33,7 @@ function fixture(t, initial, respond) {
     },
   });
   t.after(() => seat.invalidate());
-  const run = async (actions) => playLine(seat, { gameId: state.gameId, cursor: state.cursor,
+  const run = async (actions, options = {}) => playLine(seat, { ...options, gameId: state.gameId, cursor: state.cursor,
     commandId: `line-${++command}`, actions, waitMs: 500 }, async () => true);
   return { run, applied };
 }
@@ -495,11 +495,11 @@ for (const variant of ['saga', 'spell', 'reordered', 'wrong-ability', 'extra', '
   });
 }
 
-for (const variant of ['announced pair', 'different ability', 'additional trigger', 'rival response', 'mandatory choice']) {
+for (const variant of ['announced pair', 'one-card waiver', 'different ability', 'additional trigger', 'rival response', 'mandatory choice']) {
   test('[PM-LINE-IMPULSE] casting and ordering an exact pair before Valiant resolves: ' + variant, async (t) => {
     const prowess = 'Prowess (Whenever you cast a noncreature spell, this creature gets +1/+1 until end of turn.)';
-    const valiant = 'Whenever this creature becomes the target of a spell you control for the first time each turn, exile the top card of your library. You may play that card this turn.';
-    const ember = { id: 'ember', cardId: 'ember', name: 'Emberheart Challenger', rules: [prowess, valiant] };
+    const valiant = 'Whenever this creature becomes the target of a spell or ability you control for the first time each turn, exile the top card of your library. You may play that card this turn.';
+    const ember = { id: 'ember', cardId: 'ember', name: 'Emberheart Challenger', zoneChangeCounter: 2, rules: [prowess, valiant] };
     const rage = { id: 'rage', cardId: 'rage', name: 'Monstrous Rage', types: ['INSTANT'], rules: ['Target creature gets +2/+0 until end of turn.'] };
     const spell = { ...rage, id: 'cast-rage', controllerId: pilot.id };
     const own = { ...pilot, battlefield: [ember] };
@@ -512,6 +512,18 @@ for (const variant of ['announced pair', 'different ability', 'additional trigge
       expectTriggers: [prowess, valiant].map(abilityText => ({ sourceId: ember.id, abilityText })) };
     const ordered = { kind: 'choose', guard: { kind: 'pickCards', instruction: triggerInstruction },
       select: { objectId: ember.id, label: ember.name + ' — ' + prowess }, adoptTriggerOrder: true };
+    const waived = variant === 'one-card waiver';
+    const faceUp = { id: 'land', cardId: 'land', name: 'Mountain', types: ['LAND'] };
+    const sourceAfter = { ...own, exile: [faceUp] };
+    const witness = { sourceId: ember.id, stackId: 'valiant', cardId: faceUp.id, informationRevision: 1 };
+    const observed = { ...evidence, informationRevision: 1, resolutions: { valiant: 1 }, resolutionRevision: 1, ownImpulseExile: witness };
+    const afterProwess = { ...observed, resolutions: { valiant: 1, prowess: 2 }, resolutionRevision: 2 };
+    const afterRage = { ...afterProwess, resolutions: { ...afterProwess.resolutions, [spell.id]: 3 }, resolutionRevision: 3 };
+    if (waived) {
+      delete origin.reevaluateAfter;
+      origin.targets = [{ role: 0, select: { objectId: ember.id, zone: 'battlefield' } }];
+      spell.targets = [ember.id];
+    }
     const { run, applied } = fixture(t, { players: [own, opponent], ownHand: [rage], decision: priority('main', object('cast', rage)) },
       (id, selected, update) => {
         if (id === 'main') return update({ ownHand: [], stack: [spell], decision: order });
@@ -524,11 +536,34 @@ for (const variant of ['announced pair', 'different ability', 'additional trigge
             decision: { id: 'target', kind: 'target', instruction: 'Choose a target', choices: [object('target-ember', ember)] } });
           return update({ stack: [...abilities, spell], decision: priority('resolve-valiant') });
         }
+        if (waived) {
+          if (id === 'resolve-valiant') return update({ players: [sourceAfter, opponent], stack: [abilities[1], spell], sequenceEvidence: observed, decision: priority('revealed') });
+          if (id === 'revealed') return update({ stack: [spell], sequenceEvidence: afterProwess, decision: priority('resolve-rage') });
+          if (id === 'resolve-rage') return update({ stack: [], sequenceEvidence: afterRage, decision: priority('combat-prep', object('play-exile', faceUp)) });
+          if (id === 'combat-prep') return update({ step: 'DECLARE_ATTACKERS', decision: { id: 'attack', kind: 'declareAttackers', choices: [object('attack-ember', ember)] } });
+          if (id === 'attack') return update({ combat: [{ defenderId: opponent.id, attackers: [ember], blockers: [] }],
+            decision: { id: 'confirm', kind: 'declareAttackers', choices: [{ id: 'confirm-attack', type: 'button', intent: 'confirm_attack' }] } });
+          if (id === 'confirm') return update({ decision: priority('before-damage') });
+          if (id === 'before-damage') return update({ step: 'POSTCOMBAT_MAIN', combat: [], players: [sourceAfter, { ...opponent, life: 14 }],
+            sequenceEvidence: { ...afterRage, combatRevision: 1, combatDamage: [{ revision: 1, amount: 6, sourceId: ember.id, controllerId: pilot.id, targetId: opponent.id }] },
+            decision: priority('postcombat', object('play-exile', faceUp)) });
+          assert.equal(id, 'postcombat'); assert.equal(selected, 'pass');
+          return update({ step: 'END_TURN', decision: priority('end-step') });
+        }
         assert.equal(id, 'resolve-valiant', 'No further pass after the first newly visible card');
         assert.equal(selected, 'pass');
         update({ decision: priority('revealed'), players: [{ ...own, exile: [{ id: 'land', name: 'Mountain' }] }, opponent],
           stack: [abilities[1], spell], sequenceEvidence: { ...evidence, resolutions: { valiant: 1 }, resolutionRevision: 1 } });
       });
+    if (waived) {
+      const result = await run([origin, ordered, { kind: 'attack', attackers: [ember.id] },
+        { kind: 'pass_until', destination: 'end_step', policy: 'if_no_play' }],
+        { declineExiledCard: { sourceId: ember.id, abilityText: valiant } });
+      assert.equal(result.status, 'completed', JSON.stringify({ reason: result.reason, error: result.error, applied }));
+      assert.equal(result.lastDestination.step, 'END_TURN');
+      assert.deepEqual(applied.slice(-4), [['attack','attack-ember'],['confirm','confirm-attack'],['before-damage','pass'],['postcombat','pass']]);
+      return;
+    }
     if (variant === 'announced pair') {
       await assert.rejects(() => run([origin, ordered, { kind: 'attack', attackers: [ember.id] }]), { code: 'reevaluation_required' });
       assert.deepEqual(applied, [], 'An attack after the forecast is rejected before casting');
@@ -560,4 +595,22 @@ test('[PM-LINE-IMPULSE] the cast witness belongs to the visible permanent of the
   assert.equal(yours.players[1].battlefield[0].enteringSpellId, undefined);
   const spectator = visibleAgentGame({ view: { players } });
   assert.ok(spectator.players.every(player => player.battlefield.every(card => !card.enteringSpellId)));
+});
+
+test('[PM-LINE-IMPULSE-WAIVER] viewer projection admits only a face-up exile and its own visible source', () => {
+  const ownImpulseExile = { stackId: 'ability', sourceId: 'source', cardId: 'exiled', informationRevision: 7 };
+  const card = { name: 'Mountain', zoneChangeCounter: 3 };
+  const view = { sequenceEvidence: { ownImpulseExile }, players: [
+    { playerId: 'pilot', battlefield: { source: card }, exile: { exiled: card } },
+    { playerId: 'other', battlefield: {}, exile: {} },
+  ] };
+  const visible = playerId => visibleAgentGame({ view, playerId });
+  assert.deepEqual(visible('pilot').sequenceEvidence.ownImpulseExile, ownImpulseExile);
+  assert.equal(visible('pilot').players[0].battlefield[0].zoneChangeCounter, 3);
+  for (const viewer of ['other', undefined]) {
+    assert.equal(visible(viewer).sequenceEvidence.ownImpulseExile, undefined);
+    assert.equal(visible(viewer).players[0].battlefield[0].zoneChangeCounter, undefined);
+  }
+  view.players[0].exile.exiled = { ...card, faceDown: true };
+  assert.equal(visible('pilot').sequenceEvidence.ownImpulseExile, undefined);
 });

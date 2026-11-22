@@ -1,6 +1,9 @@
 package mage.server.game;
 
 import mage.MageObject;
+import mage.abilities.Ability;
+import mage.abilities.common.ValiantTriggeredAbility;
+import mage.abilities.effects.common.ExileTopXMayPlayUntilEffect;
 import mage.cards.Card;
 import mage.constants.WatcherScope;
 import mage.constants.Zone;
@@ -132,6 +135,21 @@ public class GameEventRecorder extends Watcher {
         Zone from = event.getFromZone();
         Zone to = event.getToZone();
         UUID owner = game.getOwnerId(event.getTargetId());
+        feed.objectMoved(event.getTargetId());
+        if (from == Zone.LIBRARY && to == Zone.EXILED) {
+            Card card = game.getCard(event.getTargetId());
+            if (card != null && !card.isFaceDown(game)) {
+                Ability source = event.getSource();
+                Permanent origin = source instanceof ValiantTriggeredAbility ? source.getSourcePermanentIfItStillExists(game) : null;
+                boolean exact = origin != null && owner != null && owner.equals(source.getControllerId())
+                        && owner.equals(origin.getOwnerId()) && owner.equals(origin.getControllerId()) && !origin.isFaceDown(game)
+                        && source.getStackMomentSourceZCC() > 0 && source.getStackMomentSourceZCC() == origin.getZoneChangeCounter(game)
+                        && source.getEffects().size() == 1 && source.getEffects().get(0) instanceof ExileTopXMayPlayUntilEffect
+                        && ((ExileTopXMayPlayUntilEffect) source.getEffects().get(0)).matchesSingleTopCardUntilEndOfTurn(event.getTargetId())
+                        && event.getOriginalToZone() == Zone.EXILED && event.getAppliedEffects().isEmpty();
+                feed.libraryCardExiled(owner, exact ? source.getId() : null, exact ? source.getSourceId() : null, card.getId());
+            }
+        }
         Permanent permanent = event.getTarget();
         boolean faceDown = permanent != null && permanent.isFaceDown(game);
         if (from == Zone.BATTLEFIELD && permanent != null) {

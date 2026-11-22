@@ -135,9 +135,18 @@ test('[PM-LINE-MCP-2] the turn guide examples pass the published native MCP inpu
   const commandIds = new Set(lines.map(line => line.commandId));
   for (const id of ['rage-lethal-001', 'skip-unavailable-land-001', 'resolve-visible-response-001',
     'animate-and-attack-001', 'burn-and-land-001', 'order-triggers-001',
-    'land-cast-attack-001', 'burst-at-own-nemesis-001', 'rage-valiant-001', 'saga-entry-001', 'opening-land-after-bottom', 'pass-to-own-draw-001', 'opening-upkeep-draw-001', 'shock-to-combat-001']) {
+    'land-cast-attack-001', 'burst-at-own-nemesis-001', 'rage-valiant-001', 'cast-valiant-attack-001', 'valiant-attack-002', 'saga-entry-001', 'opening-land-after-bottom', 'pass-to-own-draw-001', 'opening-upkeep-draw-001', 'shock-to-combat-001']) {
     assert.ok(commandIds.has(id), `Missing guide example ${id}`);
   }
+  const forecast = lines.find(line => line.commandId === 'cast-valiant-attack-001');
+  assert.equal(forecast.expectedStackIds, undefined);
+  assert.equal(forecast.declineExiledCard.stackId, undefined);
+  assert.ok(forecast.actions.every(action => action.reevaluateAfter === undefined));
+  assert.deepEqual(forecast.actions.map(a => a.kind), ['play', 'play', 'choose', 'attack', 'pass_until']);
+  assert.equal(forecast.actions[0].select.objectId, forecast.declineExiledCard.sourceId);
+  assert.ok(forecast.actions[1].expectTriggers.some(t => t.sourceId === forecast.declineExiledCard.sourceId && t.abilityText === forecast.declineExiledCard.abilityText));
+  assert.deepEqual(forecast.actions[3].attackers, [forecast.declineExiledCard.sourceId]);
+  assert.equal(forecast.actions[4].destination, 'end_step');
   assert.equal(examples[0].commandId, 'rage-lethal-001', 'The XMage fixture binds the first JSON example');
   assert.equal(examples[0].actions[0].select.objectId, '<rage-object-id>');
   for (const id of ['rage-lethal-001', 'respond-with-shock-001', 'rage-valiant-001']) {
@@ -1708,5 +1717,71 @@ for (const [name, types, manaCost, immediatelyPlayable] of [
     assert.deepEqual(result.state.stack.map(object => object.id), [rage.id]);
     assert.equal(result.state.decision.id, 'after-exile');
     assert.deepEqual(f.applied.map(action => action.decisionId), [first.id]);
+  });
+}
+
+for (const variant of ['free spell', 'alternate life cost', 'missing witness', 'other trigger', 'different source', 'two reveals', 'second visible card',
+  'rival response', 'mandatory choice', 'unrelated option', 'object moved', 'different trigger text', 'attempt to cast outcome', 'same-name play', 'source blink', 'next turn']) {
+  test('[PM-LINE-IMPULSE-WAIVER] observed Valiant with an explicit one-card waiver: ' + variant, async t => {
+    const rule = 'Whenever this creature becomes the target of a spell or ability you control for the first time each turn, exile the top card of your library. Until end of turn, you may play that card.';
+    const ember = { id: 'ember', cardId: 'ember', name: 'Emberheart Challenger', zoneChangeCounter: 2, rules: [rule] };
+    const ability = { id: 'valiant', sourceId: ember.id, controllerId: 'pilot', abilityType: 'TRIGGERED_NONMANA', abilityText: rule };
+    const card = { id: 'free', cardId: 'free', ...(variant === 'alternate life cost'
+      ? { name: 'Gut Shot', manaCost: '{R/P}', types: ['INSTANT'] }
+      : { name: 'Ornithopter', manaCost: '{0}', types: ['ARTIFACT', 'CREATURE'] }) };
+    const players = [{ id: 'pilot', yourSeat: true, battlefield: [ember], exile: [] }, { id: 'rival', battlefield: [] }];
+    const f = await fixture(t, { first: readyToPass('resolve'), initial: { players, stack: [ability] },
+      onResponse: ({ decisionId, choiceId }, update, state) => {
+        assert.equal(choiceId, 'pass', 'The waiver can never use the revealed card');
+        if (decisionId === 'resolve-again') {
+          return update({ stack: [], players: [{ ...players[0], exile: [{ ...card, id: 'free-copy', cardId: 'free-copy' }] }, players[1]],
+            decision: readyToPass('after-second'), sequenceEvidence: { ...state.sequenceEvidence, resolutions: { later: 2 },
+              resolutionRevision: 2, informationRevision: 2, ownImpulseExile: { stackId: 'later', sourceId: ember.id, cardId: 'free-copy', informationRevision: 2 } } });
+        }
+        if (decisionId === 'resolve') {
+          const witness = { stackId: variant === 'other trigger' ? 'other' : ability.id, sourceId: variant === 'different source' ? 'copy' : ember.id,
+            cardId: card.id, informationRevision: 1 };
+          const next = readyToPass('next');
+          next.choices.push({ id: 'free-cost', type: 'object', objectId: card.id, card });
+          if (variant === 'unrelated option') next.choices.push({ id: 'other-option', type: 'special' });
+          return update({ stack: [], players: [{ ...players[0], exile: [card] }, players[1]],
+            ...(variant === 'second visible card' ? { revealed: [{ cards: [{ id: 'another' }] }] } : {}),
+            ...(variant === 'source blink' ? { players: [{ ...players[0], battlefield: [{ ...ember, zoneChangeCounter: 4 }], exile: [card] }, players[1]] } : {}),
+            ...(variant === 'next turn' ? { turn: 4 } : {}),
+            decision: variant === 'mandatory choice' ? choice('must-choose') : next,
+            sequenceEvidence: { ...state.sequenceEvidence, resolutions: { valiant: 1 }, resolutionRevision: 1,
+              informationRevision: variant === 'two reveals' ? 2 : 1,
+              publicActions: { rival: variant === 'rival response' ? 1 : 0 },
+              ownImpulseExile: variant === 'missing witness' ? undefined : witness } });
+        }
+        assert.equal(decisionId, 'next');
+        update({ step: variant === 'object moved' ? 'POSTCOMBAT_MAIN' : 'END_TURN', decision: readyToPass('done'),
+          ...(variant === 'object moved' ? { sequenceEvidence: { ...state.sequenceEvidence, ownImpulseExile: undefined } } : {}) });
+      } });
+    const args = { ...f.request, expectedStackIds: [ability.id], declineExiledCard: { sourceId: ember.id,
+      abilityText: variant === 'different trigger text' ? 'Draw a card.' : rule, stackId: ability.id },
+      actions: [...(['attempt to cast outcome','same-name play'].includes(variant) ? [{ kind: 'play',
+          select: variant === 'same-name play' ? { cardName: card.name } : { zone: 'exile', objectId: card.id } }] : []),
+        { kind: 'pass_until', destination: 'end_step', policy: 'if_no_play' }] };
+    const { result } = await f.call('play_line', args);
+    if (variant === 'different trigger text' || ['attempt to cast outcome','same-name play'].includes(variant)) {
+      assert.equal(result.status, 'rejected'); assert.equal(result.appliedDecisions, 0);
+    } else if (variant === 'free spell' || variant === 'alternate life cost') {
+      assert.equal(result.status, 'completed'); assert.deepEqual(f.applied.map(x => x.decisionId), ['resolve', 'next']);
+      assert.equal((await f.call('play_line', args)).result.commandId, f.request.commandId);
+      assert.equal(f.applied.length, 2);
+      const { declineExiledCard: _oldConsent, ...unconsented } = args;
+      const conflicted = (await f.call('play_line', unconsented)).result;
+      assert.equal(conflicted.code, 'key_conflict');
+      f.update({ turn: 5, step: 'PRECOMBAT_MAIN', players, decision: readyToPass('resolve-again'), stack: [{ ...ability, id: 'later' }] });
+      const next = (await f.call('play_line', { ...unconsented, commandId: 'next-physical-trigger', cursor: result.state.cursor + 1, expectedStackIds: ['later'] })).result;
+      assert.equal(next.reason, 'new_information', 'The first command cannot authorize the later trigger of the same card');
+      assert.deepEqual(f.applied.map(x => x.decisionId), ['resolve','next','resolve-again']);
+    } else {
+      const expected = { 'rival response': 'opponent_action', 'mandatory choice': 'response_available',
+        'unrelated option': 'response_available', 'object moved': 'state_changed', 'source blink': 'state_changed', 'next turn': 'turn_changed' };
+      assert.equal(result.reason, expected[variant] ?? 'new_information', JSON.stringify([result.reason, result.code]));
+      assert.deepEqual(f.applied.map(x => x.decisionId), variant === 'object moved' ? ['resolve','next'] : ['resolve']);
+    }
   });
 }
