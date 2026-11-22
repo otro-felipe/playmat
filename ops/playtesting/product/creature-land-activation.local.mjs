@@ -73,10 +73,19 @@ export async function verifyCreatureLandActivation({ startFixture, ownPlayer, ri
       })
     }
     try {
+      const compact = await call('get_game_state', { gameId: state.gameId, view: 'compact' })
+      const payment = compact.decision.choices.find(option => option.objectId === mountain.id)
+        ?.payWithOptions?.find(option => option.color === 'R')
+      assert.ok(payment?.abilityId && payment.sourceId === mountain.id, 'The Mountain exposes its own exact red payment before animation')
+      const animate = { kind: 'activate', sourceId: source.id, abilityId: activation.abilityId, abilityText: activation.abilityText }
+      const rejected = await call('play_line', { gameId: state.gameId, cursor: compact.cursor, commandId: randomUUID(),
+        view: 'compact', actions: [{ ...animate, payWith: [payment, 'absent-fixture-source'] }] })
+      assert.deepEqual([rejected.status, rejected.code, rejected.appliedDecisions, rejected.state.cursor],
+        ['rejected', 'source_unavailable', 0, compact.cursor])
+      assert.deepEqual(rejected.issues[0].path, ['actions', 0, 'payWith', 1])
       const result = await playLineWithPeer({ gameId: state.gameId, cursor: state.cursor, commandId: randomUUID(),
         view: 'compact', waitMs: 15_000, actions: [
-          { kind: 'activate', sourceId: source.id, abilityId: activation.abilityId, abilityText: activation.abilityText,
-            payWith: [{ sourceId: mountain.id, color: 'R' }] },
+          { ...animate, payWith: [payment] },
           { kind: 'attack', attackers: [source.id] },
           { kind: 'pass_until', destination: 'end_step', policy: 'decline_optional' },
         ] }, { gameId: state.gameId, turn: state.turn, activePlayerId: state.activePlayerId })

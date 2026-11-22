@@ -374,7 +374,7 @@ function registerTools(mcp, { contextFor, allowedOrigins }) {
   tool('advance_to_own_turn', 'Pass only when the current engine offers no non-mana optional play, stopping before your next turn or any useful legal play, mandatory decision, public opponent action or missing causal evidence. Zero mana is never evidence that no action exists.', { gameId: Uuid, cursor: Cursor },
     'play', ({ gameId, cursor }) => getSeat().startSequence({ gameId, cursor, steps: [{ kind: 'advance_to_own_turn' }] }, current().reauthorize));
   const playSequence = (args) => getSeat().startSequence(args, current().reauthorize);
-  tool('play_line', 'Submit the longest justified line of plays, activations, choices, attacks and passes from the current cursor, on either turn. Ordinary handoffs are automatic. The line stops on new information, rival actions or a required choice it cannot answer. Returns applied progress and seat-visible game state. Check status, code and recovery when a line is rejected. For a discrete prompt, an option’s playLineAction contains its exact current decisionId and choiceId. Read the turn-planning guide for complete JSON examples, including two targets, Ward, activation, combat and command recovery.', Line, 'play', async (args, signal) => {
+  tool('play_line', 'Submit the longest justified line of plays, activations, choices, attacks and passes from the current cursor, on either turn. Ordinary handoffs are automatic. The line stops on new information, rival actions or a required choice it cannot answer. Returns applied progress and seat-visible game state. Check status, code and recovery when a line is rejected. Copy ordered payWith entries from the chosen sources’ payWithOptions. At a payment prompt or other discrete choice, an option’s playLineAction contains its exact current decisionId and choiceId. Read the turn-planning guide for complete JSON examples, including two targets, Ward, activation, combat and command recovery.', Line, 'play', async (args, signal) => {
     const actions = LineActions.safeParse(args.actions);
     if (!actions.success) return lineArgumentRejection(args, actions.error);
     const seat = getSeat();
@@ -385,7 +385,7 @@ function registerTools(mcp, { contextFor, allowedOrigins }) {
       return rejectedLine(args, {
         stage: 'preflight', code: error.code, message: error.message, recovery: error.lineRejection,
         actionIndex: error.actionIndex ?? null,
-        ...(error.field ? { issues: [{ path: ['actions', error.actionIndex, error.field], code: error.code, message: error.message }] } : {}),
+        ...(error.field ? { issues: [{ path: ['actions', error.actionIndex, error.field, ...(error.paymentIndex !== undefined ? [error.paymentIndex] : [])], code: error.code, message: error.message }] } : {}),
         ...(error.state ? { state: seat.withChoiceActions(error.state) } : {}),
       });
     }

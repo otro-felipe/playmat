@@ -1132,7 +1132,7 @@ for (const boundary of ['reached', 'rival', 'information', 'mandatory', 'missed-
   });
 }
 
-for (const variant of ['declared', 'ambiguous', 'announced-question', 'unannounced-question']) {
+for (const variant of ['declared', 'ambiguous', 'announced-question', 'unannounced-question', 'source-spent', 'source-reused']) {
   const ambiguous = variant === 'ambiguous';
   const question = variant.endsWith('-question');
   test(`[PM-LINE-PAY] four declared sources and mana pickers: ${variant}`, async (t) => {
@@ -1157,6 +1157,11 @@ for (const variant of ['declared', 'ambiguous', 'announced-question', 'unannounc
         manaAbilities: options(i + k),
       })),
     });
+    const promptAt = i => {
+      const prompt = pay(i);
+      if (variant === 'source-reused' && i === 2) prompt.choices.unshift(pay(0).choices[0]);
+      return prompt;
+    };
     const picker = (i) => ({
       id: 'picker-' + i,
       kind: 'panel',
@@ -1183,7 +1188,10 @@ for (const variant of ['declared', 'ambiguous', 'announced-question', 'unannounc
       },
       onResponse({ decisionId }, update, state) {
         if (decisionId === 'initial') return update({ ownHand: [], stack: [{ ...card, id: 'on-stack' }], decision: pay(0) });
-        if (decisionId.startsWith('pay-')) return update({ decision: picker(Number(decisionId.slice(-1))) });
+        if (decisionId.startsWith('pay-')) {
+          const i = Number(decisionId.slice(-1));
+          return update({ decision: variant === 'source-reused' && i === 2 ? { ...picker(0), id: 'picker-2' } : picker(i) });
+        }
         if (decisionId.startsWith('picker-')) {
           const i = Number(decisionId.slice(-1));
           const afterPayment = question
@@ -1197,7 +1205,7 @@ for (const variant of ['declared', 'ambiguous', 'announced-question', 'unannounc
                 ],
               }
             : priority('resolve');
-          return update({ decision: i === 3 ? afterPayment : pay(i + 1) });
+          return update({ decision: i === 3 ? afterPayment : promptAt(i + 1) });
         }
         if (decisionId === 'question') return update({ decision: priority('resolve') });
         assert.equal(decisionId, 'resolve');
@@ -1214,22 +1222,31 @@ for (const variant of ['declared', 'ambiguous', 'announced-question', 'unannounc
         {
           kind: 'play',
           select: { objectId: card.id, zone: 'hand' },
-          payWith: sources.map((land, i) => ({ sourceId: land.id, color: colors[i], ...(i === 3 ? { abilityId: 'green-3' } : {}) })),
+          payWith: sources.map((land, i) => ({ sourceId: i === 2 && ['source-spent', 'source-reused'].includes(variant) ? sources[0].id : land.id, color: colors[i], ...(i === 3 ? { abilityId: 'green-3' } : {}) })),
         },
         ...(variant === 'announced-question'
           ? [{ kind: 'choose', guard: { kind: 'question', instruction: 'Use the optional effect?' }, select: { answer: false } }]
           : []),
       ],
     });
+    if (variant === 'source-spent') {
+      assert.deepEqual([result.status, result.reason, result.actionIndex, result.error.paymentIndex, result.appliedDecisions],
+        ['interrupted', 'source_unavailable', 0, 2, 5]);
+      assert.deepEqual(result.state.decision.choices.map(c => c.payWithOptions[0].sourceId), ['source-2', 'source-3']);
+      assert.deepEqual(f.applied.map(a => a.choiceId), ['cast', 'tap-source-0', 'use-black-0', 'tap-source-1', 'use-green-1']);
+      assert.equal((await f.call('wait_for_decision', { gameId, commandId: f.request.commandId })).result.appliedDecisions, 5);
+      return;
+    }
     assert.equal(
       result.status,
       ambiguous || variant === 'unannounced-question' ? 'interrupted' : 'completed',
       JSON.stringify([result.reason, result.actionIndex, result.appliedDecisions]),
     );
     const paid = ['cast', 'tap-source-0', 'use-black-0', 'tap-source-1', 'use-green-1', 'tap-source-2'];
+    if (variant === 'source-reused') paid[5] = 'tap-source-0';
     if (ambiguous) assert.equal(result.reason, 'ambiguous_choice');
     else {
-      paid.push('use-black-2', 'tap-source-3', 'use-green-3');
+      paid.push(variant === 'source-reused' ? 'use-black-0' : 'use-black-2', 'tap-source-3', 'use-green-3');
       if (variant === 'unannounced-question') assert.equal(result.reason, 'response_available');
       else {
         if (question) paid.push('no');
@@ -1406,3 +1423,141 @@ for (const [context, first, initial] of [
     assert.deepEqual(f.applied, []);
   });
 }
+
+test('[PM-LINE-PAY-REF] same-name Mountains and Mutavault expose exact own payment options before casting and at the cost', async t => {
+  const mountains = ['mountain-a', 'mountain-b'].map(id => ({ id, name: 'Mountain', types: ['LAND'] }));
+  const vault = { id: 'mutavault', name: 'Mutavault', types: ['LAND'] };
+  const dual = { id: 'dual', name: 'Multicolor land', types: ['LAND'] };
+  const enemy = { id: 'enemy-land', name: 'Mountain', types: ['LAND'] };
+  const grouped = (card, colors) => ({ id: 'click-' + card.id, card, objectId: card.id, type: 'object',
+    manaAbilities: colors.map(color => ({ abilityId: card.id + '-' + color, manaColors: [color] })) });
+  const choices = [...mountains.map(m => grouped(m, ['R'])), grouped(vault, ['C']), grouped(dual, ['B', 'G']), grouped(enemy, ['R'])];
+  const f = await fixture(t, { first: { id: 'priority', kind: 'priority', choices }, initial: {
+    players: [{ id: 'pilot', yourSeat: true, battlefield: [...mountains, vault, dual] }, { id: 'rival', battlefield: [enemy] }],
+  }, onResponse(_, update) { update({ decision: { id: 'next', kind: 'priority', choices: [{ id: 'pass', type: 'pass' }] } }); } });
+  const read = async () => (await f.call('get_game_state', { gameId, view: 'compact' })).result.decision.choices;
+  const before = await read();
+  assert.deepEqual(before.slice(0, 2).map(c => c.payWithOptions?.[0].sourceId), mountains.map(m => m.id));
+  assert.deepEqual(before[2].payWithOptions, [{ sourceId: vault.id, abilityId: 'mutavault-C', color: 'C' }]);
+  assert.deepEqual(before[3].payWithOptions, ['B', 'G'].map(color => ({ sourceId: dual.id, abilityId: 'dual-' + color, color })));
+  assert.equal(before[4].payWithOptions, undefined);
+  f.update({ decision: { id: 'cost', kind: 'payMana', choices: [choices[1], choices[3]] } });
+  const cost = await read();
+  assert.deepEqual(cost[0].playLineAction, { kind: 'choose', decisionId: 'cost', choiceId: 'click-mountain-b' });
+  assert.deepEqual(cost[1].payWithOptions, before[3].payWithOptions);
+  const actionable = (await f.call('get_game_state', { gameId, view: 'compact' })).result;
+  const submit = async (commandId, action) => (await f.call('play_line', { gameId, cursor: actionable.cursor,
+    commandId, actions: [action], view: 'compact' })).result;
+  const stale = await submit('old-source-prompt', { ...cost[0].playLineAction, decisionId: 'previous-payment' });
+  assert.deepEqual([stale.code, stale.appliedDecisions], ['stale_decision', 0]);
+  const missing = await submit('wrong-source', { kind: 'choose', decisionId: 'cost', select: { objectId: 'fictional' } });
+  assert.deepEqual([missing.reason, missing.appliedDecisions, missing.error.field], ['source_unavailable', 0, 'select']);
+  const recovered = await submit('tap-current-mountain', cost[0].playLineAction);
+  assert.deepEqual([recovered.appliedDecisions, f.applied.map(a => a.choiceId)], [1, ['click-mountain-b']]);
+});
+
+test('[PM-LINE-PAY-REF] invalid second payment for a cast is rejected before submission, with a copyable correction', async t => {
+  const mountain = { id: 'mountain-a', name: 'Mountain', types: ['LAND'] };
+  const spell = { id: 'nemesis', cardId: 'nemesis', name: 'Screaming Nemesis', types: ['CREATURE'] };
+  const choices = [{ id: 'cast', type: 'object', objectId: spell.id, card: spell },
+    { id: 'tap-a', type: 'manaAbility', objectId: mountain.id, card: mountain }];
+  const f = await fixture(t, { first: { id: 'priority', kind: 'priority', choices }, initial: {
+    ownHand: [spell], players: [{ id: 'pilot', yourSeat: true, battlefield: [mountain] }] },
+    onResponse(_, update) { update({ decision: { id: 'pay', kind: 'payMana', paymentSourceId: spell.id, choices: [choices[1]] } }); } });
+  const { result } = await f.call('play_line', { ...f.request, view: 'compact', actions: [
+    { kind: 'play', select: { objectId: spell.id }, payWith: [mountain.id, 'fabricated-id'] },
+  ] });
+  assert.deepEqual([result.status, result.code, result.appliedDecisions, result.actionIndex], ['rejected', 'source_unavailable', 0, 0]);
+  assert.deepEqual(result.issues[0].path, ['actions', 0, 'payWith', 1]);
+  assert.deepEqual(result.state.decision.choices[1].payWithOptions, [{ sourceId: mountain.id }]);
+  assert.deepEqual(f.applied, []);
+});
+
+test('[PM-LINE-STACK-PASS] visible stack priority offers one deliberate pass and preserves the new rival response', async t => {
+  const pass = { id: 'pass', type: 'pass', label: 'Pass' };
+  const instant = { id: 'rival-spell', controllerId: 'rival', name: 'Public spell' };
+  const stack = [instant];
+  const f = await fixture(t, { first: { id: 'first', kind: 'priority', choices: [pass] }, initial: { stack },
+    onResponse(_, update, state) {
+      update({ stack: [...stack, { id: 'rival-response', controllerId: 'rival' }],
+        decision: { id: 'next', kind: 'priority', choices: [pass] },
+        sequenceEvidence: { ...state.sequenceEvidence, publicActions: { pilot: 0, rival: 1 } } });
+    } });
+  const reads = async () => (await f.call('get_game_state', { gameId, view: 'compact' })).result.decision.choices[0];
+  const option = await reads();
+  assert.deepEqual(option.playLineAction, { kind: 'pass_priority' });
+  assert.deepEqual(f.applied, []);
+  const r = (await f.call('play_line', { ...f.request, actions: [option.playLineAction] })).result;
+  assert.deepEqual(f.applied.map(a => a.decisionId), ['first']);
+  assert.deepEqual(r.state.stack.map(x => x.id), ['rival-spell', 'rival-response']);
+  f.update({ priority: 'opponent' });
+  assert.equal((await reads()).playLineAction, undefined);
+  f.update({ rollbackRequest: { id: 'request' }, priority: 'self' });
+  assert.equal((await reads()).playLineAction, undefined);
+});
+
+for (const laterSource of ['land-played', 'fabricated-later']) {
+  test('[PM-LINE-PAY-REF] preflight defers a later resource until its announcement: ' + laterSource, async t => {
+    const land = { id: 'land-played', cardId: 'mountain', name: 'Mountain', types: ['LAND'] };
+    const spell = { id: 'spell', cardId: 'spell', name: 'Fixture spell', types: ['INSTANT'] };
+    const landPlay = { id: 'land', type: 'object', card: land, objectId: land.id, canPlayLand: true };
+    const cast = { id: 'cast', type: 'object', card: spell, objectId: spell.id };
+    const tap = { id: 'tap', type: 'object', card: land, objectId: land.id };
+    const priority = (id, c) => ({ id, kind: 'priority', choices: [c] });
+    const f = await fixture(t, { first: priority('land-prompt', landPlay), initial: { ownHand: [land, spell] },
+      onResponse({ choiceId }, update, state) {
+        if (choiceId === 'land') return update({ players: state.players.map(player => player.yourSeat ? { ...player, battlefield: [land] } : player),
+          ownHand: [spell], decision: priority('cast-prompt', cast) });
+        if (choiceId === 'cast') return update({ ownHand: [], decision: { id: 'pay', kind: 'payMana', paymentSourceId: spell.id, choices: [tap] },
+          stack: [{ ...spell, id: 'on-stack', controllerId: 'pilot' }] });
+        if (choiceId === 'tap') return update({ decision: priority('resolve', { id: 'pass', type: 'pass' }) });
+        update({ stack: [], decision: priority('finished', { id: 'pass-later', type: 'pass' }),
+          sequenceEvidence: { ...state.sequenceEvidence, resolutionRevision: 1, resolutions: { 'on-stack': 1 } } });
+      } });
+    const r = (await f.call('play_line', { ...f.request, actions: [
+      { kind: 'play', playAs: 'land', select: { objectId: land.id, zone: 'hand' } },
+      { kind: 'play', select: { objectId: spell.id, zone: 'hand' }, payWith: [laterSource] },
+    ] })).result;
+    if (laterSource === land.id) {
+      assert.deepEqual([r.status, f.applied.map(a => a.choiceId)], ['completed', ['land', 'cast', 'tap', 'pass']]);
+    } else {
+      assert.deepEqual([r.reason, r.actionIndex, r.error.paymentIndex, f.applied.map(a => a.choiceId)],
+        ['source_unavailable', 1, 0, ['land']]);
+    }
+  });
+}
+
+test('[PM-LINE-PAY-REF] a second activation cannot spend a missing Mountain; only current Den and Mutavault choices are returned', async t => {
+  const lands = ['Den of the Bugbear', 'Mutavault'].map((name, i) => ({
+    id: i ? 'vault' : 'den', name, types: ['LAND'], rules: ['{T}: Add {C}.', `{1}: ${name} becomes a creature until end of turn.`],
+  }));
+  const mountains = Array.from({ length: 4 }, (_, i) => ({ id: 'red-' + i, name: 'Mountain', types: ['LAND'] }));
+  const abilities = lands.map((card, i) => ({ id: 'animation-' + i, abilityType: 'ACTIVATED_NONMANA', value: card.rules[1] }));
+  // A sole legal nonmana ability can open its own payment directly.
+  const priority = lands.map((land, i) => ({ ...priorityWithActivations(land, [abilities[i]], false), id: 'activate-' + i }));
+  const payment = (source, options, index) => ({ id: 'pay-' + source.id + '-' + index, kind: 'payMana', paymentSourceId: source.id,
+    choices: options.map(card => ({ id: 'tap-' + card.id, type: 'object', card, objectId: card.id })) });
+  const activate = (card, i) => ({ kind: 'activate', sourceId: card.id, abilityId: abilities[i].id, abilityText: card.rules[1],
+    payWith: i ? [mountains[0].id] : mountains.map(c => c.id) });
+  const pass = { id: 'pass', type: 'pass' };
+  const f = await fixture(t, { first: priority[0], initial: {
+    players: [{ id: 'pilot', yourSeat: true, battlefield: [...lands, ...mountains] }, { id: 'rival', battlefield: [] }],
+  }, onResponse({ decisionId }, update, state) {
+    if (decisionId === 'activate-0') return update({ decision: payment(lands[0], mountains, 0) });
+    if (decisionId.startsWith('pay-den-')) {
+      const i = Number(decisionId.at(-1));
+      if (i < 3) return update({ decision: payment(lands[0], mountains.slice(i + 1), i + 1) });
+      return update({ decision: { id: 'resolve', kind: 'priority', choices: [pass] },
+        stack: [{ id: 'on-stack', sourceId: lands[0].id, controllerId: 'pilot', abilityType: 'ACTIVATED_NONMANA', abilityText: lands[0].rules[1] }] });
+    }
+    if (decisionId === 'resolve') return update({ stack: [], decision: priority[1],
+      sequenceEvidence: { ...state.sequenceEvidence, resolutionRevision: 1, resolutions: { 'on-stack': 1 } } });
+    assert.equal(decisionId, 'activate-1');
+    update({ decision: payment(lands[1], lands, 0) });
+  } });
+  const out = (await f.call('play_line', { ...f.request, view: 'compact', actions: lands.map(activate) })).result;
+  assert.deepEqual([out.reason, out.actionIndex, out.error.paymentIndex, out.appliedDecisions], ['source_unavailable', 1, 0, 7]);
+  assert.deepEqual(out.state.decision.choices.map(c => c.payWithOptions[0].sourceId), lands.map(c => c.id));
+  const again = (await f.call('wait_for_decision', { gameId, commandId: f.request.commandId })).result;
+  assert.deepEqual([again.appliedDecisions, f.applied.length], [7, 7]);
+});

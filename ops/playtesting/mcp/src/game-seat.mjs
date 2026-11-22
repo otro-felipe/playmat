@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { publicActivationText } from '../dist/engine-core.mjs';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { absentPaymentIndex, paymentOptions } from './payment-sources.mjs';
 import { observedAttacks, observedBlocks, PlannedDefenderCombat, PlannedPermanentCombat } from './planned-combat.mjs';
 import { canCallCoin, drawTriggerSources, guardsEffectQuestion, needsEffectReevaluation, needsSpellReevaluation,
   needsStackReevaluation, optionalInformationEffect, plansInformationBranch, triggeredEffect } from './effect-boundaries.mjs';
@@ -13,7 +14,7 @@ const MAX_OUTCOMES = 256;
 const TURN_STEPS = ['UNTAP', 'UPKEEP', 'DRAW', 'PRECOMBAT_MAIN', 'BEGIN_COMBAT', 'DECLARE_ATTACKERS',
   'DECLARE_BLOCKERS', 'FIRST_COMBAT_DAMAGE', 'COMBAT_DAMAGE', 'END_COMBAT', 'POSTCOMBAT_MAIN', 'END_TURN', 'CLEANUP'];
 const TURN_PHASES = ['BEGINNING', 'PRECOMBAT_MAIN', 'COMBAT', 'POSTCOMBAT_MAIN', 'END'];
-const DISCRETE_PROMPTS = new Set(['startingPlayer', 'mulligan', 'mulliganBottom', 'question', 'target', 'pickCards', 'panel']);
+const DISCRETE_PROMPTS = new Set(['startingPlayer', 'mulligan', 'mulliganBottom', 'question', 'target', 'pickCards', 'panel', 'payMana']);
 const DISCRETE_CHOICES = new Set(['button', 'object', 'option', 'pile']);
 const WINDOW_ACTIONS = new Set(['play', 'activate', 'choose', 'attack', 'block']);
 const DECLARATION_STEP = { attack: 'DECLARE_ATTACKERS', block: 'DECLARE_BLOCKERS' };
@@ -30,11 +31,12 @@ function intermediateWindow(action, next) {
 const PERMANENT_SPELL_TYPES = new Set(['ARTIFACT', 'BATTLE', 'CREATURE', 'ENCHANTMENT', 'PLANESWALKER']);
 
 export class ToolError extends Error {
-  constructor(code, message, { actionIndex, field } = {}) {
+  constructor(code, message, { actionIndex, field, paymentIndex } = {}) {
     super(message);
     this.code = code;
     if (actionIndex !== undefined) this.actionIndex = actionIndex;
     if (field !== undefined) this.field = field;
+    if (paymentIndex !== undefined) this.paymentIndex = paymentIndex;
   }
 }
 
@@ -80,6 +82,13 @@ export function reaches(state, target) {
     && (target.step === undefined || state.step === target.step)
     && (target.priority === undefined || state.priority === target.priority)
     && (target.stackEmpty !== true || state.stack.length === 0);
+}
+
+function checkPaymentSources(state, payWith, actionIndex) {
+  const paymentIndex = absentPaymentIndex(state, payWith);
+  if (paymentIndex >= 0) throw new ToolError('source_unavailable',
+    'That payment source object ID is absent from the current position. Copy the sourceId from a visible payWithOptions entry.',
+    { actionIndex, field: 'payWith', paymentIndex });
 }
 
 function visibleDecision(state) {
@@ -253,11 +262,22 @@ export class GameSeat {
   withChoiceActions(state) {
     const decision = state?.decision;
     if (state?.status !== 'active' || state.rollbackRequest || this.#current || this.#inFlight
-      || !decision?.id || !DISCRETE_PROMPTS.has(decision.kind) || this.#uncertain === decision.id
-      || !decision.choices?.some(choice => DISCRETE_CHOICES.has(choice.type))) return state;
-    const choices = decision.choices.map(choice => DISCRETE_CHOICES.has(choice.type) && choice.id
-      ? { ...choice, playLineAction: { kind: 'choose', decisionId: decision.id, choiceId: choice.id } }
-      : choice);
+      || !decision?.id || this.#uncertain === decision.id || !decision.choices?.length) return state;
+    const pay = decision.kind === 'payMana';
+    const ordinary = DISCRETE_PROMPTS.has(decision.kind);
+    const priority = decision.kind === 'priority' && state.priority === 'self';
+    if (!ordinary && !priority) return state;
+    const ownObjects = new Set(state.players?.find(player => player.yourSeat)?.battlefield?.map(card => card.id));
+    const choices = decision.choices.map(choice => {
+      const refs = (pay || priority) && paymentOptions(choice, decision.kind, ownObjects);
+      const exact = choice.id && (ordinary && DISCRETE_CHOICES.has(choice.type) || pay && choice.type === 'manaAbility');
+      const passOnStack = priority && state.stack?.length
+        && choice.type === 'pass' && choice.id;
+      if (passOnStack) return { ...choice, playLineAction: { kind: 'pass_priority' } };
+      if (!refs && !exact) return choice;
+      return { ...choice, ...(refs ? { payWithOptions: refs } : {}),
+        ...(exact ? { playLineAction: { kind: 'choose', decisionId: decision.id, choiceId: choice.id } } : {}) };
+    });
     return { ...state, decision: { ...decision, choices } };
   }
 
@@ -376,6 +396,15 @@ export class GameSeat {
       && first?.kind === 'choose' && first.decisionId && first.decisionId !== decision.id) {
       throw new ToolError('stale_decision', 'The first choice refers to a different decisionId. Use the current cursor and the selected option from state.decision.', { actionIndex: 0, field: 'decisionId' });
     }
+    // Later plays may depend on a land, an untap, or another spell in this line.
+    // Check only an already legal first announcement, without assuming those results.
+    const source = first?.kind === 'activate' ? { objectId: first.sourceId, zone: 'battlefield' } : first?.select;
+    if (!this.#current && !this.#inFlight && !initial.rollbackRequest && first?.payWith?.length
+      && decision?.kind === 'priority' && initial.priority === 'self' && (first.when === 'priority' || !initial.stack.length && ['PRECOMBAT_MAIN', 'POSTCOMBAT_MAIN'].includes(initial.step)
+        && initial.players?.some(p => p.yourSeat && p.id === initial.activePlayerId))
+      && source && plannedChoice(initial, decision, { select: source })) {
+      checkPaymentSources(initial, first.payWith, 0);
+    }
     const steps = [];
     const terminalPass = (action) => ['pass_until', 'pass_priority'].includes(action?.kind);
     const finalPass = terminalPass(actions.at(-1));
@@ -456,10 +485,11 @@ export class GameSeat {
             select: target.select, intendedTargetIds: roleIds, semanticTarget: true, boundCast: true,
             singleDeclaredTarget: !activating && action.targets.length === 1 });
         }
-        for (const entry of action.payWith ?? []) {
+        if (action.payWith?.length) steps[firstStep].payWith = action.payWith;
+        for (const [paymentIndex, entry] of (action.payWith ?? []).entries()) {
           const payment = typeof entry === 'string' ? { sourceId: entry } : entry;
           steps.push({ kind: 'answer', guard: { kind: 'payMana' }, select: { objectId: payment.sourceId, zone: 'battlefield' },
-            payment: payment.color || payment.abilityId ? payment : undefined, boundCast: true,
+            payment: payment.color || payment.abilityId ? payment : undefined, paymentIndex, boundCast: true,
             activationSourceId: activating ? action.sourceId : undefined });
         }
       } else if (action.kind === 'choose') {
@@ -1313,7 +1343,14 @@ export class GameSeat {
             }
           }
           const choice = plannedChoice(state, decision, step);
+          if (!choice && decision.kind === 'payMana' && step.select?.objectId
+            && !decision.choices.some(c => (c.objectId ?? c.card?.id) === step.select.objectId)) {
+            throw new ToolError('source_unavailable',
+              'The current payment prompt does not offer that source. Inspect its choices and copy the selected playLineAction to continue from this cursor.',
+              { field: step.paymentIndex === undefined ? 'select' : 'payWith', paymentIndex: step.paymentIndex });
+          }
           if (!choice) throw new ToolError('illegal_choice', 'The planned choice is unavailable in the current decision.');
+          if (step.payWith) checkPaymentSources(state, step.payWith, step.actionIndex);
           if (step.adoptTriggerOrder) {
             const options = decision.choices.filter((option) => option.type === 'object');
             const ordered = options.length === 2 ? [choice, options.find((option) => option.id !== choice.id)] : [choice];
@@ -1733,6 +1770,7 @@ export class GameSeat {
       const latest = this.snapshot();
       sequence.error = { code: sequence.reason, message: reason instanceof ToolError ? reason.message : 'The engine could not verify this step; inspect the fresh state before retrying.',
         ...(reason?.field ? { field: reason.field } : {}),
+        ...(reason?.paymentIndex !== undefined ? { paymentIndex: reason.paymentIndex } : {}),
         stepIndex: sequence.completedSteps, actionIndex: sequence.actionIndex ?? null, expectedDecisionKind: steps[sequence.completedSteps]?.guard?.kind ?? null,
         actualDecisionKind: latest.decision?.kind ?? null,
         mismatchedGuardFields: Object.entries(steps[sequence.completedSteps]?.guard ?? {}).filter(([key, value]) => value !== undefined
