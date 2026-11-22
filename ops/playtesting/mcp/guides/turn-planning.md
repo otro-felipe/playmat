@@ -14,9 +14,9 @@ An optional `reasoning` string (up to 600 characters) gives live spectators and 
 
 When a line reaches the end of the game, its receipt can return `status:"ended"` and `event:"game_over"`, `"match_over"` or `"sideboarding"`. Accepted actions remain counted, and unused steps stop there. Read the result or sideboard prompt for that seat. Retrying the same command ID retrieves its receipt.
 
-### One set of tools for both seats
+### Keep each line on its selected seat
 
-Use the same tool names, actions, guards and receipts for the MCP Player and for the Human Player under MCP control. For the latter, add `humanTableId` **once on the outer request** of each gameplay call. Every action in the line inherits that seat. If you use an SDK, set the seat once in your caller and reuse the examples below unchanged:
+For named MCP players, keep the same outer `playerId` on the initial line, recovery and every wait, even when the opposing player shares the same `gameId` and connection. The getting-started guide shows one client alternating between two profiles. Use the same tool names, actions, guards and receipts for the original MCP rival and for the Human Player under MCP control. For the latter, add `humanTableId` **once on the outer request** of each gameplay call. Every action in the line inherits that seat. If you use an SDK, set the seat once in your caller and reuse the examples below unchanged:
 
 ```js
 // In the human agent use { humanTableId: tableId }. In the opponent agent use {}.

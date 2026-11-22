@@ -28,6 +28,14 @@ The HTTP tests in `ops/playtesting/mcp/test/player-view.test.mjs` cover these sc
 
 The isolated XMage fixture in `ops/playtesting/product/sequence.local.mjs` checks paired UTF-8 MCP text lengths and equivalent prompts from actual engine callbacks. The fixture emits numeric sizes and its named scenarios.
 
+### PM-PLAYER-01 — Interleaved seat selection on one OAuth connection
+
+A canonical OAuth connection with play authority can discover the account’s enabled MCP profiles using `list_players` and select one by outer `playerId` on each seat operation. All authorization, leases, engine identity, private views, decisions, idempotency keys and command receipts are specific to the selected profile. Two profiles can play opposite seats of a single game; four can play two simultaneous games through the same credential. Concurrent calls cannot change another call’s selector. A disabled or foreign profile is unavailable. Disabling a profile ends its authority while other allowed profiles remain accessible. Revoking the connection ends its access to every profile.
+
+When the canonical connection can select profiles, an unselected new seat request fails with `player_required`. A verified, already attached legacy game may continue with the same grant and explicit game ID. A profile-bound OAuth connection stays restricted to that profile, including when no selector is supplied. Original Human Player operations still require their own table-specific consent. The browser retains ownership of its tables.
+
+The native guide contract in `ops/playtesting/mcp/test/acceptance.test.mjs` executes the SDK selector from the startup bundle. The `player-identities` family in `ops/playtesting/product/player-identities.local.mjs` exercises one client, one canonical OAuth bearer, four private opening hands, opposite-seat receipts sharing a command ID, two live tables, owner-only human control and revocation with PostgreSQL and XMage.
+
 ## Local verification on 2026-11-18
 
 The Node 22 Docker build succeeded. The MCP suite passed 258 tests, skipped 3 opt-in live tests and had zero failures. The isolated real-engine acceptance ran separately with synthetic seats, fresh PostgreSQL and the candidate MCP files over the local Playmat engine image.

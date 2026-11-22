@@ -1,66 +1,125 @@
-// Executed only within human-match.local's isolated synthetic OAuth/PG/XMage fixture.
+// One OAuth connection drives four independent synthetic XMage seats. Never export private projections.
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 
-export async function verifyPlayerIdentities({ base, issuer, Cookie, authorizePilot, connect, until }) {
-  const flags = ['CL','FR','JP',null]
-  const lands = ['Forest','Mountain','Plains','Island']
+export async function verifyPlayerIdentities({ base, issuer, Cookie, authorizePilot, connect, until, browser, foreignCookie, revokeCanonical }) {
+  const options = cookie => ({ Cookie:cookie, Origin:issuer, 'content-type':'application/json' })
+  async function createProfile(displayName, flag, mcpEnabled, cookie = Cookie) {
+    const response = await fetch(base+'/api/playtesting/players', { method:'POST', headers:options(cookie),
+      body:JSON.stringify({displayName,flag,mcpEnabled}) })
+    assert.equal(response.status,201)
+    return response.json()
+  }
+  const call = await connect('single-account-coordinator')
+  const flags = ['CL','FR','JP',null], basics = ['Forest','Mountain','Plains','Island']
   const pilots = []
   for (const [i,flag] of flags.entries()) {
-    const created = await fetch(base + '/api/playtesting/players', { method:'POST',
-      headers:{ Cookie, Origin:issuer, 'content-type':'application/json' },
-      body:JSON.stringify({ displayName:'Fixture player '+i, mcpEnabled:true, flag }) })
-    assert.equal(created.status,201)
-    const profile = await created.json()
-    const token = await authorizePilot(profile.playerId)
-    const call = await connect('profile-fixture-' + i, token)
-    const { players } = await call('list_players')
-    assert.deepEqual(players.map(p=>[p.playerId,p.flag]),[[profile.playerId,flag]])
-    pilots.push({ ...profile, call, deck:{ name:'Basics '+i, cards:[{cardName:lands[i],amount:60}], sideboard:[] } })
+    const profile = await createProfile('Local pilot '+i,flag,true)
+    pilots.push({ ...profile, deck:{ name:'Basics '+i, cards:[{cardName:basics[i],amount:60}],sideboard:[] } })
   }
-  // The first host abandons a waiting, unclaimed table before using the same
-  // identity in the two live pairings. Never cancel a match as fixture cleanup.
+  const hidden = await createProfile('Disabled pilot',null,false)
+  const foreign = await createProfile('Other owner',null,true,await foreignCookie())
+  const allowed = async () => (await call('list_players')).players
+  const ids = rows => rows.map(row=>row.playerId).sort()
+  assert.deepEqual(ids(await allowed()),ids(pilots),'One canonical bearer lists all four enabled account profiles')
+  await call('get_game_state',{},'player_required')
+  for (const playerId of [hidden.playerId,foreign.playerId,randomUUID()]) {
+    await call('get_game_state',{playerId},'player_forbidden')
+  }
+  const as = (index, name, args = {}, expected) => call(name,{ ...args,playerId:pilots[index].playerId },expected)
+
+  // Abandon a waiting table before taking another reservation for the same profile.
   const first = pilots[0]
-  const abandoned = await first.call('create_game',{ playerId:first.playerId,name:'Unclaimed fixture',format:'Pioneer',
-    guestEngineName:pilots[1].engineName,deck:first.deck })
-  const reservation = await first.call('get_player_reservation',{playerId:first.playerId})
+  const abandoned = await as(0,'create_game',{name:'Unclaimed fixture',format:'Pioneer',
+    guestEngineName:pilots[1].engineName,deck:first.deck})
+  const reservation = await as(0,'get_player_reservation')
   assert.equal(reservation.tableId,abandoned.tableId)
-  const cancel = {playerId:first.playerId,reservationId:reservation.reservationId,tableId:abandoned.tableId}
-  assert.equal((await first.call('cancel_player_reservation',cancel)).phase,'available')
-  assert.equal((await first.call('cancel_player_reservation',cancel)).phase,'available')
+  const cancel = {reservationId:reservation.reservationId,tableId:abandoned.tableId}
+  assert.equal((await as(0,'cancel_player_reservation',cancel)).phase,'available')
+  assert.equal((await as(0,'cancel_player_reservation',cancel)).phase,'available')
+
   const tables = await Promise.all([0,2].map(async i => {
-    const host=pilots[i], guest=pilots[i+1]
-    const { tableId } = await host.call('create_game',{ playerId:host.playerId, name:'Isolated pair '+i,
-      guestEngineName:guest.engineName, format:'Pioneer', deck:host.deck })
-    await guest.call('join_game',{ playerId:guest.playerId, tableId, deck:guest.deck })
+    const { tableId } = await as(i,'create_game',{name:'Local pair '+i,guestEngineName:pilots[i+1].engineName,
+      format:'Pioneer',deck:pilots[i].deck})
+    await as(i+1,'join_game',{tableId,deck:pilots[i+1].deck})
     return tableId
   }))
   assert.equal(new Set(tables).size,2)
-  await Promise.all(tables.map((tableId,pair)=>pilots[pair*2].call('start_match',{tableId})))
+  await Promise.all(tables.map((tableId,pair)=>as(pair*2,'start_match',{tableId})))
   const states = await until(async()=>{
-    const observed = await Promise.all(pilots.map(p=>p.call('get_game_state',{playerId:p.playerId})))
+    const observed = await Promise.all(pilots.map((_,i)=>as(i,'get_game_state')))
     for (const [i,state] of observed.entries()) {
-      if (!state.gameId || !state.decision || state.ownHand?.length) continue
-      const pick = state.decision.choices.find(c=>/^Play first\b/i.test(c.label)) ?? state.decision.choices[0]
-      if (pick) await pilots[i].call('submit_decision',{gameId:state.gameId,decisionId:state.decision.id,
+      if (!state.gameId || state.ownHand?.length || state.decision?.kind!=='startingPlayer') continue
+      const pick=state.decision.choices.find(choice=>/^Play first\b/i.test(choice.label))
+      if (pick) await as(i,'submit_decision',{gameId:state.gameId,cursor:state.cursor,decisionId:state.decision.id,
         choiceId:pick.id,idempotencyKey:state.decision.id},['not_actionable','stale_decision'])
     }
     return observed.every(s=>s.status==='active' && s.gameId && s.ownHand?.length) && observed
-  },'four individual opening hands across two simultaneous tables')
+  },'four distinct seat projections on two simultaneously active tables')
   for (const [i,state] of states.entries()) {
-    const pair=Math.floor(i/2)
-    assert.equal(state.tableId,tables[pair])
+    assert.equal(state.tableId,tables[Math.floor(i/2)])
     assert.equal(state.gameId,states[i ^ 1].gameId)
     assert.notEqual(state.gameId,states[i ^ 2].gameId)
-    assert.ok(state.ownHand.every(card=>card.name===lands[i]))
-    assert.equal(state.players.find(player=>player.yourSeat).flagName,(flags[i]??'world').toLowerCase()+'.png')
-    assert.equal(state.players.find(player=>!player.yourSeat).flagName,(flags[i ^ 1]??'world').toLowerCase()+'.png')
-    await pilots[i].call('get_game_state',{playerId:pilots[i ^ 1].playerId},'player_forbidden')
-    await pilots[i].call('get_game_state',{gameId:states[i ^ 2].gameId},'forbidden_game')
+    assert.ok(state.ownHand.length>0 && state.ownHand.every(card=>card.name===basics[i]))
+    assert.ok(!JSON.stringify(state).includes('"name":"'+basics[i ^ 1]+'"'),'No opposing opening cards in this projection')
+    assert.equal(state.players.find(p=>p.yourSeat).flagName,(flags[i]??'world').toLowerCase()+'.png')
+    assert.equal(state.players.find(p=>!p.yourSeat).flagName,(flags[i ^ 1]??'world').toLowerCase()+'.png')
+    await as(i,'get_game_state',{gameId:states[i ^ 2].gameId},'forbidden_game')
   }
-  await Promise.all([0,2].map(i=>pilots[i].call('concede',{gameId:states[i].gameId,entireMatch:true})))
-  await until(async()=> {
-    const views=await Promise.all(pilots.map(p=>p.call('list_players')))
-    return views.every(view=>view.players[0]?.activeTableId===null)
-  }, 'archive completion to release all four durable reservations')
-  console.log('Verified four OAuth players, real XMage table flags and private hands, two simultaneous games and four released PostgreSQL reservations.')
+
+  // Identical gameId and commandId on opposite seats must resolve within each selected ledger.
+  const commandId='keep-the-observed-hand'
+  const receipts = new Map()
+  await until(async()=>{
+    for (const i of [0,2,1,3]) {
+      if (receipts.has(i)) continue
+      const {gameId,cursor,decision} = await as(i,'get_game_state')
+      const keep = decision?.kind==='mulligan' && decision.choices.find(c=>/^Keep\b/i.test(c.label))
+      if (!keep) continue
+      const reply = await as(i,'play_line',{gameId,cursor,commandId,waitMs:25000,view:'compact',
+        actions:[{kind:'choose',decisionId:decision.id,choiceId:keep.id}]})
+      assert.equal(reply.appliedDecisions,1)
+      receipts.set(i,reply.sequenceId)
+    }
+    return receipts.size===4
+  },'all four profiles to keep once through one bearer')
+  assert.equal(new Set(receipts.values()).size,4)
+  for (const [i,sequenceId] of receipts) {
+    const recovered=await as(i,'wait_for_decision',{gameId:states[i].gameId,commandId,timeoutMs:100})
+    assert.equal(recovered.sequenceId,sequenceId)
+    assert.equal(recovered.appliedDecisions,1)
+  }
+  await call('get_game_state',{},'player_required')
+
+  // A separate, profile-bound grant is a negative authorization control only.
+  const fixed = await connect('single-profile-control',await authorizePilot(pilots[1].playerId))
+  assert.deepEqual(ids((await fixed('list_players')).players),[pilots[1].playerId])
+  await fixed('get_game_state',{playerId:first.playerId},'player_forbidden')
+  // Disabling one profile during its active game takes effect on the same client immediately.
+  const disabled = await fetch(base+'/api/playtesting/players/'+first.playerId,{method:'PATCH',headers:options(Cookie),
+    body:JSON.stringify({mcpEnabled:false})})
+  assert.equal(disabled.status,200)
+  assert.deepEqual(ids(await allowed()),ids(pilots.slice(1)))
+  await as(0,'get_game_state',{gameId:states[0].gameId},'player_forbidden')
+  await as(0,'wait_for_decision',{gameId:states[0].gameId,commandId,timeoutMs:100},'player_forbidden')
+  assert.equal((await as(1,'get_game_state')).gameId,states[0].gameId)
+  await Promise.all([1,2].map(i=>as(i,'concede',{gameId:states[i].gameId,entireMatch:true})))
+  await until(async()=>{
+    const views=await (await fetch(base+'/api/playtesting/players',{headers:{Cookie}})).json()
+    return pilots.every(pilot=>views.players.find(p=>p.playerId===pilot.playerId)?.activeTableId===null)
+  },'archive closure to release all four reservations, including the disabled profile')
+
+  assert.equal((await fixed('get_player_reservation')).phase,'available','A fixed grant may omit its profile selector')
+  // The browser remains the human table owner when the same connection coordinates MCP profiles.
+  await browser.open()
+  const room = await browser.api.serverGetMainRoomId()
+  const human = await call('create_human_match',{mode:'friend',humanMcpAllowed:false,format:'Pioneer',
+    winsNeeded:1,name:'Owner-only table',deck:first.deck})
+  assert.equal(await browser.api.tableIsOwner(room,human.tableId),true)
+  await call('get_game_state',{humanTableId:human.tableId},'human_seat_forbidden')
+  await as(1,'get_game_state',{humanTableId:human.tableId},'player_forbidden')
+  await browser.api.tableRemove(room,human.tableId)
+  await revokeCanonical()
+  await assert.rejects(()=>call('list_players'),/401|unauthoriz/i)
+  console.log('Verified a single canonical OAuth bearer and MCP session for four profiles, interleaved games and receipts, owner-only human control and live revocation.')
 }

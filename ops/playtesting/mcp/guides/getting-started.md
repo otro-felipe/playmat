@@ -2,7 +2,7 @@
 
 For a saved list, call `list_decks({})` and pass its `id` as `deckId` to `join_game` or `create_game`. For example, `join_game({"tableId":"<invited-table-uuid>","deckId":"<agent-library-deck-uuid>"})` seats the exact saved list and records its version for performance history. For an unsaved list, send the inline `deck` field instead.
 
-Connect to the Thoughtseize `/mcp` endpoint through OAuth. On a standard account connection, Thoughtseize assigns the MCP rival automatically and keeps the Human Player's personal library separate. A connection authorized for a named player profile controls that profile and uses the account's shared MCP deck library. Use `tools/list` for input schemas and follow the scopes the owner approved.
+Connect to the Thoughtseize `/mcp` endpoint through OAuth. One standard account connection can pilot multiple named MCP players. Each profile uses the account’s shared MCP deck library. The original Human Player keeps a separate personal library. Use `tools/list` for input schemas and follow the scopes the owner approved.
 
 Before creating, joining or playing, call `get_guide({"bundle":true})` to load **all four guide texts** and their shared version. Repeat after losing context. A connector with an older schema can read the four guides individually by `guideId`: `getting-started`, `turn-planning`, `card-catalog` and `rules`. The equivalent `playmat://guides/<guideId>` resources are also available. An empty call only returns the guide index.
 
@@ -11,29 +11,67 @@ Before creating, joining or playing, call `get_guide({"bundle":true})` to load *
 3. Use `play_line` from that cursor with a fresh `commandId`. Request `view:"compact"` in state reads, lines and waits when the connector lists that field. Send the longest justified line, including known choices, combat and where you intend to stop. For any observed engine prompt, `choose` takes its `decisionId`, a listed `choiceId` and the requested `value` if applicable. The line returns a receipt and current state together. When it still owns execution, wait for that line with `wait_for_decision` using the receipt’s `gameId` and `commandId`. When it stops, plan from the returned state and preserve all accepted actions.
 4. Between games of a best-of-three match, read `get_sideboard_state` and submit the current decision with `submit_sideboard`. Keep within the registered card pool. Read the new game state for its game ID or final result when the match ends.
 
-## Pilot a named Thoughtseize player
+## Choose a player on each call
 
-The owner selects one profile when approving each pilot's OAuth connection. Read `list_players({})` on that connection and use the returned `playerId` on the outer tool call. Omitting it keeps the same player. Each pilot needs its own connection and seat. The table host can obtain the invited profile's public `engineName` from the coordinator.
+Call `list_players({})` once on your existing OAuth connection. It returns the account’s authorized, MCP-enabled profiles with their `playerId`, `engineName`, flag and current table. Use the product `playerId` on the **outer request** to create, join, start, play, read state, or wait. A single client can select both seats of a game and run another table at the same time. Give each independent pilot only its own seat’s responses.
 
-For example, use the matching calls below on the host and invited guest clients. Replace the IDs with values already returned to the corresponding pilot. Each pilot selects its saved deck from `list_decks({})`.
+With an already connected MCP SDK `client`, this helper creates a caller per authorized profile. Every caller uses the same connection. Each closure fixes its own selector, so interleaved requests keep their player.
 
 ```js
-// Host connection
-await host.callTool({ name: "create_game", arguments: {
-  playerId: hostPlayerId, format: "Pioneer", name: "Pioneer practice",
-  deckId: hostDeckId, guestEngineName: invitedEngineName
-} })
-// Guest connection, using the returned tableId
-await guest.callTool({ name: "join_game", arguments: {
-  playerId: guestPlayerId, tableId, deckId: guestDeckId
-} })
-await host.callTool({ name: "start_match", arguments: { playerId: hostPlayerId, tableId } })
-await guest.callTool({ name: "get_game_state", arguments: { playerId: guestPlayerId, view: "compact" } })
-// When the guest's line still owns execution, wait on its original receipt
-await guest.callTool({ name: "wait_for_decision", arguments: {
-  playerId: guestPlayerId, gameId, commandId, timeoutMs: 15000, view: "compact"
-} })
+async function playerDirectory(client) {
+  async function call(name, args = {}) {
+    const result = await client.callTool({ name, arguments: args })
+    if (result.isError) throw Error("MCP request failed: " + name)
+    const value = result.structuredContent ?? JSON.parse(result.content[0].text)
+    if (value.status === "rejected") throw Error(value.code)
+    return value
+  }
+  const { players } = await call("list_players")
+  function forPlayer(playerId) {
+    if (!players.some(player => player.playerId === playerId)) throw Error("Choose a listed playerId")
+    return (name, args = {}) => call(name, { ...args, playerId })
+  }
+  return { players, forPlayer }
+}
 ```
+
+For an invited pair, choose `hostPlayerId` and `guestPlayerId` from the returned list and each saved `deckId` from `list_decks({})`. Set `format` to the agreed format. This example starts one new table:
+
+```js
+const { players, forPlayer } = await playerDirectory(client)
+const host = forPlayer(hostPlayerId)
+const guest = forPlayer(guestPlayerId)
+const invited = players.find(player => player.playerId === guestPlayerId)
+const { tableId } = await host("create_game", {
+  name: "Pioneer practice", format: "Pioneer", deckId: hostDeckId,
+  guestEngineName: invited.engineName
+})
+await guest("join_game", { tableId, deckId: guestDeckId })
+await host("start_match", { tableId })
+const guestState = await guest("get_game_state", { view: "compact" })
+```
+
+Calls may alternate even when both players share a `gameId`. Suppose the host has a running line and the guest has an observed mulligan decision. The following code waits for the host’s command and submits the guest’s chosen Keep. Each consumer receives only its own result.
+
+```js
+const decision = guestState.decision
+const keep = decision?.kind === "mulligan" && decision.choices.find(c => c.label === "Keep")
+if (keep) {
+  await Promise.all([
+    host("wait_for_decision", {
+      gameId: hostReceipt.state.gameId, commandId: hostReceipt.commandId, timeoutMs: 25000, view: "compact"
+    }).then(deliverToHostPilot),
+    guest("play_line", {
+      gameId: guestState.gameId, cursor: guestState.cursor, commandId: crypto.randomUUID(),
+      actions: [{ kind: "choose", decisionId: decision.id, choiceId: keep.id }], view: "compact"
+    }).then(deliverToGuestPilot)
+  ])
+}
+```
+
+Use each pilot’s own `gameId`, `cursor`, `decisionId` and `commandId` for subsequent actions. Use the same `playerId` again when waiting for or recovering its command. These IDs and private projections belong to that seat. A disabled, foreign or otherwise unauthorized profile is rejected with `player_forbidden`. Refresh `list_players` if the owner changes control. Account tools such as the shared deck library continue to use the account connection.
+
+With enabled profiles, an omitted selector on a new seat action returns `player_required`. Supply a listed `playerId`. A separately authorized, profile-bound connection remains fixed to its player and can omit the selector. A standard account with no enabled profiles retains its original MCP rival. An already attached legacy game can continue through the same connection with its verified `gameId`. For the original Human Player, use that table’s explicit `humanTableId` and the owner’s table-specific consent; do not combine it with a profile selector.
 
 Only one table can reserve each player. On `player_busy`, inspect the profile's current table before retrying. After reauthorizing or reconnecting, use the current `gameId` and inspect the receipt or recovery status before sending another move. Combat, targets and card selectors use the IDs from the current XMage view. `humanTableId` belongs to the standard Human Player flow below.
 

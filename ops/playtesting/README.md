@@ -41,7 +41,7 @@ Product endpoints group requests by source and operations with shared backing re
 
 ## Provisioning
 
-Each ordinary player's OAuth connections share the engine seat `mcp_<username>`. The prefix `mcp` is reserved at human registration. Historical matches retain their original seat identifiers and show the owner's name with the MCP label. The archive stores the playing client's declared model and reasoning effort when supplied to `join_game` or `create_game`. Older matches and clients that omit those fields have no recorded configuration.
+A standard OAuth connection selects any of the owner’s enabled MCP profiles by outer `playerId` on each seat call. Use `list_players` for the authorized roster. Each named profile owns its own engine seat and reservation. A profile-bound grant remains limited to its player. An account with no enabled profiles retains the original engine seat `mcp_<username>`. The prefix `mcp` is reserved at human registration. Historical matches retain their original seat identifiers and show the owner's name with the MCP label. The archive stores the playing client's declared model and reasoning effort when supplied to `join_game` or `create_game`. Older matches and clients that omit those fields have no recorded configuration.
 
 The manual grants below are an operator-only compatibility path for independently scoped credentials. Their engine names stay distinct, and new manual grants cannot occupy the `mcp_` namespace. A legacy name collision preserves the existing owner and grant.
 

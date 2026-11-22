@@ -230,6 +230,32 @@ test('[PM-LINE-04] one bootstrap returns all four complete guides without openin
   assert.equal(fixtures.size, 0, 'Reading the bundle must not create or join an engine seat');
 });
 
+test('[PM-PLAYER-01] the startup guide routes interleaved work through one SDK client and the selected playerId', async t => {
+  const { url } = await start(t);
+  const client = await connect(t, url, 'fixture-player');
+  const { guides } = (await call(client, 'get_guide', { bundle: true })).value;
+  const text = guides.find(guide => guide.name === 'getting-started').text;
+  const code = text.match(/## Choose a player on each call[\s\S]*?```js\n([\s\S]*?)\n```/);
+  assert.ok(code, 'The installed startup bundle must include the single-connection player example');
+  const { playerDirectory } = await import('data:text/javascript;base64,' +
+    Buffer.from(code[1]+'\nexport { playerDirectory };').toString('base64'));
+  const calls = [];
+  const sdk = { async callTool(request) {
+    calls.push(request);
+    const response = request.name === 'list_players' ? { players: [{playerId:'red'},{playerId:'blue'}] } : request.arguments;
+    return {content:[{type:'text',text:JSON.stringify(response)}]};
+  }};
+  const directory = await playerDirectory(sdk);
+  const red = directory.forPlayer('red'), blue = directory.forPlayer('blue');
+  await Promise.all([red('wait_for_decision',{gameId:'same-game',commandId:'same-command',timeoutMs:25000}),
+    blue('get_game_state',{gameId:'same-game',view:'compact'})]);
+  await red('get_game_state',{gameId:'same-game',view:'compact'});
+  assert.deepEqual(calls.map(r => [r.name,r.arguments.playerId]), [
+    ['list_players',undefined],['wait_for_decision','red'],['get_game_state','blue'],['get_game_state','red'],
+  ]);
+  assert.throws(()=>directory.forPlayer('unlisted'));
+});
+
 test('[PM-GAME-01a] the bundled sideboard example submits the latest seat and guards the intended printing moves', async (t) => {
   const { url } = await start(t);
   const client = await connect(t, url, 'fixture-player');

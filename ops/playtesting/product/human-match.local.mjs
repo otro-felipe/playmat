@@ -299,7 +299,19 @@ try {
   if (process.env.PLAYMAT_SEQUENCE_SCENARIOS === 'human-sideboarding') await verifyHumanSideboard()
   else if (process.env.PLAYMAT_SEQUENCE_SCENARIOS === 'player-identities') {
     const { verifyPlayerIdentities } = await import('./player-identities.local.mjs')
-    await verifyPlayerIdentities({ base, issuer, Cookie, authorizePilot, connect, until })
+    async function foreignCookie() {
+      const other = humanName+'Other'
+      const fixtureProduct = await createProduct({ databaseUrl:process.env.DATABASE_URL })
+      try { await fixtureProduct.provisionHuman(other,password) } finally { await fixtureProduct.close() }
+      const login = await form('/login',{username:other,password})
+      assert.equal(login.status,303)
+      return login.headers.get('set-cookie').split(';')[0]
+    }
+    async function revokeCanonical() {
+      const revoked = await form('/oauth/revoke',{client_id:clientId,token})
+      assert.equal(revoked.status,200)
+    }
+    await verifyPlayerIdentities({ base, issuer, Cookie, authorizePilot, connect, until, browser, foreignCookie, revokeCanonical })
   } else await verifyHumanControls()
 } finally {
   for(const client of clients) await client.close()
