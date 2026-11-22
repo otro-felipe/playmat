@@ -102,15 +102,15 @@ export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [id, owner.browserSession, request.challenge, request.state, request.client.clientId,
       request.client.redirectUri, audience, request.scopes, deadline(consentLifetime)])
     const profiles = (await listPlayers(pool, owner)).players.filter(player => player.mcpEnabled)
-    const selectPlayer = profiles.length ? `<label>Identidad del piloto<select name="playerId"><option value="">Jugador MCP de la cuenta</option>${profiles.map(p => `<option value="${p.playerId}">${escape(p.displayName)}${p.flag ? ' · '+escape(p.flag) : ''}</option>`).join('')}</select></label>
-      <p>Un piloto de perfil solo controla esa identidad y usa la biblioteca compartida de mazos MCP. El historial queda en la cuenta.</p>` : ''
+    const selectPlayer = profiles.length ? `<label>Acceso de la conexión<select name="playerId"><option value="">Cuenta y jugadores MCP habilitados</option>${profiles.map(p => `<option value="${p.playerId}">${escape(p.displayName)}${p.flag ? ' · '+escape(p.flag) : ''}</option>`).join('')}</select></label>
+      <p>Si eliges un jugador por nombre, esta conexión solo podrá controlar a ese jugador y usar la biblioteca MCP compartida.</p>` : ''
     const permissions = request.scopes.map(scope => `<li>${scopeLabels[scope]}</li>`).join('')
     return html(res, 'Conectar tu cuenta de Thoughtseize', `
       <p>Autoriza a <strong>${escape(request.client.name)}</strong> a usar tu cuenta de Thoughtseize <strong>${escape(owner.username)}</strong> con estos permisos.</p>
       <p>Cliente: ${escape(request.client.clientId)}<br>Destino: <strong>${escape(request.client.redirectUri)}</strong></p>
       ${new URL(request.client.redirectUri).protocol === 'http:' ? '<p>El destino es una aplicación en este dispositivo. Comprueba que abriste esta conexión desde la aplicación que quieres autorizar.</p>' : ''}
       <ul>${permissions}</ul>
-      ${request.scopes.includes('play') ? '<p>Con el Jugador MCP de la cuenta, el agente puede crear partidas y jugar cuando lo invitas. También puede jugar en tu lugar en las partidas que habiliten MCP para el Jugador Humano, incluidas las que cree con ese permiso. En esas partidas verás tu mano y la mesa en el navegador, y el agente tomará las decisiones de juego.</p>' : ''}
+      ${request.scopes.includes('play') ? '<p>Con acceso a la cuenta, una misma conexión puede jugar con cada jugador que habilites en Administrar jugadores. También puede controlar tu asiento humano en las mesas donde permitas ese acceso.</p>' : ''}
       <form method="post" action="/oauth/authorize"><input type="hidden" name="request" value="${id}">${selectPlayer}
       <button name="decision" value="allow">Autorizar</button>
       <button name="decision" value="deny">Cancelar</button></form>`, new URL(request.client.redirectUri).origin)
@@ -261,11 +261,12 @@ export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions
       const { players } = await listPlayers(pool, owner)
       return html(res, 'Jugadores', renderPlayerForms(players, escape))
     }
-    const { rows } = await pool.query(`SELECT c.id,c.client_id,c.scopes_approved,g.scopes FROM oauth_connections c JOIN agent_grants g
-      ON g.engine_key=c.engine_key AND g.account_id=c.account_id WHERE c.audience=$1 AND c.account_id=$2
+    const { rows } = await pool.query(`SELECT c.id,c.client_id,c.scopes_approved,g.scopes,p.display_name FROM oauth_connections c JOIN agent_grants g
+      ON g.engine_key=c.engine_key AND g.account_id=c.account_id LEFT JOIN player_profiles p ON p.id=g.player_id AND p.account_id=g.account_id WHERE c.audience=$1 AND c.account_id=$2
       AND c.revoked_at IS NULL AND c.expires_at>now() AND g.revoked_at IS NULL AND g.oauth_managed ORDER BY c.created_at DESC`,
     [audience, owner.accountId])
     const entries = rows.map(row => `<form method="post"><input type="hidden" name="connection" value="${escape(row.id)}">
+      <strong>${row.display_name ? 'Jugador MCP · '+escape(row.display_name) : 'Conexión de cuenta'}</strong>
       <span>${escape(registry.name(row.client_id))} · ${approvedScopes(row.scopes, row.scopes_approved).map(scope => scopeLabels[scope]).join(', ')}</span>
       <button>Desconectar</button></form>`).join('')
     return html(res, 'Conexiones MCP', `<p><a href="${playerPage}">Administrar jugadores</a></p>` + (entries || '<p>No tienes conexiones activas.</p>'))

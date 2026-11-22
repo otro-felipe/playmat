@@ -30,5 +30,5 @@ export function renderPlayerForms(players, escape) {
       <label><span><input type="checkbox" role="switch" name="mcpEnabled"${player?.mcpEnabled ? ' checked' : ''}> Permitir conexiones MCP</span></label>
       <button type="submit">${player ? 'Guardar cambios' : 'Crear jugador'}</button></form></section>`
   }
-  return '<a href="/oauth/connections">Volver a conexiones MCP</a>' + players.map(form).join('') + form(null)
+  return '<a href="/oauth/connections">Volver a conexiones MCP</a><p>Habilita los jugadores que quieres controlar desde tu conexión MCP de cuenta. Cada uno tiene su propio asiento.</p>' + players.map(form).join('') + form(null)
 }
