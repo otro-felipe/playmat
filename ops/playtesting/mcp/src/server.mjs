@@ -147,7 +147,7 @@ const Turn = { gameId: Uuid, cursor: Cursor, actions: z.array(z.union([TurnPlay,
   expectedStackIds: z.array(StringId).max(16).optional(), finish: z.enum(['next_turn', 'end_step', 'none']).default('next_turn') };
 const LinePassUntilShape = z.object({
   kind: z.literal('pass_until'),
-  destination: z.enum(['my_upkeep', 'my_draw', 'end_step', 'current_turn']).describe('Next own upkeep, forthcoming own draw (including this turn from upkeep), this turn’s end step, or an explicit current-turn condition. A skipped window or missing draw returns the observed state.'),
+  destination: z.enum(['my_upkeep', 'my_draw', 'end_step', 'current_turn']).describe('Next own upkeep, forthcoming own draw (including this turn from upkeep), this turn’s end step, or an explicit current-turn condition. For example, current_turn with step BEGIN_COMBAT or POSTCOMBAT_MAIN and priority self returns your decision there.'),
   policy: z.enum(['if_no_play', 'decline_optional']).default('if_no_play').describe('Decline optional plays only when explicitly intended, for example to bluff a response. Both policies stop on an opponent action, new information or an unplanned required choice.'),
   ...GameCondition,
 }).strict();
