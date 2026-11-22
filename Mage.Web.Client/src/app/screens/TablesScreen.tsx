@@ -1,3 +1,4 @@
+import { useQuery } from '@tanstack/react-query';
 import { SpectatorLink } from '../spectator/SpectatorLink';
 import { MatchHumanSeat, useEnabledHumanSeat, useHumanInputLock } from '../ui/humanSeat';
 import { PlayerLabel } from '../ui/PlayerLabel';
@@ -74,6 +75,17 @@ export function TablesScreen() {
     if (!decks.loaded) void decks.refresh();
   }, [decks]);
 
+  const broadcasts = useQuery({
+    queryKey: ['owned-mcp-broadcasts', userName],
+    enabled: PRIVATE_PLAYTESTING && Boolean(userName),
+    refetchInterval: 8000,
+    queryFn: async ({ signal }): Promise<{ tableId: string; tableName: string }[]> => {
+      const response = await fetch('/api/playtesting/tables/spectator-links', { signal });
+      if (!response.ok) throw new Error('Could not load spectator tables');
+      return (await response.json()).tables;
+    },
+  });
+  const t = useT();
   const games = tables.filter((table) => !table.isTournament);
   const mine = games.filter((table) => table.seats?.some((seat) => seat.playerName === userName) && table.tableState !== 'FINISHED');
   const open = games.filter((table) => table.tableState === 'WAITING' && !mine.includes(table));
@@ -109,6 +121,13 @@ export function TablesScreen() {
   return (
     <div className={styles.page}>
       {PRIVATE_PLAYTESTING && <p><Link to="/recover">Return to your saved private matches</Link></p>}
+      {!!broadcasts.data?.length && <section className={styles.group}>
+        <h2 className={styles.groupLabel}>{t('watch.myMcpTables')}</h2>
+        {broadcasts.data.map(({ tableId, tableName }) => <article key={tableId} className={styles.row}>
+          <h3 className={styles.tableName}>{tableName}</h3>
+          <div className={styles.rowActions}><SpectatorLink tableId={tableId} publicBoard openable /></div>
+        </article>)}
+      </section>}
       <div className={styles.columns}>
         <Zone
           label="Open tables"

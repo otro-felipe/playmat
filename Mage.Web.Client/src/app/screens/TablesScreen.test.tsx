@@ -58,7 +58,7 @@ test('[PM-SETUP-AC-02] the host selects a saved friend for the invitation', asyn
   fireEvent.change(selector, { target: { value: 'Guest' } });
   fireEvent.click(dialog.getByRole('button', { name: /^Host$/ }));
   await waitFor(() => expect(fetcher).toHaveBeenCalledWith('/api/playtesting/invites', expect.objectContaining({ method: 'POST' })));
-  const [, request] = fetcher.mock.calls[0];
+  const [, request] = fetcher.mock.calls.find(([url]) => url === '/api/playtesting/invites')!;
   expect(JSON.parse(String(request.body))).toMatchObject({ tableId, mode: 'friend', guestEngineName: 'Guest' });
 });
 
@@ -75,8 +75,8 @@ test('[PM-SETUP-AC-03] the host can create a link-only invitation with an empty 
   const selector = dialog.getByRole<HTMLSelectElement>('combobox', { name: 'Invited player' });
   expect(selector.selectedOptions[0].textContent).toBe('Anyone with the link');
   fireEvent.click(dialog.getByRole('button', { name: /^Host$/ }));
-  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
-  const [, request] = fetcher.mock.calls[0];
+  await waitFor(() => expect(fetcher.mock.calls.filter(([url]) => url === '/api/playtesting/invites')).toHaveLength(1));
+  const [, request] = fetcher.mock.calls.find(([url]) => url === '/api/playtesting/invites')!;
   const invite = JSON.parse(String(request.body));
   expect(invite).toMatchObject({ tableId, mode: 'friend' });
   expect(invite).not.toHaveProperty('guestEngineName');
@@ -240,4 +240,23 @@ test('a delegated host can start the table while close and table chat input stay
   await page.findByText('Player controlled by MCP · Read only');
   expect(page.queryByRole('button', { name: 'Close' })).toBeNull();
   expect((page.getByRole('button', { name: 'Start' }) as HTMLButtonElement).disabled).toBe(false);
+});
+
+
+test('the account owner can copy the spectator link for an unlisted MCP table before game one', async () => {
+  tables = [];
+  const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined);
+  const fetcher = vi.fn(async (url: string) => {
+    if (url === '/api/playtesting/tables/spectator-links') return Response.json({ tables: [{ tableId, tableName: 'Luna fixture' }] });
+    if (url === '/api/playtesting/tables/' + tableId + '/spectator-link') return Response.json({ path: '/watch/public-fixture' });
+    return Response.json({});
+  });
+  vi.stubGlobal('fetch', fetcher);
+  const { page } = mount();
+  const button = await page.findByRole('button', { name: 'Copy spectator link' });
+  expect(page.getByText('Luna fixture')).toBeTruthy();
+  expect(page.getByRole('button', { name: 'Watch match' })).toBeTruthy();
+  expect(button.getAttribute('title')).toContain('public board');
+  fireEvent.click(button);
+  await waitFor(() => expect(writeText).toHaveBeenCalledWith(window.location.origin + '/watch/public-fixture'));
 });

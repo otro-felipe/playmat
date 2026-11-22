@@ -51,6 +51,18 @@ for (const viewport of [{ width: 1512, height: 805 }, { width: 390, height: 844 
   });
 }
 
+test('the public MCP board shows held cards as backs from their public counts', async ({ page }) => {
+  const frame = { ...spectatorSnapshot, visibility: 'public-board', hands: {}, lines: [], chat: [] };
+  await page.route('**/api/playtesting/spectate/**', route => route.request().url().endsWith('/events')
+    ? route.fulfill({ contentType: 'text/event-stream', body: 'retry: 5000\n\n' })
+    : route.fulfill({ json: frame }));
+  await page.goto('/watch/' + spectatorToken);
+  await expect(page.getByRole('listitem', { name: 'Hidden card', exact: true })).toHaveCount(1);
+  await expect(page.getByRole('listitem', { name: 'Forest', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Lightning Bolt', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Copiar enlace de espectador' })).toHaveAttribute('title', /tablero/i);
+});
+
 test('an expired spectator link shows a clear message without visiting player login', async ({ page }) => {
   await page.route('**/api/playtesting/spectate/**', route => route.fulfill({ status: 404, json: {} }));
   await page.goto('/watch/' + spectatorToken);

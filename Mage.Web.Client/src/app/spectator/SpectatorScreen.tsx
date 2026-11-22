@@ -18,6 +18,7 @@ import styles from './SpectatorBoard.module.css';
 
 interface Snapshot {
   role: 'spectator';
+  visibility?: 'public-board';
   gameId: string | null;
   status: 'waiting' | 'playing' | 'between_games' | 'finished';
   view: GameView | null;
@@ -39,7 +40,7 @@ function ProjectedBoard({ frame, gameId, seatDisplayNames }: { frame: Snapshot; 
     if (frame.view) session.showFrame(frame.view, frame.players[0]?.playerId ?? null);
   }, [frame, session]);
   const state = useStore(session.store);
-  const broadcast = useMemo(() => ({ events: spectatorFeed(gameId, frame.lines, frame.chat) }), [gameId, frame.lines, frame.chat]);
+  const broadcast = useMemo(() => ({ events: spectatorFeed(gameId, frame.lines, frame.chat), publicBoardOnly: frame.visibility === 'public-board' }), [gameId, frame.lines, frame.chat, frame.visibility]);
   const aliases = useMemo(() => ({ ...seatDisplayNames, ...Object.fromEntries(frame.players.flatMap(player =>
     player.displayName ? [[player.name, player.displayName]] : [])) }), [frame.players, seatDisplayNames]);
   return <MatchStage state={state} session={session} replayHands={frame.hands} publicSpectator={broadcast} seatDisplayNames={aliases} />;
@@ -109,7 +110,7 @@ export function SpectatorBroadcast({ endpoint, tableId, path, onLeave, humanMcpN
   const status = [tableId && t('match.input.delegated'), frame && t(`watch.${frame.status}`),
     frame && t('watch.viewers', { count: frame.spectators })].filter(Boolean).join(' · ');
   return <PublicBroadcast.Provider value><MatchHumanSeat.Provider value={(frame?.humanMcpName || humanMcpName)?.toLowerCase() ?? null}><SpectatorFrame status={status} actions={<>
-    {problem !== 'missing' && <SpectatorLink tableId={tableId} path={path} />}
+    {frame && <SpectatorLink tableId={tableId} path={path} publicBoard={frame.visibility === 'public-board'} />}
     {onLeave && <Button variant="quiet" size="sm" onClick={onLeave}>{t('career.backToPlay')}</Button>}
   </>}>
     {frame?.view && frame.gameId ? <ProjectedBoard key={frame.gameId} frame={frame} gameId={frame.gameId} seatDisplayNames={seatDisplayNames} />

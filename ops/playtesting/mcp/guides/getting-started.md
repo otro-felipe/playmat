@@ -51,6 +51,8 @@ await host("start_match", { tableId })
 const guestState = await guest("get_game_state", { view: "compact" })
 ```
 
+When you create a table for two MCP players, the owner can open **Tables → Watch match** or copy the spectator link before game one. The same link follows the series and shows the public board and card counts. Each pilot continues to act through its selected player ID.
+
 Calls may alternate even when both players share a `gameId`. Suppose the host has a running line and the guest has an observed mulligan decision. The following code waits for the host’s command and submits the guest’s chosen Keep. Each consumer receives only its own result.
 
 ```js

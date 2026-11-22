@@ -182,7 +182,7 @@ export interface MatchStageProps {
   replayLog?: ChatMessage[];
   /** explicitly authorized replay hands keyed by engine player ID */
   replayHands?: Readonly<Record<string, Readonly<Record<string, CardView>>>>;
-  publicSpectator?: { events: readonly SpectatorFeedEvent[] };
+  publicSpectator?: { events: readonly SpectatorFeedEvent[]; publicBoardOnly?: boolean };
   reviewLayout?: boolean;
   /** where leaving goes, instead of closing the game and going back to Play */
   onLeave?: () => void;
@@ -316,7 +316,12 @@ function MatchBoard({ session, state, replayLog, replayHands, publicSpectator, r
   // watching: the seat's hand, if its player lets us see it, and only backs while hands are hidden for the broadcast
   // (a replay of one's own game shows the hand that was held, as before)
   const seatHand = useMemo(
-    () => (publicSpectator ? { cards: Object.values(replayHands?.[board.me?.player.playerId ?? ''] ?? {}), faceDown: false } : mode === 'observeHuman' ? { cards: hand, faceDown: false } : spectating ? spectatorHand(view, board.me?.player, mode === 'watch' && hideHands) : null),
+    () => {
+      if (publicSpectator?.publicBoardOnly) return spectatorHand(view, board.me?.player, true);
+      if (publicSpectator) return { cards: Object.values(replayHands?.[board.me?.player.playerId ?? ''] ?? {}), faceDown: false };
+      if (mode === 'observeHuman') return { cards: hand, faceDown: false };
+      return spectating ? spectatorHand(view, board.me?.player, mode === 'watch' && hideHands) : null;
+    },
     [spectating, mode, hand, view, board.me?.player, hideHands, publicSpectator, replayHands],
   );
   const stack = useMemo(() => Object.values(view?.stack ?? {}), [view?.stack]);
