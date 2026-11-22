@@ -7,29 +7,12 @@ import { CardMarkdown, CardPreviewName, type PreviewCard } from '../ui/CardMarkd
 import { Button, IconButton } from '../ui/Button';
 import { DecisionContext, DecisionTitle, ReviewRating } from './ReplayDecision';
 import { decisionPresentation } from './decisionPresentation';
-import { reviewCategories, safePublicSource, type ReviewAnnotation, type ReviewCounts, type ReviewDecisionContext, type ReviewMoment, type ReviewSummary, type SideboardDelta } from './reviewData';
+import { safePublicSource, type ReviewAnnotation, type ReviewDecisionContext, type ReviewMoment, type ReviewSummary, type SideboardDelta } from './reviewData';
 import styles from './ReplayReviewPanel.module.css';
 
 registerMessages(messages);
 
 export { Switch as ReviewSwitch } from '../ui/Switch';
-
-export function RatingCounts({ counts }: { counts: ReviewCounts }) {
-  const t = useT();
-  const visibleRatings = new Map<string, number>();
-  for (const category of reviewCategories) {
-    const count = counts[category] ?? 0;
-    const label = t(`replay.rating.${category}`);
-    if (count) visibleRatings.set(label, (visibleRatings.get(label) ?? 0) + count);
-  }
-  return visibleRatings.size ? (
-    <dl className={styles.counts}>
-      {[...visibleRatings].map(([label, count]) => (
-        <div key={label}><dt>{label}</dt><dd>{count}</dd></div>
-      ))}
-    </dl>
-  ) : null;
-}
 
 export function ReplayReviewPanel({ analysis, sideboardDelta, moments, current, annotation, decision, decisionContexts, missingDecisionHand, showRetrospective, onMoment, onPrevious, onNext, loading, error, onRetry }: {
   analysis?: ReviewSummary;

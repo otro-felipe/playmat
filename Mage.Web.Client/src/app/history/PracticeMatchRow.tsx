@@ -3,7 +3,7 @@ import { ArrowDownRight, ArrowUpRight, ChevronRight, Clapperboard, Minus } from 
 import { Fragment, useId, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { formatDate, useT } from '../i18n';
-import { RatingCounts } from '../replay/ReplayReviewPanel';
+import { reviewCategories, type ReviewCounts } from '../replay/reviewData';
 import { NameLevel } from '../social/LevelBadge';
 import { Button } from '../ui/Button';
 import { PlayerLabel } from '../ui/PlayerLabel';
@@ -119,4 +119,21 @@ function HistoryAnalysis({ match }: { match: PracticeMatch }) {
       })}
     </details>}
   </div>;
+}
+
+function RatingCounts({ counts }: { counts: ReviewCounts }) {
+  const t = useT();
+  const visibleRatings = new Map<string, number>();
+  for (const category of reviewCategories) {
+    const count = counts[category] ?? 0;
+    const label = t(`replay.rating.${category}`);
+    if (count) visibleRatings.set(label, (visibleRatings.get(label) ?? 0) + count);
+  }
+  return visibleRatings.size ? (
+    <dl className={styles.counts}>
+      {[...visibleRatings].map(([label, count]) => (
+        <div key={label}><dt>{label}</dt><dd>{count}</dd></div>
+      ))}
+    </dl>
+  ) : null;
 }
