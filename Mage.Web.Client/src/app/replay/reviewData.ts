@@ -1,3 +1,4 @@
+import type { ReplayPage } from '../../protocol/options';
 import type { CardView, GameView } from '../../protocol/generated/views';
 
 export const reviewCategories = ['brilliant', 'best', 'good', 'acceptable', 'inaccuracy', 'blunder', 'equivalent', 'insufficient', 'unrated'] as const;
@@ -178,8 +179,12 @@ const reviewPath = (gameId: string) => '/api/playtesting/review/games/' + encode
 async function request<T>(path: string, signal: AbortSignal, allowUnavailable = false): Promise<T | null> {
   const response = await fetch(path, { signal, cache: 'no-store' });
   if (allowUnavailable && [401, 403, 404].includes(response.status)) return null;
-  if (!response.ok) throw new Error('Replay review request failed.');
+  if (!response.ok) throw new Error(response.status === 503 ? 'The replay archive could not be read.' : 'Replay review request failed.');
   return response.json() as Promise<T>;
+}
+
+export function loadPrivateReplayPage(gameId: string, start: number, count: number, signal: AbortSignal) {
+  return request<ReplayPage>(`/api/playtesting/replays/${encodeURIComponent(gameId)}?start=${start}&count=${count}`, signal, true);
 }
 
 export function loadReviewManifest(gameId: string, signal: AbortSignal) {

@@ -1018,6 +1018,50 @@ test('account history can read a completed profile BO3 score without opening its
   assert.equal((await f.request(replay,foreign)).status,404)
 })
 
+test('browser history replay serves the retained human or owned profile seat and detects a missing archive', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const owner = await f.login('ReplayOwner')
+  const rival = await f.login('HumanRival')
+  const outsider = await f.login('Unrelated')
+  const canonical = await authorizePilot(f, owner, 'history')
+  const profile = async displayName => {
+    const response = await f.request('/api/playtesting/players', { ...owner, 'Content-Type': 'application/json' }, { displayName, mcpEnabled: true })
+    assert.equal(response.status, 201)
+    return (await response.json()).engineName
+  }
+  const seats = [await profile('First'), await profile('Second')]
+  async function record(names) {
+    const gameId = randomUUID(), matchId = randomUUID(), tableId = randomUUID(), now = Date.now()
+    const players = names.map((name, index) => ({ name, human: true, playerId: randomUUID(), life: 9 + index }))
+    await writeFile(join(f.replayDirectory, gameId + '.json'), JSON.stringify({
+      gameId, matchId, tableId, gameNumber: 1, startedAt: now, endedAt: now + 2, winner: names[0], players,
+    }))
+    await writeFile(join(f.replayDirectory, gameId + '.ndjson.gz'), gzipSync(JSON.stringify({ t: 1, view: { turn: 9, players } })))
+    await writeFile(join(f.replayDirectory, matchId + '.match.json'), JSON.stringify({ matchId, endedAt: now + 3, winner: names[0] }))
+    await f.product.archiveGames()
+    return { matchId, replay: '/api/playtesting/replays/' + gameId + '?start=0&count=40' }
+  }
+  for (const { players, viewer, rivalStatus } of [
+    { players: seats, viewer: seats[0], rivalStatus: 404 },
+    { players: ['ReplayOwner', 'HumanRival'], viewer: 'ReplayOwner', rivalStatus: 200 },
+  ]) {
+    const { matchId, replay } = await record(players)
+    const listed = await (await f.request('/api/playtesting/matches/' + matchId, owner)).json()
+    assert.equal(listed.games[0].replayAvailable, true)
+    const response = await f.request(replay, owner)
+    assert.equal(response.status, 200)
+    const page = await response.json()
+    assert.equal(page.info.viewerName, listed.games[0].viewerName)
+    assert.equal(page.info.viewerName, viewer.toLowerCase())
+    assert.deepEqual([page.events[0].view.turn, ...page.events[0].view.players.map(player => player.life)], [9, 9, 10])
+    assert.equal((await f.request(replay, outsider)).status, 404)
+    assert.equal((await f.request(replay, rival)).status, rivalStatus)
+    if (players === seats) assert.equal((await f.request(replay, canonical)).status, 404)
+    f.store.clear()
+    assert.equal((await f.request(replay, owner)).status, 503)
+  }
+})
+
 test('two MCP seats automatically publish one owner-discoverable board from invitation through the archived final', {skip:!databaseUrl}, async t => {
   const tableId = randomUUID(), replacement = randomUUID()
   const engine = new Map()
