@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 import pg from 'pg'
 import { archetypesFor } from './deck-performance-identity.mjs'
 import { libraryArchetypeCoverage, migrateDeckLists, refineMigratedDeckLists, refineTournamentArchetypes } from './deck-list-migration.mjs'
+import { excludeAsParticipant } from './match-statistics.mjs'
 import { createArchive } from './archive.mjs'
 import { resetMatchHistory, setUnlimitedMatchHistory } from './history-retention.mjs'
 import { createTheoryStore, evaluateTheoryTactics } from './theory-store.mjs'
@@ -466,6 +467,12 @@ export async function createProduct({
         if (req.method === 'GET' && action === undefined) return send(res, 200, await invitations.inspect(actor, tableId))
         if (req.method === 'POST' && action === 'claim') return send(res, 200, await invitations.claim(actor, tableId, await body(req, 'optional-json', 4096)))
       }
+    }
+    const statisticsExclusion = /^matches\/([^/]+)\/statistics-exclusion$/.exec(endpoint)
+    if (statisticsExclusion && req.method === 'POST') {
+      requireScope(actor, 'history')
+      const input = await body(req, 'json', 4096)
+      return send(res, 200, await excludeAsParticipant(pool, actor, statisticsExclusion[1], input?.reason))
     }
     if (endpoint === 'matches' && req.method === 'GET') {
       requireScope(actor, 'history')

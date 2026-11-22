@@ -29,13 +29,15 @@ function AccountHistory({ account }: { account: string }) {
   const t = useT();
   const [search, setSearch] = useSearchParams();
   const format = search.get('format') || '';
+  const matchId = search.get('matchId');
   const [selected, setSelected] = useState<string[]>([]);
   const [exportState, setExportState] = useState<'idle' | 'downloading' | 'error'>('idle');
   const history = useInfiniteQuery({
-    queryKey: ['playtesting-history', account, format],
+    queryKey: ['playtesting-history', account, format, matchId],
     initialPageParam: '',
     queryFn: ({ pageParam, signal }) => {
       const query = new URLSearchParams({ limit: '25' });
+      if (matchId) query.set('id', matchId);
       if (format) query.set('format', format);
       if (pageParam) query.set('cursor', pageParam);
       return read<PracticeHistoryPage>('matches', query, signal);
@@ -91,6 +93,7 @@ function AccountHistory({ account }: { account: string }) {
       <header className={styles.head}>
         <h1>{t('shell.nav.history')}</h1>
         <div className={styles.controls}>
+          {matchId && <Button size="sm" variant="quiet" onClick={() => changeFormat(format)}>{t('history.allMatches')}</Button>}
           <label className={styles.filter}>
             <select aria-label={t('history.format')} value={format} onChange={(event) => changeFormat(event.target.value)}>
               <option value="">{t('history.formats')}</option>
@@ -118,7 +121,7 @@ function AccountHistory({ account }: { account: string }) {
             <span className={styles.score}>{t('history.score')}</span>
           </div>
           <ul className={styles.list}>
-            {matches.map((match) => <PracticeMatchRow key={match.id} match={match} account={account} selected={selectedGames} onSelect={toggleGame} />)}
+            {matches.map((match) => <PracticeMatchRow key={match.id + (matchId ?? '')} match={match} initiallyOpen={match.id === matchId} account={account} selected={selectedGames} onSelect={toggleGame} />)}
           </ul>
         </>}
         {history.hasNextPage && <Button disabled={history.isFetchingNextPage} onClick={() => void history.fetchNextPage()}>{t('history.more')}</Button>}

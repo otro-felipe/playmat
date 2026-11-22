@@ -1,4 +1,5 @@
 import { seatArchetype } from './archived-archetypes.mjs'
+import { exclusionView } from './match-statistics.mjs'
 import { createPerformance, historyFormatFilter } from './performance.mjs'
 import { createHash } from 'node:crypto'
 import { readdir, readFile, rename, stat, unlink } from 'node:fs/promises'
@@ -418,8 +419,10 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
     const format = historyFormatFilter(opts.format)
     const limit = Math.max(1, Math.min(100, Number.parseInt(opts.limit ?? '25', 10) || 25))
     const matchId = opts.id ?? null
+    if (matchId !== null && !isUuid(matchId)) throw new ProductError(404, 'Match not found')
     const { rows } = await pool.query(
-      `SELECT m.* FROM matches m JOIN retained_match_history h ON h.match_id=m.id AND h.account_id=$7
+      `SELECT m.*, x.reason, x.author, x.marked_at FROM matches m JOIN retained_match_history h ON h.match_id=m.id AND h.account_id=$7
+       LEFT JOIN match_statistics_exclusions x ON x.match_id=m.id
        WHERE ($2::text IS NULL OR COALESCE(m.format,m.engine_format,'Unknown')=$2)
          AND ($3::bigint IS NULL OR (m.started_at,m.id)<($3,$4::uuid))
          AND ($6::uuid IS NULL OR m.id=$6)
@@ -437,6 +440,7 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
       matches: page.map(m => ({
         id: m.id, tableId: m.table_id, name: m.name, format: m.format ?? m.engine_format ?? 'Unknown', status: m.status, winner: m.winner,
         startedAt: Number(m.started_at), endedAt: m.ended_at ? Number(m.ended_at) : null,
+        statisticsExclusion: exclusionView(m), canExcludeFromStatistics: !actor.agent && m.status !== 'active' && !m.reason,
         games: games.filter(g => g.match_id === m.id).map(gameView),
       })),
       cursor: rows.length > limit ? cursorFrom(page.at(-1)) : null,

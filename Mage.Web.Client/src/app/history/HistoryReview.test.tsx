@@ -41,3 +41,51 @@ test('[PM-REVIEW-UI-3] the history shows persisted analysis and separates seat a
   expect(within(game).getByText('Normal')).toBeTruthy();
   expect(within(game).getByText('Inaccuracy')).toBeTruthy();
 });
+
+test('a participant can exclude a match, see the reason and still open its replay', async () => {
+  useSession.setState({ userName: 'Alice', phase: 'signedIn' });
+  const match = {
+    id: 'match', name: 'Practice', status: 'completed', format: 'Pioneer', startedAt: 1, canExcludeFromStatistics: true,
+    statisticsExclusion: null as null | {reason: string, author: string, markedAt: string},
+    games: [{ gameId: 'game', gameNumber: 1, archiveState: 'ready', replayAvailable: true, players: [{ name: 'Alice' }, { name: 'Bob' }] }],
+  };
+  let refreshes = 0;
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit = {}) => {
+    if (url.endsWith('/matches/match/statistics-exclusion') && init.method === 'POST') {
+      match.statisticsExclusion = { ...JSON.parse(String(init.body)), author: 'Alice', markedAt: '2026-11-22T12:00:00Z' };
+      return Response.json(match.statisticsExclusion);
+    }
+    if (url.includes('/performance')) {
+      refreshes++;
+      return Response.json({ groups: [], decks: [], summary: { matches: { total: 0 }, games: { total: 0 } } });
+    }
+    return Response.json({ matches: [match], cursor: null });
+  }));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  render(<QueryClientProvider client={client}><MemoryRouter><HistoryScreen /></MemoryRouter></QueryClientProvider>);
+  fireEvent.click(await screen.findByRole('button', { name: /Bob/ }));
+  fireEvent.click(screen.getByText('Exclude from statistics'));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Reason' }), { target: { value: 'Connection lost' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save exclusion' }));
+  expect(await screen.findByText('Connection lost')).toBeTruthy();
+  expect(screen.getByText('Excluded from statistics')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Replay' })).toBeTruthy();
+  expect(refreshes).toBeGreaterThan(1);
+});
+
+test('a direct match link fetches just its history row and opens the details', async () => {
+  useSession.setState({ userName: 'Alice', phase: 'signedIn' });
+  const id = '00000000-0000-4000-8000-000000000001';
+  const fetcher = vi.fn(async (url: string) => {
+    if (url.includes('/performance')) return Response.json({ groups: [], decks: [] });
+    const query = new URL(url, 'https://local.test').searchParams;
+    expect(query.get('id')).toBe(id);
+    return Response.json({ matches: [{ id, name: 'Exact match', format: 'Pioneer', startedAt: 1, status: 'interrupted',
+      games: [], statisticsExclusion: { author: 'Alice', reason: 'Transport failure', markedAt: '2026-11-22T12:00:00Z' } }], cursor: null });
+  });
+  vi.stubGlobal('fetch', fetcher);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  render(<QueryClientProvider client={client}><MemoryRouter initialEntries={['/history?matchId=' + id]}><HistoryScreen /></MemoryRouter></QueryClientProvider>);
+  expect(await screen.findByText('Transport failure')).toBeTruthy();
+  expect(screen.getByRole('button', { name: /Exact match/ }).getAttribute('aria-expanded')).toBe('true');
+});

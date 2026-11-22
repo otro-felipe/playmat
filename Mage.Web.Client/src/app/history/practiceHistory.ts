@@ -33,6 +33,8 @@ export interface PracticeMatch {
   status: 'active' | 'completed' | 'interrupted';
   winner?: string | null;
   startedAt: number;
+  statisticsExclusion?: { reason: string; author: string; markedAt: string } | null;
+  canExcludeFromStatistics?: boolean;
   games: PracticeGame[];
   analysis?: ReviewSummary;
 }

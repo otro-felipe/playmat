@@ -8,18 +8,20 @@ import { NameLevel } from '../social/LevelBadge';
 import { Button } from '../ui/Button';
 import { PlayerLabel } from '../ui/PlayerLabel';
 import { findSeat, matchPerspective, type PracticeGame, type PracticeMatch } from './practiceHistory';
+import { MatchStatisticsExclusion } from './MatchStatisticsExclusion';
 import styles from './PracticeHistory.module.css';
 
 interface RowProps {
   match: PracticeMatch;
   account: string;
+  initiallyOpen?: boolean;
   selected: string[];
   onSelect: (id: string) => void;
 }
 
-export function PracticeMatchRow({ match, account, selected, onSelect }: RowProps) {
+export function PracticeMatchRow({ match, account, selected, onSelect, initiallyOpen = false }: RowProps) {
   const t = useT();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(initiallyOpen);
   const detailId = useId();
   const { viewer, rivals, result, score } = matchPerspective(match, account);
   const shortDate = match.startedAt ? formatDate(match.startedAt, { day: 'numeric', month: 'short' }) : '—';
@@ -33,6 +35,7 @@ export function PracticeMatchRow({ match, account, selected, onSelect }: RowProp
           {index > 0 && ', '}<PlayerLabel {...rival} />
         </Fragment>) : match.name}
         {rivals.some(rival => rival.archetype) && <small>{rivals.filter(rival => rival.archetype).map(rival => displayArchetype(t, rival.archetype)).join(', ')}</small>}
+        {match.statisticsExclusion && <small>{t('history.excludedFromStats')}</small>}
         <small className={styles.mobileArchetype}>{t('history.yourArchetype')} · {displayArchetype(t, viewer?.archetype)}</small>
       </span>
       <span className={styles.archetype}>{displayArchetype(t, viewer?.archetype)}</span>
@@ -44,6 +47,7 @@ export function PracticeMatchRow({ match, account, selected, onSelect }: RowProp
     <div hidden={!open} id={detailId} className={styles.details}>
       {open && <>
         <div className={styles.detailMeta}><span>{fullDate}</span><span>{match.format === 'Unknown' ? t('history.unreported') : match.format}</span></div>
+        <MatchStatisticsExclusion match={match} account={account} />
         {match.games.map((game) => <GameDetail key={game.gameId} game={game} selected={selected} onSelect={onSelect} />)}
         {match.status === 'completed' && match.analysis && <HistoryAnalysis match={match} />}
       </>}

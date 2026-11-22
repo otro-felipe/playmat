@@ -2276,3 +2276,103 @@ test('a shared match restores its final public broadcast after the engine is gon
   assert.equal((await f.path('/api/playtesting/spectate/'+'b'.repeat(43))).status,404)
   assert.equal((await f.path('/api/playtesting/tables/'+tableId+'/spectator',{headers:owner})).status,403)
 })
+
+test('statistical exclusion applies to both seats and all games while retaining results and replay', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const alice = await signIn(f, 'Alice')
+  const bob = await signIn(f, 'Bob')
+  const outsider = await signIn(f, 'Carol')
+  const delegated = { Authorization: 'Bearer ' + await f.product.provisionAgent('Alice', 'AliceAgent', ['history']) }
+  const now = Date.now()
+  const target = await historyMatch(f, ['Alice', 'Bob'], now, { gameCount: 2 })
+  const control = await historyMatch(f, ['Bob', 'Alice'], now - 2000)
+  const active = await historyMatch(f, ['Alice', 'Bob'], now - 4000, { active: true })
+  await writeFile(join(f.replayDirectory, target.id + '.match.json'), JSON.stringify({ matchId: target.id, endedAt: now, winner: 'Alice' }))
+  for (const [index, gameId] of target.games.entries()) {
+    const file = join(f.replayDirectory, gameId + '.json')
+    const metadata = JSON.parse(await readFile(file, 'utf8'))
+    await writeFile(file, JSON.stringify({ ...metadata, winsNeeded: 2, gameNumber: index + 1 }))
+  }
+  await f.product.archiveGames()
+  const root = '/api/playtesting/'
+  const get = async (path, headers) => {
+    const response = await f.path(root + path, { headers })
+    assert.equal(response.status, 200, path)
+    return response.json()
+  }
+  const mark = (headers, reason, id = target.id) => f.path(root + 'matches/' + id + '/statistics-exclusion',
+    json('POST', headers, { reason, author: 'forged', markedAt: '1900-01-01' }))
+  const totals = async headers => (await get('stats?format=Pioneer', headers)).totals
+  const before = await get('matches/' + target.id, alice)
+  assert.equal(before.winner, 'Alice')
+  assert.equal(before.canExcludeFromStatistics, true)
+  assert.equal((await get('matches/' + target.id, delegated)).canExcludeFromStatistics, false)
+  assert.deepEqual(await totals(alice), { matches: 2, games: 3, wins: 2 })
+  assert.equal((await mark(outsider, 'Unavailable')).status, 404)
+  assert.equal((await mark(delegated, 'Missing permission')).status, 403)
+  assert.equal((await mark(alice, 'Active match', active.id)).status, 409)
+  await f.product.archiveGames({ markInterrupted: true })
+  const interruptedDetail = await get('matches/' + active.id, alice)
+  assert.equal(interruptedDetail.status, 'interrupted')
+  assert.equal(interruptedDetail.canExcludeFromStatistics, true)
+  assert.equal((await mark(alice, 'Test interrupted', active.id)).status, 200)
+  assert.deepEqual(await totals(alice), { matches: 2, games: 3, wins: 2 })
+  assert.equal((await mark(alice, '   ')).status, 400)
+  assert.equal((await mark(alice, 'x'.repeat(501))).status, 400)
+
+  const reason = 'Connectivity failure during the second game'
+  const responses = await Promise.all([mark(alice, reason), mark(alice, reason)])
+  assert.deepEqual(responses.map(r => r.status), [200, 200])
+  const exclusion = await responses[0].json()
+  assert.equal(exclusion.author, 'Alice')
+  assert.equal(exclusion.reason, reason)
+  assert.ok(Date.parse(exclusion.markedAt) >= now)
+  assert.deepEqual(await responses[1].json(), exclusion)
+  assert.equal((await mark(bob, 'Different reason')).status, 409)
+  await f.product.archiveGames()
+  for (const [seat, wins] of [[alice, 0], [bob, 1]]) {
+    assert.deepEqual(await totals(seat), { matches: 1, games: 1, wins })
+    const performance = await get('performance?scope=all&includeCards=true', seat)
+    assert.deepEqual(performance.matchIds, [control.id])
+    assert.equal(performance.coverage.games, 1)
+    assert.equal(performance.splits.postboard.total, 0)
+    assert.equal((await get('performance?scope=all&bestOf=3', seat)).summary.matches.total, 0)
+    assert.equal(performance.summary.games.wins, wins)
+    const history = await get('matches', seat)
+    assert.deepEqual(history.matches.find(m => m.id === target.id).statisticsExclusion, exclusion)
+    const detail = await get('matches/' + target.id, seat)
+    assert.equal(detail.canExcludeFromStatistics, false)
+    assert.equal(detail.winner, before.winner)
+    assert.deepEqual(detail.games.map(g => [g.gameId, g.winner, g.archiveState]), before.games.map(g => [g.gameId, g.winner, g.archiveState]))
+    for (const id of target.games) assert.equal((await get('replays/' + id, seat)).info.gameId, id)
+    assert.equal((await f.path(root + 'exports', json('POST', seat, { gameIds: target.games }))).status, 200)
+  }
+})
+
+
+test('one-match operator exclusion preserves provenance and inspect only reports archive counts', { skip: !databaseUrl }, async t => {
+  const { default: pg } = await import('pg')
+  const { excludeAsOperator, inspectMatchStatistics } = await import('./match-statistics.mjs')
+  const f = await fixture(t)
+  const owner = await signIn(f, 'OperatorFixture')
+  const target = await historyMatch(f, ['OperatorFixture', 'SecondSeat'], Date.now())
+  const control = await historyMatch(f, ['OperatorFixture', 'SecondSeat'], Date.now() - 4000)
+  await f.product.archiveGames()
+  const pool = new pg.Pool({ connectionString: databaseUrl, options: '-c search_path=' + f.schema })
+  try {
+    const before = await inspectMatchStatistics(pool, target.id)
+    assert.deepEqual(before, { matchId: target.id, status: 'completed', included: true, completedGames: 1, eligibleGames: 1, archivedReplays: 1, exclusion: null })
+    const reason = 'Operator requested an early end'
+    const saved = await excludeAsOperator(pool, target.id, reason)
+    assert.equal(saved.author, 'service-operator')
+    assert.deepEqual(await excludeAsOperator(pool, target.id, reason), saved)
+    assert.deepEqual(await inspectMatchStatistics(pool, target.id), { ...before, included: false, eligibleGames: 0, exclusion: saved })
+    assert.equal((await inspectMatchStatistics(pool, control.id)).included, true)
+    await assert.rejects(excludeAsOperator(pool, randomUUID(), reason), { status: 404 })
+    const page = await (await f.path('/api/playtesting/matches?id=' + target.id, { headers: owner })).json()
+    assert.deepEqual(page.matches.map(m => m.id), [target.id])
+    assert.equal(page.matches[0].statisticsExclusion.author, 'service-operator')
+  } finally {
+    await pool.end()
+  }
+})

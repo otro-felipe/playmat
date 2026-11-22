@@ -6,6 +6,14 @@ import type { Catalog } from './locales';
  * Spanish. Card names, rules text and server messages stay in English.
  */
 const es: Catalog = {
+  'history.excludeFromStats': 'Excluir de las estadísticas',
+  'history.excludedFromStats': 'Fuera de las estadísticas',
+  'history.exclusionEffect': 'Todos los juegos de esta partida quedarán fuera de las estadísticas de ambos jugadores. El resultado y los replays seguirán en el historial.',
+  'history.exclusionReason': 'Motivo',
+  'history.saveExclusion': 'Guardar exclusión',
+  'history.exclusionAttribution': 'Registrado por {author} · {date}',
+  'history.exclusionError': 'No se pudo guardar la exclusión.',
+  'history.allMatches': 'Todas las partidas',
   'perf.finishedMatches': { one: '{count} partida finalizada', other: '{count} partidas finalizadas' },
   'perf.finishedGames': { one: '{count} juego', other: '{count} juegos' },
   'perf.showAll': 'Ver los {count} arquetipos',

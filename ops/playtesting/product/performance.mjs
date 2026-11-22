@@ -33,7 +33,7 @@ async function finishedGames(pool, actor, format) {
       CASE WHEN g.game_number=1 THEN p.deck_snapshot END AS opening_deck,
       reg.deck_id,reg.deck_name,reg.list_version,COALESCE(NULLIF(reg.archetype,'Other'),p.archetype,reg.archetype) AS archetype,reg.list_signature,
       opponent.archetype AS opponent_archetype,opponent.mulligans AS opponent_mulligans
-    FROM retained_match_history h JOIN matches m ON m.id=h.match_id
+    FROM retained_match_history h JOIN statistically_eligible_matches m ON m.id=h.match_id
     JOIN games g ON g.match_id=m.id
     JOIN LATERAL (
       SELECT engine_name,engine_key,player_id,mulligans,deck_snapshot,archetype
@@ -46,7 +46,7 @@ async function finishedGames(pool, actor, format) {
       FROM game_players other LEFT JOIN match_deck_registrations r ON r.table_id=m.table_id AND r.engine_key=other.engine_key
       WHERE other.game_id=g.id AND other.engine_key<>p.engine_key HAVING COUNT(*)=1
     ) opponent ON TRUE
-    WHERE h.account_id=$2 AND m.status='completed' AND g.status='completed' AND ($3::text IS NULL OR COALESCE(m.format,m.engine_format,'Unknown')=$3)
+    WHERE h.account_id=$2 AND g.status='completed' AND ($3::text IS NULL OR COALESCE(m.format,m.engine_format,'Unknown')=$3)
     ORDER BY m.started_at DESC,m.id,g.game_number,g.started_at,g.id`,
     [viewerNames(actor), actor.accountId, format],
   )

@@ -106,3 +106,10 @@
   .columnHeaders, .toggle { grid-template-columns: 42px minmax(0, 1fr) 78px 42px 12px; gap: 4px; }
   .outcome { gap: 3px; }
 }
+
+.exclusionDetails { margin-block: 8px; overflow-wrap: anywhere; }
+.exclusionDetails summary { cursor: pointer; }
+.exclusionDetails small { color: var(--ink-soft); }
+.exclusionDetails form, .exclusionDetails label { display: grid; gap: 6px; }
+.exclusionDetails form { margin-block: 8px; max-width: 42rem; }
+.exclusionDetails button { justify-self: start; }

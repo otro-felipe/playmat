@@ -1,4 +1,12 @@
 const replay = {
+  'history.excludeFromStats': 'Exclude from statistics',
+  'history.excludedFromStats': 'Excluded from statistics',
+  'history.exclusionEffect': 'All games in this match will be excluded from both players’ statistics. The result and replays stay in History.',
+  'history.exclusionReason': 'Reason',
+  'history.saveExclusion': 'Save exclusion',
+  'history.exclusionAttribution': 'Marked by {author} · {date}',
+  'history.exclusionError': 'Could not save the exclusion.',
+  'history.allMatches': 'All matches',
   'perf.finishedMatches': { one: '{count} finished match', other: '{count} finished matches' },
   'perf.finishedGames': { one: '{count} game', other: '{count} games' },
   'perf.showAll': 'Show all {count} archetypes',
