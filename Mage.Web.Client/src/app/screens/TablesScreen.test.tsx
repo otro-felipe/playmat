@@ -123,6 +123,26 @@ test.each(['quiet', 'chatty', 'coach'])('[PM-AC-04] the host creates a Rival MCP
   expect(invite).not.toHaveProperty('notifyEngineName');
 });
 
+test.each([
+  ['OtherOwner', 'guestAccountName'],
+  ['b7aa9a78-f0e4-41f5-9085-d5133c571f1d', 'guestPlayerId'],
+])('[PM-AC-16] the host addresses a private table to %s', async (recipient, field) => {
+  tables = [];
+  calls.create.mockResolvedValue({ tableId });
+  calls.join.mockResolvedValue(true);
+  const fetcher = vi.fn<(_url: string, _options?: RequestInit) => Promise<Response>>(async () => Response.json({ tables: [] }));
+  vi.stubGlobal('fetch', fetcher);
+  const { page } = mount({ host: deck.id, opponent: 'mcp' });
+  const guide = within(await page.findByRole('dialog', { name: 'Connect to Thoughtseize MCP' }));
+  fireEvent.click(guide.getByRole('button', { name: 'Continue' }));
+  const dialog = within(await page.findByRole('dialog', { name: 'Host a table' }));
+  fireEvent.change(dialog.getByRole('textbox', { name: 'Invited account or MCP player ID' }), { target: { value: recipient } });
+  fireEvent.click(dialog.getByRole('button', { name: /^Host$/ }));
+  await waitFor(() => expect(fetcher.mock.calls.some(([url]) => url === '/api/playtesting/invites')).toBe(true));
+  const [, request] = fetcher.mock.calls.find(([url]) => url === '/api/playtesting/invites')!;
+  expect(JSON.parse(String(request?.body))).toMatchObject({ tableId, mode: 'mcp', [field]: recipient });
+});
+
 test('[PM-AC-16] the host creates an account-private MCP invitation without selecting an agent', async () => {
   tables = [];
   calls.create.mockResolvedValue({ tableId });
@@ -136,7 +156,7 @@ test('[PM-AC-16] the host creates an account-private MCP invitation without sele
   fireEvent.click(guide.getByRole('button', { name: 'Continue' }));
   const dialog = within(await page.findByRole('dialog', { name: 'Host a table' }));
   expect(dialog.queryByLabelText('Notify agent')).toBeNull();
-  expect(dialog.getByText('Your connected agent can join this table.')).toBeTruthy();
+  expect(dialog.getByText('Leave empty to invite your own account.')).toBeTruthy();
   fireEvent.click(dialog.getByRole('button', { name: /^Host$/ }));
   await waitFor(() => expect(fetcher.mock.calls.some(([, request]) => request?.method === 'POST')).toBe(true));
   const [, request] = fetcher.mock.calls.find(([, request]) => request?.method === 'POST')!;
@@ -202,6 +222,8 @@ test('[PM-AC-04] the MCP alias is visible when seated and Start follows the engi
   const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined);
   fireEvent.click(page.getByRole('button', { name: 'Copy MCP link' }));
   expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/join/${tableId}`);
+  fireEvent.click(page.getByRole('button', { name: 'Copy table ID' }));
+  expect(writeText).toHaveBeenLastCalledWith(tableId);
   expect(page.getByRole('button', { name: 'Agent guide' })).toBeTruthy();
   expect((page.getByRole('button', { name: 'Start' }) as HTMLButtonElement).disabled).toBe(true);
   tables = [{ ...tables[0], tableState: 'READY_TO_START', seats: [{ playerName: 'Host', playerType: 'HUMAN' }, { playerName: 'FixtureAgent', playerType: 'HUMAN' }] }];
