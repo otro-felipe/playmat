@@ -237,6 +237,10 @@ test('[PM-PLAYER-01] the startup guide routes interleaved work through one SDK c
   const text = guides.find(guide => guide.name === 'getting-started').text;
   const code = text.match(/## Choose a player on each call[\s\S]*?```js\n([\s\S]*?)\n```/);
   assert.ok(code, 'The installed startup bundle must include the single-connection player example');
+  const join = text.match(/join_game\((\{[^\n]*?\})\)/);
+  assert.ok(join, 'Onboarding includes an outer join request');
+  assert.deepEqual(Object.keys(JSON.parse(join[1])).sort(), ['deckId','playerId','tableId']);
+  assert.match(text, /keepSideboard\(client, \{ playerId: selectedPlayerId \}\)/);
   const { playerDirectory } = await import('data:text/javascript;base64,' +
     Buffer.from(code[1]+'\nexport { playerDirectory };').toString('base64'));
   const calls = [];
@@ -270,7 +274,7 @@ test('[PM-GAME-01a] the bundled sideboard example submits the latest seat and gu
   const deck = { name: 'Fixture', cards: [card('266', 56), card('267', 4)], sideboard: [card('266', 4)] };
   const original = { ...deck, cards: [card('266', 60)], sideboard: [card('267', 4)] };
   const current = { decisionId: 'second-window', submitted: false, deck };
-  for (const seat of [{}, { humanTableId: TEST_TABLE }]) {
+  for (const seat of [{ playerId: 'selected-profile' }, {}, { humanTableId: TEST_TABLE }]) {
     const calls = [];
     const sdk = { async callTool(request) {
       calls.push(request);
