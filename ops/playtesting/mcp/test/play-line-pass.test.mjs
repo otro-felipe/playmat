@@ -730,3 +730,117 @@ for (const [step, activePlayerId, action] of [
     assert.deepEqual(table.applied, []);
   });
 }
+
+for (const [kind, declaration, activePlayerId] of [
+  ['attack', 'DECLARE_ATTACKERS', 'me'],
+  ['block', 'DECLARE_BLOCKERS', 'opponent'],
+]) {
+  const action = kind === 'attack' ? { kind, attackers: [] } : { kind, assignments: [] };
+  const phase = { kind: 'pass_until', destination: 'current_turn', step: 'BEGIN_COMBAT', priority: 'self' };
+  const final = { kind: 'pass_until', destination: 'end_step' };
+  const promptKind = kind === 'attack' ? 'declareAttackers' : 'declareBlockers';
+  const intent = kind === 'attack' ? 'confirm_attack' : 'confirm_block';
+  for (const skipped of [false, true])
+    test(`[PM-LINE-WINDOW] beginning of combat reaches the next ${kind} declaration or reports its omission: ${skipped}`, async (t) => {
+      const initial = { turn: 7, activePlayerId, phase: 'COMBAT', step: 'BEGIN_COMBAT', decision: priority('beginning') };
+      const after = { phase: 'POSTCOMBAT_MAIN', step: 'POSTCOMBAT_MAIN', decision: priority('after') };
+      const table = game(
+        t,
+        {
+          beginning: skipped
+            ? after
+            : { step: declaration, decision: { id: 'declare', kind: promptKind, choices: [{ id: 'confirm', intent }] } },
+          declare: { phase: 'END', step: 'END_TURN', decision: priority('at-end') },
+          after: { phase: 'END', step: 'END_TURN', decision: priority('extra-pass') },
+        },
+        initial,
+      );
+      const result = await table.submit([phase, action, final]);
+      if (skipped) {
+        assert.equal(result.reason, 'destination_skipped');
+        assert.equal(result.actionIndex, 1);
+        assert.equal(table.seat.snapshot().decision.id, 'after');
+        assert.deepEqual(
+          table.applied.map(([, choice]) => choice),
+          ['pass'],
+        );
+      } else {
+        assert.equal(result.status, 'completed');
+        assert.deepEqual(
+          table.applied.map(([, choice]) => choice),
+          ['pass', 'confirm'],
+        );
+      }
+    });
+  test(`[PM-LINE-WINDOW] ${kind} cannot follow an arbitrary phase or the other side's declaration step`, async (t) => {
+    const table = game(t, {});
+    for (const overrides of [
+      { step: 'POSTCOMBAT_MAIN' },
+      { step: kind === 'attack' ? 'DECLARE_BLOCKERS' : 'DECLARE_ATTACKERS' },
+      { phase: 'COMBAT', step: undefined },
+      { phase: 'END' },
+    ]) {
+      await assert.rejects(table.submit([{ ...phase, ...overrides }, action, final]), { code: 'bad_sequence', actionIndex: 0 });
+    }
+    assert.deepEqual(table.applied, []);
+  });
+}
+
+for (const policy of ['if_no_play', 'decline_optional'])
+  test(`[PM-LINE-WINDOW] ${policy} applies between beginning of combat and the declaration`, async (t) => {
+    const table = game(
+      t,
+      {
+        beginning: {
+          step: 'DECLARE_ATTACKERS',
+          decision: { id: 'attack', kind: 'declareAttackers', choices: [{ id: 'confirm', intent: 'confirm_attack' }] },
+        },
+        attack: { step: 'END_TURN', phase: 'END', decision: priority('end') },
+      },
+      {
+        turn: 7,
+        activePlayerId: 'me',
+        phase: 'COMBAT',
+        step: 'BEGIN_COMBAT',
+        decision: priority('beginning', { id: 'optional', type: 'object' }),
+      },
+    );
+    const receipt = await table.submit([
+      { kind: 'pass_until', destination: 'current_turn', priority: 'self', step: 'BEGIN_COMBAT', policy },
+      { kind: 'attack', attackers: [] },
+      { kind: 'pass_until', destination: 'end_step' },
+    ]);
+    if (policy === 'if_no_play') {
+      assert.equal(receipt.reason, 'response_available');
+      assert.deepEqual(table.applied, []);
+    } else {
+      assert.equal(receipt.status, 'completed');
+      assert.deepEqual(
+        table.applied.map(([, choice]) => choice),
+        ['pass', 'confirm'],
+      );
+    }
+  });
+
+for (const [step, kind, actor, intent] of [
+  ['DECLARE_ATTACKERS', 'declareAttackers', 'me', 'confirm_attack'],
+  ['DECLARE_BLOCKERS', 'declareBlockers', 'opponent', 'confirm_block'],
+])
+  test(`[PM-LINE-WINDOW] an observed ${step} declaration executes directly inside its named window`, async (t) => {
+    const table = game(
+      t,
+      { declare: { phase: 'END', step: 'END_TURN', decision: priority('end') } },
+      { turn: 7, activePlayerId: actor, phase: 'COMBAT', step, decision: { id: 'declare', kind, choices: [{ id: 'confirm', intent }] } },
+    );
+    const action = kind === 'declareAttackers' ? { kind: 'attack', attackers: [] } : { kind: 'block', assignments: [] };
+    const receipt = await table.submit([
+      { kind: 'pass_until', destination: 'current_turn', step, priority: 'self' },
+      action,
+      { kind: 'pass_until', destination: 'end_step' },
+    ]);
+    assert.equal(receipt.status, 'completed');
+    assert.deepEqual(
+      table.applied.map(([, choice]) => choice),
+      ['confirm'],
+    );
+  });

@@ -13,12 +13,16 @@ const TURN_STEPS = ['UNTAP', 'UPKEEP', 'DRAW', 'PRECOMBAT_MAIN', 'BEGIN_COMBAT',
   'DECLARE_BLOCKERS', 'FIRST_COMBAT_DAMAGE', 'COMBAT_DAMAGE', 'END_COMBAT', 'POSTCOMBAT_MAIN', 'END_TURN', 'CLEANUP'];
 const TURN_PHASES = ['BEGINNING', 'PRECOMBAT_MAIN', 'COMBAT', 'POSTCOMBAT_MAIN', 'END'];
 const WINDOW_ACTIONS = new Set(['play', 'activate', 'choose', 'attack', 'block']);
+const DECLARATION_STEP = { attack: 'DECLARE_ATTACKERS', block: 'DECLARE_BLOCKERS' };
 function intermediateWindow(action, next) {
+  const declaration = DECLARATION_STEP[next?.kind];
   return action?.kind === 'pass_until' && action.destination === 'current_turn' && action.priority === 'self'
     && (action.step !== undefined || action.phase !== undefined)
     && (action.step === undefined || TURN_STEPS.includes(action.step))
     && (action.phase === undefined || TURN_PHASES.includes(action.phase))
-    && WINDOW_ACTIONS.has(next?.kind);
+    && WINDOW_ACTIONS.has(next?.kind)
+    && (!declaration || (!action.phase || action.phase === 'COMBAT')
+      && (action.step === 'BEGIN_COMBAT' || action.step === declaration));
 }
 const PERMANENT_SPELL_TYPES = new Set(['ARTIFACT', 'BATTLE', 'CREATURE', 'ENCHANTMENT', 'PLANESWALKER']);
 
@@ -338,7 +342,7 @@ export class GameSeat {
     const terminalPass = (action) => ['pass_until', 'pass_priority'].includes(action?.kind);
     const finalPass = terminalPass(actions.at(-1));
     const prematurePassIndex = actions.slice(0, -1).findIndex((action, index) => terminalPass(action) && !intermediateWindow(action, actions[index + 1]));
-    if (prematurePassIndex !== -1) throw new ToolError('bad_sequence', 'Only an explicit current_turn step or phase at self priority may precede a planned action. Use at most one terminal pass (pass_priority or pass_until) and put it last.', { actionIndex: prematurePassIndex });
+    if (prematurePassIndex !== -1) throw new ToolError('bad_sequence', 'An intermediate pass needs a current_turn step or phase at self priority. Before attack or block, name BEGIN_COMBAT or its matching declaration step. Use at most one terminal pass (pass_priority or pass_until) and put it last.', { actionIndex: prematurePassIndex });
     const ownId = initial.players?.find((player) => player.yourSeat)?.id;
     const informationalStack = initial.stack.filter((card) =>
       (card.controllerId === ownId || expectedStackIds?.includes(card.id)) && needsStackReevaluation(card, ownId));
@@ -450,12 +454,12 @@ export class GameSeat {
         }
         steps.push({ kind: 'pass_to_boundary', destination, phase, step, priority, intermediate: tail.length > 0, skipOptionalResponses: action.policy === 'decline_optional' });
       } else steps.push(action);
-      if (intermediateWindow(actions[actionIndex - 1], action) && ['play', 'activate', 'choose'].includes(action.kind)) {
-        const { phase, step } = actions[actionIndex - 1];
-        steps[firstStep].window = { phase, step };
-      }
+      const window = actions[actionIndex - 1];
+      const followsWindow = intermediateWindow(window, action);
+      if (followsWindow && !DECLARATION_STEP[action.kind]) steps[firstStep].window = { phase: window.phase, step: window.step };
       for (let index = firstStep; index < steps.length; index++) {
         steps[index].actionIndex = actionIndex;
+        if (followsWindow && DECLARATION_STEP[action.kind]) steps[index].declarationPolicy = window.policy ?? 'if_no_play';
         if (beforeInformation || terminal) steps[index].beforeInformation = true;
       }
       beforeInformation ||= terminal;
@@ -1032,7 +1036,7 @@ export class GameSeat {
         && state.decision.id !== previousDecisionId;
       if ((state.activePlayerId === ownPlayerId) !== attacking || priorityAfterDeclaration
         || TURN_STEPS.indexOf(state.step) > TURN_STEPS.indexOf(expected)) {
-        throw new ToolError('illegal_choice', 'The intended combat declaration has no current window. Replan before passing.');
+        throw new ToolError(step.declarationPolicy ? 'destination_skipped' : 'illegal_choice', 'The intended combat declaration has no current window. Replan before passing.');
       }
     };
     const canSkipTarget = (state, step) => {
@@ -1189,6 +1193,10 @@ export class GameSeat {
                 throw new ToolError('illegal_choice', 'The next planned play is unavailable in this window.');
               }
               const pass = decision.choices.find((choice) => choice.type === 'pass');
+              if (step.declarationPolicy === 'if_no_play' && decision.kind === 'priority'
+                && decision.choices.some((choice) => choice.type !== 'pass' && !plainManaChoice(choice))) {
+                throw new ToolError('response_available', 'A legal response is available before the planned combat declaration.');
+              }
               if (decision.kind !== 'priority' || state.priority !== 'self' || !pass || state.stop || pendingCast
                 || (!step.semanticPlay && !['declareAttackers', 'declareBlockers'].includes(step.guard?.kind) && !state.stack.length)) {
                 throw new ToolError('response_available', 'An unplanned mandatory choice or unavailable intention needs a fresh plan.');
