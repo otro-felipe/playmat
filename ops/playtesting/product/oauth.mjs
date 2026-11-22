@@ -10,7 +10,7 @@ import { defaultScopes, scopeLabels, scopesSupported } from './oauth-scopes.mjs'
 const consentLifetime = 10 * 60
 const codeLifetime = 90
 const accessLifetime = 15 * 60
-const connectionLifetime = 30 * 24 * 60 * 60
+const connectionLifetime = 365 * 24 * 60 * 60
 const tokenPattern = /^[a-zA-Z0-9_-]{43}$/
 const verifierPattern = /^[a-zA-Z0-9_.~-]{43,128}$/
 const statePattern = /^[\x21-\x7e]{1,1024}$/

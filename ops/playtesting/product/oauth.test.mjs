@@ -463,6 +463,59 @@ test('[PM-AC-20] invalid DCR and CIMD never issue grants or redirect to unchecke
   assert.equal((await f.request('/oauth/register', headers, { client_name: 'Rate limited', redirect_uris: [redirect] })).status, 429)
 })
 
+test('[PM-AC-20] a live OAuth connection renews its 365-day term from rotation while access lasts 15 minutes', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const alice = await f.login('Alice')
+  const bob = await f.login('Bob')
+  const db = new pg.Client({ connectionString: databaseUrl, options: '-c search_path=' + f.schema })
+  await db.connect()
+  t.after(() => db.end())
+
+  const approval = await f.request('/oauth/authorize', alice, {
+    request: await consent(f, alice, { scope: 'play library' }), decision: 'allow',
+  })
+  assert.equal(approval.status, 303)
+  const code = new URL(approval.headers.get('Location')).searchParams.get('code')
+  const issue = { grant_type: 'authorization_code', client_id: clientId, redirect_uri: redirect, code_verifier: verifier, code, resource }
+  const refresh = refreshToken => ({ grant_type: 'refresh_token', client_id: clientId, resource, refresh_token: refreshToken })
+
+  async function exchange(form) {
+    const before = Date.now()
+    const reply = await f.request('/oauth/token', {}, form)
+    const after = Date.now()
+    assert.equal(reply.status, 200)
+    const tokens = await reply.json()
+    assert.equal(tokens.expires_in, 15 * 60)
+    assert.equal(tokens.scope, 'play library')
+    const verification = await f.request('/internal/verify', { Authorization: 'Bearer ' + tokens.access_token })
+    assert.equal(verification.status, 200)
+    const identity = await verification.json()
+    const { rows: [expiry] } = await db.query(`
+      SELECT c.expires_at AS connection_expires, max(a.expires_at) AS access_expires
+      FROM oauth_connections c JOIN oauth_access_tokens a ON a.connection_id = c.id
+      WHERE c.id = $1 GROUP BY c.id`, [identity.connectionId])
+    for (const [name, milliseconds] of [['connection_expires', 365 * 24 * 60 * 60 * 1000], ['access_expires', 15 * 60 * 1000]]) {
+      const issuedAt = expiry[name].getTime() - milliseconds
+      assert.ok(before <= issuedAt && issuedAt <= after, name + ' must be based on this exchange')
+    }
+    return { tokens, identity }
+  }
+
+  const original = await exchange(issue)
+  // A live connection created under the former policy keeps its authorization on the next rotation.
+  await db.query("UPDATE oauth_connections SET expires_at = now() + interval '30 days' WHERE id = $1", [original.identity.connectionId])
+  assert.equal((await f.request('/oauth/connections', bob, { connection: original.identity.connectionId })).status, 404)
+  const renewed = await exchange(refresh(original.tokens.refresh_token))
+  for (const field of ['connectionId', 'accountId', 'engineName', 'scopes']) {
+    assert.deepEqual(renewed.identity[field], original.identity[field])
+  }
+  assert.ok(renewed.tokens.refresh_token !== original.tokens.refresh_token, 'Rotation replaces the credential')
+  assert.equal((await f.request('/oauth/token', {}, refresh(original.tokens.refresh_token))).status, 400)
+  assert.equal((await f.request('/oauth/connections', alice, { connection: renewed.identity.connectionId })).status, 303)
+  assert.equal((await f.request('/oauth/token', {}, refresh(renewed.tokens.refresh_token))).status, 400)
+  assert.equal((await f.request('/internal/verify', { Authorization: 'Bearer ' + renewed.tokens.access_token })).status, 401)
+})
+
 test('[PM-AC-20] expired consent, codes, access and refresh credentials fail independently', { skip: !databaseUrl }, async t => {
   const f = await fixture(t)
   const alice = await f.login('Alice')

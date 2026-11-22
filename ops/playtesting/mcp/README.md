@@ -6,7 +6,7 @@ The [project glossary](guides/glossary.md) defines players, agents, libraries, m
 
 ## Connect an MCP client
 
-Add the remote `/mcp` URL in a client that supports OAuth. Sign in with your Thoughtseize account and authorize the connection. The Human Player and the MCP Player have separate deck libraries under the same account. Thoughtseize assigns the engine identity for an MCP rival automatically. The consent flow uses authorization code with S256 PKCE and rotating refresh tokens. Revoke a client from `/oauth/connections`.
+Add the remote `/mcp` URL in a client that supports OAuth. Sign in with your Thoughtseize account and authorize the connection. The Human Player and the MCP Player have separate deck libraries under the same account. Thoughtseize assigns the engine identity for an MCP rival automatically. The consent flow uses authorization code with S256 PKCE and rotating refresh tokens. Access tokens last 15 minutes. The connection expires 365 days after authorization or its latest successful refresh. An existing live connection adopts this term on its next rotation. Revoke a client from `/oauth/connections`.
 
 Clients from any vendor can use standard public-client OAuth. Thoughtseize resolves HTTPS Client ID Metadata Documents (CIMD) and offers `POST /oauth/register` (RFC 7591) as a fallback for clients without metadata documents. There is no vendor allowlist. Discovery advertises both mechanisms; registration alone grants no account access. The player must sign in and approve the displayed client, destination and scopes.
 

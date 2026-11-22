@@ -36,6 +36,12 @@ All cases below carry `[PM-AC-20]` in their test names:
 
 PM-AC-18 and PM-AC-19 continue to cover account/agent isolation, S256, state, CSRF, consent replay and actual Chromium consent navigation. Run the product suite with `PLAYMAT_TEST_DATABASE_URL`; include `PLAYMAT_OAUTH_BROWSER_TEST=1` and `PLAYMAT_OAUTH_SDK_TEST=1` in the Playwright 1.61.0 container with frontend and MCP dependencies installed. Each test uses its own schema in a disposable database. No coverage percentage is currently enforced or claimed.
 
+## Connection and access lifetimes
+
+PM-AC-20 issues access tokens for 15 minutes (`expires_in: 900`). Initial authorization and every successful refresh set the connection expiry to 365 days from that exchange. A live connection issued under the earlier 30-day term keeps its existing deadline until it refreshes. Rotation retains the same account, connection, client, audience and approved scopes and replaces the previous refresh token. An expired or revoked connection requires fresh authorization.
+
+PostgreSQL acceptance cases in [oauth.test.mjs](../../../ops/playtesting/product/oauth.test.mjs) include `a live OAuth connection renews its 365-day term from rotation while access lasts 15 minutes` and `expired consent, codes, access and refresh credentials fail independently`.
+
 ## Limitations
 
 Tests exercise the protocol, the official SDK and a local Chromium browser. They do not establish real login/integration compatibility for Claude, Gemini, Antigravity, OpenCode, Codex or ChatGPT. Live public metadata resolution is a separate read-only smoke, not a client login. The change is local and undeployed. Only public `none` clients with HTTPS or HTTP loopback callbacks are enabled; custom schemes and confidential authentication are outside this change.
