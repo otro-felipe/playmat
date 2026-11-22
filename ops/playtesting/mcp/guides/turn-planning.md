@@ -102,6 +102,47 @@ When the receipt has `planOwnsExecution:true`, call `wait_for_decision` with the
 }
 ```
 
+### Recover after an unavailable land drop
+
+At main-phase priority, a Mountain in hand can start a land play only if its current choice carries `canPlayLand:true`. A line starting at an earlier prompt can still include a known, later land drop. The executor checks that land's choice when the play is due.
+
+Suppose your land play was interrupted with `land_play_unavailable`. Read the receipt's state and the number of accepted decisions. In this example you are in your postcombat main phase, the stack is empty, the Mountain has no legal land choice and you have no other play. Use the returned cursor and a new command ID to pass toward the end step. If a legal play becomes available, `if_no_play` returns control.
+
+```json
+{
+  "gameId": "00000000-0000-4000-8000-000000000001",
+  "cursor": 8207,
+  "commandId": "skip-unavailable-land-001",
+  "view": "compact",
+  "actions": [
+    {"kind": "pass_until", "destination": "end_step", "policy": "if_no_play"}
+  ]
+}
+```
+
+### Continue through a visible response
+
+An opposing Fatal Push interrupted your line. After reviewing its target, you want it, your Prowess trigger and your Burst Lightning to resolve. In this example you have postcombat priority and no other play. Use the three IDs from the current `state.stack` and send one terminal pass. A further opposing action, new information or a required choice interrupts the line. A legal play offered during the pass also returns control under `if_no_play`.
+
+```json
+{
+  "gameId": "00000000-0000-4000-8000-000000000001",
+  "cursor": 8212,
+  "commandId": "resolve-visible-response-001",
+  "view": "compact",
+  "expectedStackIds": [
+    "<fatal-push-stack-id>",
+    "<prowess-trigger-stack-id>",
+    "<burst-lightning-stack-id>"
+  ],
+  "actions": [
+    {"kind": "pass_until", "destination": "end_step", "policy": "if_no_play"}
+  ]
+}
+```
+
+`expectedStackIds` replaces the default list of your own visible stack objects. If the stack has changed since you planned the line, use the latest cursor and rebuild the list from the objects still present whose resolution you intend to accept. Include any remaining opposing response you plan to pass through and each of your own remaining objects the line expects to resolve.
+
 ### Animate Mutavault and attack
 
 Mutavault is untapped and has been under your control since the turn began. A Mountain can pay for the animation. Copy the animation's `abilityId` from Mutavault's `nonManaAbilities` and its full `abilityText` from the visible rules. Use the defender's object ID to attack a planeswalker at exactly 2 loyalty. Use the opponent's player ID to attack them instead. This line assumes the opponent passes and leaves the attack unblocked.
@@ -305,7 +346,7 @@ When keeping every creature back, include `{"kind":"attack","attackers":[]}` bef
 
 When the current mulligan decision offers Keep and you know your opening line, you can submit that exact Keep with the first land and a terminal pass. The executor returns control at an unplanned bottom prompt or when the opponent starts. When you play first and skip the draw, a terminal `my_draw` after the land aims for your next turn. Use `pass_priority` if you intend to cede just once after the land. Replan after any actual draw.
 
-`current_turn` requires at least one exact `phase`, `step` or `priority` condition. Multiple conditions must all match. `priority:"self"` alone means any position where you currently have it, which may already be true. Use `pass_priority` for an actual handoff.
+`current_turn` requires at least one exact `phase`, `step` or `priority` condition. Multiple conditions must all match. `priority:"self"` alone means any position where you currently have it, which may already be true. Use `pass_priority` for one handoff or `pass_until` for a named boundary. A line accepts at most one of these terminal pass actions, as its final action.
 
 ## London mulligan
 

@@ -104,16 +104,26 @@ test('[PM-LINE-MCP-1] native stale line transport preserves the preflight reject
 });
 
 test('[PM-LINE-MCP-2] the turn guide examples pass the published native MCP input contracts', async (t) => {
-  const guide = await readFile(new URL('../guides/turn-planning.md', import.meta.url), 'utf8');
+  const f = await fixture(t);
+  const { result: { text: guide } } = await f.call('get_guide', { guideId: 'turn-planning' });
   const examples = [...guide.matchAll(/```json\n([\s\S]*?)\n```/g)].map(([, body]) => JSON.parse(body));
   const lines = examples.filter(({ actions }) => actions);
   const commandIds = new Set(lines.map(line => line.commandId));
-  for (const id of ['rage-lethal-001', 'animate-and-attack-001', 'burn-and-land-001', 'order-triggers-001',
+  for (const id of ['rage-lethal-001', 'skip-unavailable-land-001', 'resolve-visible-response-001',
+    'animate-and-attack-001', 'burn-and-land-001', 'order-triggers-001',
     'land-cast-attack-001', 'burst-at-own-nemesis-001', 'rage-valiant-001', 'saga-entry-001', 'opening-land-after-bottom']) {
     assert.ok(commandIds.has(id), `Missing guide example ${id}`);
   }
-  assert.equal(lines[0].actions[0].select.objectId, '<rage-object-id>', 'The lethal is the first copyable example');
-  const f = await fixture(t);
+  assert.equal(examples[0].commandId, 'rage-lethal-001', 'The XMage fixture binds the first JSON example');
+  assert.equal(examples[0].actions[0].select.objectId, '<rage-object-id>');
+  const passToEnd = [{ kind: 'pass_until', destination: 'end_step', policy: 'if_no_play' }];
+  const withoutLand = lines.find(line => line.commandId === 'skip-unavailable-land-001');
+  assert.deepEqual(withoutLand.actions, passToEnd, 'Recover from an unavailable land without queuing it again');
+  const continuation = lines.find(line => line.commandId === 'resolve-visible-response-001');
+  assert.deepEqual(continuation.expectedStackIds.toSorted(),
+    ['<burst-lightning-stack-id>', '<fatal-push-stack-id>', '<prowess-trigger-stack-id>'],
+    'Adopt both the opposing response and the two previously visible friendly objects');
+  assert.deepEqual(continuation.actions, passToEnd);
   for (const args of lines) {
     const { isError, result } = await f.call('play_line', args);
     assert.equal(isError, false, args.commandId);
@@ -406,6 +416,98 @@ test('[PM-LINE-03] an opt-in compact view retains exact options and available st
   assert.ok(Buffer.byteLength(JSON.stringify(compact)) < Buffer.byteLength(JSON.stringify(full)));
 });
 
+test('[PM-LINE-MCP-3] the native catalog describes when a land and a terminal pass can execute', async (t) => {
+  const f = await fixture(t);
+  const { tools } = await f.listTools();
+  const { properties } = tools.find(tool => tool.name === 'play_line').inputSchema;
+  assert.match(properties.actions.description, /at most one.*pass_priority.*pass_until.*last/i);
+  const play = properties.actions.items.anyOf.find(action => action.properties.kind?.const === 'play');
+  assert.match(play.properties.playAs.description, /canPlayLand:true/);
+});
+
+for (const variant of ['absent-choice', 'unmatched-selector', 'ambiguous-selector', 'unavailable-spell']) {
+  test(`[PM-LINE-SEM-7] an unavailable play stops before its queued pass: ${variant}`, async (t) => {
+    const mountain = { id: 'mountain-1', name: 'Mountain', types: ['LAND'] };
+    const other = { ...mountain, id: 'mountain-2' };
+    const legalChoices = variant === 'ambiguous-selector' ? [mountain, other]
+      : variant === 'unmatched-selector' ? [other] : [];
+    const first = { id: 'main', kind: 'priority', choices: [
+      { id: 'pass', type: 'pass' },
+      ...legalChoices.map(card => ({ id: card.id, card, type: 'object', canPlayLand: true })),
+    ] };
+    const f = await fixture(t, { first, initial: { ownHand: [mountain, other] } });
+    const play = variant === 'unavailable-spell' ? { kind: 'play', select: { objectId: 'missing-spell' } }
+      : { kind: 'play', playAs: 'land', select: variant === 'ambiguous-selector'
+        ? { cardName: 'Mountain', zone: 'hand' } : { objectId: mountain.id, zone: 'hand' } };
+    const { result } = await f.call('play_line', { ...f.request, actions: [play, { kind: 'pass_priority' }] });
+    const expected = { 'ambiguous-selector': 'ambiguous_choice', 'unavailable-spell': 'illegal_choice' };
+    assert.equal(result.reason, expected[variant] ?? 'land_play_unavailable');
+    if (result.reason === 'land_play_unavailable') assert.match(result.error.message, /canPlayLand:true/);
+    assert.equal(result.status, 'interrupted');
+    assert.equal(result.stage, 'execution');
+    assert.equal(result.error.actionIndex, 0);
+    assert.equal(result.appliedDecisions, 0);
+    assert.deepEqual(f.applied, []);
+  });
+}
+
+for (const actions of [
+  [{ kind: 'pass_priority' }, { kind: 'pass_until', destination: 'my_draw' }],
+  [{ kind: 'pass_until', destination: 'end_step' }, { kind: 'pass_priority' }],
+  [{ kind: 'pass_priority' }, { kind: 'attack', attackers: [] }],
+]) {
+  test(`[PM-LINE-MCP-3] preflight explains a premature ${actions[0].kind} before ${actions[1].kind}`, async (t) => {
+    const f = await fixture(t);
+    const { result } = await f.call('play_line', { ...f.request, actions });
+    assert.equal(result.status, 'rejected');
+    assert.equal(result.stage, 'preflight');
+    assert.equal(result.code, 'bad_sequence');
+    assert.equal(result.actionIndex, 0);
+    assert.match(result.message, /at most one.*pass_priority.*pass_until.*last/i);
+    assert.equal(result.appliedDecisions, 0);
+    assert.deepEqual(f.applied, []);
+  });
+}
+
+for (const newResponse of [false, true]) {
+  test(`[PM-LINE-FLOW-3] adopted response stack ${newResponse ? 'stops for a later opposing spell' : 'resolves to the end step'}`, async (t) => {
+    const stack = [
+      { id: 'push', name: 'Fatal Push', controllerId: 'rival' },
+      { id: 'prowess', abilityText: 'Prowess', abilityType: 'TRIGGERED_NONMANA', controllerId: 'pilot' },
+      { id: 'burst', name: 'Burst Lightning', controllerId: 'pilot' },
+    ];
+    const priority = id => ({ id, kind: 'priority', choices: [{ id: 'pass', type: 'pass' }] });
+    const f = await fixture(t, { first: priority('after-response'), initial: { stack },
+      onResponse: ({ choiceId }, update, state) => {
+        assert.equal(choiceId, 'pass');
+        const evidence = state.sequenceEvidence;
+        if (newResponse && state.stack.length === 2) {
+          update({ stack: [{ id: 'new-spell', name: 'Shock', controllerId: 'rival' }, ...state.stack],
+            sequenceEvidence: { ...evidence, publicActions: { pilot: 0, rival: 1 } }, decision: priority('new-response') });
+          return;
+        }
+        const [resolved, ...remaining] = state.stack;
+        const revision = evidence.resolutionRevision + 1;
+        update({ stack: remaining, decision: priority('after-' + resolved.id),
+          sequenceEvidence: { ...evidence, resolutionRevision: revision, resolutions: { ...evidence.resolutions, [resolved.id]: revision } },
+          ...(remaining.length === 0 && { phase: 'END', step: 'END_TURN' }) });
+      },
+    });
+    const { result } = await f.call('play_line', { ...f.request, expectedStackIds: stack.map(card => card.id),
+      actions: [{ kind: 'pass_until', destination: 'end_step', policy: 'if_no_play' }] });
+    assert.equal(result.status, newResponse ? 'interrupted' : 'completed', JSON.stringify(result));
+    if (newResponse) {
+      assert.equal(result.reason, 'opponent_action');
+      assert.equal(result.state.stack[0].id, 'new-spell');
+    } else {
+      assert.equal(result.state.step, 'END_TURN');
+      assert.deepEqual(result.state.stack, []);
+    }
+    assert.deepEqual(f.applied.map(answer => answer.decisionId), newResponse
+      ? ['after-response', 'after-push'] : ['after-response', 'after-push', 'after-prowess']);
+  });
+}
+
 for (const variant of ['channel-only', 'land-only', 'land-and-channel', 'different-source', 'two-land-faces']) {
   test(`[PM-LINE-01] Boseiju land intent acts only on a verified land action: ${variant}`, async (t) => {
     const boseiju = { id: 'boseiju', name: 'Boseiju, Who Endures', cardId: 'boseiju', types: ['LAND'] };
@@ -426,7 +528,7 @@ for (const variant of ['channel-only', 'land-only', 'land-and-channel', 'differe
       { kind: 'play', playAs: 'land', select: { cardId: boseiju.id, zone: 'hand' } },
     ] });
     if (!landPlayable) {
-      assert.equal(result.reason, 'illegal_choice');
+      assert.equal(result.reason, 'land_play_unavailable');
       assert.deepEqual(f.applied, []);
     } else if (variant === 'different-source' || variant === 'two-land-faces') {
       assert.equal(result.reason, 'response_available');

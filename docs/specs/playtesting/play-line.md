@@ -36,6 +36,8 @@ A single guide request can load all four full guides. Guide loading and tool des
 - **PM-LINE-FLOW-5** An exact answer to a public trigger-order prompt can opt into following its selected trigger and the final forced trigger. The engine must confirm the public source, ability, instance and placement order. Unknown, changed or additional stack objects, meaningful rival actions, and new information still return control.
 - **PM-LINE-FLOW-6** With an applicable public draw trigger on the battlefield, a queued pass returns control during the relevant upkeep before the draw, even under an explicit optional-decline policy. A draw destination with no applicable trigger can still reach the draw. A new command from the returned position can pass deliberately.
 - **PM-LINE-SEM-6** An optional casting-cost question can be answered with a guard for the exact visible source and engine question. Queue that choice at the engine's observed point in the announcement, before targets for Burst Lightning. Taking the cost preserves the engine's resulting payment and information boundaries.
+- **PM-LINE-SEM-7** A `playAs:"land"` action requires one matching engine choice marked `canPlayLand:true` when it executes. At an empty-stack main-phase priority decision with zero matching land choices, the line interrupts with `land_play_unavailable` before applying the land or later actions. Multiple matching legal choices retain `ambiguous_choice`.
+- **PM-LINE-MCP-3** A line supports at most one terminal pass. Both `pass_priority` and `pass_until` must be last. Preflight rejects a premature pass with `bad_sequence`, the action index and the one-pass rule before applying any action.
 
 - **PM-LINE-COMBAT-2** An attack can identify an exact observed player, planeswalker or battle for each creature. The engine must witness the declared assignments before confirming them. Verified damage to a planeswalker or battle can continue through the associated counter change, including lethal loyalty loss and the resulting graveyard move. Other effects and decisions still require independent evidence.
 
@@ -69,6 +71,7 @@ A single guide request can load all four full guides. Guide loading and tool des
 - `test/pioneer-line-boundaries.test.mjs` exercises `[PM-LINE-SEM-2] Thoughtseize with its declared black mana crosses a dual-land picker before reveal`.
 - `Mage/src/test/java/mage/TargetOpponentAutoChooseTest.java` exercises PM-LINE-SEM-3 through `standardAutoTargetSelectsTheOnlyLegalOpponent`, `forcedOpponentCanBeNamedBeforeALaterSearch`, and `preservesManualChoicesAndTheAutoTargetSetting`.
 - `test/play-line-pass.test.mjs` exercises PM-LINE-FLOW-6 for Sheoldred on either turn, a draw-step trigger, a source entering after the line began, a new flash source during upkeep, and draws without a relevant public trigger.
+- `test/play-line-http.test.mjs` exercises PM-LINE-SEM-7 and PM-LINE-MCP-3 through native MCP. For PM-LINE-FLOW-3 it adopts an observed opposing spell, own trigger and own spell, verifies their witnessed resolutions through the end step, and checks that a new opposing spell interrupts after the first resolution.
 
 Receipt recovery is process-local. A completed line can outlive the short HTTP request, but a restart loses the retained receipts. After an expired or uncertain receipt, read the current game state before choosing another action.
 

@@ -326,7 +326,7 @@ export class GameSeat {
     const terminalPass = (action) => ['pass_until', 'pass_priority'].includes(action?.kind);
     const finalPass = terminalPass(actions.at(-1));
     const prematurePassIndex = actions.slice(0, -1).findIndex(terminalPass);
-    if (prematurePassIndex !== -1) throw new ToolError('bad_sequence', 'Put an explicit pass at the end of the line.', { actionIndex: prematurePassIndex });
+    if (prematurePassIndex !== -1) throw new ToolError('bad_sequence', 'Use at most one terminal pass (pass_priority or pass_until) and put it last.', { actionIndex: prematurePassIndex });
     const ownId = initial.players?.find((player) => player.yourSeat)?.id;
     const informationalStack = initial.stack.filter((card) =>
       (card.controllerId === ownId || expectedStackIds?.includes(card.id)) && needsStackReevaluation(card, ownId));
@@ -1142,6 +1142,9 @@ export class GameSeat {
               if (!await waitForNext()) throw new ToolError('timeout', 'The next intended decision did not arrive.');
             } else {
               if (step.semanticPlay && decision.kind === 'priority' && state.stack.length === 0 && ['PRECOMBAT_MAIN', 'POSTCOMBAT_MAIN'].includes(state.step) && state.priority === 'self') {
+                if (step.playAs === 'land') {
+                  throw new ToolError('land_play_unavailable', 'No current land choice matches this selector. Use a choice marked canPlayLand:true or replan without this land.');
+                }
                 throw new ToolError('illegal_choice', 'The next planned play is unavailable in this main phase.');
               }
               const pass = decision.choices.find((choice) => choice.type === 'pass');

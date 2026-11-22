@@ -97,7 +97,7 @@ const TurnActivation = z.object({
   expectTriggers: z.array(OwnTrigger).max(4).optional(),
 }).strict();
 const TurnPlayShape = z.object({ kind: z.literal('play'), select: ChoiceSelector, when: z.enum(['stack_empty', 'priority']).default('stack_empty'),
-  playAs: z.literal('land').optional().describe('Require an engine-confirmed land play. If the object opens a picker, use the unique land option for that exact source. Omit for other plays.'),
+  playAs: z.literal('land').optional().describe('At execution the matching choice must have canPlayLand:true. A land in hand alone does not establish legality. If the object opens a picker, use the unique land option for that exact source. Omit for other plays.'),
   reevaluateAfter: z.boolean().optional().describe('Make this the last strategic intention and return control after settlement. Only guarded costs for its tracked cast/activation may follow before resolution; an untracked no-stack choice must be last. Use for uncertain effects not recognized automatically.'),
   expectCast: z.boolean().optional().describe('False for an intentional no-stack special action such as plot; lands are detected automatically. Unexpected stack additions still stop.'),
   spellAbilityId: StringId.optional().describe('Choose this exact spell or alternative-cost ability from the selected source picker.'),
@@ -159,7 +159,7 @@ const Line = {
   gameId: Uuid, cursor: Cursor, commandId: StringId.describe('Choose a unique ID for this line. For an uncertain result, reuse this ID with the same game, cursor and actions.'),
   reasoning: z.string().trim().min(1).max(600).optional().describe('A brief comment for the live spectator audience and authorized replay. Describe the line’s objective and an observation. Use send_chat to speak to the opponent.'),
   actions: z.array(z.union([TurnPlayShape, TurnActivation, TurnChooseShape, TurnAttackShape, TurnBlockShape, Pace, LinePassUntilShape, LinePassPriority])).min(1).max(32)
-    .describe('Plan as far as current information justifies. Use exact choices for visible engine prompts. Put pass_until or pass_priority last.'),
+    .describe('Plan as far as current information justifies. Use exact choices for visible engine prompts. Use at most one terminal pass (pass_priority or pass_until) and put it last.'),
   expectedStackIds: z.array(StringId).max(16).optional().describe('Exact objects already visible on the stack. For a current trigger-order prompt, use choose.adoptTriggerOrder instead.'),
   waitMs: z.number().int().min(0).max(25_000).default(5_000).describe('Bound how long this call waits for the result. If the plan still owns execution, wait_for_decision with this gameId and commandId.'),
   view: StateView,
