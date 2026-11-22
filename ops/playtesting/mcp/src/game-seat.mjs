@@ -278,6 +278,13 @@ export class GameSeat {
       return { ...choice, ...(refs ? { payWithOptions: refs } : {}),
         ...(exact ? { playLineAction: { kind: 'choose', decisionId: decision.id, choiceId: choice.id } } : {}) };
     });
+    if (priority && state.stack?.length && state.stack.length <= 16 && choices.some(choice => choice.type === 'pass')) {
+      const expectedStackIds = state.stack.map(card => card.id);
+      if (expectedStackIds.every(id => typeof id === 'string' && id.length > 0)
+          && new Set(expectedStackIds).size === expectedStackIds.length) {
+        return { ...state, decision: { ...decision, choices, visibleStackArgs: { expectedStackIds } } };
+      }
+    }
     return { ...state, decision: { ...decision, choices } };
   }
 

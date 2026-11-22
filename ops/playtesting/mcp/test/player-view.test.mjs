@@ -103,6 +103,21 @@ function measure(t, name, full, compact) {
   t.diagnostic(`${name} UTF-8 text bytes: full=${full.bytes} compact=${compact.bytes}`);
 }
 
+test('the acting seat can copy exact visible stack IDs when it chooses a response or pass', async (t) => {
+  const stack = [lingeringAbility, { id: 'spell-on-stack', name: 'Shock', controllerId: 'pilot' }];
+  const { call } = await fixture(t, { stack });
+  for (const view of ['compact', 'full']) {
+    const { payload } = await call('get_game_state', { gameId, view });
+    assert.deepEqual(payload.decision.visibleStackArgs, { expectedStackIds: stack.map(item => item.id) });
+  }
+  for (const overrides of [{ priority: 'opponent', stack }, { stack: [] }, { decision: target, stack },
+    { stack: Array.from({ length: 17 }, (_, i) => ({ ...lingeringAbility, id: String(i) })) }]) {
+    const f = await fixture(t, overrides);
+    const { payload } = await f.call('get_game_state', { gameId, view: 'compact' });
+    assert.equal(payload.decision.visibleStackArgs, undefined);
+  }
+});
+
 test('compact priority identifies when passing is the only engine option at this cursor', async (t) => {
   const pass = priority.choices.find(choice => choice.type === 'pass');
   const scenarios = [
