@@ -23,9 +23,10 @@ const verifier = 'fixture-verifier'.padEnd(64, '0')
 const challenge = createHash('sha256').update(verifier).digest('base64url')
 const password = 'synthetic-browser-password'
 
-async function fixture(t, oauthClients = [], oauthClientOptions) {
+async function fixture(t, oauthClients = [], oauthClientOptions, readSpectatorEngine) {
   const replayDirectory = await mkdtemp(join(tmpdir(), 'playmat-oauth-'))
   const schema = 'test_' + randomUUID().replaceAll('-', '')
+  const store = new Map()
   const delivered = []
   const eventOptions = { deliver: async (_url, { body }) => {
     const payload = JSON.parse(body)
@@ -33,9 +34,9 @@ async function fixture(t, oauthClients = [], oauthClientOptions) {
     delivered.push({ type: payload.name, tableId: payload.data.tableId })
     return { status: 204, body: '' }
   } }
-  const product = await createProduct({ databaseUrl, schema, replayDirectory, store: new Map(), publicUrl: issuer,
+  const product = await createProduct({ databaseUrl, schema, replayDirectory, store, publicUrl: issuer,
     oauthClients: [{ clientId, redirectUri: redirect, name: 'Fixture client' }, ...oauthClients], oauthClientOptions,
-    insecureCookie: true, eventOptions })
+    insecureCookie: true, eventOptions, readSpectatorEngine })
   product.server.listen(0, '127.0.0.1')
   await once(product.server, 'listening')
   t.after(async () => {
@@ -75,7 +76,7 @@ async function fixture(t, oauthClients = [], oauthClientOptions) {
     assert.equal(signedIn.status, 303)
     return { Cookie: signedIn.headers.get('Set-Cookie').split(';', 1)[0], Origin: issuer }
   }
-  return { product, request, login, schema, delivered, replayDirectory }
+  return { product, request, login, schema, delivered, replayDirectory, endpoint, store }
 }
 
 function authPath(fields = {}) {
@@ -949,4 +950,131 @@ test('account history can read a completed profile BO3 score without opening its
   assert.equal((await f.request(matchPath,foreign)).status,404)
   for (const headers of [fixed,playOnly]) assert.equal((await f.request(matchPath,headers)).status,403)
   assert.equal((await f.request(replay,foreign)).status,404)
+})
+
+test('two MCP seats automatically publish one owner-discoverable board from invitation through the archived final', {skip:!databaseUrl}, async t => {
+  const tableId = randomUUID(), replacement = randomUUID()
+  const engine = new Map()
+  const f = await fixture(t,[],undefined,async id => engine.get(id) ?? null)
+  const owner = await f.login('BroadcastHost')
+  const peer = await f.login('BroadcastGuest')
+  const write = (path,headers,body) => f.request(path,{...headers,'Content-Type':'application/json'},body)
+  const make = async (cookie,displayName) => (await (await write('/api/playtesting/players',cookie,{displayName,mcpEnabled:true})).json())
+  const host = await make(owner,'Public host'), guest=await make(peer,'Public guest')
+  const pilot = await authorizePilot(f,owner,'play',host.playerId)
+  const lease=randomUUID()
+  const change = (operation,id) => write('/internal/player-reservations/'+host.playerId,pilot,{operation,reservationId:lease,tableId:id})
+  assert.equal((await change('reserve')).status,200)
+  assert.equal((await change('bind',tableId)).status,200)
+  const invite = {tableId,roomId:randomUUID(),format:'Pioneer',tableName:'Broadcast fixture',password:'synthetic-fixture',guestEngineName:guest.engineName}
+  const created=await write('/api/playtesting/invites',pilot,invite)
+  assert.equal(created.status,201)
+  const links='/api/playtesting/tables/spectator-links', route='/api/playtesting/tables/'+tableId+'/spectator-link'
+  const listing=await f.request(links,owner)
+  assert.equal(listing.status,200)
+  const {tables}=await listing.json()
+  assert.deepEqual(tables,[{tableId,tableName:'Broadcast fixture'}])
+  assert.equal((await write('/api/playtesting/invites',pilot,invite)).status,201)
+  const listingPeer=await (await f.request(links,peer)).json()
+  assert.deepEqual(listingPeer.tables,[])
+  assert.equal((await f.request(links,pilot)).status,403)
+  const share=await f.request(route,owner)
+  assert.equal(share.status,200)
+  const {path}=await share.json()
+  assert.ok(path.startsWith('/watch/'))
+  assert.equal((await (await f.request(route,owner,null,'POST')).json()).path,path)
+  assert.equal((await f.request(route,peer)).status,403)
+  assert.equal((await f.request(route,peer,null,'POST')).status,403)
+  assert.equal((await f.request(route,pilot)).status,403)
+  assert.ok(!(await created.text()).includes(path.slice(7)))
+  const playerList=await f.request('/api/playtesting/players',pilot)
+  assert.ok(!(await playerList.text()).includes(path.slice(7)))
+  const publicPath=path.replace('/watch/','/api/playtesting/spectate/')
+  const waiting=await (await f.request(publicPath)).json()
+  assert.equal(waiting.status,'waiting')
+  assert.deepEqual(waiting.hands,{})
+  const gameId=randomUUID(), playerA=randomUUID(), playerB=randomUUID()
+  const players=[{playerId:playerA,name:host.engineName},{playerId:playerB,name:guest.engineName}]
+  const fixtureHands={[playerA]:{x:{name:'SENTINEL_PRIVATE'}}}
+  const frame={role:'spectator',status:'playing',revision:1,tableId:replacement,gameId,players,
+    view:{turn:2,players:players.map(p=>({...p,life:18,myHand:fixtureHands,handCount:3})),private:'SENTINEL_PRIVATE'},
+    hands:fixtureHands,lines:[{reasoning:'SENTINEL_PRIVATE'}],chat:[{message:'SENTINEL_PRIVATE'}]}
+  engine.set(tableId,{owner:guest.engineName,snapshot:frame})
+  await sleep(720)
+  assert.equal((await f.request(publicPath)).status,404)
+  engine.set(replacement,{owner:host.engineName,snapshot:frame})
+  assert.equal((await write('/internal/human-seat/restore',{}, {originalTableId:tableId,tableId:replacement})).status,200)
+  await sleep(720)
+  const assertBoard = data => {
+    assert.equal(data.gameId,gameId)
+    assert.equal(data.players.length,2)
+    assert.deepEqual(data.hands,{})
+    assert.deepEqual(data.lines,[])
+    assert.deepEqual(data.chat,[])
+    assert.ok(!JSON.stringify(data).includes('SENTINEL_PRIVATE'))
+  }
+  assertBoard(await (await f.request(publicPath)).json())
+  const stream=await fetch(f.endpoint+publicPath+'/events',{signal:AbortSignal.timeout(5000)})
+  const reader=stream.body.getReader()
+  let text=''
+  try {
+    while (!/data: [^\n]+\n\n/.test(text)) text+=new TextDecoder().decode((await reader.read()).value)
+  } finally { await reader.cancel() }
+  assertBoard(JSON.parse(/data: ([^\n]+)/.exec(text)[1]))
+  engine.set(replacement,{owner:host.engineName,snapshot:{...frame,status:'between_games',revision:2}})
+  await sleep(720)
+  assert.equal((await (await f.request(publicPath)).json()).status,'between_games')
+  assert.equal((await (await f.request(route,owner)).json()).path,path)
+  const now=Date.now(), matchId=randomUUID()
+  await writeFile(join(f.replayDirectory,gameId+'.json'),JSON.stringify({gameId,gameNumber:3,matchId,tableId:replacement,
+    winsNeeded:2,deckType:'Constructed - Pioneer',startedAt:now-100,endedAt:now,result:'Game finished',winner:host.engineName,
+    players:players.map(p=>({...p,human:true}))}))
+  await writeFile(join(f.replayDirectory,gameId+'.ndjson.gz'),gzipSync([JSON.stringify({t:1,view:frame.view,hands:fixtureHands}),
+    JSON.stringify({t:2,kind:'spectatorEnd',players,hands:fixtureHands})].join('\n')))
+  await writeFile(join(f.replayDirectory,matchId+'.match.json'),JSON.stringify({matchId,endedAt:now,winner:host.engineName}))
+  await f.product.archiveGames()
+  engine.clear()
+  await sleep(720)
+  const archived=await (await f.request(publicPath)).json()
+  assertBoard(archived)
+  assert.equal(archived.status,'finished')
+  assert.deepEqual((await (await f.request(links,owner)).json()).tables,[])
+  assert.equal((await (await f.request(route,owner)).json()).path,path)
+  const restarted=await createProduct({databaseUrl,schema:f.schema,replayDirectory:f.replayDirectory,store:f.store,
+    publicUrl:issuer,insecureCookie:true,readSpectatorEngine:async()=>null})
+  try {
+    restarted.server.listen(0,'127.0.0.1')
+    await once(restarted.server,'listening')
+    const endpoint='http://127.0.0.1:'+restarted.server.address().port
+    const final=await (await fetch(endpoint+publicPath)).json()
+    assertBoard(final)
+    assert.equal(final.status,'finished')
+  } finally {
+    restarted.server.close()
+    restarted.server.closeAllConnections()
+    await restarted.close()
+  }
+})
+
+test('automatic spectator links require a trusted creation with two MCP seats', {skip:!databaseUrl}, async t=>{
+  const f=await fixture(t,[],undefined,async()=>null)
+  const owner=await f.login('LegacyHost'), peer=await f.login('LegacyPeer')
+  const host=await f.product.provisionAgent('LegacyHost','LegacyPilot',['play'])
+  await f.product.provisionAgent('LegacyPeer','GuestPilot',['play'])
+  const agent={Authorization:'Bearer '+host}
+  const create=async(headers,guestEngineName)=>{
+    const tableId=randomUUID()
+    const response=await f.request('/api/playtesting/invites',{...headers,'Content-Type':'application/json'},{
+      tableId,roomId:randomUUID(),format:'Pioneer',password:'fixture-password',guestEngineName,
+    })
+    assert.equal(response.status,201)
+    return '/api/playtesting/tables/'+tableId+'/spectator-link'
+  }
+  const direct=await create({...agent,'X-Playmat-Client-IP':'192.0.2.1'},'GuestPilot')
+  const humanGuest=await create(agent,'LegacyPeer')
+  const humanHost=await create(owner,'GuestPilot')
+  for (const path of [direct,humanGuest,humanHost]) assert.equal((await f.request(path,owner)).status,403)
+  const supported=await create(agent,'GuestPilot')
+  assert.equal((await f.request(supported,owner)).status,200)
+  assert.equal((await f.request(supported,peer)).status,403)
 })

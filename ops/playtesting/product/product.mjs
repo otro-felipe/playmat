@@ -16,6 +16,7 @@ import { createArchive } from './archive.mjs'
 import { resetMatchHistory, setUnlimitedMatchHistory } from './history-retention.mjs'
 import { createTheoryStore, evaluateTheoryTactics } from './theory-store.mjs'
 import { createIdentity, identityView } from './identity.mjs'
+import { restoreSpectatorLink } from './spectator-links.mjs'
 import { createSpectators, spectatorStorage, spectatorRoute } from './spectators.mjs'
 import { createSignup } from './signup.mjs'
 import { createTurnstile, loginChallengeAction } from './turnstile.mjs'
@@ -122,7 +123,7 @@ function rejectMissing(value, message) {
 export async function createProduct({
   databaseUrl, schema = 'playmat_product', replayDirectory, store, insecureCookie = false, enableInternal = true,
   purgeExpiredHistory = false,
-  publicUrl, oauthClients = [], oauthClientOptions, eventOptions, signup, turnstile,
+  publicUrl, oauthClients = [], oauthClientOptions, eventOptions, signup, turnstile, readSpectatorEngine,
 }) {
   if (!databaseUrl || !/^[a-z_][a-z0-9_]{0,60}$/.test(schema)) throw Error('A valid product database configuration is required')
   const challenge = createTurnstile(publicUrl, turnstile)
@@ -158,7 +159,7 @@ export async function createProduct({
   const id = createIdentity(pool, insecureCookie, oauth.resolve)
   const registration = createSignup(pool, id, publicUrl, signup, challenge)
   const archive = createArchive(pool, replayDirectory, store, { purgeExpiredHistory })
-  const spectators = createSpectators({storage:spectatorStorage(pool, archive)})
+  const spectators = createSpectators({storage:spectatorStorage(pool, archive),readEngine:readSpectatorEngine})
   const review = createPostMatchReview(pool, archive, permissions)
   const theory = createTheoryStore(pool, review)
   const events = createMcpEvents(pool, eventOptions)
@@ -297,6 +298,7 @@ export async function createProduct({
       await transaction(pool, async db => {
         await restoreHumanSeat(db,input)
         await restorePlayerReservations(db,input.originalTableId,input.tableId)
+        await restoreSpectatorLink(db,input.originalTableId,input.tableId)
       })
       return send(res, 200, {})
     }
@@ -477,7 +479,7 @@ export async function createProduct({
     if (endpoint === 'invites') {
       requireScope(actor, 'play')
       if (req.method === 'GET') return send(res, 200, await invitations.list(actor, url.searchParams.get('limit')))
-      if (req.method === 'POST') return send(res, 201, await invitations.create(actor, await body(req)))
+      if (req.method === 'POST') return send(res, 201, await invitations.create(actor, await body(req), {trustedPilot:!proxied}))
     }
     if (endpoint.startsWith('invites/')) {
       requireScope(actor, 'play')

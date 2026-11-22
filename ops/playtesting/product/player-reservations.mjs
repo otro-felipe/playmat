@@ -55,7 +55,10 @@ export async function changeReservation(pool, actor, playerId, input) {
       if (operation === 'cancel') {
         if (held.table_id ? !held.cancel_pending || held.table_id !== tableId : held.started || tableId !== undefined)
           throw new ProductError(409,'The engine must confirm this waiting table before cancellation')
-        if (held.table_id) await db.query('DELETE FROM invitations WHERE table_id=$1 AND cancel_pending AND claimed_at IS NULL',[held.table_id])
+        if (held.table_id) {
+          await db.query('DELETE FROM invitations WHERE table_id=$1 AND cancel_pending AND claimed_at IS NULL',[held.table_id])
+          await db.query('DELETE FROM spectator_links WHERE public_host IS NOT NULL AND (table_id=$1 OR live_table_id=$1)',[held.table_id])
+        }
       }
       await db.query('DELETE FROM player_table_reservations WHERE player_id=$1',[playerId])
     }

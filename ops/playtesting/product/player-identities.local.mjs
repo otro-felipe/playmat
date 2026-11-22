@@ -55,6 +55,17 @@ export async function verifyPlayerIdentities({ base, issuer, Cookie, authorizePi
     return tableId
   }))
   assert.equal(new Set(tables).size,2)
+  const broadcasts=await Promise.all(tables.map(async tableId => {
+    const response=await fetch(base+'/api/playtesting/tables/'+tableId+'/spectator-link',{headers:{Cookie}})
+    assert.equal(response.status,200)
+    const {path}=await response.json()
+    assert.ok(typeof path==='string' && path.startsWith('/watch/'))
+    const board=base+path.replace('/watch/','/api/playtesting/spectate/')
+    const waiting=await (await fetch(board)).json()
+    assert.equal(waiting.status,'waiting')
+    assert.deepEqual(waiting.hands,{})
+    return board
+  }))
   await Promise.all(tables.map((tableId,pair)=>as(pair*2,'start_match',{tableId})))
   async function chooseStartingPlayer(index, state) {
     if (state.decision?.kind !== 'startingPlayer') return
@@ -68,6 +79,19 @@ export async function verifyPlayerIdentities({ base, issuer, Cookie, authorizePi
     await Promise.all(observed.map((state,i)=>chooseStartingPlayer(i,state)))
     return observed.every(s=>s.status==='active' && s.gameId && s.ownHand?.length && s.decision?.kind!=='startingPlayer') && observed
   },'four distinct seat projections on two simultaneously active tables')
+  await Promise.all(broadcasts.map((board,pair)=>until(async()=>{
+    const response=await fetch(board)
+    if (!response.ok) return false
+    const snapshot=await response.json()
+    if (snapshot.status!=='playing' || !snapshot.view?.players?.length) return false
+    assert.equal(snapshot.gameId,states[pair*2].gameId)
+    assert.equal(snapshot.players.length,2)
+    assert.deepEqual(snapshot.hands,{})
+    assert.deepEqual(snapshot.lines,[])
+    assert.deepEqual(snapshot.chat,[])
+    for (const card of basics) assert.ok(!JSON.stringify(snapshot).includes('"name":"'+card+'"'),'Opening hands stay out of the public channel')
+    return true
+  },'live board on the same public link for the privately seated MCP table')))
   for (const [i,state] of states.entries()) {
     assert.equal(state.tableId,tables[Math.floor(i/2)])
     assert.equal(state.gameId,states[i ^ 1].gameId)

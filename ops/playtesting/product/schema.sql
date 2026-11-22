@@ -257,3 +257,12 @@ CREATE TABLE IF NOT EXISTS spectator_links (
   token text NOT NULL UNIQUE,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- Ordinary browser broadcasts retain their existing sharing policy. Automatically
+-- published MCP tables persist their expected seats and the current engine table.
+ALTER TABLE spectator_links
+  ADD COLUMN IF NOT EXISTS public_host text,
+  ADD COLUMN IF NOT EXISTS public_guest text,
+  ADD COLUMN IF NOT EXISTS table_name text,
+  ADD COLUMN IF NOT EXISTS live_table_id uuid;
+CREATE UNIQUE INDEX IF NOT EXISTS spectator_live_table ON spectator_links(live_table_id) WHERE live_table_id IS NOT NULL;

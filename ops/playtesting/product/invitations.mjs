@@ -1,3 +1,4 @@
+import { issuePublicSpectatorLink } from './spectator-links.mjs'
 import { checkInvitationReservation } from './player-reservations.mjs'
 import { isUuid, normalize, normalizeFormat, ProductError, transaction } from './decks.mjs'
 
@@ -53,7 +54,7 @@ export function createInvitations(pool, identity, events) {
     return { invites: rows.map(invitationView) }
   }
 
-  async function create(actor, data) {
+  async function create(actor, data, {trustedPilot=false}={}) {
     const runtime = agentRuntime(actor, data)
     const format = normalizeFormat(data?.format)
     if (!isUuid(data?.tableId) || !isUuid(data.roomId) || !format || typeof data.password !== 'string'
@@ -89,7 +90,23 @@ export function createInvitations(pool, identity, events) {
       ) VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '48 hours',$8,$9,$10,$11,$12,$13) ON CONFLICT (table_id) DO NOTHING RETURNING *, ${guestOwner}`,
       [data.tableId, data.roomId, format, normalize(actor.engineName), invitee ? normalize(invitee) : null,
         invitee, data.password, mode, chatMode, ownerAccountId, unlisted, ...runtime])
-      if (!invite) throw new ProductError(409, 'This table already has an invitation')
+      // Only a trusted adapter creates public broadcasts for MCP seats. External product
+      // requests cannot nominate an arbitrary engine table for public sharing.
+      const automatic = trustedPilot && actor.agent && friend?.agent
+      if (!invite) {
+        if (automatic) {
+          const {rows:[same]} = await db.query(`SELECT *, ${guestOwner} FROM invitations WHERE table_id=$1 AND room_id=$2
+            AND creator_key=$3 AND invitee_key=$4 AND format=$5 AND table_password=$6 AND NOT cancel_pending AND expires_at>now()
+            AND EXISTS (SELECT 1 FROM spectator_links l WHERE l.table_id=$1 AND l.public_host=$3 AND l.public_guest=$4)`,
+            [data.tableId,data.roomId,normalize(actor.engineName),normalize(friend.engineName),format,data.password])
+          if (same) return invitationView(same)
+        }
+        throw new ProductError(409, 'This table already has an invitation')
+      }
+      if (automatic) {
+        const title=typeof data.tableName === 'string' ? [...data.tableName.trim()].slice(0,80).join('') : null
+        await issuePublicSpectatorLink(db,data.tableId,actor,friend,title || null)
+      }
       if (ownerAccountId) {
         const { rows: [agent] } = await db.query(`SELECT engine_name FROM agent_grants
           WHERE account_id=$1 AND oauth_managed AND player_id IS NULL AND revoked_at IS NULL AND 'play'=ANY(scopes)`, [ownerAccountId])

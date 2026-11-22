@@ -448,7 +448,7 @@ function registerTools(mcp, { contextFor, allowedOrigins }) {
   }, 'play', async ({ guestEngineName, model, reasoningEffort, deck, deckId, ...args }) => {
     const selectedDeck = await resolvePlayDeck(deck, deckId);
     return withTableReservation(undefined, (engine, lease) => engine.createGame({ ...args, deck: selectedDeck },
-      record => fromProduct('create_game_invite', { ...record, guestEngineName, model, reasoningEffort }), lease));
+      record => fromProduct('create_game_invite', { ...record, tableName: args.name, guestEngineName, model, reasoningEffort }), lease));
   });
   tool('join_game', 'Join a private table from its Thoughtseize invite link or table ID. Use a legal deck and an optional seat display name.', {
     tableId: Uuid.optional(), inviteLink: z.url().max(2048).optional(),
