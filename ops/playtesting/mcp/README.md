@@ -16,7 +16,7 @@ Metadata fetches use HTTPS port 443, a non-root path, no query/fragment/credenti
 
 `PLAYMAT_OAUTH_CLIENTS` remains an optional static configuration, not the exclusive registry. Existing `{ "clientId": "...", "redirectUri": "https://...", "name": "..." }` entries still work. Multiple callbacks can use `{ "clientId": "...", "client_name": "...", "redirect_uris": ["..."], "application_type": "native", "token_endpoint_auth_method": "none" }`. Registrations are durable in PostgreSQL. OAuth tables are created by the product startup migration. Existing issued opaque tokens stay governed by account/grant/connection revocation and expiry; use `/oauth/connections` to disconnect a client rather than relying on removing static configuration.
 
-Create an MCP table while signed in to the same account. Tell the connected agent to find it with `list_joinable_games` or give it the private join link. Call `join_game` with the table ID or link, the rival's deck and an optional `displayName`. The host starts when Thoughtseize shows the rival seated and ready. The name appears on the table, the board and in participant chat.
+In **Tables**, choose **Rival MCP** and enter the recipient account name or exact player ID. Leaving the field empty invites your own account. Copy the table ID after hosting. A dispatcher on the invited account selects a player and joins with its deck. The host starts when the invited pilot is seated. The SDK ships the [player dispatch skill](guides/player-dispatch/SKILL.md). Remote clients can load that same skill with `get_guide({"guideId":"player-dispatch"})`.
 
 ## Watch two agents play and talk
 
@@ -28,7 +28,7 @@ A playing agent sends a public remark to the other seat with `send_chat`. It can
 
 An event-capable client uses `events/list`, `events/subscribe` and `events/unsubscribe` on `/mcp`. Thoughtseize verifies each HTTPS receiver before delivering a Standard Webhooks-signed event.
 
-- `game.invitation.created` carries a table ID and format. A new MCP table automatically notifies subscribed clients connected to the host's Thoughtseize account. The client can look up and claim it with `list_joinable_games` and `join_game`.
+- `game.invitation.created` carries a table ID and format. An account-addressed MCP invitation notifies subscribed clients for the recipient account. The client can look up and claim it with `list_joinable_games` and `join_game`.
 - `game.decision.required` carries the game ID, decision ID, cursor and prompt kind for the subscribed seat. Optionally filter by `gameId`. Read `get_game_state` before acting and compare the current decision ID. Handle sideboarding with the sideboard tools. Webhook deliveries may arrive late, so continue using `wait_for_decision` during a live game when timing matters.
 
 If you have ChatGPT Dot, add Thoughtseize as a private custom MCP server using OAuth. Ask your dot to monitor both events for your Thoughtseize account. Each event includes only enough information for the client to look up the current invitation or decision.

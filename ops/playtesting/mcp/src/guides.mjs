@@ -25,18 +25,23 @@ const guides = [
     description: 'Find the official downloadable Comprehensive Rules and sections for common timing questions.',
   },
   {
+    name: 'player-dispatch', title: 'Assign a player to an approved match',
+    description: 'Find an addressed invitation, select an available player and hand off the approved match.',
+  },
+  {
     name: 'replay-analysis', title: 'Review Magic decisions after the match',
     description: 'Research matchups, reconstruct decisions and grade supported plays and omissions.',
   },
 ].map(({ name, ...metadata }) => ({
   name, ...metadata, mimeType,
   uri: `playmat://guides/${name}`,
-  text: [readGuide(name), ...(['getting-started', 'replay-analysis'].includes(name) ? [glossary] : []),
+  text: [readGuide(name === 'player-dispatch' ? 'player-dispatch/SKILL' : name), ...(['getting-started', 'replay-analysis'].includes(name) ? [glossary] : []),
     ...(usesMatchupStrategy.has(name) ? [matchupStrategy] : [])].join('\n\n') + '\n',
 }));
 const GuideId = z.enum(guides.map(({ name }) => name));
 const guideList = guides.map(({ text, ...guide }) => guide);
-const bootstrapGuides = guides.filter(({ name }) => name !== 'replay-analysis');
+const bootstrapNames = new Set(['getting-started', 'card-catalog', 'turn-planning', 'rules']);
+const bootstrapGuides = guides.filter(({ name }) => bootstrapNames.has(name));
 const guideBundle = {
   version: createHash('sha256').update(JSON.stringify(bootstrapGuides)).digest('hex'),
   guides: bootstrapGuides,

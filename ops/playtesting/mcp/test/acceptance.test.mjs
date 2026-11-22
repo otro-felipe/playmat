@@ -116,6 +116,7 @@ test('an invited agent can discover Thoughtseize and read its guides before join
     [cardCatalog, /search_cards[\s\S]*find_possible_responses/],
     [turnPlanning, /play_sequence[\s\S]*expectCast/],
     ['playmat://guides/replay-analysis', /earlier games[\s\S]*Wrenn.s Resolve[\s\S]*Thoughtseize/],
+    ['playmat://guides/player-dispatch', /list_joinable_games[\s\S]*availableOnly[\s\S]*create_player_slot[\s\S]*join_game/],
     [rules, /magic\.wizards\.com\/en\/rules[\s\S]*media\.wizards\.com\/\d{4}\/downloads\/MagicCompRules.*\.txt[\s\S]*117/],
   ]);
   const { resources } = await rival.listResources();
@@ -164,8 +165,8 @@ test('[PM-AC-08] a tools-only connector can discover and read the same guides as
   }
   const { error, value: { guides } } = await call(client, 'get_guide');
   assert.equal(error, false);
-  assert.deepEqual(new Set(guides.map(({ name }) => name)), new Set([...ids, 'replay-analysis']));
-  assert.equal(guides.length, ids.length + 1);
+  assert.deepEqual(new Set(guides.map(({ name }) => name)), new Set([...ids, 'replay-analysis', 'player-dispatch']));
+  assert.equal(guides.length, ids.length + 2);
 
   const { resources } = await client.listResources();
   for (const guide of guides) {
