@@ -1302,3 +1302,85 @@ test('[PM-LINE-CHOICE] running lines and other game IDs cannot produce new actio
   }
   await f.call('wait_for_decision',{gameId,commandId:f.request.commandId,timeoutMs:500});
 });
+
+const cryptOption = { id: 'object-crypt', type: 'object', objectId: 'crypt', nonManaAbilities: [{ abilityId: 'exile' }] };
+const freeSpell = { id: 'free', type: 'object', card: { id: 'free', manaCost: '{0}' } };
+const optionalPriority = (id, ...options) => ({ id, kind: 'priority', choices: [{ id: 'pass', type: 'pass' }, ...options] });
+const observedBoundary = { kind: 'pass_until', destination: 'current_turn', step: 'END_TURN', priority: 'self', policy: 'if_no_play' };
+
+for (const outcome of ['unchanged', 'new free spell', 'new ability on same object', 'mandatory target', 'rival trigger', 'new information']) {
+  test('copied optional-priority continuation protects ' + outcome, async t => {
+    const f = await fixture(t, { first: optionalPriority('first', cryptOption), initial: { ownHand: [freeSpell.card] }, onResponse: ({ decisionId, choiceId }, update, state) => {
+      assert.equal(choiceId, 'pass');
+      if (decisionId === 'first') return update({ step: 'BEGIN_COMBAT', decision: optionalPriority('second', cryptOption) });
+      if (decisionId === 'second') return update({ step: 'DECLARE_ATTACKERS', decision: optionalPriority('third', cryptOption) });
+      if (decisionId === 'third') {
+        const patch = {
+          unchanged: { step: 'END_TURN', decision: optionalPriority('last', cryptOption) },
+          'new free spell': { decision: optionalPriority('free', cryptOption, freeSpell) },
+          'new ability on same object': { decision: optionalPriority('changed', { ...cryptOption, nonManaAbilities: [...cryptOption.nonManaAbilities, { abilityId: 'draw' }] }) },
+          'mandatory target': { decision: { id: 'trigger-target', kind: 'target', choices: [{ id: 'legal', type: 'object' }] } },
+          'rival trigger': { decision: optionalPriority('trigger', cryptOption), stack: [{ id: 'opponent-trigger', controllerId: 'rival', abilityType: 'TRIGGERED' }] },
+          'new information': { decision: optionalPriority('reveal', cryptOption), sequenceEvidence: { ...state.sequenceEvidence, informationRevision: 1 } },
+        }[outcome];
+        return update(patch);
+      }
+      assert.fail('submitted an unapproved choice at ' + decisionId);
+    } });
+    const stopped = (await f.call('play_line', { ...f.request, actions: [
+      { kind: 'choose', decisionId: 'first', choiceId: 'pass' }, observedBoundary,
+    ] })).result;
+    assert.equal(stopped.reason, 'response_available');
+    assert.deepEqual(f.applied.map(a => a.decisionId), ['first']);
+    const hints = stopped.priorityOptions;
+    assert.ok(hints, 'the actual if_no_play interruption must explain the available alternatives');
+    assert.match(hints.respondNow, /current|open/i);
+    assert.deepEqual(hints.passOnce, { kind: 'pass_priority' });
+    assert.deepEqual(hints.declineKnown, { ...observedBoundary, policy: 'decline_optional', declineFromDecisionId: 'second' });
+    const next = (await f.call('play_line', { gameId, cursor: stopped.state.cursor, commandId: 'known-opts', actions: [hints.declineKnown] })).result;
+    assert.deepEqual(f.applied.map(a => a.decisionId), ['first', 'second', 'third']);
+    assert.equal(next.status, outcome === 'unchanged' ? 'completed' : 'interrupted');
+    if (['new free spell', 'new ability on same object','mandatory target'].includes(outcome)) assert.equal(next.reason, 'response_available');
+    if (outcome === 'new information') assert.equal(next.reason, 'new_information');
+    assert.equal(next.priorityOptions, undefined);
+    const recovered = (await f.call('wait_for_decision', { gameId, commandId: stopped.commandId, timeoutMs: 100 })).result;
+    assert.equal(recovered.priorityOptions, undefined, 'retained receipt cannot suggest passing an old window');
+  });
+}
+test('a scoped decline is bound to the observed priority and executes no prefix', async t => {
+  const f = await fixture(t, { first: optionalPriority('now', cryptOption) });
+  const action = { ...observedBoundary, policy: 'decline_optional', declineFromDecisionId: 'previous' };
+  const call = async (actions) => (await f.call('play_line', { ...f.request, actions })).result;
+  assert.equal((await call([action])).code, 'stale_decision');
+  assert.equal((await call([{ kind: 'choose', decisionId: 'now', choiceId: 'pass' }, { ...action, declineFromDecisionId: 'now' }])).status, 'rejected');
+  assert.equal((await call([{ ...action, policy: 'if_no_play' }])).status, 'rejected');
+  assert.deepEqual(f.applied, []);
+});
+
+test('the copyable single pass yields exactly once and retains the next optional play', async t => {
+  const f = await fixture(t, { first: optionalPriority('first', cryptOption), onResponse: ({ decisionId, choiceId }, update) => {
+    assert.deepEqual([decisionId, choiceId], ['first', 'pass']);
+    update({ decision: optionalPriority('second', cryptOption) });
+  } });
+  const stopped = (await f.call('play_line', { ...f.request, actions: [observedBoundary] })).result;
+  assert.deepEqual(f.applied, []);
+  const result = (await f.call('play_line', { gameId, cursor: stopped.state.cursor, commandId: 'only-once',
+    actions: [stopped.priorityOptions.passOnce] })).result;
+  assert.equal(result.status, 'completed');
+  assert.equal(result.state.decision.id, 'second');
+  assert.equal(result.priorityOptions, undefined);
+  assert.deepEqual(f.applied.map(a => a.choiceId), ['pass']);
+});
+
+for (const [context, first, initial] of [
+  ['a required target', { id: 'target', kind: 'target', choices: [{ id: 'forced', type: 'object' }] }, {}],
+  ['an existing rival stack object', optionalPriority('respond', cryptOption), { stack: [{ id: 'rival-trigger', controllerId: 'rival', abilityType: 'TRIGGERED' }] }],
+]) {
+  test('original safe-pass receipt gives no priority shortcut for ' + context, async t => {
+    const f = await fixture(t, { first, initial });
+    const result = (await f.call('play_line', { ...f.request, actions: [observedBoundary] })).result;
+    assert.equal(result.status, 'interrupted');
+    assert.equal(result.priorityOptions, undefined);
+    assert.deepEqual(f.applied, []);
+  });
+}

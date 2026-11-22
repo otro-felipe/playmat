@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { publicActivationText } from '../dist/engine-core.mjs';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -230,6 +231,10 @@ function plainManaChoice(choice) {
   return activated.length > 0 && activated.every((text) => /^\{T\}: Add (?:\{[WUBRGC]\})+(?: or (?:\{[WUBRGC]\})+)*\.$/.test(text));
 }
 
+function optionalPlays(decision) {
+  return decision.choices.filter(choice => choice.type !== 'pass' && !plainManaChoice(choice));
+}
+
 export class GameSeat {
   #outcomes = new Map();
   #sequences = new Map();
@@ -254,6 +259,19 @@ export class GameSeat {
       ? { ...choice, playLineAction: { kind: 'choose', decisionId: decision.id, choiceId: choice.id } }
       : choice);
     return { ...state, decision: { ...decision, choices } };
+  }
+
+  priorityOptions(stop, state) {
+    if (!stop || !state || state.status !== 'active' || state.rollbackRequest || state.stop || state.stack.length
+      || this.#current || this.#inFlight || state.epoch !== stop.epoch || state.cursor !== stop.cursor
+      || state.priority !== 'self' || state.decision?.kind !== 'priority'
+      || state.decision.id !== stop.decisionId || this.#uncertain === stop.decisionId) return;
+    return {
+      respondNow: 'Priority is still open. Inspect all visible legal plays, including free spells and useful abilities. Choose a response if you want one.',
+      passOnce: { kind: 'pass_priority' },
+      declineKnown: { ...stop.boundary, policy: 'decline_optional', declineFromDecisionId: stop.decisionId },
+      instructions: 'To pass once, copy passOnce. If you decide to decline these same visible options until the requested boundary, copy the entire declineKnown action, including declineFromDecisionId, as the only action of a fresh play_line from this cursor. Omitting that field also declines newly legal options.',
+    };
   }
 
   async wait(args, signal, predicate) {
@@ -472,7 +490,17 @@ export class GameSeat {
         if (destination === 'current_turn' && phase === undefined && step === undefined && priority === undefined) {
           throw new ToolError('bad_sequence', 'Choose a phase, step or priority for a current-turn destination.', { actionIndex });
         }
-        steps.push({ kind: 'pass_to_boundary', destination, phase, step, priority, intermediate: tail.length > 0, skipOptionalResponses: action.policy === 'decline_optional' });
+        let knownOptions;
+        if (action.declineFromDecisionId !== undefined) {
+          if (actions.length !== 1 || action.policy !== 'decline_optional') throw new ToolError('bad_sequence',
+            'A decline from an observed decision must be the only action and use decline_optional.', { actionIndex, field: 'declineFromDecisionId' });
+          if (initial.priority !== 'self' || decision?.kind !== 'priority' || decision.id !== action.declineFromDecisionId) {
+            throw new ToolError('stale_decision', 'Choose from the current ordinary priority before declining options.', { actionIndex, field: 'declineFromDecisionId' });
+          }
+          knownOptions = structuredClone(optionalPlays(decision));
+        }
+        steps.push({ kind: 'pass_to_boundary', destination, phase, step, priority, intermediate: tail.length > 0,
+          skipOptionalResponses: action.policy === 'decline_optional', knownOptions });
       } else steps.push(action);
       const window = actions[actionIndex - 1];
       const followsWindow = intermediateWindow(window, action);
@@ -1619,9 +1647,20 @@ export class GameSeat {
             requireBeforeInformation(state, step);
             requireBeforeDrawTrigger(state);
             const choice = state.decision.choices.find((item) => item.type === 'pass');
-            if (state.decision.kind !== 'priority' || state.priority !== 'self' || !choice || pendingIntention() || state.stop
-              || (!step.skipOptionalResponses && state.decision.choices.some((item) => item.type !== 'pass' && !plainManaChoice(item)))) {
-              throw new ToolError('response_available', 'A currently legal play or mandatory choice needs your decision before advancing.');
+            if (state.decision.kind !== 'priority' || state.priority !== 'self' || !choice || pendingIntention() || state.stop) {
+              throw new ToolError('response_available', 'A mandatory choice or pending action needs your decision before advancing.');
+            }
+            const options = optionalPlays(state.decision);
+            if (options.length && !step.skipOptionalResponses) {
+              if (step.kind === 'pass_to_boundary') {
+                const { destination, phase, step: targetStep, priority } = step;
+                sequence.optionalPassStop = { cursor: state.cursor, epoch: state.epoch, decisionId: state.decision.id,
+                  boundary: { kind: 'pass_until', destination, phase, step: targetStep, priority } };
+              }
+              throw new ToolError('response_available', 'A currently legal play needs your decision before advancing.');
+            }
+            if (step.knownOptions && options.some(option => !step.knownOptions.some(known => isDeepStrictEqual(known, option)))) {
+              throw new ToolError('response_available', 'A new or changed optional play is available. Inspect it before advancing.');
             }
             if (++passCount > 80) throw new ToolError('pass_limit', 'The advance reached its priority window limit.');
             await submit({ gameId: sequence.gameId, cursor: state.cursor, decisionId: state.decision.id,

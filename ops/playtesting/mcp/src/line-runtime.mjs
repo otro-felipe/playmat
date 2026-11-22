@@ -39,8 +39,11 @@ async function lineResult(seat, { gameId, commandId, sequenceId }, timeoutMs, si
   }
   const planOwnsExecution = receipt.status === 'running';
   const rollback = Boolean(state?.rollbackRequest);
+  const { optionalPassStop, ...status } = receipt;
+  const priorityOptions = optionalPassStop && seat.priorityOptions(optionalPassStop, state);
   return {
-    ...receipt,
+    ...status,
+    ...(priorityOptions ? { priorityOptions } : {}),
     commandId,
     stage: 'execution',
     actionIndex: receipt.error?.actionIndex ?? receipt.actionIndex ?? null,

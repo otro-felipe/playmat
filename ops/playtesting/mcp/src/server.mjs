@@ -151,6 +151,7 @@ const LinePassUntilShape = z.object({
   kind: z.literal('pass_until'),
   destination: z.enum(['my_upkeep', 'my_draw', 'end_step', 'current_turn']).describe('Next own upkeep, forthcoming own draw (including this turn from upkeep), this turn’s end step, or an explicit current-turn condition. For example, current_turn with step BEGIN_COMBAT or POSTCOMBAT_MAIN and priority self returns your decision there.'),
   policy: z.enum(['if_no_play', 'decline_optional']).default('if_no_play').describe('Decline optional plays only when explicitly intended, for example to bluff a response. Both policies stop on an opponent action, new information or an unplanned required choice.'),
+  declineFromDecisionId: StringId.optional().describe('With decline_optional on a single action, decline only options visible at this exact ordinary priority. Stop for a different option, even on the same source.'),
   ...GameCondition,
 }).strict();
 const LinePassUntil = LinePassUntilShape.refine((value) => (value.destination === 'current_turn') === hasDestination(value),
