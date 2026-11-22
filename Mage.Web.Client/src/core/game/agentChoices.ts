@@ -96,6 +96,7 @@ export function visibleAgentGame(state: GameSessionState | undefined) {
     players: (view?.players ?? []).map((player) => ({
       id: player.playerId,
       name: player.name,
+      ...(player.userData?.flagName ? { flagName: player.userData.flagName } : {}),
       yourSeat: player.playerId === state?.playerId,
       life: player.life,
       counters: (player.counters ?? []).map(({ name, count }) => ({ name, count })),

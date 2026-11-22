@@ -35,28 +35,32 @@ const openBrowserSeat = () => new PlaymatEngineSeat({ engineUrl: 'ws://127.0.0.1
 let browser = openBrowserSeat()
 const clientId = 'https://fixture.invalid/client'
 const callback = 'https://fixture.invalid/callback'
-const verifier = randomBytes(48).toString('base64url')
-const params = new URLSearchParams({ response_type: 'code', client_id: clientId, redirect_uri: callback, resource: issuer+'/mcp',
-  code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256', state: randomUUID() })
-const page = await fetch(base + '/oauth/authorize?' + params, { headers: { Cookie }, redirect:'manual' })
-assert.equal(page.status, 200)
-const request = /name="request" value="([a-f0-9-]{36})"/.exec(await page.text())?.[1]
-assert.ok(request)
-const approved = await form('/oauth/authorize', { request, decision: 'allow' }, { Cookie, Origin: issuer })
-assert.equal(approved.status, 303)
-const redirect = new URL(approved.headers.get('location'))
-assert.equal(redirect.origin + redirect.pathname, callback)
-const exchange = await form('/oauth/token', { grant_type:'authorization_code', client_id:clientId, code:redirect.searchParams.get('code'),
-  redirect_uri:callback, code_verifier:verifier, resource:issuer+'/mcp' })
-assert.equal(exchange.status, 200)
-const token = (await exchange.json()).access_token
-assert.ok(token)
+async function authorizePilot(playerId) {
+  const verifier = randomBytes(48).toString('base64url')
+  const params = new URLSearchParams({ response_type: 'code', client_id: clientId, redirect_uri: callback, resource: issuer+'/mcp',
+    code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256', state: randomUUID() })
+  const page = await fetch(base + '/oauth/authorize?' + params, { headers: { Cookie }, redirect:'manual' })
+  assert.equal(page.status, 200)
+  const request = /name="request" value="([a-f0-9-]{36})"/.exec(await page.text())?.[1]
+  assert.ok(request)
+  const approved = await form('/oauth/authorize', { request, decision: 'allow', ...(playerId && {playerId}) }, { Cookie, Origin: issuer })
+  assert.equal(approved.status, 303)
+  const redirect = new URL(approved.headers.get('location'))
+  assert.equal(redirect.origin + redirect.pathname, callback)
+  const exchange = await form('/oauth/token', { grant_type:'authorization_code', client_id:clientId, code:redirect.searchParams.get('code'),
+    redirect_uri:callback, code_verifier:verifier, resource:issuer+'/mcp' })
+  assert.equal(exchange.status, 200)
+  const token = (await exchange.json()).access_token
+  assert.ok(token)
+  return token
+}
+const token = await authorizePilot()
 const clients = []
-async function connect(label) {
+async function connect(label, pilotToken = token) {
   const client = new Client({name:label,version:'1'})
   clients.push(client)
   await client.connect(new StreamableHTTPClientTransport(new URL(base + '/mcp'), {
-    fetch:fixtureMcpFetch, requestInit:{ headers:{Authorization:'Bearer '+token} },
+    fetch:fixtureMcpFetch, requestInit:{ headers:{Authorization:'Bearer '+pilotToken} },
   }))
   await client.callTool({ name:'get_guide', arguments:{ bundle:true } })
   return async (tool, args = {}, expectedCode = null) => {
@@ -293,7 +297,10 @@ async function verifyHumanSideboard() {
 
 try {
   if (process.env.PLAYMAT_SEQUENCE_SCENARIOS === 'human-sideboarding') await verifyHumanSideboard()
-  else await verifyHumanControls()
+  else if (process.env.PLAYMAT_SEQUENCE_SCENARIOS === 'player-identities') {
+    const { verifyPlayerIdentities } = await import('./player-identities.local.mjs')
+    await verifyPlayerIdentities({ base, issuer, Cookie, authorizePilot, connect, until })
+  } else await verifyHumanControls()
 } finally {
   for(const client of clients) await client.close()
   browser.close()

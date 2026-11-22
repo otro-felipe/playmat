@@ -13,6 +13,7 @@ import { registerPostMatchReviewPrompt, reviewManifestInput, reviewEvidenceInput
 import { playLine, waitForLine } from './line-runtime.mjs';
 import { registerTheorycraftTools } from './theorycraft.mjs';
 import { compactGameState, formatGameReceipt } from './state-view.mjs';
+import { checkPlayerSelection, playerLease, requirePlayerControl, samePlayerControl } from './player-seats.mjs';
 
 const Uuid = z.uuid();
 const LibraryDeckId = z.string().regex(/^[a-z0-9_:.-]{1,64}$/i);
@@ -221,16 +222,28 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
     const scopes = scope === 'catalog' ? ['play', 'library'] : [scope === 'decks' ? 'library' : scope];
     const gameTool = ['play', 'chat'].includes(scope) && (Object.hasOwn(inputSchema, 'gameId')
       || ['list_recoverable_matches', 'get_recovery_status', 'recover_match'].includes(name));
-    if (gameTool) inputSchema = { ...inputSchema,
+    if (gameTool || ['create_game','join_game'].includes(name)) inputSchema = { ...inputSchema,
       humanTableId: Uuid.optional().describe('Supply the opted-in table ID on every call for the Human Player. Omit to use the MCP Player.') };
+    inputSchema = { ...inputSchema, playerId: Uuid.optional().describe('Persistent Thoughtseize player selected at OAuth consent. Omission keeps that same player. Use game object IDs for targets inside actions.') };
     mcp.registerTool(name, { description, inputSchema, annotations: { readOnlyHint },
       _meta: { securitySchemes: scopes.map(value => ({ type: 'oauth2', scopes: [value] })) },
     }, async (args, extra) => {
       try {
-        if (!actor.scopes.includes(scope)) throw new ToolError('forbidden', 'This credential lacks the required scope.');
-        const { humanTableId, ...input } = args;
+        if (!actor.scopes.includes(scope) || actor.playerId && scope === 'history') throw new ToolError('forbidden', 'This credential lacks the required scope.');
+        checkPlayerSelection(actor, args, name);
+        const { playerId, ...selected } = args;
+        const { humanTableId, ...input } = selected;
         const execute = async () => {
-          const result = await run(gameTool ? input : args, extra.signal);
+          if (actor.playerId && (gameTool || name === 'start_match')) {
+            requirePlayerControl(actor);
+            if (!actor.activeTableId || !actor.reservationId || (name === 'start_match' && input.tableId !== actor.activeTableId)) {
+              throw new ToolError('player_table_required', 'This connection has no reservation for that table.');
+            }
+            await getSeat().engine.open();
+          }
+          const result = await run(gameTool ? input : selected, extra.signal);
+          if (actor.playerId && ['play_line', 'wait_for_decision', 'wait_until', 'wait_for_chat'].includes(name)
+              && !await reauthorize(scope)) throw new ToolError('forbidden', 'The player reservation changed during this call.');
           if (actor.scopes.includes('chat') && ['get_game_state','wait_for_decision','play_line'].includes(name)) {
             const cursor = getSeat().engine.chatCursor?.(result.gameId ?? result.state?.gameId);
             if (cursor) return { ...result, chatCursor: cursor };
@@ -337,6 +350,11 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
     model: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9.:/_+-]{0,95}$/).optional().describe('Your actual playing model ID if known.'),
     reasoningEffort: z.string().regex(/^[a-z][a-z0-9_-]{0,23}$/).optional().describe('Your configured reasoning effort if known, such as high.'),
   };
+  tool('list_players', 'List the persistent Thoughtseize player identities authorized for this connection, with their public name, flag and active table.', {}, 'play', async () => {
+    const { players } = await fromProduct('list_players', {});
+    return { players: players.map(({ playerId, displayName, flag, engineName, mcpEnabled, activeTableId }) =>
+      ({ playerId, displayName, flag, engineName, mcpEnabled, activeTableId })) };
+  }, true);
   tool('list_joinable_games', 'List only tables with an available invitation for this account.', { limit: z.number().int().min(1).max(50).default(25) },
     'play', (args) => fromProduct('list_joinable_games', args), true);
   const playDeck = {
@@ -383,7 +401,7 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
     format: Format, name: z.string().trim().min(1).max(80), ...playDeck,
     guestEngineName: z.string().trim().min(1).max(36), ...agentRuntime,
   }, 'play', async ({ guestEngineName, model, reasoningEffort, deck, deckId, ...args }) => getSeat().engine.createGame({ ...args, deck: await resolvePlayDeck(deck, deckId) },
-    (record) => fromProduct('create_game_invite', { ...record, guestEngineName, model, reasoningEffort })));
+    (record) => fromProduct('create_game_invite', { ...record, guestEngineName, model, reasoningEffort }), playerLease(actor, fromProduct)));
   tool('join_game', 'Join a private table from its Thoughtseize invite link or table ID. Use a legal deck and an optional seat display name.', {
     tableId: Uuid.optional(), inviteLink: z.url().max(2048).optional(),
     displayName: z.string().trim().min(1).max(24).optional(), ...playDeck, ...agentRuntime,
@@ -400,7 +418,7 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
       }
       const invitation = await fromProduct('inspect_game_invite', { tableId });
       return getSeat().engine.joinGame({ tableId, deck: await resolvePlayDeck(deck, deckId) }, invitation,
-        () => fromProduct('get_game_invite', { tableId, displayName, model, reasoningEffort }));
+        () => fromProduct('get_game_invite', { tableId, displayName, model, reasoningEffort }), playerLease(actor, fromProduct, tableId));
     });
   tool('start_match', 'Start a ready table as its host. For the MCP Player provide tableId. For the Human Player provide humanTableId, including to finish setup of an MCP-created table with human gameplay disabled.', {
     tableId: Uuid.optional(), humanTableId: Uuid.optional(),
@@ -530,12 +548,22 @@ export function createMcpServer({
     const release = requestSlots(actor.accountId);
     if (!release) return limited(2);
     res.once('close', release);
-    const seatKey = JSON.stringify([actor.accountId, actor.engineName]);
+    const seatKey = actor.playerId ? JSON.stringify([actor.accountId, 'player', actor.playerId])
+      : JSON.stringify([actor.accountId, actor.engineName]);
     const callProduct = product ? (operation, args) => product(token, operation, args) : null;
     const human = humanMatchAccess({ actor, product: callProduct, createEngine, seats, maxSeats });
     function getSeat() {
+      requirePlayerControl(actor);
       const current = seatContext.getStore();
       if (current) return current.seat;
+      const prior = seats.get(seatKey);
+      if (prior && actor.playerId && !prior.engine.matchesPlayerGrant(actor)) {
+        prior.invalidate('player_control_changed');
+        prior.engine.close?.();
+        seatWatchers.get(seatKey)?.();
+        seatWatchers.delete(seatKey);
+        seats.delete(seatKey);
+      }
       if (!seats.has(seatKey)) {
         if (seats.size >= maxSeats) throw new ToolError('capacity', 'The beta seat limit has been reached.');
         seats.set(seatKey, new GameSeat(createEngine(actor)));
@@ -550,15 +578,16 @@ export function createMcpServer({
     const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true, sessionIdGenerator: undefined });
     registerGuides(mcp);
     if (eventRequest) registerEvents(mcp.server, actor, (method, args) => eventRequest(token, method, args));
-    if (actor.scopes.includes('history')) {
+    if (!actor.playerId && actor.scopes.includes('history')) {
       registerMatchReviewPrompt(mcp);
       registerPostMatchReviewPrompt(mcp);
     }
     registerTools(mcp, {
       actor, getSeat, allowedOrigins, human, callProduct,
-      reauthorize: async () => {
+      reauthorize: async (scope = 'play') => {
         const fresh = await authorize(token);
-        if (fresh?.accountId !== actor.accountId || fresh.engineName !== actor.engineName || !fresh.scopes.includes('play')) return false;
+        if (fresh?.accountId !== actor.accountId || fresh.engineName !== actor.engineName || !fresh.scopes.includes(scope)
+          || !samePlayerControl(actor, fresh)) return false;
         const current = seatContext.getStore();
         return !current || Boolean(await human.policy(current.tableId).catch(() => false));
       },

@@ -106,11 +106,16 @@ export class PlaymatEngineSeat {
   #chat = new TableConversation();
   #invitePresentation = null;
 
-  constructor({ engineUrl, engineName, trustedHeader, accountId, recoverySeatId, connectionId, canonicalAgent = false, authenticationHeaders = {}, guardedPrompts = true, managedPriorityStops = false, humanTableId = null }) {
+  constructor({ engineUrl, engineName, trustedHeader, accountId, recoverySeatId, connectionId, canonicalAgent = false, authenticationHeaders = {}, guardedPrompts = true, managedPriorityStops = false, humanTableId = null, playerId, activeTableId, flag }) {
     this.engineUrl = engineUrl;
     this.managedPriorityStops = managedPriorityStops;
     this.engineName = engineName;
     this.humanTableId = humanTableId;
+    this.profileId = playerId;
+    this.profileConnectionId = connectionId;
+    this.profileTableId = activeTableId ?? null;
+    this.userData = playerId ? { ...MCP_USER_DATA, flagName: (flag?.toLowerCase() || 'world') + '.png' } : MCP_USER_DATA;
+    if (playerId) this.#tableId = this.profileTableId;
     if (humanTableId && humanTableId !== 'create') {
       this.#tableId = humanTableId.replace(/^start:/, '');
       this.#allowHumanPlay = !humanTableId.startsWith('start:');
@@ -227,7 +232,7 @@ export class PlaymatEngineSeat {
       rejectOnFalse(login, 'engine_signin', 'This agent seat could not sign in to XMage.');
       if (!this.humanTableId) this.#restoreToken = await this.api.sessionGetRestoreToken();
       if (this.managedPriorityStops && !this.humanTableId) {
-        rejectOnFalse(await this.api.connectSetUserData(null, MCP_USER_DATA, 'web', ''),
+        rejectOnFalse(await this.api.connectSetUserData(null, this.userData, 'web', ''),
           'engine_preferences_unavailable', 'XMage could not initialize the MCP seat priority stops.');
       }
       this.#roomId = await this.api.serverGetMainRoomId();
@@ -249,7 +254,14 @@ export class PlaymatEngineSeat {
   }
 
   #acceptsTable(tableId) {
+    if (this.profileId) return Boolean(tableId && (tableId === this.profileTableId || tableId === this.#restoredProfileTable));
     return !this.humanTableId || this.humanTableId === tableId;
+  }
+
+  #restoredProfileTable = null;
+  matchesPlayerGrant(actor) {
+    return this.profileId === actor.playerId && this.profileConnectionId === actor.connectionId
+      && this.profileTableId === (actor.activeTableId ?? null);
   }
 
   #joinStartedGame(message) {
@@ -345,27 +357,40 @@ export class PlaymatEngineSeat {
     return { requested: await this.#session.resync() };
   }
 
-  async createGame({ name, format, deck, matchTimeLimit, seed, winsNeeded = 2, mode, botDeck, humanMcpAllowed }, register) {
-    await this.open();
+  async createGame({ name, format, deck, matchTimeLimit, seed, winsNeeded = 2, mode, botDeck, humanMcpAllowed }, register, lease) {
     const password = randomBytes(24).toString('base64url');
-    await this.#validateForSeat(format, deck);
     const computer = mode === 'practice' || mode === 'bot';
     const rival = mode === 'practice' ? { name: 'Goldfish', cards: [{cardName: 'Plains', amount: 60}], sideboard: [] }
       : botDeck ?? deck;
-    if (computer && rival !== deck) await this.#validateForSeat(format, rival);
+    await lease?.reserve();
+    try {
+      await this.open();
+      await this.#validateForSeat(format, deck);
+      if (computer && rival !== deck) await this.#validateForSeat(format, rival);
+    } catch (error) {
+      await lease?.release();
+      throw error;
+    }
     const table = await this.api.roomCreateTable(this.#roomId, {
       name, gameType: 'Two Player Duel', deckType: formatTag(format), playerTypes: ['HUMAN', computer ? 'COMPUTER_MAD' : 'HUMAN'],
       ...(this.humanTableId ? { humanMcpAllowed } : {}),
       winsNeeded, rollbackTurnsAllowed: true, rated: false, spectatorsAllowed: false, password,
       ...(matchTimeLimit ? { matchTimeLimit } : {}), ...(seed === undefined ? {} : { seed }),
     });
-    if (!table?.tableId) throw new ToolError('table_failed', 'XMage could not create the table.');
+    if (!table?.tableId) {
+      await lease?.release();
+      throw new ToolError('table_failed', 'XMage could not create the table.');
+    }
     const { tableId } = table;
     if (this.humanTableId) {
       this.humanTableId = tableId;
       this.#allowHumanPlay = humanMcpAllowed === true;
     }
     try {
+      if (lease) {
+        await lease.bind(tableId);
+        this.profileTableId = tableId;
+      }
       await this.#joinTable(this.#roomId, tableId, deck, password);
       const access = await register?.({ tableId, roomId: this.#roomId, format, password });
       if (computer) {
@@ -375,18 +400,42 @@ export class PlaymatEngineSeat {
       }
       return { tableId, format, state: computer ? 'started' : 'waiting', ...(access?.inviteLink ? { inviteLink: access.inviteLink } : {}) };
     } catch (error) {
-      await this.api.tableRemove(this.#roomId, tableId).catch(() => {});
+      const removed = await this.api.tableRemove(this.#roomId, tableId).catch(() => false);
+      if (lease && removed === true && await this.api.roomGetTableById(this.#roomId, tableId).catch(() => undefined) === null) {
+        await lease.release();
+        this.profileTableId = null;
+        this.#tableId = null;
+      }
       throw error;
     }
   }
 
-  async joinGame({ tableId, deck }, invitation, claim) {
+  async joinGame({ tableId, deck }, invitation, claim, lease) {
     if (!invitation || invitation.tableId !== tableId || !invitation.format) {
       throw new ToolError('not_invited', 'This agent has no available invitation to that table.');
     }
-    await this.open();
-    await this.#validateForSeat(invitation.format.replace('Constructed - ', ''), deck);
-    const grant = await claim();
+    await lease?.reserve();
+    try {
+      await this.open();
+      await this.#validateForSeat(invitation.format.replace('Constructed - ', ''), deck);
+    } catch (error) {
+      await lease?.release();
+      throw error;
+    }
+    if (lease) {
+      await lease.bind(tableId);
+      this.profileTableId = tableId;
+    }
+    let grant;
+    try {
+      grant = await claim();
+    } catch (error) {
+      // Product refused the claim before any join RPC could have reached XMage.
+      if (['invalid_input', 'unauthorized', 'forbidden', 'not_found', 'revision_conflict'].includes(error.code)) {
+        await lease?.release();
+      }
+      throw error;
+    }
     if (grant?.tableId !== tableId || grant.format !== invitation.format) {
       throw new ToolError('not_invited', 'The requested invitation changed. Use the current link.');
     }
@@ -431,11 +480,29 @@ export class PlaymatEngineSeat {
     return { tableId, started: true };
   }
 
-  async recoveryList() { await this.open(); return this.api.recoveryList(); }
-  async recoveryStatus(matchId) { await this.open(); return this.api.recoveryStatus(matchId); }
+  async recoveryList() {
+    await this.open();
+    const views = await this.api.recoveryList();
+    return this.profileId ? views.filter(view => this.#ownsRecovery(view)) : views;
+  }
+  #ownsRecovery(view) {
+    return Boolean(this.profileTableId && (view.originalTableId === this.profileTableId || view.tableId === this.profileTableId));
+  }
+  async recoveryStatus(matchId) {
+    await this.open();
+    const view = await this.api.recoveryStatus(matchId);
+    if (this.profileId) {
+      if (!this.#ownsRecovery(view)) throw new ToolError('forbidden_match', 'This recovery belongs to a different table.');
+      this.#restoredProfileTable = view.tableId ?? null;
+    }
+    return view;
+  }
   async recoveryJoin({ matchId, revision, agree }) {
     await this.open();
-    return this.api.recoveryJoin(matchId, revision, agree);
+    if (this.profileId) await this.recoveryStatus(matchId);
+    const view = await this.api.recoveryJoin(matchId, revision, agree);
+    if (this.profileId && this.#ownsRecovery(view)) this.#restoredProfileTable = view.tableId ?? null;
+    return view;
   }
 
   #requireGame(gameId) {

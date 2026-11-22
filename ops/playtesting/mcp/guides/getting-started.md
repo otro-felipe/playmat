@@ -2,7 +2,7 @@
 
 For a saved list, call `list_decks({})` and pass its `id` as `deckId` to `join_game` or `create_game`. For example, `join_game({"tableId":"<invited-table-uuid>","deckId":"<agent-library-deck-uuid>"})` seats the exact saved list and records its version for performance history. For an unsaved list, send the inline `deck` field instead.
 
-Connect to the Thoughtseize `/mcp` endpoint through OAuth with the player's Thoughtseize account. The Human Player and the MCP Player have separate deck libraries under the same account. Thoughtseize assigns the rival identity automatically for MCP matches. Use `tools/list` for input schemas and follow the scopes the player approved.
+Connect to the Thoughtseize `/mcp` endpoint through OAuth. On a standard account connection, Thoughtseize assigns the MCP rival automatically and keeps the Human Player's personal library separate. A connection authorized for a named player profile controls that profile and uses the account's shared MCP deck library. Use `tools/list` for input schemas and follow the scopes the owner approved.
 
 Before creating, joining or playing, call `get_guide({"bundle":true})` to load **all four guide texts** and their shared version. Repeat after losing context. A connector with an older schema can read the four guides individually by `guideId`: `getting-started`, `turn-planning`, `card-catalog` and `rules`. The equivalent `playmat://guides/<guideId>` resources are also available. An empty call only returns the guide index.
 
@@ -10,6 +10,32 @@ Before creating, joining or playing, call `get_guide({"bundle":true})` to load *
 2. The host starts when the table shows you seated and ready. Use `wait_for_decision` while another player decides or `get_game_state` to attach to an existing position. Read the game ID, cursor, priority, stack and your visible decision. After a timeout, inspect the returned state and answer an actionable choice promptly.
 3. Use `play_line` from that cursor with a fresh `commandId`. Request `view:"compact"` in state reads, lines and waits when the connector lists that field. Send the longest justified line, including known choices, combat and where you intend to stop. For any observed engine prompt, `choose` takes its `decisionId`, a listed `choiceId` and the requested `value` if applicable. The line returns a receipt and current state together. When it still owns execution, wait for that line with `wait_for_decision` using the receipt’s `gameId` and `commandId`. When it stops, plan from the returned state and preserve all accepted actions.
 4. Between games of a best-of-three match, read `get_sideboard_state` and submit the current decision with `submit_sideboard`. Keep within the registered card pool. Read the new game state for its game ID or final result when the match ends.
+
+## Pilot a named Thoughtseize player
+
+The owner selects one profile when approving each pilot's OAuth connection. Read `list_players({})` on that connection and use the returned `playerId` on the outer tool call. Omitting it keeps the same player. Each pilot needs its own connection and seat. The table host can obtain the invited profile's public `engineName` from the coordinator.
+
+For example, use the matching calls below on the host and invited guest clients. Replace the IDs with values already returned to the corresponding pilot. Each pilot selects its saved deck from `list_decks({})`.
+
+```js
+// Host connection
+await host.callTool({ name: "create_game", arguments: {
+  playerId: hostPlayerId, format: "Pioneer", name: "Pioneer practice",
+  deckId: hostDeckId, guestEngineName: invitedEngineName
+} })
+// Guest connection, using the returned tableId
+await guest.callTool({ name: "join_game", arguments: {
+  playerId: guestPlayerId, tableId, deckId: guestDeckId
+} })
+await host.callTool({ name: "start_match", arguments: { playerId: hostPlayerId, tableId } })
+await guest.callTool({ name: "get_game_state", arguments: { playerId: guestPlayerId, view: "compact" } })
+// When the guest's line still owns execution, wait on its original receipt
+await guest.callTool({ name: "wait_for_decision", arguments: {
+  playerId: guestPlayerId, gameId, commandId, timeoutMs: 15000, view: "compact"
+} })
+```
+
+Only one table can reserve each player. On `player_busy`, inspect the profile's current table before retrying. After reauthorizing or reconnecting, use the current `gameId` and inspect the receipt or recovery status before sending another move. Combat, targets and card selectors use the IDs from the current XMage view. `humanTableId` belongs to the standard Human Player flow below.
 
 ## Sideboard between games
 

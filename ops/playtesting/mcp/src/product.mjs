@@ -38,6 +38,15 @@ export function createProductClient(baseUrl, publicUrl) {
     let path;
     let config;
     switch (name) {
+      case 'list_players':
+        path = root + '/players';
+        break;
+      case 'player_reservation': {
+        const { playerId, ...body } = args;
+        path = '/internal/player-reservations/' + encode(playerId);
+        config = { method: 'POST', body };
+        break;
+      }
       case 'list_joinable_games':
         path = `${root}/invites?limit=${args.limit}`;
         break;
@@ -139,6 +148,9 @@ export function createProductClient(baseUrl, publicUrl) {
     }
     const response = await request(token, path, config);
     if (!response.ok) {
+      if (name === 'player_reservation' && response.status === 409) {
+        throw new ToolError('player_busy', 'This player already has a reservation. Check its current table before retrying.');
+      }
       if (response.status === 409 && path.startsWith(root + '/review/')) {
         const result = await response.json().catch(() => null);
         if (result?.error === 'Wait for the completed match and its replay archive' || result?.error === 'Replay is not ready for review') {
