@@ -14,6 +14,8 @@
 	}
 
 	route {
+		@publicPlayerSelector header X-Playmat-Player-Id *
+		respond @publicPlayerSelector 403
 		request_header -X-Playmat-Human-Table
 		request_header -X-Playmat-Canonical-Agent
 		request_header -X-Playmat-User

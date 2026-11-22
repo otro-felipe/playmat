@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'node:crypto'
 import { promisify } from 'node:util'
+import { selectOAuthPlayer } from './players.mjs'
 import { normalize, ProductError, transaction } from './decks.mjs'
 
 const derive = promisify(scrypt)
@@ -264,6 +265,8 @@ export function createIdentity(pool, insecureCookie, resolveOAuth = async () => 
   }
 
   async function resolve(req) {
+    const selected = req.headers['x-playmat-player-id']
+    if (selected !== undefined && req.headers['x-playmat-client-ip']) throw new ProductError(403,'Select a player through MCP')
     if (req.headers.authorization !== undefined) {
       const match = /^Bearer ([a-z0-9_-]{43})$/i.exec(req.headers.authorization)
       if (!match) return null
@@ -272,8 +275,9 @@ export function createIdentity(pool, insecureCookie, resolveOAuth = async () => 
         'SELECT a.id, a.username, g.engine_name, g.scopes FROM agent_grants g JOIN accounts a ON a.id=g.account_id WHERE g.digest=$1 AND g.revoked_at IS NULL AND a.enabled AND NOT g.oauth_managed',
         [tokenDigest],
       )
-      return row ? actor(row.id, row.username, row.engine_name, row.scopes, true) : resolveOAuth(tokenDigest)
+      return selectOAuthPlayer(pool, row ? actor(row.id, row.username, row.engine_name, row.scopes, true) : await resolveOAuth(tokenDigest), selected)
     }
+    if (selected !== undefined) throw new ProductError(403,'A player selector requires an MCP connection')
     const session = sessionDigest(req)
     if (!session) return null
     const { rows: [row] } = await pool.query(
@@ -336,8 +340,10 @@ export function createIdentity(pool, insecureCookie, resolveOAuth = async () => 
     if (!grant.oauth_managed) return true
     if (!/^[\da-f-]{36}$/i.test(principal.connectionId ?? '')) return false
     const { rowCount } = await pool.query(
-      "SELECT 1 FROM oauth_connections WHERE id=$1 AND account_id=$2 AND engine_key=$3 AND revoked_at IS NULL AND expires_at>now() AND 'play'=ANY(scopes_approved) AND ($4::uuid IS NULL OR NOT EXISTS (SELECT 1 FROM player_table_reservations WHERE player_id=$4 AND connection_id<>$1))",
-      [principal.connectionId, principal.accountId, grant.engine_key, grant.player_id],
+      `SELECT 1 FROM playable_oauth_seats s LEFT JOIN player_table_reservations r ON r.player_id=s.player_id
+       WHERE s.connection_id=$1 AND s.account_id=$2 AND s.engine_key=$3
+         AND (r.connection_id=$1 OR (r.connection_id IS NULL AND NOT s.delegated))`,
+      [principal.connectionId, principal.accountId, grant.engine_key],
     )
     return rowCount === 1
   }
@@ -358,5 +364,5 @@ export function viewerNames(actor) {
 export function identityView(actor) {
   const { accountId, engineName, scopes, agent, connectionId, accountAgent, username } = actor
   return { accountId, engineName, scopes, agent, ...(actor.playerId ? {playerId:actor.playerId, displayName:actor.displayName, flag:actor.flag, activeTableId:actor.activeTableId, ownsReservation:actor.ownsReservation, ...(actor.reservationId ? {reservationId:actor.reservationId,reservationStarted:actor.reservationStarted,reservationCancelPending:actor.reservationCancelPending} : {})} : {}), ...(connectionId ? { connectionId } : {}),
-    ...(accountAgent ? { accountAgent, username } : {}) }
+    ...(accountAgent ? { accountAgent, username } : {}), ...(actor.playerSelectionEnabled ? {playerSelectionEnabled:true} : {}) }
 }

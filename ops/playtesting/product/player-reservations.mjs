@@ -26,7 +26,8 @@ export async function changeReservation(pool, actor, playerId, input) {
     throw new ProductError(400,'Invalid table reservation')
   return transaction(pool,async db => {
     const {rowCount} = await db.query(`SELECT p.id FROM player_profiles p JOIN agent_grants g ON g.player_id=p.id AND g.revoked_at IS NULL
-      JOIN oauth_connections c ON c.engine_key=g.engine_key AND c.account_id=p.account_id
+      JOIN playable_oauth_seats s ON s.player_id=p.id AND s.account_id=p.account_id
+      JOIN oauth_connections c ON c.id=s.connection_id
       WHERE p.id=$1 AND p.account_id=$2 AND p.mcp_enabled AND c.id=$3 AND c.revoked_at IS NULL AND c.expires_at>now()
         AND 'play'=ANY(c.scopes_approved) FOR UPDATE OF p FOR SHARE OF g,c`,[playerId,actor.accountId,actor.connectionId])
     if (!rowCount) throw new ProductError(403,'This pilot permission is inactive')
@@ -72,7 +73,7 @@ export async function checkInvitationReservation(db, actor, tableId) {
 export async function restorePlayerReservations(db, original, replacement) {
   // Recovery calls this trusted callback only after XMage created the replacement table.
   const {rows} = await db.query(`SELECT r.player_id,r.original_table_id,r.table_id,r.cancel_pending,p.mcp_enabled,
-    (g.revoked_at IS NULL AND c.revoked_at IS NULL AND c.expires_at>now() AND 'play'=ANY(c.scopes_approved)) AS valid
+    EXISTS (SELECT 1 FROM playable_oauth_seats s WHERE s.player_id=r.player_id AND s.connection_id=c.id) AS valid
     FROM player_table_reservations r JOIN player_profiles p ON p.id=r.player_id JOIN agent_grants g ON g.player_id=p.id
     JOIN oauth_connections c ON c.id=r.connection_id WHERE r.table_id=ANY($1::uuid[]) OR r.original_table_id=$2
     ORDER BY r.player_id FOR UPDATE OF p,r FOR SHARE OF g,c`, [[original,replacement],original])

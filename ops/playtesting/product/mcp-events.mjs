@@ -35,9 +35,9 @@ const definitions = [
 const activeGrant = "g.revoked_at IS NULL AND a.enabled AND 'play'=ANY(g.scopes)"
 const activeConnection = `(
   s.connection_id IS NULL OR EXISTS (
-    SELECT 1 FROM oauth_connections c WHERE c.id=s.connection_id AND c.account_id=s.account_id
-      AND c.engine_key=s.engine_key AND c.expires_at>now() AND c.revoked_at IS NULL
-      AND 'play'=ANY(c.scopes_approved)
+    SELECT 1 FROM playable_oauth_seats seat WHERE seat.connection_id=s.connection_id
+      AND seat.account_id=s.account_id AND seat.engine_key=s.engine_key
+      AND NOT EXISTS (SELECT 1 FROM player_table_reservations r WHERE r.player_id=seat.player_id AND r.connection_id<>s.connection_id)
   )
 )`
 
@@ -107,8 +107,8 @@ export function createMcpEvents(pool, { deliver = postWebhook, intervalMs = 400 
       SELECT 1 FROM agent_grants g JOIN accounts a ON a.id=g.account_id
       WHERE g.account_id=$1 AND g.engine_key=$2 AND ${activeGrant}
         AND ($3::uuid IS NULL OR EXISTS (
-          SELECT 1 FROM oauth_connections c WHERE c.id=$3 AND c.account_id=$1 AND c.engine_key=$2
-            AND c.expires_at>now() AND c.revoked_at IS NULL AND 'play'=ANY(c.scopes_approved)
+          SELECT 1 FROM playable_oauth_seats seat WHERE seat.connection_id=$3 AND seat.account_id=$1 AND seat.engine_key=$2
+            AND NOT EXISTS (SELECT 1 FROM player_table_reservations r WHERE r.player_id=seat.player_id AND r.connection_id<>$3)
         )) ${lock ? 'FOR UPDATE OF g' : ''}
     `, owner)
     if (!rowCount) throw new ProductError(403, 'This game event credential is inactive.')

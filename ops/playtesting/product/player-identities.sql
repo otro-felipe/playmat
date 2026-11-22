@@ -56,3 +56,21 @@ ALTER TABLE player_table_reservations
   ADD COLUMN IF NOT EXISTS cancel_pending boolean NOT NULL DEFAULT false;
 ALTER TABLE player_table_reservations ALTER COLUMN started SET DEFAULT false;
 ALTER TABLE invitations ADD COLUMN IF NOT EXISTS cancel_pending boolean NOT NULL DEFAULT false;
+
+-- Effective play seats are resolved afresh for every connection. An exact OAuth
+-- seat always retains its identity. Only the canonical account grant can select
+-- additional opted-in profiles owned by that account.
+CREATE OR REPLACE VIEW playable_oauth_seats AS
+  SELECT c.id AS connection_id, c.account_id, target.engine_key, target.player_id,
+    target.engine_key <> source.engine_key AS delegated
+  FROM oauth_connections c
+  JOIN accounts a ON a.id=c.account_id AND a.enabled
+  JOIN agent_grants source ON source.engine_key=c.engine_key AND source.account_id=c.account_id
+    AND source.oauth_managed AND source.revoked_at IS NULL AND 'play'=ANY(source.scopes)
+  JOIN agent_grants target ON target.account_id=c.account_id
+    AND (target.engine_key=source.engine_key OR
+      (source.player_id IS NULL AND source.engine_key='mcp_' || a.username_key AND target.player_id IS NOT NULL))
+    AND target.oauth_managed AND target.revoked_at IS NULL AND 'play'=ANY(target.scopes)
+  LEFT JOIN player_profiles p ON p.id=target.player_id AND p.account_id=c.account_id
+  WHERE c.revoked_at IS NULL AND c.expires_at>now() AND 'play'=ANY(c.scopes_approved)
+    AND (target.player_id IS NULL OR p.mcp_enabled);

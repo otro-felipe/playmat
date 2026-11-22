@@ -53,6 +53,7 @@ async function fixture(t) {
   await pool.query('CREATE SCHEMA ' + schema)
   await pool.query(await readFile(new URL('./schema.sql', import.meta.url), 'utf8'))
   await pool.query(await readFile(new URL('./oauth-schema.sql', import.meta.url), 'utf8'))
+  await pool.query(await readFile(new URL('./player-identities.sql', import.meta.url), 'utf8'))
   t.after(async () => {
     await pool.query('DROP SCHEMA ' + schema + ' CASCADE')
     await pool.end()
@@ -164,6 +165,7 @@ test('OAuth revocation removes only its subscriptions and signing-key rotation k
   const { pool, alice } = await fixture(t)
   const connectionId = randomUUID()
   const connected = { ...alice, connectionId }
+  await pool.query('UPDATE agent_grants SET oauth_managed=true WHERE account_id=$1', [alice.accountId])
   await pool.query(`
     INSERT INTO oauth_connections(id,account_id,engine_key,audience,client_id,scopes_approved,refresh_digest,expires_at)
     VALUES($1,$2,$3,$4,'fixture-client',ARRAY['play'],$5,now()+interval '1 day')

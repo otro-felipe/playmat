@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto'
-import { isUuid, ProductError, transaction } from './decks.mjs'
+import { isUuid, normalize, ProductError, transaction } from './decks.mjs'
 
 const profileScopes = ['play', 'library', 'chat']
 const profileQuery = `SELECT p.id AS "playerId",p.display_name AS "displayName",p.flag,p.mcp_enabled AS "mcpEnabled",
@@ -9,6 +9,32 @@ const profileQuery = `SELECT p.id AS "playerId",p.display_name AS "displayName",
 
 function owner(actor) {
   if (!actor?.browserSession || actor.agent) throw new ProductError(403,'A signed-in owner is required')
+}
+
+function canonicalPlay(actor) {
+  return actor?.accountAgent === true && actor.connectionId && actor.scopes.includes('play')
+    && normalize(actor.engineName) === 'mcp_'+normalize(actor.username)
+}
+
+export async function selectOAuthPlayer(pool, actor, playerId) {
+  if (!actor) return null
+  if (playerId === undefined) {
+    if (!canonicalPlay(actor)) return actor
+    const {rowCount} = await pool.query('SELECT 1 FROM playable_oauth_seats WHERE connection_id=$1 AND delegated LIMIT 1',[actor.connectionId])
+    return rowCount ? {...actor,playerSelectionEnabled:true} : actor
+  }
+  if (isUuid(playerId) && playerId.toLowerCase() === actor.playerId) return actor
+  if (!isUuid(playerId) || !canonicalPlay(actor)) throw new ProductError(403,'This connection cannot select that player')
+  const {rows:[row]} = await pool.query(`SELECT g.engine_name,g.scopes,p.id,p.display_name,p.flag,r.reservation_id,r.connection_id,
+    r.table_id,r.started,r.cancel_pending FROM playable_oauth_seats s JOIN agent_grants g ON g.engine_key=s.engine_key
+    JOIN player_profiles p ON p.id=s.player_id LEFT JOIN player_table_reservations r ON r.player_id=p.id
+    WHERE s.connection_id=$1 AND s.account_id=$2 AND s.player_id=$3 AND s.delegated`,[actor.connectionId,actor.accountId,playerId])
+  if (!row) throw new ProductError(403,'This connection cannot select that player')
+  return {accountId:actor.accountId,username:actor.username,agent:true,connectionId:actor.connectionId,
+    playerId:row.id,engineName:row.engine_name,displayName:row.display_name,flag:row.flag,
+    scopes:profileScopes.filter(scope => actor.scopes.includes(scope) && row.scopes.includes(scope)),
+    activeTableId:row.table_id,ownsReservation:!row.connection_id || row.connection_id === actor.connectionId,
+    ...(row.connection_id === actor.connectionId ? {reservationId:row.reservation_id,reservationStarted:row.started,reservationCancelPending:row.cancel_pending} : {})}
 }
 
 function fields(input, current = {}) {
@@ -28,6 +54,11 @@ function view(row, actor) {
 }
 
 export async function listPlayers(pool, actor) {
+  if (canonicalPlay(actor)) {
+    const {rows} = await pool.query(profileQuery+` WHERE EXISTS (SELECT 1 FROM playable_oauth_seats s
+      WHERE s.player_id=p.id AND s.connection_id=$1 AND s.delegated) ORDER BY p.display_name,p.id`,[actor.connectionId])
+    return {players:rows.map(row => view(row,actor))}
+  }
   if (!actor?.playerId) owner(actor)
   const {rows} = await pool.query(profileQuery+` WHERE p.account_id=$1 AND ($2::uuid IS NULL OR p.id=$2) ORDER BY p.display_name,p.id`,
     [actor.accountId,actor.playerId ?? null])
