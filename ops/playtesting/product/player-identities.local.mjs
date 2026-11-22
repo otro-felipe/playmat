@@ -56,15 +56,17 @@ export async function verifyPlayerIdentities({ base, issuer, Cookie, authorizePi
   }))
   assert.equal(new Set(tables).size,2)
   await Promise.all(tables.map((tableId,pair)=>as(pair*2,'start_match',{tableId})))
+  async function chooseStartingPlayer(index, state) {
+    if (state.decision?.kind !== 'startingPlayer') return
+    const first = state.decision.choices.find(choice=>/^Play first\b/i.test(choice.label))
+    assert.ok(first, 'An observed starting player chooses from its own legal prompt')
+    await as(index,'submit_decision',{gameId:state.gameId,cursor:state.cursor,decisionId:state.decision.id,
+      choiceId:first.id,idempotencyKey:state.decision.id},['not_actionable','stale_decision'])
+  }
   const states = await until(async()=>{
     const observed = await Promise.all(pilots.map((_,i)=>as(i,'get_game_state')))
-    for (const [i,state] of observed.entries()) {
-      if (!state.gameId || state.ownHand?.length || state.decision?.kind!=='startingPlayer') continue
-      const pick=state.decision.choices.find(choice=>/^Play first\b/i.test(choice.label))
-      if (pick) await as(i,'submit_decision',{gameId:state.gameId,cursor:state.cursor,decisionId:state.decision.id,
-        choiceId:pick.id,idempotencyKey:state.decision.id},['not_actionable','stale_decision'])
-    }
-    return observed.every(s=>s.status==='active' && s.gameId && s.ownHand?.length) && observed
+    await Promise.all(observed.map((state,i)=>chooseStartingPlayer(i,state)))
+    return observed.every(s=>s.status==='active' && s.gameId && s.ownHand?.length && s.decision?.kind!=='startingPlayer') && observed
   },'four distinct seat projections on two simultaneously active tables')
   for (const [i,state] of states.entries()) {
     assert.equal(state.tableId,tables[Math.floor(i/2)])
@@ -80,19 +82,33 @@ export async function verifyPlayerIdentities({ base, issuer, Cookie, authorizePi
   // Identical gameId and commandId on opposite seats must resolve within each selected ledger.
   const commandId='keep-the-observed-hand'
   const receipts = new Map()
-  await until(async()=>{
-    for (const i of [0,2,1,3]) {
-      if (receipts.has(i)) continue
-      const {gameId,cursor,decision} = await as(i,'get_game_state')
-      const keep = decision?.kind==='mulligan' && decision.choices.find(c=>/^Keep\b/i.test(c.label))
-      if (!keep) continue
-      const reply = await as(i,'play_line',{gameId,cursor,commandId,waitMs:25000,view:'compact',
-        actions:[{kind:'choose',decisionId:decision.id,choiceId:keep.id}]})
-      assert.equal(reply.appliedDecisions,1)
-      receipts.set(i,reply.sequenceId)
+  await Promise.all([0,2,1,3].map(async i => {
+    let state = await as(i,'get_game_state')
+    const deadline = Date.now()+90_000
+    while (Date.now()<deadline) {
+      const {gameId,cursor,decision}=state
+      if (decision?.kind==='mulligan') {
+        const keep = decision.choices.find(c=>/^Keep\b/i.test(c.label))
+        assert.ok(keep,'The mulligan prompt offers Keep')
+        const reply=await as(i,'play_line',{gameId,cursor,commandId,waitMs:25000,view:'compact',
+          actions:[{kind:'choose',decisionId:decision.id,choiceId:keep.id}]})
+        if (reply.status==='rejected' && reply.code==='stale_decision') {
+          // The peer may have advanced the shared cursor without answering this seat's question.
+          assert.equal(reply.appliedDecisions,0)
+          state=reply.state
+          continue
+        }
+        assert.equal(reply.appliedDecisions,1)
+        assert.ok(reply.sequenceId)
+        receipts.set(i,reply.sequenceId)
+        return
+      }
+      await chooseStartingPlayer(i,state)
+      const event=await as(i,'wait_for_decision',{gameId,afterCursor:cursor,timeoutMs:5000,view:'compact'})
+      state=event.state
     }
-    return receipts.size===4
-  },'all four profiles to keep once through one bearer')
+    assert.fail('No Keep for fixture seat '+i+' (status '+state.status+', decision '+state.decision?.kind+', turn '+state.turn+')')
+  }))
   assert.equal(new Set(receipts.values()).size,4)
   for (const [i,sequenceId] of receipts) {
     const recovered=await as(i,'wait_for_decision',{gameId:states[i].gameId,commandId,timeoutMs:100})
