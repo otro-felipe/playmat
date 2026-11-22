@@ -24,6 +24,6 @@ budgets per skill, the web bridge, the Docker sizing.
 To check them against a newer upstream:
 
 ```sh
-git worktree add --detach /tmp/upstream origin/master
+git worktree add --detach /tmp/upstream playmat-upstream-baseline
 cd /tmp/upstream && git am /path/to/ops/perf/upstream/*.patch
 ```

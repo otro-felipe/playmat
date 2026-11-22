@@ -9,7 +9,7 @@
 #   ops/ci/check.sh --full          all of the above
 #   ops/ci/check.sh --all           check every area, whatever changed
 #   ops/ci/check.sh --list          only print what would run
-#   ops/ci/check.sh --base <ref>    compare against <ref> instead of fork/master (origin/master, master)
+#   ops/ci/check.sh --base <ref>    compare against <ref> instead of the upstream comparison revision
 #
 # What runs, by changed path (the same commands as .github/workflows):
 #   rust/**                     cargo fmt --all --check; cargo clippy --workspace --all-targets --locked -- -D warnings;
@@ -54,11 +54,11 @@ note() { printf '%s%s%s\n' "$DIM" "$*" "$RESET"; }
 
 # ---- what changed --------------------------------------------------------------------------------------------------
 if [ -z "$BASE" ]; then
-  for candidate in fork/master origin/master master; do
+  for candidate in fork/master origin/master master refs/tags/playmat-upstream-baseline; do
     if git rev-parse --verify -q "$candidate^{commit}" >/dev/null; then BASE=$candidate; break; fi
   done
 fi
-[ -n "$BASE" ] || { echo "check.sh: no fork/master, origin/master or master to compare with; pass --base <ref>" >&2; exit 2; }
+[ -n "$BASE" ] || { echo "check.sh: no upstream comparison revision; pass --base <ref>" >&2; exit 2; }
 TARGET=${REV:-HEAD}
 MERGE_BASE=$(git merge-base "$BASE" "$TARGET" 2>/dev/null) || { echo "check.sh: $BASE and $TARGET share no history" >&2; exit 2; }
 
