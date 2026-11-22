@@ -11,20 +11,20 @@ function owner(actor) {
   if (!actor?.browserSession || actor.agent) throw new ProductError(403,'A signed-in owner is required')
 }
 
-function canonicalPlay(actor) {
-  return actor?.accountAgent === true && actor.connectionId && actor.scopes.includes('play')
+export function canonicalAccountScope(actor, scope) {
+  return actor?.accountAgent === true && actor.connectionId && actor.scopes.includes(scope)
     && normalize(actor.engineName) === 'mcp_'+normalize(actor.username)
 }
 
 export async function selectOAuthPlayer(pool, actor, playerId) {
   if (!actor) return null
   if (playerId === undefined) {
-    if (!canonicalPlay(actor)) return actor
+    if (!canonicalAccountScope(actor,'play')) return actor
     const {rowCount} = await pool.query('SELECT 1 FROM playable_oauth_seats WHERE connection_id=$1 AND delegated LIMIT 1',[actor.connectionId])
     return rowCount ? {...actor,playerSelectionEnabled:true} : actor
   }
   if (isUuid(playerId) && playerId.toLowerCase() === actor.playerId) return actor
-  if (!isUuid(playerId) || !canonicalPlay(actor)) throw new ProductError(403,'This connection cannot select that player')
+  if (!isUuid(playerId) || !canonicalAccountScope(actor,'play')) throw new ProductError(403,'This connection cannot select that player')
   const {rows:[row]} = await pool.query(`SELECT g.engine_name,g.scopes,p.id,p.display_name,p.flag,r.reservation_id,r.connection_id,
     r.table_id,r.started,r.cancel_pending FROM playable_oauth_seats s JOIN agent_grants g ON g.engine_key=s.engine_key
     JOIN player_profiles p ON p.id=s.player_id LEFT JOIN player_table_reservations r ON r.player_id=p.id
@@ -54,7 +54,7 @@ function view(row, actor) {
 }
 
 export async function listPlayers(pool, actor) {
-  if (canonicalPlay(actor)) {
+  if (canonicalAccountScope(actor,'play')) {
     const {rows} = await pool.query(profileQuery+` WHERE EXISTS (SELECT 1 FROM playable_oauth_seats s
       WHERE s.player_id=p.id AND s.connection_id=$1 AND s.delegated) ORDER BY p.display_name,p.id`,[actor.connectionId])
     return {players:rows.map(row => view(row,actor))}

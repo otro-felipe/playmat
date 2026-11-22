@@ -1,3 +1,4 @@
+import { canonicalAccountScope } from './players.mjs'
 import { seatArchetype } from './archived-archetypes.mjs'
 import { exclusionView } from './match-statistics.mjs'
 import { createPerformance, historyFormatFilter } from './performance.mjs'
@@ -198,7 +199,7 @@ function gameView(row) {
     startedAt: Number(row.started_at), endedAt: row.ended_at === null ? 0 : Number(row.ended_at),
     result: row.result, winner: row.winner, startPlayer: row.start_player, turns: row.turns,
     events: row.events, archiveState: row.archive_state, status: row.status,
-    truncated: row.truncated, players: row.players, replayAvailable: Boolean(row.object_key),
+    truncated: row.truncated, players: row.players, replayAvailable: Boolean(row.object_key && row.viewer),
     ownMulligans: row.own_mulligans, viewerName: row.viewer,
   }
 }
@@ -423,21 +424,28 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
     const limit = Math.max(1, Math.min(100, Number.parseInt(opts.limit ?? '25', 10) || 25))
     const matchId = opts.id ?? null
     if (matchId !== null && !isUuid(matchId)) throw new ProductError(404, 'Match not found')
+    const seats = viewerNames(actor)
+    const profiles = canonicalAccountScope(actor,'history')
+      ? (await pool.query('SELECT engine_key FROM agent_grants WHERE account_id=$1 AND player_id IS NOT NULL',[actor.accountId])).rows
+      : []
+    // Profile ownership extends completed score lookup. Replay projections still require a viewer seat.
+    const resultSeat = "(p.engine_key=ANY($1::text[]) OR (m.status='completed' AND p.engine_key=ANY($3::text[])))"
+    const profileSeats = profiles.map(row => row.engine_key)
     const { rows } = await pool.query(
-      `SELECT m.*, x.reason, x.author, x.marked_at FROM matches m JOIN retained_match_history h ON h.match_id=m.id AND h.account_id=$7
+      `SELECT m.*, x.reason, x.author, x.marked_at FROM matches m JOIN retained_match_history h ON h.match_id=m.id AND h.account_id=$2
        LEFT JOIN match_statistics_exclusions x ON x.match_id=m.id
-       WHERE ($2::text IS NULL OR COALESCE(m.format,m.engine_format,'Unknown')=$2)
-         AND ($3::bigint IS NULL OR (m.started_at,m.id)<($3,$4::uuid))
-         AND ($6::uuid IS NULL OR m.id=$6)
-         AND EXISTS(SELECT 1 FROM games g JOIN game_players p ON p.game_id=g.id WHERE g.match_id=m.id AND p.engine_key=ANY($1::text[]))
-       ORDER BY m.started_at DESC,m.id DESC LIMIT $5`,
-      [viewerNames(actor), format, older, earlierMatch, limit + 1, matchId, actor.accountId],
+       WHERE ($4::text IS NULL OR COALESCE(m.format,m.engine_format,'Unknown')=$4)
+         AND ($5::bigint IS NULL OR (m.started_at,m.id)<($5,$6::uuid))
+         AND ($8::uuid IS NULL OR m.id=$8)
+         AND EXISTS(SELECT 1 FROM games g JOIN game_players p ON p.game_id=g.id WHERE g.match_id=m.id AND ${resultSeat})
+       ORDER BY m.started_at DESC,m.id DESC LIMIT $7`,
+      [seats, actor.accountId, profileSeats, format, older, earlierMatch, limit + 1, matchId],
     )
     const page = rows.slice(0, limit)
     const { rows: games } = await pool.query(
-      `${selectGame} WHERE g.match_id=ANY($2::uuid[]) AND EXISTS(SELECT 1 FROM game_players p WHERE p.game_id=g.id AND p.engine_key=ANY($1::text[]))
+      `${selectGame} WHERE g.match_id=ANY($2::uuid[]) AND EXISTS(SELECT 1 FROM game_players p WHERE p.game_id=g.id AND ${resultSeat})
        ORDER BY g.game_number,g.id`,
-      [viewerNames(actor), page.map(m => m.id)],
+      [seats, page.map(m => m.id), profileSeats],
     )
     return {
       matches: page.map(m => ({

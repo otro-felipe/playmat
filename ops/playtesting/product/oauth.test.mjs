@@ -7,6 +7,7 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { gzipSync } from 'node:zlib'
 import { setTimeout as sleep } from 'node:timers/promises'
 import pg from 'pg'
 import { createProduct } from './product.mjs'
@@ -82,6 +83,17 @@ function authPath(fields = {}) {
     response_type: 'code', client_id: clientId, redirect_uri: redirect, resource,
     code_challenge: challenge, code_challenge_method: 'S256', state, ...fields,
   })
+}
+
+async function authorizePilot(f,owner,scope,playerId) {
+  const page = await f.request(authPath({scope}),owner)
+  const request = /name="request" value="([a-f0-9-]{36})"/.exec(await page.text())?.[1]
+  const consent = await f.request('/oauth/authorize',owner,{request,decision:'allow',...(playerId && {playerId})})
+  assert.equal(consent.status,303)
+  const code = new URL(consent.headers.get('Location')).searchParams.get('code')
+  const token = await f.request('/oauth/token',{}, {grant_type:'authorization_code',code,client_id:clientId,redirect_uri:redirect,code_verifier:verifier,resource})
+  assert.equal(token.status,200)
+  return {Authorization:'Bearer '+(await token.json()).access_token}
 }
 
 async function consent(f, headers, parameters = {}) {
@@ -805,16 +817,7 @@ test('one canonical OAuth connection selects only enabled account players and ke
     assert.equal(created.status,201)
     return (await created.json()).playerId
   }
-  async function authorize(scope,playerId) {
-    const page = await f.request(authPath({scope}),owner)
-    const request = /name="request" value="([a-f0-9-]{36})"/.exec(await page.text())?.[1]
-    const consent = await f.request('/oauth/authorize',owner,{request,decision:'allow',...(playerId && {playerId})})
-    assert.equal(consent.status,303)
-    const code = new URL(consent.headers.get('Location')).searchParams.get('code')
-    const token = await f.request('/oauth/token',{}, {grant_type:'authorization_code',code,client_id:clientId,redirect_uri:redirect,code_verifier:verifier,resource})
-    assert.equal(token.status,200)
-    return {Authorization:'Bearer '+(await token.json()).access_token}
-  }
+  const authorize = (scope,playerId) => authorizePilot(f,owner,scope,playerId)
   const shared = await authorize('play library chat history')
   const verify = async headers => (await f.request('/internal/verify',headers)).json()
   assert.equal((await verify(shared)).playerSelectionEnabled,undefined)
@@ -891,4 +894,59 @@ test('one canonical OAuth connection selects only enabled account players and ke
   assert.equal(recovered.activeTableId,replacement)
   assert.equal((await validate(recovered)).status,200)
   assert.equal((await f.request('/internal/verify',select(ids[0],renewed))).status,403)
+})
+
+test('account history can read a completed profile BO3 score without opening its live hand or a foreign series', {skip:!databaseUrl}, async t => {
+  const f = await fixture(t)
+  const owner = await f.login('ScoreOwner')
+  const outsider = await f.login('OtherOwner')
+  const make = async (headers,displayName) => {
+    const created = await f.request('/api/playtesting/players',{...headers,'Content-Type':'application/json'},{displayName,mcpEnabled:true})
+    assert.equal(created.status,201)
+    return created.json()
+  }
+  const home = await make(owner,'Home')
+  const away = await make(owner,'Away')
+  const history = await authorizePilot(f,owner,'history')
+  const foreign = await authorizePilot(f,outsider,'history')
+  const fixed = await authorizePilot(f,owner,'play history',home.playerId)
+  const playOnly = await authorizePilot(f,owner,'play')
+  const match = randomUUID(), table = randomUUID(), now = Date.now()
+  const endpoint = '/api/playtesting/matches', matchPath = endpoint+'/'+match
+  const games = []
+  const winners = [home.engineName,away.engineName,home.engineName]
+  for (const [i,winner] of winners.entries()) {
+    const game = randomUUID()
+    games.push(game)
+    await writeFile(join(f.replayDirectory,game+'.json'),JSON.stringify({
+      gameId:game,gameNumber:i+1,matchId:match,tableId:table,winsNeeded:2,deckType:'Constructed - Pioneer',
+      startedAt:now+i*10,endedAt:now+i*10+1,result:'Game finished',winner,
+      players:[home,away].map(p=>({name:p.engineName,human:true})),
+    }))
+    await writeFile(join(f.replayDirectory,game+'.ndjson.gz'),gzipSync(JSON.stringify({
+      t:1,view:{turn:1},hands:{[home.engineName]:['fixture private home'],[away.engineName]:['fixture private away']},
+    })))
+  }
+  await f.product.archiveGames()
+  const ids = async headers => (await (await f.request(endpoint,headers)).json()).matches.map(m=>m.id)
+  assert.deepEqual(await ids(history),[])
+  assert.equal((await f.request(matchPath,history)).status,404)
+  const replay = '/api/playtesting/replays/'+games[0]
+  assert.equal((await f.request(replay,history)).status,404)
+  await writeFile(join(f.replayDirectory,match+'.match.json'),JSON.stringify({matchId:match,endedAt:now+32,winner:home.engineName}))
+  await f.product.archiveGames()
+  assert.deepEqual(await ids(owner),[match])
+  assert.deepEqual(await ids(history),[match])
+  const result = await f.request(matchPath,history)
+  assert.equal(result.status,200)
+  const score = await result.json()
+  assert.equal(score.winner,home.engineName)
+  assert.equal(score.status,'completed')
+  assert.deepEqual(score.games.map(g=>g.winner),winners)
+  assert.ok(score.games.every(game => !game.replayAvailable))
+  assert.equal(JSON.stringify(score).includes('fixture private'),false)
+  assert.deepEqual(await ids(foreign),[])
+  assert.equal((await f.request(matchPath,foreign)).status,404)
+  for (const headers of [fixed,playOnly]) assert.equal((await f.request(matchPath,headers)).status,403)
+  assert.equal((await f.request(replay,foreign)).status,404)
 })
