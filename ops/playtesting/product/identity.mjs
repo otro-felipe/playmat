@@ -357,6 +357,6 @@ export function viewerNames(actor) {
 
 export function identityView(actor) {
   const { accountId, engineName, scopes, agent, connectionId, accountAgent, username } = actor
-  return { accountId, engineName, scopes, agent, ...(actor.playerId ? {playerId:actor.playerId, displayName:actor.displayName, flag:actor.flag, activeTableId:actor.activeTableId, ownsReservation:actor.ownsReservation, ...(actor.reservationId ? {reservationId:actor.reservationId} : {})} : {}), ...(connectionId ? { connectionId } : {}),
+  return { accountId, engineName, scopes, agent, ...(actor.playerId ? {playerId:actor.playerId, displayName:actor.displayName, flag:actor.flag, activeTableId:actor.activeTableId, ownsReservation:actor.ownsReservation, ...(actor.reservationId ? {reservationId:actor.reservationId,reservationStarted:actor.reservationStarted,reservationCancelPending:actor.reservationCancelPending} : {})} : {}), ...(connectionId ? { connectionId } : {}),
     ...(accountAgent ? { accountAgent, username } : {}) }
 }

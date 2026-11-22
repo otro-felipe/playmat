@@ -49,3 +49,10 @@ CREATE TABLE IF NOT EXISTS player_table_reservations (
   original_table_id uuid
 );
 CREATE INDEX IF NOT EXISTS player_reservations_table ON player_table_reservations(table_id);
+
+-- Existing reservations predate the RPC boundary and may already be in XMage.
+ALTER TABLE player_table_reservations
+  ADD COLUMN IF NOT EXISTS started boolean NOT NULL DEFAULT true,
+  ADD COLUMN IF NOT EXISTS cancel_pending boolean NOT NULL DEFAULT false;
+ALTER TABLE player_table_reservations ALTER COLUMN started SET DEFAULT false;
+ALTER TABLE invitations ADD COLUMN IF NOT EXISTS cancel_pending boolean NOT NULL DEFAULT false;

@@ -309,7 +309,7 @@ export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions
   }
 
   async function resolve(accessDigest) {
-    const { rows: [row] } = await pool.query(`SELECT a.id,a.username,g.engine_name,g.player_id,p.flag AS player_flag,p.display_name,r.reservation_id,r.table_id,r.connection_id AS lease_holder,c.id AS connection_id,
+    const { rows: [row] } = await pool.query(`SELECT a.id,a.username,g.engine_name,g.player_id,p.flag AS player_flag,p.display_name,r.reservation_id,r.table_id,r.started,r.cancel_pending,r.connection_id AS lease_holder,c.id AS connection_id,
       ARRAY(SELECT legacy.engine_key FROM agent_grants legacy WHERE legacy.successor_key=g.engine_key
         AND legacy.account_id=g.account_id AND legacy.oauth_managed) AS previous_seats,
       g.scopes AS current_scopes,c.scopes_approved,c.client_id FROM oauth_access_tokens t
@@ -324,7 +324,7 @@ export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions
     return scopes.length ? { accountId: row.id, username: row.username, engineName: row.engine_name,
       scopes, agent: true, ...(row.player_id ? {playerId:row.player_id,displayName:row.display_name,flag:row.player_flag,activeTableId:row.table_id,
         ownsReservation:!row.lease_holder || row.lease_holder === row.connection_id,
-        ...(row.lease_holder === row.connection_id ? {reservationId:row.reservation_id} : {})} : {accountAgent:true,previousSeatNames:row.previous_seats}), connectionId: row.connection_id } : null
+        ...(row.lease_holder === row.connection_id ? {reservationId:row.reservation_id,reservationStarted:row.started,reservationCancelPending:row.cancel_pending} : {})} : {accountAgent:true,previousSeatNames:row.previous_seats}), connectionId: row.connection_id } : null
   }
 
   return { route, resolve }

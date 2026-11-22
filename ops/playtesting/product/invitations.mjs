@@ -44,7 +44,7 @@ export function createInvitations(pool, identity, events) {
   async function list(actor, requestedLimit) {
     const limit = Math.max(1, Math.min(50, Number.parseInt(requestedLimit, 10) || 25))
     const { rows } = await pool.query(
-      `SELECT *, ${guestOwner} FROM invitations WHERE expires_at>now() AND NOT unlisted AND (
+      `SELECT *, ${guestOwner} FROM invitations WHERE expires_at>now() AND NOT cancel_pending AND NOT unlisted AND (
         (owner_account_id IS NULL AND invitee_key=$1)
         OR (owner_account_id=$2 AND (invitee_key IS NULL OR invitee_key=$1))
       ) ORDER BY expires_at DESC,table_id LIMIT $3`,
@@ -103,7 +103,7 @@ export function createInvitations(pool, identity, events) {
   }
 
   async function inspect(actor, tableId) {
-    const { rows: [invite] } = await pool.query(`SELECT *, ${guestOwner} FROM invitations WHERE table_id=$1 AND expires_at>now()
+    const { rows: [invite] } = await pool.query(`SELECT *, ${guestOwner} FROM invitations WHERE table_id=$1 AND NOT cancel_pending AND expires_at>now()
       AND (creator_key=$2
         OR (owner_account_id IS NULL AND (invitee_key=$2 OR (invitee_key IS NULL AND (
           (unlisted AND NOT $3) OR (mode='mcp' AND $3)))))
@@ -126,7 +126,7 @@ export function createInvitations(pool, identity, events) {
         guest_effort=CASE WHEN claimed_at IS NULL THEN $9 ELSE guest_effort END,
         claimed_at=COALESCE(claimed_at,now()), invitee_key=COALESCE(invitee_key,$2), invitee_name=COALESCE(invitee_name,$3),
         guest_display_name=CASE WHEN $10 THEN $4 WHEN mode='mcp' THEN COALESCE(guest_display_name,$4,$7) ELSE guest_display_name END
-        WHERE table_id=$1 AND creator_key<>$2 AND expires_at>now()
+        WHERE table_id=$1 AND NOT cancel_pending AND creator_key<>$2 AND expires_at>now()
           AND (owner_account_id IS NULL OR owner_account_id=$6) AND (NOT $10 OR invitee_key=$2) AND (
           (mode='friend' AND (invitee_key=$2 OR (unlisted AND invitee_key IS NULL AND NOT $5)))
           OR (mode='mcp' AND $5 AND (invitee_key IS NULL OR invitee_key=$2))

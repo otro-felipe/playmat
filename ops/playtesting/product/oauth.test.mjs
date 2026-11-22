@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import { once } from 'node:events'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer, request as httpRequest } from 'node:http'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
@@ -74,7 +74,7 @@ async function fixture(t, oauthClients = [], oauthClientOptions) {
     assert.equal(signedIn.status, 303)
     return { Cookie: signedIn.headers.get('Set-Cookie').split(';', 1)[0], Origin: issuer }
   }
-  return { product, request, login, schema, delivered }
+  return { product, request, login, schema, delivered, replayDirectory }
 }
 
 function authPath(fields = {}) {
@@ -660,6 +660,58 @@ test('owner delegates four named players to isolated OAuth pilots with exclusive
     write('/internal/player-reservations/'+id, headers, {operation,reservationId,tableId})
   const claims = players.map(()=>randomUUID())
   assert.equal((await reserve(pilot,two.playerId,'reserve',randomUUID())).status,403)
+  const pending = randomUUID()
+  const changeOne = (operation,tableId) => reserve(pilot,one.playerId,operation,pending,tableId)
+  assert.equal((await changeOne('reserve')).status,200)
+  assert.equal((await changeOne('cancel')).status,200)
+  assert.equal((await changeOne('cancel')).status,200)
+  assert.equal((await changeOne('begin')).status,409)
+  assert.equal((await changeOne('reserve')).status,200)
+  assert.equal((await changeOne('begin')).status,200)
+  assert.equal((await changeOne('cancel')).status,409)
+  const waiting = randomUUID()
+  assert.equal((await changeOne('bind',waiting)).status,200)
+  const waitingInvite = {tableId:waiting,roomId:randomUUID(),format:'Pioneer',password:'fixture-only-code',guestEngineName:two.engineName}
+  assert.equal((await write('/api/playtesting/invites',pilot,waitingInvite)).status,201)
+  assert.equal((await changeOne('cancel',waiting)).status,409)
+  assert.equal((await changeOne('lock_cancel',waiting)).status,200)
+  assert.equal((await changeOne('lock_cancel',waiting)).status,200)
+  const freezing = await (await f.request('/internal/verify',pilot)).json()
+  assert.equal(freezing.reservationStarted,true)
+  assert.equal(freezing.reservationCancelPending,true)
+  const paired = randomUUID()
+  assert.equal((await reserve(second,two.playerId,'reserve',paired)).status,200)
+  assert.equal((await reserve(second,two.playerId,'bind',paired,waiting)).status,200)
+  assert.equal((await write('/api/playtesting/invites/'+waiting+'/claim',second,{})).status,404)
+  assert.equal((await reserve(second,two.playerId,'release',paired)).status,200)
+  assert.equal((await changeOne('cancel',waiting)).status,200)
+  assert.equal((await changeOne('cancel',waiting)).status,200)
+  assert.equal((await f.request('/api/playtesting/invites/'+waiting,second)).status,404)
+  const taken = randomUUID()
+  assert.equal((await changeOne('reserve')).status,200)
+  assert.equal((await changeOne('bind',taken)).status,200)
+  assert.equal((await write('/api/playtesting/invites',pilot,{...waitingInvite,tableId:taken})).status,201)
+  assert.equal((await reserve(second,two.playerId,'reserve',paired)).status,200)
+  assert.equal((await reserve(second,two.playerId,'bind',paired,taken)).status,200)
+  assert.equal((await write('/api/playtesting/invites/'+taken+'/claim',second,{})).status,200)
+  assert.equal((await changeOne('lock_cancel',taken)).status,409)
+  assert.equal((await changeOne('release')).status,409)
+  const finish = async tableId => {
+    const fixtureDb = new pg.Client({connectionString:databaseUrl,options:'-c search_path='+f.schema})
+    await fixtureDb.connect()
+    const matchId = randomUUID()
+    try {
+      await fixtureDb.query("INSERT INTO matches(id,table_id,wins_needed,started_at,status) VALUES($1,$2,2,$3,'active')",[matchId,tableId,Date.now()])
+    } finally {
+      await fixtureDb.end()
+    }
+    return async () => {
+      await writeFile(join(f.replayDirectory,matchId+'.match.json'), JSON.stringify({matchId,endedAt:Date.now()}))
+      await f.product.archiveGames()
+    }
+  }
+  const completeTaken = await finish(taken)
+  await completeTaken()
   const competing = [claims[0],randomUUID()]
   const races = await Promise.all(competing.map(id => reserve(pilot,one.playerId,'reserve',id)))
   assert.deepEqual(races.map(r=>r.status).sort(),[200,409])
@@ -713,7 +765,11 @@ test('owner delegates four named players to isolated OAuth pilots with exclusive
   assert.notEqual(rebound.connectionId,before.connectionId)
   assert.equal(rebound.displayName,'Renamed')
   assert.equal(rebound.flag,'US')
-  assert.equal((await reserve(renewed,one.playerId,'release',claims[0])).status,200)
+  const completeRestored = await finish(tableA)
+  assert.equal((await reserve(renewed,one.playerId,'lock_cancel',claims[0],restored)).status,409)
+  await completeRestored()
+  assert.equal((await (await f.request('/internal/verify',second)).json()).activeTableId,null)
+  assert.equal((await (await f.request('/internal/verify',pilots[2])).json()).activeTableId,tableB)
   assert.equal((await (await f.request('/internal/verify',renewed)).json()).activeTableId,null)
 })
 

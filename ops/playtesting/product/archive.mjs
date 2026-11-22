@@ -274,7 +274,7 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
         if (variant === '.match') {
           if (raw.matchId === id && Number.isSafeInteger(raw.endedAt)) {
             const saved = await pool.query(`WITH finished AS (UPDATE matches SET status='completed', ended_at=$2, winner=$3 WHERE id=$1 RETURNING table_id),
-              released AS (DELETE FROM player_table_reservations WHERE table_id IN (SELECT table_id FROM finished))
+              released AS (DELETE FROM player_table_reservations r USING finished f WHERE f.table_id IN (r.table_id,r.original_table_id))
               SELECT table_id FROM finished`, [id, raw.endedAt, raw.winner ?? null])
             if (saved.rowCount || await wasPurged(pool, id)) await unlink(join(stage, file))
           }
