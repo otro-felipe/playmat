@@ -25,7 +25,7 @@ import { CardMarkdown } from '../ui/CardMarkdown';
 import { decisionFrame, replayName } from './decisionPresentation';
 import { ReplayDecisionMarkers, RecordedDecision } from './ReplayDecision';
 import { ReplayReviewPanel, ReviewSwitch } from './ReplayReviewPanel';
-import { frameProjection, loadReviewAnnotations, loadReviewEvents, loadReviewManifest, loadReviewPlays, perspectivesFor, type ReviewMoment } from './reviewData';
+import { frameProjection, loadPrivateReplayPage, loadReviewAnnotations, loadReviewEvents, loadReviewManifest, loadReviewPlays, perspectivesFor, type ReviewMoment } from './reviewData';
 import styles from './ReplayScreen.module.css';
 
 /** events asked for at a time: snapshots are large, so pages stay small and the replay starts early */
@@ -65,7 +65,7 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
     return cursor && /^\d+$/.test(cursor) ? Number(cursor) : undefined;
   });
   const [timeline, setTimeline] = useState<ReplayTimeline>(EMPTY_TIMELINE);
-  const [info, setInfo] = useState<ReplayInfo | null>(null);
+  const [info, setInfo] = useState<(ReplayInfo & { viewerName?: string }) | null>(null);
   const [total, setTotal] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [frameIndex, setFrameIndex] = useState(() => Number.isFinite(startFrame) ? Math.max(0, startFrame) : 0);
@@ -85,15 +85,17 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
 
   // pages come in one after the other; playback starts with the first
   useEffect(() => {
-    let cancelled = false;
     if (PRIVATE_PLAYTESTING && !userName) return;
+    const controller = new AbortController();
     void (async () => {
       let current = EMPTY_TIMELINE;
       for (;;) {
-        const page = await api.replayPage(gameId, current.read, PAGE_SIZE);
-        if (cancelled) return;
+        const page = PRIVATE_PLAYTESTING
+          ? await loadPrivateReplayPage(gameId, current.read, PAGE_SIZE, controller.signal)
+          : await api.replayPage(gameId, current.read, PAGE_SIZE);
+        if (controller.signal.aborted) return;
         if (!page) {
-          setError('This replay is not on the server any more.');
+          setError(PRIVATE_PLAYTESTING ? 'This replay is unavailable.' : 'This replay is not on the server any more.');
           return;
         }
         current = appendEvents(current, page.events ?? []);
@@ -103,11 +105,9 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
         if ((page.events ?? []).length === 0 || current.read >= page.total) return;
       }
     })().catch((reason) => {
-      if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason));
+      if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : String(reason));
     });
-    return () => {
-      cancelled = true;
-    };
+    return () => controller.abort();
   }, [gameId, userName]);
 
   const manifestQuery = useQuery({
@@ -202,9 +202,10 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
   const last = Math.max(0, frames.length - 1);
   const index = anchor === undefined ? frameIndex : frameIndexAt(timeline, anchor);
   const frame = frames[Math.min(index, last)] ?? null;
+  const viewer = (info?.viewerName ?? userName).toLowerCase();
   const ownSeat = useMemo(
-    () => frames[0]?.view.players?.find((player) => player.name === userName)?.playerId ?? null,
-    [frames, userName],
+    () => frames[0]?.view.players?.find((player) => player.name?.toLowerCase() === viewer)?.playerId ?? null,
+    [frames, viewer],
   );
 
   const orient = perspective?.playerId ?? frame?.view.players?.find((player) => player.name === perspective?.name)?.playerId;

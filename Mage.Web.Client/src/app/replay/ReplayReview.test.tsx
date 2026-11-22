@@ -54,18 +54,21 @@ const annotation = {
   confidence: 'high', rationale: 'Sheoldred was on the battlefield.', evidence: { basis: 'engine_log', frameCursor: 2, turn: 7 }, retrospective: 'Bob held Fatal Push.',
 };
 const request = vi.fn<(url: string, options?: RequestInit) => Promise<Response>>();
+const pageRequest = vi.fn<(url: string, options?: RequestInit) => Promise<Response>>();
 const json = (value: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(value), { status }));
 
 beforeEach(() => {
   useSession.setState({ userName: 'Alice', phase: 'signedIn' });
-  vi.stubGlobal('fetch', request);
-  vi.mocked(api.replayPage).mockResolvedValue({
+  vi.stubGlobal('fetch', (url: string, options?: RequestInit) => url.startsWith('/api/playtesting/replays/')
+    ? pageRequest(url, options) : request(url, options));
+  vi.mocked(api.replayPage).mockResolvedValue(null);
+  pageRequest.mockImplementation(() => json({
     info: { gameId: 'game' },
     start: 0,
     total: 5,
     events: [{ view: { ...view, turn: 6 }, myHand: fromHand }, { log: { message: 'Played Island' } },
       { view, myHand: fromHand }, { log: { message: actual.text } }, { view: positioned, myHand: fromHand }],
-  });
+  }));
   request.mockImplementation((raw) => {
     const url = new URL(raw, 'http://localhost');
     if (url.pathname.endsWith('/annotations')) return json({ annotations: [annotation], next: null });
@@ -93,6 +96,33 @@ function openReplay(address = '/replay/game?cursor=1') {
     </QueryClientProvider>,
   );
 }
+
+test('[PM-REVIEW-UI-2] a browser history replay follows the owned player perspective across pages', async () => {
+  useSession.setState({ userName: 'ProfileOwner', phase: 'signedIn' });
+  request.mockImplementation(() => json({}, 404));
+  const players = [{ playerId: 'p1', name: 'ProfileOne', life: 11 }, { playerId: 'p2', name: 'ProfileTwo', life: 7 }];
+  pageRequest.mockImplementation((path) => {
+    const start = Number(new URL(path, 'http://localhost').searchParams.get('start'));
+    return json({ info: { gameId: 'game', viewerName: 'profiletwo' }, start, total: 2, events: [{ view: { players, turn: 8 + start } }] });
+  });
+  openReplay('/replay/game?frame=1');
+  await waitFor(() => expect(screen.getByTestId('turn').textContent).toBe('9'));
+  expect(screen.getByTestId('seat').textContent).toBe('p2');
+  expect(pageRequest.mock.calls.map(([url]) => url)).toEqual([
+    '/api/playtesting/replays/game?start=0&count=40', '/api/playtesting/replays/game?start=1&count=40',
+  ]);
+  expect(api.replayPage).not.toHaveBeenCalled();
+});
+
+test.each([
+  [404, 'This replay is unavailable.'],
+  [503, 'The replay archive could not be read.'],
+])('[PM-REVIEW-UI-2] a private archive returns its unavailable state (%i) without switching transport', async (status, message) => {
+  pageRequest.mockImplementation(() => json({}, status));
+  openReplay();
+  expect(await screen.findByText(message)).toBeTruthy();
+  expect(api.replayPage).not.toHaveBeenCalled();
+});
 
 test('[PM-REVIEW-UI-1] jumping to a reviewed play preserves the cursor when changing hands and perspective', async () => {
   openReplay();
