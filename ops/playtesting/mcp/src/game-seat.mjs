@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { publicActivationText } from '../dist/engine-core.mjs';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { priorityChoiceActions, visiblePlaySource } from './priority-choice-actions.mjs';
 import { absentPaymentIndex, paymentOptions } from './payment-sources.mjs';
 import { observedAttacks, observedBlocks, PlannedDefenderCombat, PlannedPermanentCombat } from './planned-combat.mjs';
 import { canCallCoin, drawTriggerSources, guardsEffectQuestion, needsEffectReevaluation, needsSpellReevaluation,
@@ -14,7 +15,7 @@ const MAX_OUTCOMES = 256;
 const TURN_STEPS = ['UNTAP', 'UPKEEP', 'DRAW', 'PRECOMBAT_MAIN', 'BEGIN_COMBAT', 'DECLARE_ATTACKERS',
   'DECLARE_BLOCKERS', 'FIRST_COMBAT_DAMAGE', 'COMBAT_DAMAGE', 'END_COMBAT', 'POSTCOMBAT_MAIN', 'END_TURN', 'CLEANUP'];
 const TURN_PHASES = ['BEGINNING', 'PRECOMBAT_MAIN', 'COMBAT', 'POSTCOMBAT_MAIN', 'END'];
-const DISCRETE_PROMPTS = new Set(['startingPlayer', 'mulligan', 'mulliganBottom', 'question', 'target', 'pickCards', 'panel', 'payMana']);
+const DISCRETE_PROMPTS = new Set(['startingPlayer', 'mulligan', 'mulliganBottom', 'question', 'target', 'pickCards', 'panel', 'payMana', 'declareAttackers', 'declareBlockers']);
 const DISCRETE_CHOICES = new Set(['button', 'object', 'option', 'pile']);
 const WINDOW_ACTIONS = new Set(['play', 'activate', 'choose', 'attack', 'block']);
 const DECLARATION_STEP = { attack: 'DECLARE_ATTACKERS', block: 'DECLARE_BLOCKERS' };
@@ -189,9 +190,8 @@ function guardedCostChoice(step) {
 }
 
 function visibleCastSource(state, objectId) {
-  const zones = [...(state.ownHand ?? []),
-    ...(state.players ?? []).flatMap((player) => [...(player.exile ?? []), ...(player.graveyard ?? [])])];
-  return objectId && zones.find((card) => card.id === objectId && card.cardId && !card.faceDown);
+  const source = visiblePlaySource(state, objectId)?.card;
+  return source?.cardId ? source : undefined;
 }
 
 function planCard(state, step) {
@@ -274,8 +274,9 @@ export class GameSeat {
       const passOnStack = priority && state.stack?.length
         && choice.type === 'pass' && choice.id;
       if (passOnStack) return { ...choice, playLineAction: { kind: 'pass_priority' } };
-      if (!refs && !exact) return choice;
-      return { ...choice, ...(refs ? { payWithOptions: refs } : {}),
+      const action = priority && priorityChoiceActions(choice, state, ownObjects);
+      if (!refs && !exact && !action) return choice;
+      return { ...choice, ...action, ...(refs ? { payWithOptions: refs } : {}),
         ...(exact ? { playLineAction: { kind: 'choose', decisionId: decision.id, choiceId: choice.id } } : {}) };
     });
     if (priority && state.stack?.length && state.stack.length <= 16 && choices.some(choice => choice.type === 'pass')) {

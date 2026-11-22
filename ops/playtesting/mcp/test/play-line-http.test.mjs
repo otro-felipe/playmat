@@ -1572,3 +1572,77 @@ test('[PM-LINE-PAY-REF] a second activation cannot spend a missing Mountain; onl
   const again = (await f.call('wait_for_decision', { gameId, commandId: f.request.commandId })).result;
   assert.deepEqual([again.appliedDecisions, f.applied.length], [7, 7]);
 });
+
+test('[PM-LINE-COPY] T4 priority returns the current legal land and spell at cursor 450 after a rejected object', async t => {
+  const land = { id: 'forest-object', cardId: 'forest-print', name: 'Forest', types: ['LAND'] };
+  const spell = { id: 'spell-object', cardId: 'spell-print', name: 'Test instant', types: ['INSTANT'] };
+  const hidden = { id: 'unknown-object', name: 'Face-down card', faceDown: true };
+  const landOption = { id: 'land-choice', type: 'object', card: land, objectId: land.id, canPlayLand: true };
+  const spellOption = { id: 'spell-choice', type: 'object', card: spell, objectId: spell.id, spellAbilities: [{ abilityId: 'spell-ability' }] };
+  const priority = (id, choices) => ({ id, kind: 'priority', choices });
+  const first = priority('main-4', [landOption, spellOption, { ...spellOption, id: 'opaque', card: hidden, objectId: hidden.id },
+    { id: 'untyped', type: 'object', card: { ...spell, id: 'cycling' }, objectId: 'cycling' }]);
+  const f = await fixture(t, { first, initial: { turn: 4, cursor: 450, ownHand: [land, spell, hidden] },
+    onResponse({ choiceId }, update, state) {
+      if (choiceId === landOption.id) return update({ ownHand: [spell], decision: priority('after-land', [spellOption]),
+        players: state.players.map(player => player.yourSeat ? { ...player, battlefield: [land] } : player) });
+      assert.equal(choiceId, spellOption.id);
+      update({ decision: { id: 'required', kind: 'target', choices: [{ id: 'target-1', type: 'object' }] },
+        ownHand: [], stack: [{ ...spell, controllerId: 'pilot', id: 'spell-stack' }] });
+    } });
+  const submit = async (commandId, cursor, actions) => (await f.call('play_line', { gameId, commandId, cursor, actions, view: 'compact' })).result;
+  const bad = await submit('bad-object', 450, [{ kind: 'play', select: { objectId: land.cardId } }]);
+  assert.deepEqual([bad.reason, bad.state.cursor, bad.appliedDecisions], ['illegal_choice', 450, 0]);
+  const [playLand, cast, opaque, untyped] = bad.state.decision.choices;
+  assert.deepEqual(playLand.playLineAction, { kind: 'play', playAs: 'land', select: { zone: 'hand', objectId: land.id } });
+  assert.deepEqual(cast.playLineAction, { kind: 'play', select: { zone: 'hand', objectId: spell.id } });
+  assert.equal(opaque.playLineAction, undefined);
+  assert.equal(untyped.playLineAction, undefined);
+  const executed = await submit('copy-line', 450, [playLand.playLineAction, cast.playLineAction]);
+  assert.deepEqual(f.applied.map(a => a.choiceId), [landOption.id, spellOption.id]);
+  assert.equal(executed.state.decision.id, 'required');
+});
+
+test('[PM-LINE-COPY] stack priority exposes exact spell and nonmana abilities with distinct identities', async t => {
+  const land = { id: 'land', name: 'Creature land', types: ['LAND'], rules: ['{T}: Add {C}.', '{1}: Draw a card.', '{2}: Untap this land.'] };
+  const ability = (id, value) => ({ id, abilityType: 'ACTIVATED_NONMANA', value });
+  const abilities = [ability('draw', land.rules[1]), ability('untap', land.rules[2])];
+  const playable = { id: 'instant', cardId: 'instant-print', name: 'Visible instant', types: ['INSTANT'] };
+  const addSpell = choice => ({ ...choice, choices: [...choice.choices,
+    { id: 'cast', type: 'object', objectId: playable.id, card: playable, spellAbilities: [{ abilityId: 'cast-id' }] }] });
+  const f = await fixture(t, { first: addSpell(priorityWithActivations(land, abilities)), initial: {
+    players: [{ id: 'pilot', yourSeat: true, battlefield: [land], graveyard: [playable] }, { id: 'rival', battlefield: [] }],
+    stack: [{ id: 'rival-spell', controllerId: 'rival' }], activePlayerId: 'rival' } });
+  const read = async () => (await f.call('get_game_state', { gameId, view: 'compact' })).result.decision.choices;
+  const [group, cast] = await read();
+  assert.equal(group.playLineAction, undefined);
+  const expected = abilities.map(({ id, value }) => ({ kind: 'activate', sourceId: land.id, abilityId: id, abilityText: value, when: 'priority' }));
+  assert.deepEqual(group.nonManaAbilities.map(a => a.playLineAction), expected);
+  assert.deepEqual(cast.playLineAction, { kind: 'play', when: 'priority', select: { zone: 'graveyard', objectId: playable.id } });
+  f.update({ decision: priorityWithActivations(land, abilities.slice(0, 1)) });
+  assert.deepEqual((await read())[0].playLineAction, expected[0]);
+  f.update({ priority: 'opponent' });
+  assert.equal((await read())[0].playLineAction, undefined);
+});
+
+test('[PM-LINE-COPY] T6 at declaration, the actual all-attack button leaves the engine’s next choice pending', async t => {
+  const all = { id: 'button-0', type: 'button', intent: 'attack_all', label: 'All attack' };
+  const confirm = { id: 'button-1', type: 'button', intent: 'confirm_attack', label: 'No Attacks' };
+  const prompt = { id: 'declaration', kind: 'declareAttackers', choices: [all, confirm] };
+  const f = await fixture(t, { first: prompt, initial: { cursor: 740, turn: 6, phase: 'COMBAT', step: 'DECLARE_ATTACKERS' },
+    onResponse(_, update) { update({ decision: { id: 'defender', kind: 'target', choices: [{ id: 'defender-1', type: 'object' }] } }); } });
+  const request = actions => f.call('play_line', { ...f.request, view: 'compact', actions });
+  const bad = (await request([{ kind: 'attack', attackers: ['unavailable-creature'] }])).result;
+  assert.deepEqual([bad.reason, bad.state.cursor, bad.appliedDecisions], ['illegal_choice', 740, 0]);
+  const choices = bad.state.decision.choices;
+  assert.deepEqual(choices.map(c => c.playLineAction), [all, confirm].map(c => ({ kind: 'choose', decisionId: prompt.id, choiceId: c.id })));
+  const recover = (await f.call('play_line', { ...f.request, commandId: 'click-all', actions: [choices[0].playLineAction] })).result;
+  assert.deepEqual(f.applied.map(a => a.choiceId), [all.id]);
+  assert.equal(recover.state.decision.id, 'defender');
+  f.update({ decision: { id: 'block', kind: 'declareBlockers', choices: [{ id: 'confirm', type: 'button', intent: 'confirm_block' }] } });
+  const current = (await f.call('get_game_state', { gameId })).result;
+  assert.deepEqual(current.decision.choices[0].playLineAction, { kind: 'choose', decisionId: 'block', choiceId: 'confirm' });
+  const stale = (await f.call('play_line', { gameId, cursor: current.cursor, commandId: 'old-button', actions: [choices[0].playLineAction] })).result;
+  assert.equal(stale.code, 'stale_decision');
+  assert.equal(f.applied.length, 1);
+});
