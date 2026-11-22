@@ -35,7 +35,17 @@ export async function verifyPlayerIdentities({ base, issuer, Cookie, authorizePi
   const reservation = await as(0,'get_player_reservation')
   assert.equal(reservation.tableId,abandoned.tableId)
   const cancel = {reservationId:reservation.reservationId,tableId:abandoned.tableId}
-  assert.equal((await as(0,'cancel_player_reservation',cancel)).phase,'available')
+  await until(async () => {
+    const result = await as(0,'cancel_player_reservation',cancel,['reservation_uncertain'])
+    if (result) { assert.equal(result.phase,'available'); return true }
+    // XMage may acknowledge the removal before the room view reflects it. Verify the
+    // persisted cancellation before retrying the identical player, table and reservation.
+    const pending = await as(0,'get_player_reservation')
+    assert.equal(pending.phase,'cancelling')
+    assert.equal(pending.tableId,cancel.tableId)
+    assert.equal(pending.reservationId,cancel.reservationId)
+    return false
+  },'confirmation of the same unclaimed table removal')
   assert.equal((await as(0,'cancel_player_reservation',cancel)).phase,'available')
 
   const tables = await Promise.all([0,2].map(async i => {
