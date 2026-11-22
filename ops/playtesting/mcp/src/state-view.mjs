@@ -27,7 +27,12 @@ export function compactGameState(state) {
   };
   if (state.decision?.choices?.length) {
     const visibleCards = indexVisibleCards(compact);
-    compact.decision = { ...state.decision, choices: state.decision.choices.map((choice) => compactChoice(choice, visibleCards)) };
+    const { decision } = state;
+    compact.decision = { ...decision, choices: decision.choices.map((choice) => compactChoice(choice, visibleCards)) };
+    if (state.priority === 'self' && decision.kind === 'priority'
+        && decision.choices.length === 1 && decision.choices[0].type === 'pass') {
+      compact.decision.onlyPass = true;
+    }
   }
   return compact;
 }

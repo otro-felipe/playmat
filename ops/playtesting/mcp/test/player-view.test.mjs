@@ -103,6 +103,24 @@ function measure(t, name, full, compact) {
   t.diagnostic(`${name} UTF-8 text bytes: full=${full.bytes} compact=${compact.bytes}`);
 }
 
+test('compact priority identifies when passing is the only engine option at this cursor', async (t) => {
+  const pass = priority.choices.find(choice => choice.type === 'pass');
+  const scenarios = [
+    { kind: 'priority', choices: [pass], onlyPass: true },
+    { kind: 'priority', choices: [pass], holder: 'opponent' },
+    { kind: 'priority', choices: [pass, { id: 'mana', type: 'manaAbility' }] },
+    { kind: 'priority', choices: priority.choices },
+    { kind: 'priority', choices: [] },
+    { kind: 'question', choices: [pass] },
+  ];
+  for (const { kind, choices, onlyPass, holder = 'self' } of scenarios) {
+    const { call, applied } = await fixture(t, { priority: holder, decision: { ...priority, kind, choices } });
+    const { payload } = await call('get_game_state', { gameId, view: 'compact' });
+    assert.equal(payload.decision.onlyPass, onlyPass);
+    assert.deepEqual(applied, []);
+  }
+});
+
 test('[PM-VIEW-01] compact state, line and wait carry the same actionable combat and target choices', async (t) => {
   const { call, applied } = await fixture(t);
   const full = await call('get_game_state', { gameId });

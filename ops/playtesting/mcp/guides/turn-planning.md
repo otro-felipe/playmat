@@ -6,6 +6,8 @@ Play to win from your seat's view. Compare credible lines using your hand, avail
 
 Use `play_line` for the longest line you would commit to if the opponent only passes. It can begin in either player's turn. Include land drops, spells, known modes, targets and costs, combat, postcombat plays and your intended stopping point in one call. The executor supplies routine priority handoffs and checks each intention against the live XMage choice. Open opposing mana shapes your strategy. Once you pick a line, ordinary passes and expected resolutions can happen without another decision from you.
 
+When compact priority reports `decision.onlyPass:true`, the engine offers only Pass at this cursor. Use a terminal `pass_until` to reach the window where you intend to act, or `pass_priority` for one handoff. To queue an action at a later window of this turn, give the exact window and the planned action in the same line. A land play uses `kind:"play",playAs:"land"` at a legal main phase.
+
 Plan the whole known turn from the decision in your last receipt. Start with the [full-turn example](#play-before-and-after-combat-in-one-line). Include a postcombat play after the attack when it is already decided. Use a guarded `choose` for a predictable cost, mode or target. If a blocker, trigger or draw could change the plan, the executor stops at that event. For a deliberate priority stop, see [Shock to beginning of combat](#cast-one-card-and-stop-at-your-combat-priority).
 
 | What the receipt shows | Next action |
