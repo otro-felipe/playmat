@@ -28,6 +28,12 @@ export async function verifyPlayerIdentities({ base, issuer, Cookie, authorizePi
   await Promise.all(tables.map((tableId,pair)=>pilots[pair*2].call('start_match',{tableId})))
   const states = await until(async()=>{
     const observed = await Promise.all(pilots.map(p=>p.call('get_game_state',{playerId:p.playerId})))
+    for (const [i,state] of observed.entries()) {
+      if (!state.gameId || !state.decision || state.ownHand?.length) continue
+      const pick = state.decision.choices.find(c=>/^Play first\b/i.test(c.label)) ?? state.decision.choices[0]
+      if (pick) await pilots[i].call('submit_decision',{gameId:state.gameId,decisionId:state.decision.id,
+        choiceId:pick.id,idempotencyKey:state.decision.id},['not_actionable','stale_decision'])
+    }
     return observed.every(s=>s.status==='active' && s.gameId && s.ownHand?.length) && observed
   },'four individual opening hands across two simultaneous tables')
   for (const [i,state] of states.entries()) {

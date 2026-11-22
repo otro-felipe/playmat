@@ -371,6 +371,18 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
     const { name, cards, sideboard } = saved.data;
     return { name, cards, sideboard, libraryDeckId: deckId };
   }
+  async function withTableReservation(joinTableId, run) {
+    const lease = playerLease(actor, fromProduct, joinTableId);
+    await lease?.reserve();
+    let engine;
+    try {
+      engine = getSeat(Boolean(lease)).engine;
+    } catch (error) {
+      await lease?.release();
+      throw error;
+    }
+    return run(engine, lease);
+  }
   tool('list_human_matches', 'Find your waiting or in-progress opted-in Human Player tables, including browser-created tables. Returns tableId and live XMage status.', {}, 'play', () => {
     human.requireAccount();
     return fromProduct('list_human_matches', {});
@@ -400,8 +412,11 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
   tool('create_game', 'Create a private, unrated best-of-three table as this agent seat.', {
     format: Format, name: z.string().trim().min(1).max(80), ...playDeck,
     guestEngineName: z.string().trim().min(1).max(36), ...agentRuntime,
-  }, 'play', async ({ guestEngineName, model, reasoningEffort, deck, deckId, ...args }) => getSeat().engine.createGame({ ...args, deck: await resolvePlayDeck(deck, deckId) },
-    (record) => fromProduct('create_game_invite', { ...record, guestEngineName, model, reasoningEffort }), playerLease(actor, fromProduct)));
+  }, 'play', async ({ guestEngineName, model, reasoningEffort, deck, deckId, ...args }) => {
+    const selectedDeck = await resolvePlayDeck(deck, deckId);
+    return withTableReservation(undefined, (engine, lease) => engine.createGame({ ...args, deck: selectedDeck },
+      record => fromProduct('create_game_invite', { ...record, guestEngineName, model, reasoningEffort }), lease));
+  });
   tool('join_game', 'Join a private table from its Thoughtseize invite link or table ID. Use a legal deck and an optional seat display name.', {
     tableId: Uuid.optional(), inviteLink: z.url().max(2048).optional(),
     displayName: z.string().trim().min(1).max(24).optional(), ...playDeck, ...agentRuntime,
@@ -417,8 +432,9 @@ function registerTools(mcp, { actor, getSeat, callProduct, reauthorize, allowedO
         tableId = id;
       }
       const invitation = await fromProduct('inspect_game_invite', { tableId });
-      return getSeat().engine.joinGame({ tableId, deck: await resolvePlayDeck(deck, deckId) }, invitation,
-        () => fromProduct('get_game_invite', { tableId, displayName, model, reasoningEffort }), playerLease(actor, fromProduct, tableId));
+      const selectedDeck = await resolvePlayDeck(deck, deckId);
+      return withTableReservation(tableId, (engine, lease) => engine.joinGame({ tableId, deck: selectedDeck }, invitation,
+        () => fromProduct('get_game_invite', { tableId, displayName, model, reasoningEffort }), lease));
     });
   tool('start_match', 'Start a ready table as its host. For the MCP Player provide tableId. For the Human Player provide humanTableId, including to finish setup of an MCP-created table with human gameplay disabled.', {
     tableId: Uuid.optional(), humanTableId: Uuid.optional(),
@@ -552,12 +568,15 @@ export function createMcpServer({
       : JSON.stringify([actor.accountId, actor.engineName]);
     const callProduct = product ? (operation, args) => product(token, operation, args) : null;
     const human = humanMatchAccess({ actor, product: callProduct, createEngine, seats, maxSeats });
-    function getSeat() {
+    function getSeat(newReservation = false) {
       requirePlayerControl(actor);
       const current = seatContext.getStore();
       if (current) return current.seat;
       const prior = seats.get(seatKey);
       if (prior && actor.playerId && !prior.engine.matchesPlayerGrant(actor)) {
+        if (!newReservation && !actor.reservationId) {
+          throw new ToolError('player_busy', 'Reserve this player before replacing its existing connection.');
+        }
         prior.invalidate('player_control_changed');
         prior.engine.close?.();
         seatWatchers.get(seatKey)?.();

@@ -17,6 +17,9 @@ test('four profile-bound pilot connections share a library and keep two simultan
   }));
   const grants = new Map(identities.map(identity => [identity.token, identity]));
   const seats = new Map(), leases = new Map(), tables = new Map();
+  const closed = [];
+  let race;
+
   const server = createMcpServer({
     authorize: async token => {
       const identity = grants.get(token);
@@ -29,13 +32,24 @@ test('four profile-bound pilot connections share a library and keep two simultan
     product: async (token, op, args) => {
       const identity = grants.get(token);
       if (op === 'list_players') return { players: [{ playerId: identity.playerId, engineName: identity.engineName }] };
-      if (op === 'get_deck') return { id: 'shared', library: 'agent', data: deck };
+      if (op === 'get_deck') {
+        if (race && identity.playerId === identities[0].playerId) {
+          if (token === 'fixture-racing-grant') {
+            race.contenderRead();
+            await race.hostReserved;
+          } else {
+            await race.contenderAtDeck;
+          }
+        }
+        return { id: 'shared', library: 'agent', data: deck };
+      }
       if (op === 'player_reservation') {
         const lease = leases.get(identity.playerId);
         assert.equal(args.playerId, identity.playerId);
         if (lease && (lease.reservationId !== args.reservationId || lease.connectionId !== identity.connectionId)) {
           throw new ToolError('player_busy', 'Reserved by another connection');
         }
+        if (race && token === identities[0].token && args.operation === 'reserve') race.hostAcquired();
         if (args.operation === 'release') leases.delete(identity.playerId);
         else leases.set(identity.playerId, { connectionId: identity.connectionId, reservationId: args.reservationId,
           tableId: args.tableId ?? lease?.tableId ?? null });
@@ -51,11 +65,10 @@ test('four profile-bound pilot connections share a library and keep two simultan
     createEngine: actor => {
       let tableId = actor.activeTableId ?? null;
       const engine = {
-        open: async () => {}, close() {}, subscribe: () => () => {},
+        open: async () => {}, close() { closed.push(actor.connectionId); }, subscribe: () => () => {},
         matchesPlayerGrant: current => current.connectionId === actor.connectionId && (current.activeTableId ?? null) === tableId,
         async createGame(args, register, lease) {
           assert.deepEqual(args.deck, { ...deck, libraryDeckId: 'shared' });
-          await lease?.reserve();
           tableId = randomUUID();
           await lease?.bind(tableId);
           await register({ tableId, roomId: randomUUID(), format: args.format });
@@ -63,7 +76,6 @@ test('four profile-bound pilot connections share a library and keep two simultan
         },
         async joinGame(args, invitation, claim, lease) {
           assert.deepEqual(args.deck, { ...deck, libraryDeckId: 'shared' });
-          await lease?.reserve();
           await lease?.bind(args.tableId);
           await claim();
           tableId = invitation.tableId;
@@ -96,8 +108,23 @@ test('four profile-bound pilot connections share a library and keep two simultan
   for (const i of [0, 2]) {
     const host = identities[i], guest = identities[i+1];
     assert.deepEqual((await calls[i]('list_players')).players.map(p => p.playerId), [host.playerId]);
-    const created = await calls[i]('create_game', { playerId: host.playerId, name: 'Fixture', format: 'Pioneer',
-      deckId: 'shared', guestEngineName: guest.engineName });
+    const create = { playerId: host.playerId, name: 'Fixture', format: 'Pioneer',
+      deckId: 'shared', guestEngineName: guest.engineName };
+    let created;
+    if (i === 0) {
+      const rivalGrant = { ...host, connectionId: randomUUID() };
+      grants.set('fixture-racing-grant', rivalGrant);
+      const contender = await connect('fixture-racing-grant');
+      const read = Promise.withResolvers(), acquired = Promise.withResolvers();
+      race = { contenderAtDeck: read.promise, contenderRead: read.resolve, hostReserved: acquired.promise, hostAcquired: acquired.resolve };
+      const [winner, rejected] = await Promise.all([calls[i]('create_game', create), contender('create_game', create)]);
+      race = null;
+      assert.equal(rejected.code, 'player_busy', 'The losing grant must fail its database reservation');
+      assert.ok(!closed.includes(host.connectionId), 'The losing request must never close the winning connection');
+      created = winner;
+    } else {
+      created = await calls[i]('create_game', create);
+    }
     assert.ok(created.tableId, JSON.stringify(created));
     tableIds.push(created.tableId);
     const joined = await calls[i+1]('join_game', { playerId: guest.playerId, tableId: created.tableId, deckId: 'shared' });

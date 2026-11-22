@@ -362,7 +362,6 @@ export class PlaymatEngineSeat {
     const computer = mode === 'practice' || mode === 'bot';
     const rival = mode === 'practice' ? { name: 'Goldfish', cards: [{cardName: 'Plains', amount: 60}], sideboard: [] }
       : botDeck ?? deck;
-    await lease?.reserve();
     try {
       await this.open();
       await this.#validateForSeat(format, deck);
@@ -414,7 +413,6 @@ export class PlaymatEngineSeat {
     if (!invitation || invitation.tableId !== tableId || !invitation.format) {
       throw new ToolError('not_invited', 'This agent has no available invitation to that table.');
     }
-    await lease?.reserve();
     try {
       await this.open();
       await this.#validateForSeat(invitation.format.replace('Constructed - ', ''), deck);
