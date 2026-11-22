@@ -703,3 +703,24 @@ test('owner delegates four named players to isolated OAuth pilots with exclusive
   assert.equal((await reserve(renewed,one.playerId,'release',claims[0])).status,200)
   assert.equal((await (await f.request('/internal/verify',renewed)).json()).activeTableId,null)
 })
+
+test('owners manage pilot profiles from their browser connections page', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const alice = await f.login('Alice')
+  const bob = await f.login('Bob')
+  const path = '/oauth/connections?view=players'
+  assert.match(await (await f.request('/oauth/connections', alice)).text(), /href="\/oauth\/connections\?view=players"/)
+  const settings = { displayName: 'Piloto local', flag: 'cl', mcpEnabled: 'on', action: 'create' }
+  assert.equal((await f.request(path, { ...alice, Origin: 'https://foreign.example' }, settings)).status, 403)
+  assert.equal((await f.request(path, alice, settings)).status, 303)
+  const page = await (await f.request(path, alice)).text()
+  assert.match(page, /🇨🇱/)
+  const playerId = page.match(/name="playerId" value="([a-f0-9-]{36})"/)?.[1]
+  assert.ok(playerId)
+  const update = { action: 'update', playerId, displayName: 'Luna <2>', flag: '' }
+  assert.equal((await f.request(path, bob, update)).status, 404)
+  assert.equal((await f.request(path, alice, update)).status, 303)
+  const saved = await (await f.request(path, alice)).text()
+  assert.match(saved, /Luna &lt;2&gt;/)
+  assert.doesNotMatch(saved, /🇨🇱| checked/)
+})

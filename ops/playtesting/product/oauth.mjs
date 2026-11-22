@@ -1,4 +1,5 @@
 import { listPlayers, profileConsent } from './players.mjs'
+import { playerPage, renderPlayerForms, savePlayerForm } from './player-profile-forms.mjs'
 import { authStyles } from './auth-styles.mjs'
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
 import { digest, ensureOAuthAgent, newToken } from './identity.mjs'
@@ -236,19 +237,27 @@ export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions
     return res.writeHead(200).end()
   }
 
-  async function connections(req, res, resolveIdentity) {
+  async function connections(req, res, resolveIdentity, playersView) {
     const owner = browserOnly(await resolveIdentity(req))
-    if (!owner && req.method === 'GET') return res.writeHead(303, { Location: '/login?next=%2Foauth%2Fconnections' }).end()
+    if (!owner && req.method === 'GET') return res.writeHead(303, { Location: '/login?next=' + encodeURIComponent(playersView ? playerPage : '/oauth/connections') }).end()
     if (!owner) throw new ProductError(401, 'Inicia sesión en Thoughtseize')
     if (req.method === 'POST') {
       if (req.headers.origin !== issuer || req.headers['sec-fetch-site'] === 'cross-site') throw new ProductError(403, 'Origen OAuth inválido')
       const form = await body(req, 'form', 4096)
+      if (playersView) {
+        await savePlayerForm(pool, owner, form)
+        return res.writeHead(303, { Location: playerPage }).end()
+      }
       const id = form.get('connection')
       if (!isUuid(id)) throw new ProductError(400, 'Conexión inválida')
       const revoked = await pool.query('UPDATE oauth_connections SET revoked_at=now() WHERE id=$1 AND audience=$2 AND account_id=$3 AND revoked_at IS NULL',
         [id, audience, owner.accountId])
       if (!revoked.rowCount) throw new ProductError(404, 'Conexión no encontrada')
       return res.writeHead(303, { Location: '/oauth/connections' }).end()
+    }
+    if (playersView) {
+      const { players } = await listPlayers(pool, owner)
+      return html(res, 'Jugadores', renderPlayerForms(players, escape))
     }
     const { rows } = await pool.query(`SELECT c.id,c.client_id,c.scopes_approved,g.scopes FROM oauth_connections c JOIN agent_grants g
       ON g.engine_key=c.engine_key AND g.account_id=c.account_id WHERE c.audience=$1 AND c.account_id=$2
@@ -257,7 +266,7 @@ export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions
     const entries = rows.map(row => `<form method="post"><input type="hidden" name="connection" value="${escape(row.id)}">
       <span>${escape(registry.name(row.client_id))} · ${approvedScopes(row.scopes, row.scopes_approved).map(scope => scopeLabels[scope]).join(', ')}</span>
       <button>Desconectar</button></form>`).join('')
-    return html(res, 'Conexiones MCP', entries || '<p>No tienes conexiones activas.</p>')
+    return html(res, 'Conexiones MCP', `<p><a href="${playerPage}">Administrar jugadores</a></p>` + (entries || '<p>No tienes conexiones activas.</p>'))
   }
 
   async function route(req, res, requestUrl, resolveIdentity) {
@@ -292,7 +301,7 @@ export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions
     else if (path === '/oauth/authorize' && post) await approve(req, res, resolveIdentity)
     else if (path === '/oauth/token' && post) await token(req, res)
     else if (path === '/oauth/revoke' && post) await revoke(req, res)
-    else if (path === '/oauth/connections' && (get || post)) await connections(req, res, resolveIdentity)
+    else if (path === '/oauth/connections' && (get || post)) await connections(req, res, resolveIdentity, requestUrl.searchParams.get('view') === 'players')
     else return false
     return true
   }
