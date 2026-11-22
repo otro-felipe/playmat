@@ -207,6 +207,28 @@ An opposing Fatal Push interrupted your line. After reviewing its target, you wa
 
 `expectedStackIds` replaces the default list of your own visible stack objects. If the stack has changed since you planned the line, use the latest cursor and rebuild the list from the objects still present whose resolution you intend to accept. Include any remaining opposing response you plan to pass through and each of your own remaining objects the line expects to resolve.
 
+### Cast a known response in one line
+
+The opponent cast a pump spell on a creature with two toughness. You have priority and decide to cast Shock on that creature now. Copy the opposing spell’s stack ID, the creature’s battlefield ID, the Shock card ID and your red source ID from the current receipt. If the opponent only passes, you intend to advance to the end step. Submit one call:
+
+```json
+{
+  "gameId":"00000000-0000-4000-8000-000000000001",
+  "cursor":8213,
+  "commandId":"respond-with-shock-001",
+  "expectedStackIds":["<opposing-pump-stack-id>"],
+  "actions":[
+    {"kind":"play","when":"priority","select":{"objectId":"<shock-id>","zone":"hand"},
+     "targets":[{"role":0,"targetZone":"BATTLEFIELD","select":{"objectId":"<target-creature-id>"}}],
+     "payWith":[{"sourceId":"<red-source-id>","color":"R"}]},
+    {"kind":"pass_until","destination":"end_step","policy":"if_no_play"}
+  ],
+  "waitMs":25000
+}
+```
+
+Use the exact prompt `instruction` for a target callback that offers no role index. Include known triggers of your response in `expectTriggers` when present. A different target prompt, new opposing spell or revealed card requires a fresh decision.
+
 ### Animate Mutavault and attack
 
 Mutavault is untapped and has been under your control since the turn began. A Mountain can pay for its animation. Given the current state and Mutavault's observed object ID, read both activation fields from the same legal option. Its tap-for-mana option is in `manaAbilities`.
