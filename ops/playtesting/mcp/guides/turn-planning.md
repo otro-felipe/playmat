@@ -544,7 +544,7 @@ Once you have inspected the redrawn seven, you may already know which card to bo
 
 ## Express every visible engine choice
 
-For a visible `attack_all`, `confirm_attack` or `confirm_block` button, copy its `playLineAction` with the exact `decisionId` and `choiceId`. `attack_all` presses that button once. Inspect the resulting selection and next prompt before confirming combat.
+When you intend to attack with every legal attacker, queue `{"kind":"attack","attackers":"all"}` in the line. For selective attacks, use the intended attacker IDs. To press a single visible `attack_all`, `confirm_attack` or `confirm_block` button, copy its `playLineAction` with the current `decisionId` and `choiceId`.
 
 Use `{"kind":"choose","decisionId":"<observed prompt>","choiceId":"<legal option>"}` for any observed engine choice, including mulligan, cards to put on the bottom, attackers, blockers, mode, targets, mana or costs. Supply the engine's requested numeric or array `value` when shown. For a future choice, use a typed guard and unique `select`. A known Yes/No question can use `guard:{kind:"question",sourceObjectId:"<visible source>"}` with `select:{answer:false}`. For named alternatives such as Odd and Even, select the exact strategic label with the question’s instruction guard. For prompts without typed projection, keep the exact `guard.instruction`.
 
