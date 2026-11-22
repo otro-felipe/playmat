@@ -77,7 +77,8 @@ export async function verifyCreatureLandActivation({ startFixture, ownPlayer, ri
       const payment = compact.decision.choices.find(option => option.objectId === mountain.id)
         ?.payWithOptions?.find(option => option.color === 'R')
       assert.ok(payment?.abilityId && payment.sourceId === mountain.id, 'The Mountain exposes its own exact red payment before animation')
-      const animate = { kind: 'activate', sourceId: source.id, abilityId: activation.abilityId, abilityText: activation.abilityText }
+      const animate = compact.decision.choices.find(option => option.objectId === source.id)?.playLineAction
+      assert.deepEqual(animate, { kind: 'activate', sourceId: source.id, abilityId: activation.abilityId, abilityText: activation.abilityText })
       const rejected = await call('play_line', { gameId: state.gameId, cursor: compact.cursor, commandId: randomUUID(),
         view: 'compact', actions: [{ ...animate, payWith: [payment, 'absent-fixture-source'] }] })
       assert.deepEqual([rejected.status, rejected.code, rejected.appliedDecisions, rejected.state.cursor],

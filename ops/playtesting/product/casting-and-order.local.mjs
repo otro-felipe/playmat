@@ -366,7 +366,10 @@ export async function verifyCardToStep(fixture) {
             if (choice) { castTurn = view.turn; return choice }
           }
           // Spend this turn's land drop so the normal pass policy has no unrelated legal land.
-          return landChoice(view)
+          const land = landChoice(view)
+          if (land) assert.deepEqual(land.playLineAction, { kind: 'play', playAs: 'land',
+            select: { zone: 'hand', objectId: land.objectId } })
+          return land
         },
         ready: view => ownMain(view, ownPlayer) && !view.stack.length && mana(view).length > 0
           && view.decision.choices.some(choice => choice.card?.name === spell)
@@ -380,7 +383,10 @@ export async function verifyCardToStep(fixture) {
       request.gameId = state.gameId
       request.cursor = state.cursor
       request.commandId = randomUUID()
-      request.actions[0].select.objectId = shock.id
+      const compact = await call('get_game_state', { gameId: state.gameId, view: 'compact' })
+      const cast = compact.decision.choices.find(option => option.objectId === shock.id)?.playLineAction
+      assert.deepEqual(cast, { kind: 'play', select: { objectId: shock.id, zone: 'hand' } })
+      Object.assign(request.actions[0], cast)
       request.actions[0].targets[0].select.objectId = rivalPlayer(state).id
       request.actions[0].payWith = [mana(state)[0].id]
       if (mandatory) {
@@ -412,6 +418,15 @@ export async function verifyCardToStep(fixture) {
           assert.equal(receipt.state.decision.kind, 'declareAttackers')
           assert.ok(receipt.state.decision.choices.some(choice => choice.card?.name === creature || choice.cardRef))
           assert.equal(receipt.lastDestination, undefined)
+          const all = receipt.state.decision.choices.find(choice => choice.intent === 'attack_all')
+          assert.ok(all?.playLineAction, 'The real XMage declaration offers its own all-attack button')
+          const pressed = await playLineWithPeer({ gameId: state.gameId, cursor: receipt.state.cursor, commandId: randomUUID(),
+            actions: [all.playLineAction] }, bound(receipt.state))
+          assert.equal(pressed.appliedDecisions, 1)
+          const confirm = pressed.state.decision.choices.find(choice => choice.intent === 'confirm_attack')
+          assert.deepEqual(confirm?.playLineAction, { kind: 'choose', decisionId: pressed.state.decision.id, choiceId: confirm?.id })
+          assert.notEqual(pressed.state.decision.id, receipt.state.decision.id)
+          assert.equal(rivalPlayer(pressed.state).life, before-2, 'Clicking all attackers leaves confirmation to the pilot')
         } else {
           assert.equal(receipt.status, 'completed', receipt.reason)
           assert.equal(receipt.lastDestination.step, 'BEGIN_COMBAT')
