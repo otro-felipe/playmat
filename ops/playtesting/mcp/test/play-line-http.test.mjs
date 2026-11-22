@@ -97,12 +97,34 @@ test('[PM-LINE-MCP-1] native stale line transport preserves the preflight reject
   assert.equal(result.code, 'stale_decision');
   assert.equal(result.status, 'rejected');
   assert.equal(result.stage, 'preflight');
-  assert.equal(result.cursor, f.request.cursor);
+  assert.equal(result.requestedCursor, f.request.cursor);
+  assert.equal(result.cursor, result.state.cursor);
   assert.equal(result.appliedDecisions, 0);
   assert.equal(result.gameId, f.request.gameId);
   assert.equal(result.state.cursor, f.request.cursor + 1);
   assert.equal(result.recovery, 'replan_from_state');
   assert.deepEqual(f.applied, []);
+});
+
+test('a recovered receipt exposes the current decision cursor and retains its historical progress', async (t) => {
+  const f = await fixture(t, { onResponse: (_, update) => update({ decision: choice('second') }) });
+  const { result: initial } = await f.call('play_line', { ...f.request, waitMs: 100 });
+  assert.equal(initial.status, 'completed');
+  f.update({ decision: choice('third') });
+  for (const view of ['full', 'compact']) {
+    const { result } = await f.call('wait_for_decision', { gameId, commandId: f.request.commandId, view });
+    assert.equal(result.needsAgent, true);
+    assert.equal(result.cursor, result.state.cursor);
+    assert.equal(result.progressCursor, initial.cursor);
+    assert.equal(result.state.decision.id, 'third');
+  }
+  const { result: recovered } = await f.call('play_line', f.request);
+  const { result: continued } = await f.call('play_line', {
+    gameId, cursor: recovered.cursor, commandId: 'third-answer',
+    actions: [{ kind: 'choose', decisionId: 'third', choiceId: 'third-answer', value: 1 }], waitMs: 100,
+  });
+  assert.equal(continued.status, 'completed');
+  assert.deepEqual(f.applied.map(r => r.decisionId), ['first', 'third']);
 });
 
 test('[PM-LINE-MCP-2] the turn guide examples pass the published native MCP input contracts', async (t) => {

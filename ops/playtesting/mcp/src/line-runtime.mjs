@@ -43,6 +43,7 @@ async function lineResult(seat, { gameId, commandId, sequenceId }, timeoutMs, si
   const priorityOptions = optionalPassStop && seat.priorityOptions(optionalPassStop, state);
   return {
     ...status,
+    ...(state && state.cursor !== status.cursor ? { cursor: state.cursor, progressCursor: status.cursor } : {}),
     ...(priorityOptions ? { priorityOptions } : {}),
     commandId,
     stage: 'execution',
@@ -111,7 +112,8 @@ export function closedPlayerReceipts(seat) {
     if (line.status === 'running') continue;
     results.push({ gameId: command.gameId, commandId: command.commandId, sequenceId: line.sequenceId,
       status: line.status, reason: line.reason, stage: 'execution', event: line.status === 'ended' ? line.reason : 'line_stopped',
-      appliedDecisions: line.appliedDecisions, completedSteps: line.completedSteps, cursor: line.cursor,
+      appliedDecisions: line.appliedDecisions, completedSteps: line.completedSteps, cursor: state.cursor,
+      ...(line.cursor !== state.cursor ? { progressCursor: line.cursor } : {}),
       planOwnsExecution: false, needsAgent: false,
       state: { gameId: state.gameId, tableId: state.tableId, status: state.status, cursor: state.cursor, score: state.score } });
   }

@@ -8,6 +8,8 @@ Use `play_line` for the longest line you would commit to if the opponent only pa
 
 When compact priority reports `decision.onlyPass:true`, the engine offers only Pass at this cursor. Use a terminal `pass_until` to reach the window where you intend to act, or `pass_priority` for one handoff. To queue an action at a later window of this turn, give the exact window and the planned action in the same line. A land play uses `kind:"play",playAs:"land"` at a legal main phase.
 
+Use the receipt’s current `cursor` for your next action with the decision in its `state`. If a newer state arrived after the line stopped, `progressCursor` records where the previous line stopped. A stale request can also report the original `requestedCursor`.
+
 Plan the whole known turn from the decision in your last receipt. Start with the [full-turn example](#play-before-and-after-combat-in-one-line). Include a postcombat play after the attack when it is already decided. Use a guarded `choose` for a predictable cost, mode or target. If a blocker, trigger or draw could change the plan, the executor stops at that event. For a deliberate priority stop, see [Shock to beginning of combat](#cast-one-card-and-stop-at-your-combat-priority).
 
 | What the receipt shows | Next action |
