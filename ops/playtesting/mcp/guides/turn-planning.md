@@ -6,7 +6,7 @@ Play to win from your seat's view. Compare credible lines using your hand, avail
 
 Use `play_line` for the longest line you would commit to if the opponent only passes. It can begin in either player's turn. Include land drops, spells, known modes, targets and costs, combat, postcombat plays and your intended stopping point in one call. The executor supplies routine priority handoffs and checks each intention against the live XMage choice. Open opposing mana shapes your strategy. Once you pick a line, ordinary passes and expected resolutions can happen without another decision from you.
 
-When compact priority reports `decision.onlyPass:true`, the engine offers only Pass at this cursor. Use a terminal `pass_until` to reach the window where you intend to act, or `pass_priority` for one handoff. To queue an action at a later window of this turn, give the exact window and the planned action in the same line. A land play uses `kind:"play",playAs:"land"` at a legal main phase.
+When compact priority reports `decision.onlyPass:true`, the engine offers only Pass at this cursor. Use a terminal `pass_until` to reach the window where you intend to act, or `pass_priority` for one handoff. To queue an action at a later window of this turn, give the exact window and the planned action in the same line. At priority, copy the intended `decision.choices[].playLineAction`. A land uses `kind:"play",playAs:"land"`; a spell uses `kind:"play"`. Both select the visible `objectId` and `zone`. An activation carries its `sourceId`, `abilityId` and full `abilityText`. When a source offers several activations, choose the matching `nonManaAbilities[].playLineAction`. Keep any returned `when:"priority"`. Add only the costs, modes and targets you have decided.
 
 Use the receipt’s current `cursor` for your next action with the decision in its `state`. If a newer state arrived after the line stopped, `progressCursor` records where the previous line stopped. A stale request can also report the original `requestedCursor`.
 
@@ -17,6 +17,7 @@ Plan the whole known turn from the decision in your last receipt. Start with the
 | `needsAgent:true` with a current decision | Use the included `state` to submit the next justified line. Its `state.cursor` and decision belong together. |
 | `planOwnsExecution:true` | The client waits on the same seat, game and command ID. An ordinary callback calls for no new plan. Handle a rollback request immediately. |
 | `response_available` at a legal option you intend to decline | Explicitly pass once or choose `decline_optional` through your chosen destination. Resending the same `if_no_play` policy can return the same option. |
+| `illegal_choice` | Check what was applied. At the returned cursor, replace the rejected action with a current legal choice or drop it. Submit only the still-justified remainder under a new command ID. Repeating the same rejected choice at the same cursor cannot advance the game. |
 | A real response, new information or an unplanned choice | Read the change in the receipt and submit only the remaining justified actions with a new command ID. |
 
 Start from your observed `gameId` and `cursor`. Give each new line its own `commandId`. When the connector offers it, use `view:"compact"` with `get_game_state`, `play_line` and `wait_for_decision`. A choice's `cardRef` is the card's object ID elsewhere in that same state. Use the choice's own `id` for `choiceId`. Cards visible only in a prompt and distinct card records stay inline. Use `view:"full"` for inline card detail or printing information.
@@ -542,6 +543,8 @@ Once you have inspected the redrawn seven, you may already know which card to bo
 ```
 
 ## Express every visible engine choice
+
+For a visible `attack_all`, `confirm_attack` or `confirm_block` button, copy its `playLineAction` with the exact `decisionId` and `choiceId`. `attack_all` presses that button once. Inspect the resulting selection and next prompt before confirming combat.
 
 Use `{"kind":"choose","decisionId":"<observed prompt>","choiceId":"<legal option>"}` for any observed engine choice, including mulligan, cards to put on the bottom, attackers, blockers, mode, targets, mana or costs. Supply the engine's requested numeric or array `value` when shown. For a future choice, use a typed guard and unique `select`. A known Yes/No question can use `guard:{kind:"question",sourceObjectId:"<visible source>"}` with `select:{answer:false}`. For named alternatives such as Odd and Even, select the exact strategic label with the question’s instruction guard. For prompts without typed projection, keep the exact `guard.instruction`.
 
