@@ -8,20 +8,21 @@ export function createProductClient(baseUrl, publicUrl) {
     throw new Error('The Thoughtseize product service must bind on loopback.');
   }
 
-  async function request(token, path, { method = 'GET', body } = {}) {
+  async function request(token, path, { method = 'GET', body, playerId } = {}) {
     return fetch(new URL(path, base), {
       method, redirect: 'error', signal: AbortSignal.timeout(12_000),
       headers: {
         accept: 'application/json',
         authorization: `Bearer ${token}`,
+        ...(playerId && { 'X-Playmat-Player-Id': playerId }),
         ...(body === undefined ? {} : { 'content-type': 'application/json' }),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
   }
 
-  async function authorize(token) {
-    const reply = await request(token, '/internal/verify');
+  async function authorize(token, playerId) {
+    const reply = await request(token, '/internal/verify', { playerId });
     if ([401, 403, 404].includes(reply.status)) return null;
     if (!reply.ok) throw new Error('Thoughtseize authorization service unavailable.');
     const actor = await reply.json();
@@ -32,7 +33,7 @@ export function createProductClient(baseUrl, publicUrl) {
     return { ...actor, scopes: [...scopes] };
   }
 
-  async function operation(token, name, args) {
+  async function operation(token, name, args, playerId) {
     const encode = encodeURIComponent;
     const root = '/api/playtesting';
     let path;
@@ -146,7 +147,7 @@ export function createProductClient(baseUrl, publicUrl) {
       default:
         throw new ToolError('invalid_operation', 'No such Thoughtseize operation.');
     }
-    const response = await request(token, path, config);
+    const response = await request(token, path, { ...config, playerId });
     if (!response.ok) {
       if (name === 'player_reservation' && response.status === 409) {
         throw new ToolError('player_busy', 'This player already has a reservation. Check its current table before retrying.');
@@ -182,8 +183,8 @@ export function createProductClient(baseUrl, publicUrl) {
     return data;
   }
 
-  async function eventRequest(token, method, params) {
-    const response = await request(token, '/internal/mcp-events/' + method, { method: 'POST', body: params });
+  async function eventRequest(token, method, params, playerId) {
+    const response = await request(token, '/internal/mcp-events/' + method, { method: 'POST', body: params, playerId });
     const data = await response.json();
     if (response.ok) return data;
     if (data.rpcCode === -32015) throw new McpError(-32015, 'Callback verification failed', { reason: data.reason });

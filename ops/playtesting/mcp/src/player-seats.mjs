@@ -4,6 +4,16 @@ import { ToolError } from './game-seat.mjs';
 const humanTools = new Set(['create_human_match', 'list_human_matches', 'list_human_decks']);
 const forbidden = () => new ToolError('player_forbidden', 'This connection cannot select that Thoughtseize player or the Human Player.');
 
+export async function resolvePlayerActor(account, playerId, verify) {
+  if (playerId === undefined || playerId === account.playerId) return account;
+  if (account.playerId || !account.playerSelectionEnabled || !account.connectionId) throw forbidden();
+  const player = await verify(playerId);
+  if (player?.playerId !== playerId || player.accountId !== account.accountId || player.connectionId !== account.connectionId) {
+    throw forbidden();
+  }
+  return player;
+}
+
 export function checkPlayerSelection(actor, { playerId, humanTableId }, name) {
   if (playerId !== undefined && playerId !== actor.playerId) throw forbidden();
   if (actor.playerId && (humanTableId !== undefined || humanTools.has(name))) throw forbidden();
