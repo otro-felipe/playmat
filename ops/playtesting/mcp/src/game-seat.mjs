@@ -11,6 +11,15 @@ const MAX_SEQUENCE_WALL_MS = 15 * 60_000;
 const MAX_OUTCOMES = 256;
 const TURN_STEPS = ['UNTAP', 'UPKEEP', 'DRAW', 'PRECOMBAT_MAIN', 'BEGIN_COMBAT', 'DECLARE_ATTACKERS',
   'DECLARE_BLOCKERS', 'FIRST_COMBAT_DAMAGE', 'COMBAT_DAMAGE', 'END_COMBAT', 'POSTCOMBAT_MAIN', 'END_TURN', 'CLEANUP'];
+const TURN_PHASES = ['BEGINNING', 'PRECOMBAT_MAIN', 'COMBAT', 'POSTCOMBAT_MAIN', 'END'];
+const WINDOW_ACTIONS = new Set(['play', 'activate', 'choose', 'attack', 'block']);
+function intermediateWindow(action, next) {
+  return action?.kind === 'pass_until' && action.destination === 'current_turn' && action.priority === 'self'
+    && (action.step !== undefined || action.phase !== undefined)
+    && (action.step === undefined || TURN_STEPS.includes(action.step))
+    && (action.phase === undefined || TURN_PHASES.includes(action.phase))
+    && WINDOW_ACTIONS.has(next?.kind);
+}
 const PERMANENT_SPELL_TYPES = new Set(['ARTIFACT', 'BATTLE', 'CREATURE', 'ENCHANTMENT', 'PLANESWALKER']);
 
 export class ToolError extends Error {
@@ -328,8 +337,8 @@ export class GameSeat {
     const steps = [];
     const terminalPass = (action) => ['pass_until', 'pass_priority'].includes(action?.kind);
     const finalPass = terminalPass(actions.at(-1));
-    const prematurePassIndex = actions.slice(0, -1).findIndex(terminalPass);
-    if (prematurePassIndex !== -1) throw new ToolError('bad_sequence', 'Use at most one terminal pass (pass_priority or pass_until) and put it last.', { actionIndex: prematurePassIndex });
+    const prematurePassIndex = actions.slice(0, -1).findIndex((action, index) => terminalPass(action) && !intermediateWindow(action, actions[index + 1]));
+    if (prematurePassIndex !== -1) throw new ToolError('bad_sequence', 'Only an explicit current_turn step or phase at self priority may precede a planned action. Use at most one terminal pass (pass_priority or pass_until) and put it last.', { actionIndex: prematurePassIndex });
     const ownId = initial.players?.find((player) => player.yourSeat)?.id;
     const informationalStack = initial.stack.filter((card) =>
       (card.controllerId === ownId || expectedStackIds?.includes(card.id)) && needsStackReevaluation(card, ownId));
@@ -439,8 +448,12 @@ export class GameSeat {
         if (destination === 'current_turn' && phase === undefined && step === undefined && priority === undefined) {
           throw new ToolError('bad_sequence', 'Choose a phase, step or priority for a current-turn destination.', { actionIndex });
         }
-        steps.push({ kind: 'pass_to_boundary', destination, phase, step, priority, skipOptionalResponses: action.policy === 'decline_optional' });
+        steps.push({ kind: 'pass_to_boundary', destination, phase, step, priority, intermediate: tail.length > 0, skipOptionalResponses: action.policy === 'decline_optional' });
       } else steps.push(action);
+      if (intermediateWindow(actions[actionIndex - 1], action) && ['play', 'activate', 'choose'].includes(action.kind)) {
+        const { phase, step } = actions[actionIndex - 1];
+        steps[firstStep].window = { phase, step };
+      }
       for (let index = firstStep; index < steps.length; index++) {
         steps[index].actionIndex = actionIndex;
         if (beforeInformation || terminal) steps[index].beforeInformation = true;
@@ -1009,14 +1022,17 @@ export class GameSeat {
       return true;
     };
     const intentionReady = (state, step) => matchesAnswer(state, step) && (!step.semanticPlay || plannedChoice(state, state.decision, step));
-    const checkAttackWindow = (state, step) => {
-      if (autoAdvance && step.guard?.kind === 'declareAttackers'
-        && (state.activePlayerId !== ownPlayerId || ['DECLARE_BLOCKERS', 'FIRST_COMBAT_DAMAGE', 'COMBAT_DAMAGE', 'END_COMBAT', 'POSTCOMBAT_MAIN', 'END_TURN', 'CLEANUP'].includes(state.step))) {
-        throw new ToolError('illegal_choice', 'The intended attack has no current own attack window; replan before passing.');
-      }
-      if (autoAdvance && step.guard?.kind === 'declareBlockers'
-        && (state.activePlayerId === ownPlayerId || ['FIRST_COMBAT_DAMAGE', 'COMBAT_DAMAGE', 'END_COMBAT', 'POSTCOMBAT_MAIN', 'END_TURN', 'CLEANUP'].includes(state.step))) {
-        throw new ToolError('illegal_choice', 'The intended block has no current own blocker declaration window; replan before passing.');
+    const checkActionWindow = (state, step) => {
+      if (step.window && !reaches(state, step.window)) throw new ToolError('destination_skipped', 'The phase or step of the planned action has passed.');
+      const declaration = step.guard?.kind;
+      if (!autoAdvance || !['declareAttackers', 'declareBlockers'].includes(declaration)) return;
+      const attacking = declaration === 'declareAttackers';
+      const expected = attacking ? 'DECLARE_ATTACKERS' : 'DECLARE_BLOCKERS';
+      const priorityAfterDeclaration = state.step === expected && visibleDecision(state)?.kind === 'priority'
+        && state.decision.id !== previousDecisionId;
+      if ((state.activePlayerId === ownPlayerId) !== attacking || priorityAfterDeclaration
+        || TURN_STEPS.indexOf(state.step) > TURN_STEPS.indexOf(expected)) {
+        throw new ToolError('illegal_choice', 'The intended combat declaration has no current window. Replan before passing.');
       }
     };
     const canSkipTarget = (state, step) => {
@@ -1150,7 +1166,7 @@ export class GameSeat {
             continue;
           }
           if (autoAdvance && state.stop) throw new ToolError('response_available', 'The configured stop needs a fresh plan.');
-          checkAttackWindow(state, step);
+          checkActionWindow(state, step);
           if ((!matchesAnswer(state, step) || step.semanticTarget && step.guard?.instruction === undefined && step.guard?.targetRole === undefined)
             && canSkipTarget(state, step)) {
             sequence.skippedSteps = (sequence.skippedSteps ?? 0) + 1;
@@ -1161,16 +1177,16 @@ export class GameSeat {
           while (autoAdvance && !intentionReady(state, step)) {
             requireBeforeInformation(state, step);
             if (step.resumeCastId) throw new ToolError('response_available', 'The resumed cast reached another prompt. Inspect it before continuing.');
-            checkAttackWindow(state, step);
+            checkActionWindow(state, step);
             const decision = visibleDecision(state);
             if (!decision || decision.id === previousDecisionId) {
               if (!await waitForNext()) throw new ToolError('timeout', 'The next intended decision did not arrive.');
             } else {
-              if (step.semanticPlay && decision.kind === 'priority' && state.stack.length === 0 && ['PRECOMBAT_MAIN', 'POSTCOMBAT_MAIN'].includes(state.step) && state.priority === 'self') {
+              if (step.semanticPlay && decision.kind === 'priority' && state.stack.length === 0 && (step.window || ['PRECOMBAT_MAIN', 'POSTCOMBAT_MAIN'].includes(state.step)) && state.priority === 'self') {
                 if (step.playAs === 'land') {
                   throw new ToolError('land_play_unavailable', 'No current land choice matches this selector. Use a choice marked canPlayLand:true or replan without this land.');
                 }
-                throw new ToolError('illegal_choice', 'The next planned play is unavailable in this main phase.');
+                throw new ToolError('illegal_choice', 'The next planned play is unavailable in this window.');
               }
               const pass = decision.choices.find((choice) => choice.type === 'pass');
               if (decision.kind !== 'priority' || state.priority !== 'self' || !pass || state.stop || pendingCast
@@ -1184,7 +1200,7 @@ export class GameSeat {
             }
             state = await stateForStep();
           }
-          checkAttackWindow(state, step);
+          checkActionWindow(state, step);
           requireBeforeInformation(state, step);
           const decision = state.decision;
           if (step.resumeCastId && (state.stack[0]?.id !== step.resumeCastId || state.stack[0].unpaid !== true)) {
@@ -1528,11 +1544,13 @@ export class GameSeat {
             });
           const requestedStep = TURN_STEPS.indexOf(step.step);
           const startingStep = TURN_STEPS.indexOf(state.step);
-          const approachingStep = startingStep >= 0 && startingStep <= requestedStep;
+          const checkSkippedStep = requestedStep >= 0 && (step.intermediate || startingStep >= 0 && startingStep <= requestedStep);
+          const requestedPhase = TURN_PHASES.indexOf(step.phase);
           const inspectEndpoint = (view) => {
             if (step.kind === 'advance_to_own_turn') return nextOwnTurn(view) ? 'reached' : null;
             if (step.destination === 'current_turn') {
-              if (view.turn !== turn || (approachingStep && TURN_STEPS.indexOf(view.step) > requestedStep)) return 'skipped';
+              if (view.turn !== turn || checkSkippedStep && TURN_STEPS.indexOf(view.step) > requestedStep
+                || step.intermediate && requestedPhase >= 0 && TURN_PHASES.indexOf(view.phase) > requestedPhase) return 'skipped';
               return reaches(view, step) ? 'reached' : null;
             }
             if (step.destination === 'end_step') {

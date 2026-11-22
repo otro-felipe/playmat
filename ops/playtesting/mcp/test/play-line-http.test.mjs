@@ -928,3 +928,297 @@ test('[PM-AC-09-RESPONSES] an observed numeric decision includes its requested v
   assert.equal(recovered.appliedDecisions, 1);
   assert.deepEqual(f.applied.map(({ choiceId, value }) => [choiceId, value]), [['pay-life-answer', 2]]);
 });
+
+for (const boundary of ['reached', 'rival', 'information', 'mandatory', 'missed-step', 'changed-turn', 'unavailable']) {
+  test(`[PM-LINE-WINDOW] one command reaches postcombat and plays there, or returns at ${boundary}`, async (t) => {
+    const land = { id: 'mountain', cardId: 'mountain', name: 'Mountain', types: ['LAND'], rules: ['{T}: Add {R}.'] };
+    const shock = { id: 'shock', cardId: 'shock', name: 'Shock', controllerId: 'pilot', types: ['INSTANT'] };
+    const firstMountain = { ...land, id: 'first-mountain' },
+      secondMountain = { ...land, id: 'second-mountain' };
+    const mage = { id: 'mage', cardId: 'mage', name: 'Soul-Scar Mage', controllerId: 'pilot', types: ['CREATURE'] };
+    const swift = { id: 'swift', name: 'Monastery Swiftspear', controllerId: 'pilot', types: ['CREATURE'] };
+    const option = (card, id) => ({ id, type: 'object', objectId: card.id, card });
+    const priority = (id, ...options) => ({ id, kind: 'priority', choices: [{ id: 'pass', type: 'pass' }, ...options] });
+    const first = priority('land', { ...option(land, 'land-choice'), canPlayLand: true });
+    const own = { id: 'pilot', yourSeat: true, battlefield: [swift, firstMountain, secondMountain] },
+      other = { id: 'rival', life: 20, battlefield: [] };
+    const evidence = {
+      epoch: 'fixture',
+      publicActions: { pilot: 0, rival: 0 },
+      resolutionRevision: 0,
+      resolutions: {},
+      informationRevision: 0,
+      combatRevision: 0,
+      combatDamage: [],
+    };
+    const triggered = { id: 'prowess', abilityType: 'TRIGGERED_NONMANA', sourceId: 'swift', abilityText: 'Prowess', controllerId: 'pilot' };
+    const stackShock = { ...shock, id: 'stack-shock' };
+    const guide = await readFile(new URL('../guides/turn-planning.md', import.meta.url), 'utf8');
+    const json = [...guide.matchAll(/```json\s*([\s\S]*?)```/g)]
+      .map((hit) => hit[1])
+      .find((example) => example.includes('"red-full-turn-001"'));
+    assert.ok(json, 'The actual published full-turn example is required');
+    const ids = {
+      '<mountain-in-hand-id>': land.id,
+      '<shock-id>': shock.id,
+      '<opponent-id>': 'rival',
+      '<first-mountain-id>': firstMountain.id,
+      '<swiftspear-id>': swift.id,
+      '<full-visible-prowess-text>': 'Prowess',
+      '<soul-scar-mage-id>': mage.id,
+      '<second-mountain-id>': secondMountain.id,
+    };
+    const request = JSON.parse(
+      json.replace(/<[^>]+>/g, (token) => {
+        assert.ok(Object.hasOwn(ids, token));
+        return ids[token];
+      }),
+    );
+    const played = [];
+    const f = await fixture(t, {
+      first,
+      initial: { cursor: request.cursor, players: [own, other], ownHand: [land, shock, mage], sequenceEvidence: evidence },
+      onResponse({ decisionId, choiceId }, update, state) {
+        played.push([state.step, choiceId]);
+        switch (decisionId) {
+          case 'land':
+            return update({
+              ownHand: [shock, mage],
+              players: [{ ...own, battlefield: [swift, firstMountain, secondMountain, land] }, other],
+              decision: priority('cast', option(shock, 'cast-shock')),
+            });
+          case 'cast':
+            return update({
+              ownHand: [mage],
+              stack: [stackShock],
+              decision: {
+                id: 'target',
+                kind: 'target',
+                targetSourceId: shock.id,
+                targetRole: 0,
+                choices: [{ id: 'opponent', type: 'object', objectId: 'rival' }],
+              },
+            });
+          case 'target':
+            return update({
+              decision: { id: 'pay', kind: 'payMana', choices: [{ ...option(firstMountain, 'tap'), type: 'manaAbility' }] },
+            });
+          case 'pay':
+            return update({ stack: [stackShock, triggered], decision: priority('resolve-trigger') });
+          case 'resolve-trigger':
+            return update({
+              stack: [stackShock],
+              sequenceEvidence: { ...evidence, resolutionRevision: 1, resolutions: { prowess: 1 } },
+              decision: priority('resolve-shock'),
+            });
+          case 'resolve-shock':
+            return update({
+              stack: [],
+              sequenceEvidence: { ...evidence, resolutionRevision: 2, resolutions: { prowess: 1, 'stack-shock': 2 } },
+              players: [{ ...own, battlefield: [swift, { ...firstMountain, tapped: true }, secondMountain, land] }, other],
+              decision: priority('beginning'),
+            });
+          case 'beginning':
+            return update({
+              step: 'DECLARE_ATTACKERS',
+              decision: { id: 'attack', kind: 'declareAttackers', choices: [option(swift, 'attack-swift')] },
+            });
+          case 'attack':
+            return update({
+              combat: [{ attackers: [swift], blockers: [] }],
+              decision: { id: 'confirm', kind: 'declareAttackers', choices: [{ id: 'confirm-attack', intent: 'confirm_attack' }] },
+            });
+          case 'confirm':
+            return update({ step: 'END_COMBAT', decision: priority('end-combat') });
+          case 'end-combat': {
+            const frame = {
+              step: 'POSTCOMBAT_MAIN',
+              phase: 'POSTCOMBAT_MAIN',
+              decision: priority('postcombat', option(mage, 'cast-mage')),
+            };
+            if (boundary === 'rival') frame.sequenceEvidence = { ...state.sequenceEvidence, publicActions: { pilot: 0, rival: 1 } };
+            if (boundary === 'information') frame.ownHand = [mage, { id: 'unseen', name: 'New card' }];
+            if (boundary === 'mandatory') frame.decision = { id: 'mandatory', kind: 'target', choices: [{ id: 'unknown-target' }] };
+            if (boundary === 'missed-step') frame.step = 'END_TURN';
+            if (boundary === 'changed-turn') Object.assign(frame, { turn: 4, activePlayerId: 'rival' });
+            if (boundary === 'unavailable') frame.decision = priority('postcombat');
+            return update(frame);
+          }
+          case 'postcombat':
+            return update({
+              ownHand: [],
+              stack: [{ ...mage, id: 'stack-mage' }],
+              decision: { id: 'post-pay', kind: 'payMana', choices: [{ ...option(secondMountain, 'tap-other'), type: 'manaAbility' }] },
+            });
+          case 'post-pay':
+            return update({ decision: priority('resolve-mage') });
+          case 'resolve-mage':
+            return update({
+              stack: [],
+              sequenceEvidence: {
+                ...state.sequenceEvidence,
+                resolutionRevision: 3,
+                resolutions: { ...state.sequenceEvidence.resolutions, 'stack-mage': 3 },
+              },
+              decision: priority('advance'),
+            });
+          case 'advance':
+            return update({ turn: 4, activePlayerId: 'rival', decision: priority('rival-turn') });
+          case 'rival-turn':
+            return update({
+              turn: 5,
+              activePlayerId: 'pilot',
+              step: 'DRAW',
+              phase: 'BEGINNING',
+              ownHand: [{ id: 'drawn', name: 'New draw' }],
+              sequenceEvidence: { ...state.sequenceEvidence, informationRevision: 1 },
+              decision: priority('draw'),
+            });
+          default:
+            assert.fail('Unexpected engine callback');
+        }
+      },
+    });
+    const { result } = await f.call('play_line', request);
+    assert.equal(
+      result.status,
+      boundary === 'reached' ? 'completed' : 'interrupted',
+      JSON.stringify({ code: result.code, reason: result.reason, actionIndex: result.actionIndex }),
+    );
+    const reasons = {
+      rival: 'opponent_action',
+      information: 'new_information',
+      mandatory: 'response_available',
+      'missed-step': 'destination_skipped',
+      'changed-turn': 'destination_skipped',
+      unavailable: 'illegal_choice',
+    };
+    if (boundary !== 'reached') assert.equal(result.reason, reasons[boundary]);
+    assert.deepEqual(
+      played.filter(([, id]) => id === 'cast-mage'),
+      boundary === 'reached' ? [['POSTCOMBAT_MAIN', 'cast-mage']] : [],
+    );
+    assert.deepEqual(
+      played.slice(0, 10).map(([, id]) => id),
+      ['land-choice', 'cast-shock', 'opponent', 'tap', 'pass', 'pass', 'pass', 'attack-swift', 'confirm-attack', 'pass'],
+    );
+    const applied = played.length;
+    const replay = await f.call('wait_for_decision', { gameId, commandId: request.commandId });
+    assert.equal(replay.result.appliedDecisions, applied);
+    assert.equal(played.length, applied);
+    if (boundary === 'reached') assert.equal(result.lastDestination.step, 'DRAW');
+  });
+}
+
+for (const variant of ['declared', 'ambiguous', 'announced-question', 'unannounced-question']) {
+  const ambiguous = variant === 'ambiguous';
+  const question = variant.endsWith('-question');
+  test(`[PM-LINE-PAY] four declared sources and mana pickers: ${variant}`, async (t) => {
+    const card = { id: 'four-mana-spell', cardId: 'four-mana-spell', name: 'Fixture creature', types: ['CREATURE'], controllerId: 'pilot' };
+    const colors = ['B', 'G', 'B', 'G'];
+    const sources = colors.map((color, i) => ({ id: 'source-' + i, name: 'Land ' + i, types: ['LAND'] }));
+    const option = (id, color) => ({ abilityId: id, abilityType: 'ACTIVATED_MANA', manaColors: [color] });
+    const options = (i) => [
+      option('black-' + i, 'B'),
+      option('green-' + i, 'G'),
+      ...(ambiguous && i === 2 ? [option('second-black', 'B')] : []),
+    ];
+    const pay = (i) => ({
+      id: 'pay-' + i,
+      kind: 'payMana',
+      paymentSourceId: card.id,
+      choices: sources.slice(i).map((land, k) => ({
+        id: 'tap-' + land.id,
+        type: 'manaAbility',
+        objectId: land.id,
+        card: land,
+        manaAbilities: options(i + k),
+      })),
+    });
+    const picker = (i) => ({
+      id: 'picker-' + i,
+      kind: 'panel',
+      sourceObjectId: sources[i].id,
+      choices: options(i).map((ability) => ({ id: 'use-' + ability.abilityId, type: 'option', ...ability })),
+    });
+    const first = {
+      id: 'initial',
+      kind: 'priority',
+      choices: [
+        { id: 'cast', objectId: card.id, type: 'object', card },
+        { id: 'pass', type: 'pass' },
+      ],
+    };
+    const priority = (id) => ({ id, kind: 'priority', choices: [{ id: 'pass', type: 'pass' }] });
+    const f = await fixture(t, {
+      first,
+      initial: {
+        ownHand: [card],
+        players: [
+          { id: 'pilot', yourSeat: true, battlefield: sources },
+          { id: 'rival', battlefield: [] },
+        ],
+      },
+      onResponse({ decisionId }, update, state) {
+        if (decisionId === 'initial') return update({ ownHand: [], stack: [{ ...card, id: 'on-stack' }], decision: pay(0) });
+        if (decisionId.startsWith('pay-')) return update({ decision: picker(Number(decisionId.slice(-1))) });
+        if (decisionId.startsWith('picker-')) {
+          const i = Number(decisionId.slice(-1));
+          const afterPayment = question
+            ? {
+                id: 'question',
+                kind: 'question',
+                instruction: 'Use the optional effect?',
+                choices: [
+                  { id: 'yes', type: 'button', label: 'Yes', answer: true },
+                  { id: 'no', type: 'button', label: 'No', answer: false },
+                ],
+              }
+            : priority('resolve');
+          return update({ decision: i === 3 ? afterPayment : pay(i + 1) });
+        }
+        if (decisionId === 'question') return update({ decision: priority('resolve') });
+        assert.equal(decisionId, 'resolve');
+        return update({
+          decision: priority('finished'),
+          stack: [],
+          sequenceEvidence: { ...state.sequenceEvidence, resolutionRevision: 1, resolutions: { 'on-stack': 1 } },
+        });
+      },
+    });
+    const { result } = await f.call('play_line', {
+      ...f.request,
+      actions: [
+        {
+          kind: 'play',
+          select: { objectId: card.id, zone: 'hand' },
+          payWith: sources.map((land, i) => ({ sourceId: land.id, color: colors[i], ...(i === 3 ? { abilityId: 'green-3' } : {}) })),
+        },
+        ...(variant === 'announced-question'
+          ? [{ kind: 'choose', guard: { kind: 'question', instruction: 'Use the optional effect?' }, select: { answer: false } }]
+          : []),
+      ],
+    });
+    assert.equal(
+      result.status,
+      ambiguous || variant === 'unannounced-question' ? 'interrupted' : 'completed',
+      JSON.stringify([result.reason, result.actionIndex, result.appliedDecisions]),
+    );
+    const paid = ['cast', 'tap-source-0', 'use-black-0', 'tap-source-1', 'use-green-1', 'tap-source-2'];
+    if (ambiguous) assert.equal(result.reason, 'ambiguous_choice');
+    else {
+      paid.push('use-black-2', 'tap-source-3', 'use-green-3');
+      if (variant === 'unannounced-question') assert.equal(result.reason, 'response_available');
+      else {
+        if (question) paid.push('no');
+        paid.push('pass');
+      }
+    }
+    assert.deepEqual(
+      f.applied.map((a) => a.choiceId),
+      paid,
+    );
+    assert.equal((await f.call('wait_for_decision', { gameId, commandId: f.request.commandId })).result.appliedDecisions, paid.length);
+    assert.equal(f.applied.length, paid.length);
+  });
+}

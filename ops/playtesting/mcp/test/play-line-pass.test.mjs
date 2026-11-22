@@ -656,3 +656,77 @@ for (const { name, result, observed, duplicate } of [
   assert.deepEqual(table.applied.map(([decisionId, choiceId]) => [decisionId, choiceId]),
     [['start', 'cast'], ...(result === 'completed' ? [['second-role', 'second'], ['pay', 'tap']] : [])]);
 });
+
+test('[PM-LINE-WINDOW] intermediate current-turn windows require own priority, a named phase or step and an immediate action', async (t) => {
+  const table = game(t, {});
+  const choose = { kind: 'choose', decisionId: 'known', choiceId: 'known' };
+  for (const first of [
+    { kind: 'pass_priority' },
+    { kind: 'pass_until', destination: 'my_draw' },
+    { kind: 'pass_until', destination: 'end_step' },
+    { kind: 'pass_until', destination: 'current_turn', priority: 'self' },
+    { kind: 'pass_until', destination: 'current_turn', step: 'POSTCOMBAT_MAIN' },
+    { kind: 'pass_until', destination: 'current_turn', step: 'BEGIN_COMBAT', priority: 'opponent' },
+    { kind: 'pass_until', destination: 'current_turn', step: 'NOT_AN_ENGINE_STEP', priority: 'self' },
+  ])
+    await assert.rejects(table.submit([first, choose]), { code: 'bad_sequence', actionIndex: 0 });
+  await assert.rejects(
+    table.submit([
+      { kind: 'pass_until', destination: 'current_turn', step: 'BEGIN_COMBAT', priority: 'self' },
+      { kind: 'pass_until', destination: 'my_draw' },
+    ]),
+    { code: 'bad_sequence', actionIndex: 0 },
+  );
+  assert.deepEqual(table.applied, []);
+});
+
+test('[PM-LINE-WINDOW] a useful option before the phase pauses an intermediate if_no_play without consuming priority', async (t) => {
+  const choice = { id: 'free', kind: 'spell', type: 'object' };
+  const table = game(
+    t,
+    {},
+    { turn: 3, activePlayerId: 'me', phase: 'PRECOMBAT_MAIN', step: 'PRECOMBAT_MAIN', decision: priority('initial', choice) },
+  );
+  const receipt = await table.submit([
+    { kind: 'pass_until', destination: 'current_turn', phase: 'POSTCOMBAT_MAIN', priority: 'self' },
+    { kind: 'play', select: { cardId: 'future' } },
+  ]);
+  assert.equal(receipt.reason, 'response_available');
+  assert.equal(receipt.actionIndex, 0);
+  assert.deepEqual(table.applied, []);
+});
+
+test('[PM-LINE-WINDOW] omitted blocker declaration never uses the following priority to select a blocker', async (t) => {
+  const table = game(
+    t,
+    { combat: { phase: 'POSTCOMBAT_MAIN', step: 'POSTCOMBAT_MAIN', decision: priority('after-skipped') } },
+    { turn: 7, activePlayerId: 'opponent', phase: 'COMBAT', step: 'BEGIN_COMBAT', decision: priority('combat') },
+  );
+  const receipt = await table.submit([
+    { kind: 'pass_until', destination: 'current_turn', step: 'DECLARE_BLOCKERS', priority: 'self' },
+    { kind: 'block', assignments: [] },
+    { kind: 'pass_until', destination: 'end_step' },
+  ]);
+  assert.equal(receipt.reason, 'destination_skipped');
+  assert.equal(receipt.lastDestination.step, 'POSTCOMBAT_MAIN');
+  assert.deepEqual(
+    table.applied.map(([id, choice]) => [id, choice]),
+    [['combat', 'pass']],
+  );
+});
+
+for (const [step, activePlayerId, action] of [
+  ['DECLARE_ATTACKERS', 'me', { kind: 'attack', attackers: [] }],
+  ['DECLARE_BLOCKERS', 'opponent', { kind: 'block', assignments: [] }],
+]) {
+  test(`[PM-LINE-WINDOW] priority after ${step} cannot be passed to recover a missed declaration`, async (t) => {
+    const table = game(
+      t,
+      { ordinary: { step: 'POSTCOMBAT_MAIN', decision: priority('too-late') } },
+      { turn: 7, activePlayerId, phase: 'COMBAT', step, decision: priority('ordinary') },
+    );
+    const receipt = await table.submit([action, { kind: 'pass_until', destination: 'end_step' }]);
+    assert.equal(receipt.reason, 'illegal_choice');
+    assert.deepEqual(table.applied, []);
+  });
+}

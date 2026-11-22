@@ -254,12 +254,14 @@ async function verifyPreparedModeLine(mode, verifyArchive = false) {
   const battlemage = state => ownPlayer(state).battlefield.find(card => card.name === 'Pompous Battlemage')
   const hangout = state => state.ownHand.find(card => card.name === "Heroes' Hangout")
   const prepared = state => ownPlayer(state).exile.find(card => card.name === 'Improvised Act')
+  const wholeTurn = mode === 'Whole turn'
+  const availableLand = state => state.decision.choices.find(choice => choice.canPlayLand && choice.card?.name === 'Mountain')
   let battlemageCastTurn
   while (gameClock.hasTime()) {
     const decision = state.decision
     const ownMain = state.step === 'PRECOMBAT_MAIN' && state.activePlayerId === ownPlayer(state).id && decision.kind === 'priority'
     if (ownMain && battlemage(state) && state.turn > battlemageCastTurn && hangout(state)
-      && prepared(state) && freeLands(state).length >= 2 && !state.stack.length) break
+      && prepared(state) && freeLands(state).length >= 2 && !state.stack.length && (!wholeTurn || availableLand(state))) break
     const land = ownMain && decision.choices.find(choice => choice.card?.name === 'Mountain'
       && state.ownHand.some(card => card.id === choice.card.id))
     const creature = ownMain && battlemageCastTurn === undefined && freeLands(state).length
@@ -306,15 +308,22 @@ async function verifyPreparedModeLine(mode, verifyArchive = false) {
   }
   const receipt = await playLineWithPeer({ gameId: state.gameId, cursor: state.cursor, commandId: randomUUID(),
     view: 'compact', waitMs: 15_000, actions: [
-      hangoutAction, ...actActions,
+      ...(wholeTurn ? [{ kind: 'play', playAs:'land', select:{objectId:availableLand(state).objectId,zone:'hand'} }] : []),
+      hangoutAction, ...(wholeTurn ? [] : actActions),
       { kind: 'attack', attackers: [attacker.id] },
+      ...(wholeTurn ? [{kind:'pass_until',destination:'current_turn',step:'POSTCOMBAT_MAIN',priority:'self',policy:'decline_optional'}, ...actActions] : []),
       { kind: 'pass_until', destination: 'end_step', policy: 'decline_optional' },
     ] }, { gameId: state.gameId, turn: state.turn, activePlayerId: state.activePlayerId })
   const context = JSON.stringify({ reason: receipt.reason, error: receipt.error, step: receipt.state?.step,
     prompt: receipt.state?.decision?.instruction, choices: receipt.state?.decision?.choices.map(({ label }) => label), completedSteps: receipt.completedSteps })
   if (patrol && !acceptsDiscard) {
     assert.equal(receipt.status, 'completed', context)
-    assert.equal(rivalPlayer(receipt.state).life, beforeLife - 4, 'Patrol Night and two Prowess triggers give four damage')
+    assert.equal(rivalPlayer(receipt.state).life, beforeLife - (wholeTurn ? 3 : 4), 'Only spells cast before combat contribute to this attack')
+    if (wholeTurn) {
+      assert.ok(ownPlayer(receipt.state).battlefield.some(card => card.id === availableLand(state).objectId))
+      assert.ok(!ownPlayer(receipt.state).exile.some(card => card.id === act.id), 'The prepared postcombat spell was cast')
+      assert.equal(receipt.state.turn,state.turn)
+    }
     assert.equal(receipt.lastDestination.step, 'END_TURN')
   } else {
     assert.equal(receipt.status, 'interrupted', context)
@@ -385,6 +394,8 @@ try {
   } else if (pioneer) {
     const [, modulePath, run] = pioneer
     await (await import(modulePath))[run](fixture)
+  } else if (scenarios === 'whole-turn') {
+    await verifyPreparedModeLine('Whole turn')
   } else if (scenarios === 'date-night') {
     await verifyPreparedModeLine('Date Night')
   } else if (scenarios === 'improvised-yes') {
