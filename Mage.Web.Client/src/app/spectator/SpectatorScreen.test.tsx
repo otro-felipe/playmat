@@ -14,8 +14,11 @@ test.each(['public-board', 'both-hands'])('a %s broadcast drops abandoned reveal
     revision: 10, view, players, hands: {}, lines: [], chat: [] };
   const revealed = [{ name: 'Public fixture', cards: { land: { id: 'land', name: 'Forest', ownerId: 'a', zone: 'GRAVEYARD' } } }];
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ ...frame, view: { ...view, revealed } })));
-  let stream: EventTarget;
-  vi.stubGlobal('EventSource', class extends EventTarget { constructor() { super(); stream = this; } close() {} });
+  class FixtureStream extends EventTarget {
+    close() {}
+  }
+  const stream = new FixtureStream();
+  vi.stubGlobal('EventSource', vi.fn(function () { return stream; }));
   const board = render(<MemoryRouter><QueryClientProvider client={queryClient}><SpectatorBroadcast endpoint="/fixture" /></QueryClientProvider></MemoryRouter>);
   const label = { name: /Revealed: Public fixture/ };
   expect(await board.findByRole('button', label)).toBeTruthy();
