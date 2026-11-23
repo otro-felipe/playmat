@@ -90,6 +90,10 @@ public class LandAnimationSicknessTest extends CardTestPlayerBase {
         addCard(Zone.HAND, playerA, "Annex");
         addCard(Zone.HAND, playerA, "Hydroform");
         // Allow the land to see its original controller's turn before it changes hands.
+        runCode("established under the original controller", 3, PhaseStep.PRECOMBAT_MAIN, playerA,
+                (info, player, game) -> assertTrue(getPermanent("Mountain", playerB).wasControlledFromStartOfControllerTurn()));
+        // Float four blue for Annex, leaving one Island and the Forest untapped for Hydroform.
+        activateManaAbility(3, PhaseStep.PRECOMBAT_MAIN, playerA, "{T}: Add {U}", 4);
         castSpell(3, PhaseStep.PRECOMBAT_MAIN, playerA, "Annex", "Mountain", true);
         runCode("new controller", 3, PhaseStep.PRECOMBAT_MAIN, playerA,
                 (info, player, game) -> checkLand(game, "Mountain", false, true));
