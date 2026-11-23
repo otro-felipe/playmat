@@ -664,3 +664,19 @@
     transform: translate(1.4em, -1.5em);
   }
 }
+
+.landNotice {
+  position: absolute;
+  left: 2%;
+  bottom: 16%;
+  max-width: 96%;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: var(--mat-900);
+  color: var(--ink-strong);
+  box-shadow: 0 0 0 1px var(--ink-dim);
+  font-size: max(17px, calc(var(--touch-target, 0px) * 0.25));
+  font-weight: 600;
+  line-height: 1.1;
+  pointer-events: none;
+}

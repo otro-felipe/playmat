@@ -91,6 +91,7 @@ import { useBlockDrag } from './useBlockDrag';
 import { useAutoOrder } from './useAutoOrder';
 import { Vfx } from './Vfx';
 import { CardPicker, ChoicePanel, DungeonViewer, GameOverOverlay, MulliganOverlay, StartingPlayerOverlay, ZoneViewer } from './Overlays';
+import { animationTargets, type LandNotice } from './landAnimation';
 import { PermanentStack } from './PermanentStack';
 import { clothOf, clothStyle } from './playmats';
 import { arrowTints, landStyleKey, lookCloth, pairsOf, stampOf, theirClothBox } from './touches';
@@ -531,9 +532,10 @@ function MatchBoard({ session, state, replayLog, replayHands, publicSpectator, r
     () => (interaction.mode === 'target' && !pregamePick ? offBoardTargets(view, clickable) : null),
     [interaction.mode, pregamePick, view, clickable],
   );
+  const landAnimation = useMemo(() => awaitingServer ? null : animationTargets(prompt, view, clickable), [awaitingServer, prompt, view, clickable]);
   const pickerCards = interaction.mode === 'pickCards' && prompt?.kind === 'target' && prompt.cards
     ? Object.values(prompt.cards)
-    : choosingFromHand ? hand : offBoard;
+    : choosingFromHand ? hand : offBoard ?? landAnimation?.lands;
   const canAct = mode === 'play' && !state.gameOver;
   const combatEstimate = useMemo(() => canAct && (interaction.mode === 'declareAttackers' || interaction.mode === 'declareBlockers') ? combatPreview(view) : null, [canAct, interaction.mode, view]);
   // several opponents: the server asks what each attacker attacks
@@ -707,6 +709,7 @@ function MatchBoard({ session, state, replayLog, replayHands, publicSpectator, r
                 selected={interaction.selected}
                 attacking={attacking}
                 targeting={targeting}
+                animationNotices={landAnimation?.notices}
                 blocking={blocking}
                 onClick={onClick}
                 pending={pending}
@@ -720,7 +723,7 @@ function MatchBoard({ session, state, replayLog, replayHands, publicSpectator, r
 
             {board.me && (
               <>
-                <Battlefield board={board.me} sleeve={sleeves.mine} clickable={clickable} selected={chosen} attacking={attacking} blocking={blocking} targeting={targeting} onClick={onClick} pending={pending} onBlockDrop={interaction.mode === 'declareBlockers' && canAct ? onBlockDrop : interaction.mode === 'declareAttackers' && canAct ? attackDrop.onDrop : undefined} dropTargets={interaction.mode === 'declareAttackers' ? attackDrop.targets : undefined} place={layout.me} />
+                <Battlefield board={board.me} sleeve={sleeves.mine} clickable={clickable} selected={chosen} attacking={attacking} blocking={blocking} targeting={targeting} animationNotices={landAnimation?.notices} onClick={onClick} pending={pending} onBlockDrop={interaction.mode === 'declareBlockers' && canAct ? onBlockDrop : interaction.mode === 'declareAttackers' && canAct ? attackDrop.onDrop : undefined} dropTargets={interaction.mode === 'declareAttackers' ? attackDrop.targets : undefined} place={layout.me} />
                 <div ref={plateRef} className={styles.myPlate} style={layout.myPlate}>
                   <PlayerPlate bubbleSide="lower"
                     player={board.me.player}
@@ -875,7 +878,8 @@ function MatchBoard({ session, state, replayLog, replayHands, publicSpectator, r
             )}
             {pickerCards && !awaitingServer && (
               <CardPicker
-                title={choosingFromHand ? 'Put cards on the bottom' : 'Choose cards'}
+                title={landAnimation?.lands ? t('match.landAnimation.choose') : choosingFromHand ? 'Put cards on the bottom' : 'Choose cards'}
+                animationNotices={landAnimation?.notices}
                 cards={pickerCards}
                 graveyards={graveyards}
                 interaction={interaction}
@@ -935,6 +939,7 @@ function MatchBoard({ session, state, replayLog, replayHands, publicSpectator, r
 
 interface RowProps {
   sleeve: string;
+  animationNotices?: ReadonlyMap<string, LandNotice>;
   clickable: ReadonlySet<string>;
   selected: ReadonlySet<string>;
   attacking: ReadonlySet<string>;

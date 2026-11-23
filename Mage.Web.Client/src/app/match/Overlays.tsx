@@ -23,6 +23,7 @@ import { useMatchUi } from './matchUi';
 import { useKeyboardHints } from './useKeyboardHints';
 import { stampArt } from './touches';
 import { usePaintedArt } from '../career/careerArt';
+import type { LandNotice } from './landAnimation';
 import styles from './Overlays.module.css';
 
 /**
@@ -77,9 +78,10 @@ export function MulliganOverlay({ hand, interaction, sleeve, onCommand }: {
  * Each click toggles a card; the server answers with the updated choice. Hand choices include the visible hand
  * context. Other choices lead with selectable cards and let the player show any remaining cards from the payload.
  */
-export function CardPicker({ title, cards, graveyards, interaction, sleeve, footer, onCommand }: {
+export function CardPicker({ title, cards, graveyards, animationNotices, interaction, sleeve, footer, onCommand }: {
   title: string;
   cards: CardView[];
+  animationNotices?: ReadonlyMap<string, LandNotice>;
   graveyards?: ReadonlyMap<string, { id: string; label: string }>;
   interaction: Interaction;
   sleeve: string;
@@ -87,6 +89,7 @@ export function CardPicker({ title, cards, graveyards, interaction, sleeve, foot
   footer?: ReactNode;
   onCommand(command: Command): void;
 }) {
+  const t = useT();
   const [hidden, setHidden] = useState(false);
   const keyboard = useChoiceKeyboard(!hidden);
   const hints = useKeyboardHints();
@@ -110,13 +113,13 @@ export function CardPicker({ title, cards, graveyards, interaction, sleeve, foot
   if (hidden) {
     return (
       <div className={styles.peek}>
-        <Button variant="decision" onClick={() => setHidden(false)}>Back to choice</Button>
+        <Button variant="decision" onClick={() => setHidden(false)}>{t('match.landAnimation.back')}</Button>
       </div>
     );
   }
   return (
     <div ref={keyboard} tabIndex={-1} className={styles.scrim} role="dialog" aria-modal="true" aria-label={title}>
-      <div className={styles.panel}>
+      <div className={styles.panel} data-land-choice={animationNotices?.size ? true : undefined}>
         <header className={styles.panelHead}>
           <h2 className={styles.panelTitle}>{cards.length > 0 && cards.every(isStackAbility) ? 'Choose an ability' : cleanText(title)}</h2>
           {others > 0 && !handChoice && (
@@ -124,7 +127,7 @@ export function CardPicker({ title, cards, graveyards, interaction, sleeve, foot
               {showAll ? 'Only what can be chosen' : `Show all (${cards.length})`}
             </Button>
           )}
-          <Button variant="quiet" size="sm" onClick={() => setHidden(true)}>See the board</Button>
+          <Button variant="quiet" size="sm" onClick={() => setHidden(true)}>{t('match.landAnimation.seeBoard')}</Button>
         </header>
         <p className={styles.panelText}><PromptText text={interaction.headline} /></p>
         {choosable.length === 0 && <p className={styles.panelText}>None of these can be chosen.</p>}
@@ -137,6 +140,7 @@ export function CardPicker({ title, cards, graveyards, interaction, sleeve, foot
                   const id = card.id!;
                   const clickable = interaction.clickable.has(id);
                   const selected = interaction.selected.has(id);
+                  const notice = animationNotices?.get(id);
                   const ability = isStackAbility(card) ? card : null;
                   const name = ability ? `${ability.sourceCard?.name ?? 'Ability'}: ${(ability.rules ?? []).map(stripMarkup).join(' ')}` : card.name;
                   return (
@@ -146,6 +150,7 @@ export function CardPicker({ title, cards, graveyards, interaction, sleeve, foot
                       type="button"
                       className={[styles.pick, clickable ? styles.pickable : styles.unpickable, selected ? styles.picked : ''].join(' ')}
                       disabled={!clickable}
+                      aria-describedby={notice ? `land-choice-${id}` : undefined}
                       aria-pressed={selected}
                       data-card-id={id}
                       aria-label={`${name}${selected ? ', chosen' : ''}`}
@@ -153,6 +158,11 @@ export function CardPicker({ title, cards, graveyards, interaction, sleeve, foot
                       {...zoom(card)}
                     >
                       {ability ? <AbilityCard ability={ability} sleeve={sleeve} /> : <CardFace card={card} sleeve={sleeve} size="normal" />}
+                      {notice && (
+                        <span id={`land-choice-${id}`} className={styles.landCaption}>
+                          {t(`match.landAnimation.${notice}.detail`)}
+                        </span>
+                      )}
                     </button>
                   );
                 })}

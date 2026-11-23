@@ -16,6 +16,8 @@ import { TermText } from '../ui/TermText';
 import { useMatchUi } from './matchUi';
 import { useStage } from './stageContext';
 import { useLongPress } from './useLongPress';
+import { recentlyControlledLand } from './landAnimation';
+import { useT } from '../i18n';
 import styles from './CardDetail.module.css';
 
 /** Every card the table shows, by id: battlefield, hands, stack, graveyards, exile and revealed cards. */
@@ -103,6 +105,7 @@ export function CardDetail({ view, extra, sleeveOf, attacking, blocking }: {
   blocking: ReadonlySet<string>;
 }) {
   const stage = useStage();
+  const t = useT();
   const detail = useMatchUi((state) => state.detail);
   const openDetail = useMatchUi((state) => state.openDetail);
   const [backFace, setBackFace] = useState(false);
@@ -163,6 +166,11 @@ export function CardDetail({ view, extra, sleeveOf, attacking, blocking }: {
   const ability = isStackAbility(live);
   const permanent = live as PermanentView;
   const { chips, notes, stats } = stateOf(permanent, view, attacking, blocking);
+  const id = live.id;
+  if (id && recentlyControlledLand(permanent) && view?.players?.some(player => player.battlefield?.[id] === live)) {
+    chips.push({ label: t('match.landAnimation.recent.short') });
+    notes.push(t('match.landAnimation.recent.detail'));
+  }
   const kinds = [...new Set(explanation.lines.map((line) => line.kind))]
     .filter((kind): kind is Exclude<LineKind, 'keyword' | 'spell' | 'static'> => !['keyword', 'spell', 'static'].includes(kind));
   const terms: Term[] = [

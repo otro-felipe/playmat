@@ -55,6 +55,7 @@ function stackSignature(permanent: PermanentView): string | null {
     permanent.name,
     permanent.expansionSetCode,
     permanent.isToken ? 'token' : 'card',
+    isLand(permanent) ? String(permanent.summoningSickness) : '',
     permanent.power ?? '',
     permanent.toughness ?? '',
   ].join('|');

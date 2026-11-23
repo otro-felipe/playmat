@@ -557,3 +557,31 @@
   text-transform: uppercase;
   white-space: nowrap;
 }
+
+.landCaption {
+  display: block;
+  padding: 8px;
+  text-align: left;
+  color: var(--ink-strong);
+  font-size: 16px;
+  line-height: 1.35;
+}
+
+.panel[data-land-choice] .grid {
+  grid-template-columns: repeat(auto-fit, minmax(200px, 290px));
+  justify-content: center;
+  align-items: start;
+}
+
+:global([data-touch]) .panel[data-land-choice] .grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, calc(var(--touch-target) * 3)), 1fr));
+}
+
+:global([data-touch]) .landCaption {
+  font-size: max(20px, calc(var(--touch-target) * 0.33));
+}
+
+:global([data-touch]) .panel[data-land-choice] .panelHead button {
+  min-height: var(--touch-target);
+  font-size: calc(var(--touch-target) * 0.29);
+}

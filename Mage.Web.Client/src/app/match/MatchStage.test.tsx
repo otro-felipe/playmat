@@ -272,3 +272,57 @@ test('ordinary game seats never mount broadcast commentary, including with ident
   expect(game.queryByText('Audience only fixture')).toBeNull();
   game.dispose();
 });
+
+test('land animation compares identical legal targets by engine state before deciding and keeps mana independent', () => {
+  const game = match();
+  const first = { id: 'old', name: 'Forest', cardTypes: ['LAND' as const], zone: 'BATTLEFIELD' as const, summoningSickness: false };
+  const fresh = { ...first, id: 'new', summoningSickness: true };
+  const unknown = { ...first, id: 'legacy', summoningSickness: undefined };
+  const view: GameView = { ...BOARD, players: [{ ...BOARD.players![0], battlefield: { old: first, new: fresh, legacy: unknown } }, BOARD.players![1]],
+    canPlayObjects: { objects: { old: {}, new: {}, legacy: {} } } };
+  const card = (id: string) => game.container.querySelector<HTMLElement>(`[data-object-id="${id}"]`)!;
+  game.updateView(view, true);
+  expect(card('new').textContent).toContain('Recent control');
+  expect(card('old').textContent).not.toContain('Recent control');
+  expect(card('new').getAttribute('aria-label')).not.toContain('summoning sick');
+  expect(card('new').parentElement).not.toBe(card('old').parentElement);
+  expect(card('new').getAttribute('role')).toBe('button');
+
+  game.updateView(view, parsePrompt('GAME_PLAY_MANA', { message: 'Pay green mana' })!);
+  expect(card('new').getAttribute('role')).toBe('button');
+  expect(card('new').textContent).not.toContain('Needs haste');
+  expect(game.queryByRole('dialog', { name: 'Choose a land to animate' })).toBeNull();
+
+  const target = (intent?: string) => parsePrompt('GAME_TARGET', {
+    message: 'Choose target land', targets: ['old', 'new', 'legacy'], flag: true,
+    options: intent ? { targetAnimation: intent } : {},
+  })!;
+  game.updateView(view, target());
+  expect(game.queryByRole('dialog', { name: 'Choose a land to animate' })).toBeNull();
+  expect(card('new').textContent).not.toContain('Needs haste');
+  const mixed = parsePrompt('GAME_TARGET', { message: 'Choose a target', targets: ['new', 'them'], flag: true,
+    options: { targetAnimation: 'becomesCreature' } })!;
+  game.updateView(view, mixed);
+  expect(game.queryByRole('dialog', { name: 'Choose a land to animate' })).toBeNull();
+  expect(card('new').textContent).toContain('Needs haste');
+  game.updateView(view, target('becomesCreature'));
+  const choose = within(game.getByRole('dialog', { name: 'Choose a land to animate' }));
+  const recent = choose.getByRole('button', { name: 'Forest', description: /needs haste to attack/i });
+  expect((recent as HTMLButtonElement).disabled).toBe(false);
+  expect(choose.getByRole('button', { name: 'Forest', description: /no summoning sickness indicated/i })).toBeTruthy();
+  expect(choose.getByRole('button', { name: 'Forest', description: /unknown/i })).toBeTruthy();
+  fireEvent.click(choose.getByRole('button', { name: 'See the board' }));
+  expect(card('new').textContent).toContain('Needs haste');
+  expect(card('old').textContent).not.toContain('Needs haste');
+  game.updateView(view, target('grantsHaste'));
+  expect(card('new').textContent).toContain('Grants haste');
+  expect(card('new').textContent).not.toContain('Needs haste');
+  game.updateView(view, true);
+  expect(card('new').textContent).toContain('Recent control');
+  expect(card('new').textContent).not.toContain('Grants haste');
+  const animated = { ...fresh, cardTypes: ['LAND' as const, 'CREATURE' as const] };
+  game.updateView({ ...view, players: [{ ...view.players![0], battlefield: { new: animated } }, BOARD.players![1]] }, true);
+  expect(card('new').getAttribute('aria-label')).toContain('summoning sick');
+  expect(card('new').textContent).not.toContain('Recent control');
+  game.dispose();
+});

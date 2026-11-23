@@ -17,6 +17,7 @@ import './matchMessages';
 import { useMatchUi } from './matchUi';
 import { useStage } from './stageContext';
 import { isMatchObjectKey, preventMatchObjectMouseFocus } from './keyboard';
+import { recentlyControlledLand, type LandNotice } from './landAnimation';
 import styles from './PermanentStack.module.css';
 
 export interface PermanentStackProps {
@@ -31,6 +32,7 @@ export interface PermanentStackProps {
   forward: 1 | -1;
   /** a target is being chosen: the candidates stand out from merely playable cards */
   targeting?: boolean;
+  animationNotices?: ReadonlyMap<string, LandNotice>;
   onClick(id: string): void;
   /** the permanent just clicked, drawn pressed until the server answers */
   pending?: string | null;
@@ -136,7 +138,7 @@ interface PlacedCardProps extends PermanentStackProps {
   count?: string | null;
 }
 
-function PlacedCard({ permanent, width, sleeve, clickable, selected, attacking, blocking, forward, targeting, onClick, onBlockDrop, dropTargets, pending, settleImmediately, left, top, depth, count }: PlacedCardProps) {
+function PlacedCard({ permanent, width, sleeve, clickable, selected, attacking, blocking, forward, targeting, animationNotices, onClick, onBlockDrop, dropTargets, pending, settleImmediately, left, top, depth, count }: PlacedCardProps) {
   const ref = useRef<HTMLDivElement>(null);
   const id = permanent.id!;
   const t = useT();
@@ -194,8 +196,10 @@ function PlacedCard({ permanent, width, sleeve, clickable, selected, attacking, 
   const isCreature = (permanent.cardTypes ?? []).includes('CREATURE');
   const loyalty = permanent.loyalty || permanent.defense;
   const doors = roomDoors(permanent);
-  // summoning sick: it can't attack or tap yet, so it dozes (the server's flag ignores haste; a hasty creature is awake)
-  const asleep = isCreature && !!permanent.summoningSickness && !keywords.some((mark) => mark.name === 'Haste');
+  // The current battlefield projection includes continuous control and haste.
+  const asleep = isCreature && !!permanent.summoningSickness;
+  const notice = animationNotices?.get(id) ?? (recentlyControlledLand(permanent) ? 'recent' : null);
+  const noticeId = notice ? `land-control-${id}` : undefined;
   const flying = effects.includes('float');
   const advance = isAttacking ? forward * height * 0.16 : isBlocking ? forward * height * 0.1 : 0;
 
@@ -231,6 +235,7 @@ function PlacedCard({ permanent, width, sleeve, clickable, selected, attacking, 
       tabIndex={isClickable ? 0 : undefined}
       onMouseDown={preventMatchObjectMouseFocus}
       aria-label={describe(permanent, { tapped, asleep, isAttacking, isBlocking, isSelected, keywords: keywords.map((mark) => (mark.gained ? `${mark.name.toLowerCase()} (gained)` : mark.name.toLowerCase())) }) + counterBadges(permanent).filter((badge) => badge.saga).map((badge) => `, ${t('match.counter.saga', { count: badge.count })}`).join('') + (isClickable && targeting && !isSelected ? ', can be targeted' : '') + (isSource ? ', source of the ability' : '')}
+      aria-describedby={noticeId}
       aria-pressed={isClickable ? isSelected : undefined}
       onClick={() => {
         if (suppressClick.current) {
@@ -263,6 +268,14 @@ function PlacedCard({ permanent, width, sleeve, clickable, selected, attacking, 
         {isAttacking && <span className={[styles.mark, styles.markAttack].join(' ')} title="Attacking"><Swords size={13} aria-hidden="true" /></span>}
         {isBlocking && <span className={styles.mark} title="Blocking"><Shield size={13} aria-hidden="true" /></span>}
       </div>
+
+      {notice && (
+        <span className={styles.landNotice} style={{ transform: tapped ? 'rotate(-90deg)' : undefined }}
+          title={t(`match.landAnimation.${notice}.detail`)}>
+          {t(`match.landAnimation.${notice}.short`)}
+          <span id={noticeId} className="visually-hidden">{t(`match.landAnimation.${notice}.detail`)}</span>
+        </span>
+      )}
 
       {asleep && (
         <span className={styles.sleep} style={{ transform: tapped ? 'rotate(-90deg)' : undefined }} data-still={motion ? undefined : ''} title="Summoning sick: it can't attack or tap until your next turn" aria-hidden="true">
