@@ -1792,9 +1792,9 @@ for (const variant of ['free spell', 'alternate life cost', 'missing witness', '
 
 test('[PM-LINE-PUBLIC] play_line publishes at first dispatch, once per command, accepting up to 4000 characters', async t => {
   const f = await fixture(t, {onResponse: (_, update) => update({decision:null, status:'ended'})});
-  const explanation = 'Keep pressure. '.repeat(300).slice(0,4000).trimEnd().padEnd(4000,'!');
+  const explanation = '🃏'.repeat(4000);
   const args = {...f.request, explanation};
-  for (const invalid of [{explanation:explanation+'!'}, {explanation:'   '}, {explanation,reasoning:'legacy'}]) {
+  for (const invalid of [{explanation:explanation+'🃏'}, {explanation:'   '}, {explanation,reasoning:'legacy'}]) {
     assert.equal((await f.rawCall('play_line',{...args,...invalid})).isError,true);
     assert.equal(f.applied.length,0);
   }
@@ -1807,7 +1807,11 @@ test('[PM-LINE-PUBLIC] play_line publishes at first dispatch, once per command, 
 test('[PM-LINE-PUBLIC] play_turn uses its sequence ID for the authored explanation', async t => {
   const f = await fixture(t, {onResponse: (_, update) => update({decision:null, status:'ended'})});
   const {gameId,cursor,actions}=f.request;
-  const {result}=await f.call('play_turn',{gameId,cursor,actions,finish:'none',explanation:'   Attack before blockers.   '});
+  const explanation = 'A'.repeat(3999) + '🃏';
+  const turn = {gameId, cursor, actions, finish:'none'};
+  assert.equal((await f.rawCall('play_turn', {...turn, explanation: explanation+'🃏'})).isError, true);
+  assert.equal(f.applied.length, 0);
+  const {result} = await f.call('play_turn', {...turn, explanation:'   '+explanation+'   '});
   await f.call('get_sequence_status',{gameId,sequenceId:result.sequenceId});
-  assert.deepEqual(f.applied.map(answer=>answer.line),[{commandId:result.sequenceId,explanation:'Attack before blockers.'}]);
+  assert.deepEqual(f.applied.map(answer=>answer.line),[{commandId:result.sequenceId,explanation}]);
 });

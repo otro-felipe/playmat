@@ -22,7 +22,8 @@ public final class LineExplanation {
             throw new IllegalArgumentException("Invalid replay line " + field);
         }
         String text = value.getAsString().trim();
-        if (text.isEmpty() || text.length() > (published ? 4000 : 600)) throw new IllegalArgumentException("Invalid replay line " + field);
+        int length = published ? text.codePointCount(0, text.length()) : text.length();
+        if (text.isEmpty() || length > (published ? 4000 : 600)) throw new IllegalArgumentException("Invalid replay line " + field);
         return new LineExplanation(text, published);
     }
 

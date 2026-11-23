@@ -106,10 +106,10 @@ test('nested identities inside a concealed permanent cannot reappear in mirrors 
 })
 
 test('[PM-LINE-PUBLIC] public board publishes only marked lines with authenticated roster and no table chat',()=>{
-  const f=frame(), explanation='A'.repeat(4000)
+  const f=frame(), explanation='🃏'.repeat(4000)
   const first={lineId:gameId+':'+playerId+':internal-command-name',playerId,playerName:'forged',explanation,audience:'public',at:10,turn:2,reasoning:privateText}
   f.lines=[{...first,audience:undefined},first,{...first},{...first,lineId:'bad',playerId:randomUUID()},
-    {...first,lineId:'too-long',explanation:explanation+'!'},{...first,lineId:gameId+':'+playerId+':b',at:11,explanation:'Pass.'}]
+    {...first,lineId:gameId+':'+playerId+':too-long',explanation:explanation+'🃏'},{...first,lineId:gameId+':'+playerId+':b',at:11,explanation:'Pass.'}]
   const r=publicSpectatorBoard(f)
   assert.deepEqual(r.lines.map(({explanation,at,playerName})=>[explanation,at,playerName]),[[explanation,10,'MCP_A'],['Pass.',11,'MCP_A']])
   assert.deepEqual(r.chat,[])

@@ -6,7 +6,7 @@ export function lineText(row, allowLegacy = false) {
   if (!row) return null
   if (row.audience === 'public' && typeof row.explanation === 'string') {
     const explanation = row.explanation.trim()
-    if (explanation && explanation.length <= publicExplanationLimit) return { audience: 'public', explanation }
+    if (explanation && explanation.length <= publicExplanationLimit * 2 && [...explanation].length <= publicExplanationLimit) return { audience: 'public', explanation }
   }
   if (allowLegacy && typeof row.reasoning === 'string' && row.reasoning.trim() && row.reasoning.length <= 600) {
     return { reasoning: row.reasoning }

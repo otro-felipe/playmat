@@ -82,7 +82,7 @@ Receipt recovery is process-local. A completed line can outlive the short HTTP r
 
 ### PM-LINE-REPLAY-1 · Player-authored line explanations
 
-An authorized pilot may omit commentary or supply an authored `explanation` on either `play_line` or `play_turn`. Accept 1–4,000 UTF-16 code units after trimming. The pilot writes for the spectators using public game facts, covering the play, objective, anticipated response and relevant alternative. A short comment suffices for a routine play. For example, “I attack with the flyer and leave the ground creature back. It can trade with the opposing attacker if we race. Sending both gains one damage but leaves us exposed to the return attack.”
+An authorized pilot may omit commentary or supply an authored `explanation` on either `play_line` or `play_turn`. Accept 1–4,000 Unicode code points after trimming. The pilot writes for the spectators using public game facts, covering the play, objective, anticipated response and relevant alternative. A short comment suffices for a routine play. For example, “I attack with the flyer and leave the ground creature back. It can trade with the opposing attacker if we race. Sending both gains one damage but leaves us exposed to the return attack.”
 
 The first dispatched decision records one `kind:"line"` event at the current replay frame with the authenticated player, timestamp, command ID, `audience:"public"` and `explanation`. A turn uses its sequence ID. A rejected line without a dispatch creates no entry. Receipt recovery cannot publish the line again. Changing its text under the same command ID conflicts.
 
