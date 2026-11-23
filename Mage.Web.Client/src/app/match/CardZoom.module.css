@@ -40,15 +40,23 @@
   font-size: 24px;
 }
 
-/* a styled card's rules text, which its painting doesn't print */
+.cardName {
+  font: 700 22px / 1.15 var(--font-print);
+  color: var(--ink-strong);
+}
+
 .rules {
-  composes: details;
   display: grid;
-  gap: 6px;
+  gap: 9px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+  font-size: 20px;
+  line-height: 1.38;
+  color: var(--ink-strong);
 }
 
 .large .rules {
-  max-width: 520px;
   font-size: 24px;
 }
 

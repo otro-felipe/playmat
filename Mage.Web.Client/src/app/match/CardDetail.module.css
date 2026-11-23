@@ -371,3 +371,39 @@
 :global([data-touch]) .turn {
   min-height: max(48px, var(--touch-target, 0px));
 }
+
+/* Portrait phones scale the whole table down; give the reader a full-width text column
+   and use the stage's 44-screen-pixel touch measure to keep the rules at 16px. */
+@media (max-width: 600px) and (orientation: portrait) {
+  :global([data-layout='tall'][data-touch]) .sheet {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  :global([data-layout='tall'][data-touch]) .cardColumn {
+    flex-direction: row;
+    padding-right: var(--touch-target);
+  }
+
+  :global([data-layout='tall'][data-touch]) .card {
+    width: 250px;
+    flex: none;
+  }
+
+  :global([data-layout='tall'][data-touch]) .info {
+    min-height: 0;
+  }
+
+  :global([data-layout='tall'][data-touch]) .line {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  :global([data-layout='tall'][data-touch]) .lineText {
+    font-size: max(22px, calc(var(--touch-target) * 0.364));
+  }
+
+  :global([data-layout='tall'][data-touch]) .kind {
+    font-size: max(15px, calc(var(--touch-target) * 0.28));
+  }
+}

@@ -118,7 +118,7 @@ export function CardDetail({ view, extra, sleeveOf, attacking, blocking }: {
     const target = element instanceof Element ? element.closest<HTMLElement>('[data-object-id], [data-card-id]') : null;
     const id = target?.dataset.objectId ?? target?.dataset.cardId;
     const card = id ? findCard(view, id, extra) : null;
-    return card && id && !card.hideInfo ? { id, card } : null;
+    return card && id && !card.hideInfo && !card.faceDown ? { id, card } : null;
   }, [view, extra]);
 
   // one listener for the whole stage: any card that carries its id can be opened
@@ -156,7 +156,12 @@ export function CardDetail({ view, extra, sleeveOf, attacking, blocking }: {
 
   // the latest state of the card while it stays on the table; the snapshot once it has left
   const live = detail ? findCard(view, detail.id, extra) ?? detail.card : null;
-  const card = live && backFace && live.secondCardFace ? live.secondCardFace : live;
+  const otherFace = live?.secondCardFace;
+  const visibleOtherFace = otherFace && !otherFace.hideInfo && !otherFace.faceDown ? otherFace : null;
+  const card = live?.hideInfo || live?.faceDown ? null : backFace && visibleOtherFace ? visibleOtherFace : live;
+  useEffect(() => {
+    if (live?.hideInfo || live?.faceDown) openDetail(null);
+  }, [live, openDetail]);
   const explanation = useMemo(() => (card ? explainCard(isStackAbility(card) ? { ...card, cardTypes: [] } : card) : null), [card]);
   const styled = !!useCardStyle(live && !isStackAbility(live) ? live : undefined);
   if (!detail || !live || !card || !explanation) return null;
@@ -179,7 +184,7 @@ export function CardDetail({ view, extra, sleeveOf, attacking, blocking }: {
   ];
   const name = ability ? (live as CardView & { sourceCard?: CardView }).sourceCard?.name ?? 'Ability' : card.displayName ?? card.name ?? '';
   const sleeve = sleeveOf(live);
-  const canTurn = !!live.secondCardFace && !ability;
+  const canTurn = !!visibleOtherFace && !ability;
 
   return (
     <RadixDialog.Root open onOpenChange={(open) => !open && close()}>
@@ -207,7 +212,7 @@ export function CardDetail({ view, extra, sleeveOf, attacking, blocking }: {
             <div className={styles.card}>
               {ability
                 ? <AbilityCard ability={live} sleeve={sleeve} />
-                : <CardFace card={card} face={backFace && !showsBackFace(live) ? 'back' : 'front'} size="large" sleeve={sleeve} printed={asPrinted} />}
+                : <CardFace card={card} face={backFace && visibleOtherFace && !showsBackFace(live) ? 'back' : 'front'} size="large" sleeve={sleeve} printed={asPrinted} />}
             </div>
             {styled && !backFace && (
               <button type="button" className={styles.turn} aria-pressed={asPrinted} onClick={() => setAsPrinted((value) => !value)}>
@@ -229,6 +234,20 @@ export function CardDetail({ view, extra, sleeveOf, attacking, blocking }: {
               </div>
               <p className={styles.type}>{ability ? (card.abilityType?.startsWith('TRIGGERED') ? 'Triggered ability' : 'Activated ability') : typeLine(card)}</p>
             </header>
+
+            {explanation.lines.length > 0 && (
+              <section className={styles.section}>
+                <h3 className={styles.sectionTitle}>Card text</h3>
+                <ol className={styles.lines}>
+                  {explanation.lines.map((line, index) => (
+                    <li key={index} className={styles.line}>
+                      <span className={styles.kind}>{LINE_KIND_LABEL[line.kind]}</span>
+                      <span className={styles.lineText}><TermText text={stripMarkup(line.text)} card={card} /></span>
+                    </li>
+                  ))}
+                </ol>
+              </section>
+            )}
 
             {(stats || chips.length > 0 || notes.length > 0 || explanation.hints.length > 0) && (
               <section className={styles.state} aria-label="On the table">
@@ -255,20 +274,6 @@ export function CardDetail({ view, extra, sleeveOf, attacking, blocking }: {
                     ))}
                   </ul>
                 )}
-              </section>
-            )}
-
-            {explanation.lines.length > 0 && (
-              <section className={styles.section}>
-                <h3 className={styles.sectionTitle}>Card text</h3>
-                <ol className={styles.lines}>
-                  {explanation.lines.map((line, index) => (
-                    <li key={index} className={styles.line}>
-                      <span className={styles.kind}>{LINE_KIND_LABEL[line.kind]}</span>
-                      <span className={styles.lineText}><TermText text={stripMarkup(line.text)} card={card} /></span>
-                    </li>
-                  ))}
-                </ol>
               </section>
             )}
 

@@ -7,7 +7,6 @@ import { AbilityCard } from '../ui/AbilityCard';
 import { showsBackFace } from '../../core/images/imageLinks';
 import { CardFace } from '../ui/CardFace';
 import { useT } from '../i18n';
-import { useCardStyle } from '../ui/cardStyles';
 import { PromptText } from '../ui/PromptText';
 import { useMatchUi } from './matchUi';
 import { toStagePoint, useStage } from './stageContext';
@@ -22,7 +21,7 @@ const LARGE_WIDTH = 520;
 const DELAY_MS = 260;
 const EDGE = 24;
 /** the Mechanics panel beside the card, and the gap between them */
-const PANEL_WIDTH = 300;
+const PANEL_WIDTH = 380;
 const LARGE_PANEL_WIDTH = 420;
 const PANEL_GAP = 14;
 
@@ -39,7 +38,7 @@ export function CardZoom({ large = false, big = false }: { large?: boolean; big?
   const [settled, setSettled] = useState<typeof zoom>(null);
   const hovered = zoom && !dragging && settled === zoom ? zoom.card : null;
   // what the card's keywords and mechanics mean, beside it (an ability on the stack has no card types)
-  const terms = useMemo(() => (hovered ? explainCard(isStackAbility(hovered) ? { ...hovered, cardTypes: [] } : hovered).terms : []), [hovered]);
+  const explanation = useMemo(() => (hovered && !hovered.hideInfo && !hovered.faceDown ? explainCard(isStackAbility(hovered) ? { ...hovered, cardTypes: [] } : hovered) : null), [hovered]);
 
   useEffect(() => {
     if (!zoom || dragging) return;
@@ -49,19 +48,19 @@ export function CardZoom({ large = false, big = false }: { large?: boolean; big?
 
   // show the hovered card only once the pointer has rested on it
   const shown = zoom && !dragging && settled === zoom ? zoom : null;
-  // a card wearing a card style shows its painting: the rules text goes under it
-  const styled = !!useCardStyle(shown && !isStackAbility(shown.card) ? shown.card as PermanentView : undefined);
   // a card that left its place while hovered (cast from hand, died) never reports the pointer leaving it
   // ...or that changed zone under the same id (a spell becoming a permanent): only the hovered element counts
   const element = shown?.anchor
     ?? (shown?.card.id ? stage.element?.querySelector(`[data-object-id="${CSS.escape(shown.card.id)}"]`) : null);
   // a finger doesn't hover: on touch the card opens with a long press instead (the detail view)
   const touch = lastPointerType() === 'touch';
-  if (!shown || touch || detailOpen || !element || !element.isConnected || !element.matches(':hover')) return null;
+  if (!shown || !explanation || touch || detailOpen || !element || !element.isConnected || !element.matches(':hover')) return null;
   const card = shown.card as PermanentView;
-  const back = card.secondCardFace;
+  const back = card.secondCardFace && !card.secondCardFace.faceDown && !card.secondCardFace.hideInfo ? card.secondCardFace : null;
   const extra = details(card);
-  const rules = styled ? (card.rules ?? []).map(stripMarkup).filter(Boolean) : [];
+  const { lines, terms } = explanation;
+  const cardName = card.displayName || card.name;
+  const showRules = !isStackAbility(card) && lines.length > 0;
   const width = large ? LARGE_WIDTH : big ? BIG_WIDTH : ZOOM_WIDTH;
   const height = width * (88 / 63);
   const point = toStagePoint(stage, shown.x, shown.y);
@@ -92,27 +91,34 @@ export function CardZoom({ large = false, big = false }: { large?: boolean; big?
           <CardFace card={back} face={showsBackFace(card) ? 'front' : 'back'} size="normal" sleeve={shown.sleeve} style={{ width: width * 0.62 }} />
         )}
       </div>
-      {rules.length > 0 && (
-        <ul className={styles.rules}>
-          {rules.map((line) => <li key={line}><PromptText text={line} /></li>)}
-        </ul>
-      )}
       {extra.length > 0 && (
         <ul className={styles.details}>
           {extra.map((line) => <li key={line}>{line}</li>)}
         </ul>
       )}
-      {terms.length > 0 && (
+      {(showRules || terms.length > 0) && (
         <aside className={styles.mechanics} style={{ left: panelLeft - left, width: panelWidth, maxHeight: stage.height - top - EDGE }}>
-          <h3 className={styles.mechanicsTitle}>{t('match.zoom.mechanics')}</h3>
-          <dl className={styles.terms}>
-            {terms.map((term) => (
-              <div key={term.name} className={styles.term}>
-                <dt>{term.name}</dt>
-                <dd><PromptText text={term.text} /></dd>
-              </div>
-            ))}
-          </dl>
+          {showRules && (
+            <>
+              <h3 className={styles.cardName}>{cardName}</h3>
+              <ul className={styles.rules}>
+                {lines.map((line, index) => <li key={index}><PromptText text={stripMarkup(line.text)} /></li>)}
+              </ul>
+            </>
+          )}
+          {terms.length > 0 && (
+            <>
+              <h3 className={styles.mechanicsTitle}>{t('match.zoom.mechanics')}</h3>
+              <dl className={styles.terms}>
+                {terms.map((term) => (
+                  <div key={term.name} className={styles.term}>
+                    <dt>{term.name}</dt>
+                    <dd><PromptText text={term.text} /></dd>
+                  </div>
+                ))}
+              </dl>
+            </>
+          )}
         </aside>
       )}
     </div>
