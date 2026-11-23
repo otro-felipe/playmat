@@ -731,8 +731,12 @@ export function createMcpServer({
     ingress: { client: 240, total: 2400, window: 60_000 },
     account: { client: 150, total: 2000, window: 60_000 },
   });
-  const authSlots = createConcurrencyLimit(32, 8);
-  const requestSlots = createConcurrencyLimit(48, 8);
+  // An SDK client keeps its GET event stream open while making tool calls.
+  // An eight-seat tournament plus its organizer can use nine of each per account.
+  const authSlots = createConcurrencyLimit(32, 9);
+  const streamSlots = createConcurrencyLimit(24, 9);
+  const operationSlots = createConcurrencyLimit(48, 9);
+  const combinedSlots = createConcurrencyLimit(48, 18);
   const server = createServer({ requestTimeout: 30_000, headersTimeout: 10_000 }, async (req, res) => {
     const pathname = req.url?.split('?')[0];
     if (pathname === '/healthz' && req.method === 'GET') {
@@ -741,13 +745,14 @@ export function createMcpServer({
       return;
     }
     if (pathname !== '/mcp') return reply(res, 404, -32601, 'Not found');
-    function limited(seconds) {
+    function limited(seconds, reason) {
+      res.setHeader('X-Playmat-Limit-Reason', reason);
       res.setHeader('Retry-After', String(seconds));
       return reply(res, 429, -32029, 'Too many MCP requests. Try again shortly.');
     }
     const source = clientKey(req);
     const ingressWait = rate('ingress', source);
-    if (ingressWait) return limited(ingressWait);
+    if (ingressWait) return limited(ingressWait, 'ingress-rate');
     const token = readToken(req);
     if (req.headers.origin && !allowedOrigins.includes(req.headers.origin)) return reply(res, 403, -32600, 'Origin not allowed');
     function unauthorized() {
@@ -757,18 +762,25 @@ export function createMcpServer({
     if (!token) return unauthorized();
 
     const releaseAuth = authSlots(source);
-    if (!releaseAuth) return limited(2);
+    if (!releaseAuth) return limited(2, 'auth-concurrency');
     let actor;
     try { actor = await authorize(token); }
     catch { return reply(res, 503, -32000, 'Authorization service unavailable'); }
     finally { releaseAuth(); }
     if (!actor || !actor.accountId || !actor.engineName || !Array.isArray(actor.scopes)) return unauthorized();
 
+    if (res.destroyed) return;
     const accountWait = rate('account', actor.accountId);
-    if (accountWait) return limited(accountWait);
-    const release = requestSlots(actor.accountId);
-    if (!release) return limited(2);
-    res.once('close', release);
+    if (accountWait) return limited(accountWait, 'account-rate');
+    const stream = req.method === 'GET';
+    const releaseKind = (stream ? streamSlots : operationSlots)(actor.accountId);
+    if (!releaseKind) return limited(2, stream ? 'stream-concurrency' : 'operation-concurrency');
+    const releaseCombined = combinedSlots(actor.accountId);
+    if (!releaseCombined) {
+      releaseKind();
+      return limited(2, 'global-concurrency');
+    }
+    res.once('close', () => { releaseKind(); releaseCombined(); });
     async function contextFor(selector) {
       const selected = await resolvePlayerActor(actor, selector, id => authorize(token, id));
       return playerContext(selected, selector);
