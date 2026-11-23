@@ -95,8 +95,10 @@ export function spectatorStorage(pool, archive) {
       if (!game) return null
       const {rows:registered}=await pool.query('SELECT player_id AS "playerId",engine_name AS name FROM game_players WHERE game_id=$1 AND player_id IS NOT NULL',[game.id])
       const rows=game.object_key ? await archive.readReviewArchive(game) : []
-      const frame=rows.findLast(r=>r.view)
-      const finish=rows.findLast(r=>r.kind==='spectatorEnd')
+      const lastRollback=rows.findLastIndex(row=>row.kind==='rollback')
+      const frame=rows.findLast((row,index)=>index>lastRollback && row.view)
+      const finish=rows.findLast((row,index)=>index>lastRollback && row.kind==='spectatorEnd')
+      const rollbackRevision=rows.reduce((count,row)=>count+(row.kind==='rollback' ? 1 : 0),0)
       const players=finish?.players??registered
       const lines=[], chat=[], seen=new Set()
       for (const row of rows) {
@@ -113,9 +115,9 @@ export function spectatorStorage(pool, archive) {
         lines.push({lineId,playerId:player.playerId,playerName:player.name,...note,
           at:row.at??Number(game.started_at)+row.t,turn:row.turn??null})
       }
-      if (publicTarget) return {role:'spectator',tableId,gameId:game.id,status:'finished',revision:rows.length,players,view:frame?.view,lines:lines.slice(-100).filter(line=>line.audience==='public')}
+      if (publicTarget) return {role:'spectator',tableId,gameId:game.id,status:'finished',revision:rows.length,rollbackRevision,players,view:frame?.view,lines:lines.slice(-100).filter(line=>line.audience==='public')}
       const hands=Object.fromEntries(players.map(p=>[p.playerId,finish?.hands?.[p.playerId]??frame?.hands?.[p.name]??frame?.review?.seatViews?.[p.playerId]?.myHand??{}]))
-      return {role:'spectator',tableId,gameId:game.id,status:'finished',revision:rows.length,players,view:board(frame?.view),hands,lines:lines.slice(-100),chat:chat.slice(-100)}
+      return {role:'spectator',tableId,gameId:game.id,status:'finished',revision:rows.length,rollbackRevision,players,view:board(frame?.view),hands,lines:lines.slice(-100),chat:chat.slice(-100)}
     },
   }
 }
@@ -228,7 +230,7 @@ export function createSpectators({storage, readEngine=engine}) {
       busy=true
       try {
         const data=await snapshot(id,publicBoard,privateSeats,capability)
-        const revision=[data.gameId,data.status,data.revision,data.spectators].join('/')
+        const revision=[data.gameId,data.status,data.revision,data.rollbackRevision??0,data.spectators].join('/')
         if (revision!==last) {
           last=revision
           if (!res.write('event: snapshot\ndata: '+JSON.stringify(data)+'\n\n') && res.writableLength>2*1024*1024) res.destroy()

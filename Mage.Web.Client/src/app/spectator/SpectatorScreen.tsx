@@ -22,6 +22,7 @@ interface Snapshot {
   visibility?: 'public-board' | 'both-hands';
   seatKnowledge?: Record<string, KnownCards>;
   gameId: string | null;
+  rollbackRevision?: number;
   status: 'waiting' | 'playing' | 'between_games' | 'finished';
   view: GameView | null;
   hands: Record<string, Record<string, CardView>>;
@@ -127,7 +128,7 @@ export function SpectatorBroadcast({ endpoint, tableId, path, onLeave, humanMcpN
     {frame && !(path && frame.visibility === 'both-hands') && <SpectatorLink bothHands={frame.visibility === 'both-hands'} tableId={tableId} path={path} publicBoard={frame.visibility === 'public-board'} />}
     {onLeave && <Button variant="quiet" size="sm" onClick={onLeave}>{t('career.backToPlay')}</Button>}
   </>}>
-    {frame?.view && frame.gameId ? <ProjectedBoard key={frame.gameId} frame={frame} gameId={frame.gameId} seatDisplayNames={seatDisplayNames} />
+    {frame?.view && frame.gameId ? <ProjectedBoard key={`${frame.gameId}:${frame.rollbackRevision ?? 0}`} frame={frame} gameId={frame.gameId} seatDisplayNames={seatDisplayNames} />
       : <div className={styles.empty} role="status">
         {closedPath ? <>{t('watch.expandedEnded')}<ButtonLink href={closedPath}>{t('watch.openPublic')}</ButtonLink></>
           : t(problem ? `watch.${problem}` : `watch.${frame!.status}`)}

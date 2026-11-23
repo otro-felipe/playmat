@@ -137,6 +137,7 @@ export function publicSpectatorBoard(snapshot) {
   const roster = new Map(players.filter(p => p.playerId).map(p => [p.playerId,p]))
   return {role:'spectator',visibility:'public-board',...pick(snapshot,['tableId'],isUuid),
     gameId,status:statuses.has(snapshot.status) ? snapshot.status : 'waiting',
-    ...numbers(snapshot,['revision','spectators']),players,view:gameId ? publicView(snapshot.view,roster,gameId) : null,
+    ...numbers(snapshot,['revision','spectators']),
+    ...pick(snapshot,['rollbackRevision'],n=>Number.isSafeInteger(n) && n>=0),players,view:gameId ? publicView(snapshot.view,roster,gameId) : null,
     hands:{},lines:gameId ? publicLineExplanations(snapshot.lines,roster,gameId) : [],chat:[]}
 }

@@ -133,3 +133,12 @@ test('[PM-LINE-PUBLIC] restart rebuilds the same public feed alongside separatel
   assert.deepEqual(legacy.lines.map(x=>x.explanation??x.reasoning),['Legacy only','Attack.'])
   assert.deepEqual(legacy.chat.map(x=>x.message),['Talk only'])
 })
+
+test('a spectator reads only the numeric rollback boundary alongside the ordinary frame revision',()=>{
+  const source={...frame(),rollbackRevision:2}
+  assert.equal(publicSpectatorBoard(source).rollbackRevision,2)
+  assert.equal(publicSpectatorBoard(source).revision,17)
+  for (const invalid of [-1, 2.5, {private:'fixture'}]) {
+    assert.equal(publicSpectatorBoard({...source,rollbackRevision:invalid}).rollbackRevision,undefined)
+  }
+})

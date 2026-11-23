@@ -432,7 +432,7 @@ public final class ReplayRecorder {
                     first = false;
                 }
             }
-            if (broadcast != null) broadcast.frame(visible, hands, names, ReplayEvidence.spectatorSeatKnowledge(review, visible));
+            if (broadcast != null) broadcast.frame(visible, hands, names, ReplayEvidence.spectatorSeatKnowledge(review, visible), replayBranch);
             frame.append('}');
             String snapshot = frame.toString();
             lastKey = key;

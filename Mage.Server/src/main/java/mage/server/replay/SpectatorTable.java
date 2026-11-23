@@ -21,6 +21,7 @@ public final class SpectatorTable {
     private final JsonArray lines = new JsonArray(), chat = new JsonArray();
     private JsonObject view, hands = new JsonObject(), names = new JsonObject();
     private long revision;
+    private long rollbackRevision;
     private boolean ended;
     private JsonObject seatKnowledge = new JsonObject();
 
@@ -39,10 +40,11 @@ public final class SpectatorTable {
     }
 
     synchronized void frame(JsonObject publicView, JsonObject cardsInHand, JsonObject playerNames) {
-        frame(publicView, cardsInHand, playerNames, new JsonObject());
+        frame(publicView, cardsInHand, playerNames, new JsonObject(), rollbackRevision);
     }
 
-    synchronized void frame(JsonObject publicView, JsonObject cardsInHand, JsonObject playerNames, JsonObject knowledge) {
+    synchronized void frame(JsonObject publicView, JsonObject cardsInHand, JsonObject playerNames, JsonObject knowledge, long branch) {
+        rollbackRevision = branch;
         seatKnowledge = knowledge;
         view = publicView;
         hands = cardsInHand;
@@ -120,6 +122,7 @@ public final class SpectatorTable {
         result.add("gameId", gameId == null ? JsonNull.INSTANCE : new com.google.gson.JsonPrimitive(gameId.toString()));
         result.addProperty("status", ended ? "finished" : view == null ? "waiting" : "playing");
         result.addProperty("revision", revision);
+        result.addProperty("rollbackRevision", rollbackRevision);
         JsonArray players = new JsonArray();
         for (Map.Entry<String,JsonElement> p : names.entrySet()) {
             JsonObject player = new JsonObject();

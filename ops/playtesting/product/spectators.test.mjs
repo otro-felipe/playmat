@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { createSpectators } from './spectators.mjs'
+import { createSpectators, spectatorStorage } from './spectators.mjs'
 
 test('only the browser host can share; a public link is stable, read-only and independent of account or game ID', async () => {
   const tableId = randomUUID(), actor = { username:'Host', accountId:randomUUID() }, rows=new Map()
@@ -28,4 +28,18 @@ test('only the browser host can share; a public link is stable, read-only and in
   await assert.rejects(()=>seats.privateTableId({...actor,accountId:randomUUID()},tableId))
   assert.equal(await seats.privateTableId(actor,tableId),tableId)
   seats.close()
+})
+
+test('an archived broadcast resumes the latest committed branch and never substitutes an older board',async()=>{
+  const tableId=randomUUID(), gameId=randomUUID()
+  const rows=[{view:{turn:8,step:'PRECOMBAT_MAIN'}},{kind:'rollback',turn:8},{view:{turn:8,step:'UPKEEP'}}]
+  const pool={async query(sql){return {rows:sql.includes('FROM matches') ? [{id:gameId,object_key:'fixture'}] : []}}}
+  const storage=spectatorStorage(pool,{readReviewArchive:async()=>rows})
+  const restored=await storage.finished(tableId,{live_table_id:tableId})
+  assert.equal(restored.rollbackRevision,1)
+  assert.equal(restored.view.step,'UPKEEP')
+  rows.push({kind:'rollback',turn:8})
+  const awaitingFrame=await storage.finished(tableId,{live_table_id:tableId})
+  assert.equal(awaitingFrame.rollbackRevision,2)
+  assert.ok(!awaitingFrame.view)
 })

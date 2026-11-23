@@ -9,6 +9,25 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class SpectatorTableTest {
+    @Test void aRestoredFrameAndItsBranchArePublishedTogetherEvenWhenTheTurnDoesNotChange() {
+        SpectatorTable table = new SpectatorTable(UUID.randomUUID(), UUID.randomUUID(), "Fixture");
+        JsonObject view = new JsonObject();
+        view.addProperty("turn", 8);
+        JsonObject empty = new JsonObject();
+        table.frame(view, empty, empty, empty, 0);
+        long revision = table.snapshot().get("revision").getAsLong();
+        table.frame(view, empty, empty, empty, 2);
+        for (boolean privateSeats : new boolean[]{false, true}) {
+            JsonObject result = table.snapshot(privateSeats);
+            assertThat(result.get("rollbackRevision").getAsLong()).isEqualTo(2);
+            assertThat(result.get("revision").getAsLong()).isGreaterThan(revision);
+            assertThat(result.getAsJsonObject("view").get("turn").getAsInt()).isEqualTo(8);
+            assertThat(result.has("seatKnowledge")).isEqualTo(privateSeats);
+        }
+        table.frame(view, empty, empty, empty, 2);
+        assertThat(table.snapshot().get("rollbackRevision").getAsLong()).isEqualTo(2);
+    }
+
     @Test void privateKnowledgeRequiresExplicitAccessAndUsesOnlyTheSeatPerspective() {
         UUID a = UUID.randomUUID(), b = UUID.randomUUID();
         JsonObject visible = new JsonObject(), seat = new JsonObject(), seats = new JsonObject(), review = new JsonObject();
@@ -29,7 +48,7 @@ class SpectatorTableTest {
         review.add("seatViews", seats);
         JsonObject knowledge = ReplayEvidence.spectatorSeatKnowledge(review, visible);
         SpectatorTable broadcast = new SpectatorTable(UUID.randomUUID(), UUID.randomUUID(), "Synthetic host");
-        broadcast.frame(visible, new JsonObject(), new JsonObject(), knowledge);
+        broadcast.frame(visible, new JsonObject(), new JsonObject(), knowledge, 0);
         assertThat(broadcast.snapshot().has("seatKnowledge")).isFalse();
         JsonObject shown = broadcast.snapshot(true).getAsJsonObject("seatKnowledge").getAsJsonObject(a.toString());
         assertThat(shown.keySet()).containsExactlyInAnyOrder("topCard", "lookedAt", "revealed");
