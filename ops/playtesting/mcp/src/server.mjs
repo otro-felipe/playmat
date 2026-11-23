@@ -231,7 +231,7 @@ function readToken(req) {
 // Each validated call captures its own actor, including work continued by its line executor.
 const toolContext = new AsyncLocalStorage();
 
-function registerTools(mcp, { contextFor, allowedOrigins }) {
+function registerTools(mcp, { contextFor, invitationOrigin }) {
   const current = () => toolContext.getStore();
   const getSeat = (...args) => current().getSeat(...args);
   function tool(name, description, inputSchema, scope, run, readOnlyHint = false) {
@@ -416,17 +416,20 @@ function registerTools(mcp, { contextFor, allowedOrigins }) {
     return { players: players.map(({ playerId, displayName, flag, engineName, mcpEnabled, activeTableId, availability }) =>
       ({ playerId, displayName, flag, engineName, mcpEnabled, activeTableId, availability })) };
   }, true);
-  const inviteLocator={tableId:Uuid.optional(), inviteLink:z.url().max(2048).optional()};
+  const inviteLocator={tableId:Uuid.optional(), inviteLink:z.string().min(1).max(2048).optional()};
   function locateInvitation(tableId,inviteLink) {
     if (!inviteLink) return tableId ? {tableId} : {};
     if (tableId) throw new ToolError('invalid_invite','Provide either the invite link or the table ID.');
-    const url=new URL(inviteLink);
+    const invalid=()=>new ToolError('invalid_invite','Provide the private link copied from this Thoughtseize deployment.');
+    // Installations without a public URL emit root-relative links. Their parser
+    // never adopts an origin from the caller, the request Host or the CORS list.
+    const relative=!invitationOrigin && inviteLink.startsWith('/join/');
+    const url=URL.parse(inviteLink,relative?'https://relative.invalid':undefined);
+    if (!url || (relative ? url.pathname+url.hash!==inviteLink : url.origin!==invitationOrigin)) throw invalid();
     const path=/^\/join\/(mcp\/)?([0-9a-f-]+)$/i.exec(url.pathname);
     const capability=/^#invite=([A-Za-z0-9_-]{43})$/.exec(url.hash);
-    if (!allowedOrigins.includes(url.origin) || url.username || url.password || url.search || !path
-        || !Uuid.safeParse(path[2]).success || (path[1] ? !capability : Boolean(url.hash))) {
-      throw new ToolError('invalid_invite','Provide the private link copied from this Thoughtseize deployment.');
-    }
+    if (url.username || url.password || url.search || !path
+        || !Uuid.safeParse(path[2]).success || (path[1] ? !capability : Boolean(url.hash))) throw invalid();
     return {tableId:path[2],...(capability && {inviteToken:capability[1]})};
   }
   tool('list_joinable_games', 'List incoming invitations to your account and enabled players. Inspect one external invitation using its complete private inviteLink.', {
@@ -597,7 +600,7 @@ function registerTools(mcp, { contextFor, allowedOrigins }) {
 }
 
 export function createMcpServer({
-  authorize, createEngine, product, eventRequest, publishSeatEvent, oauthResourceMetadata, allowedOrigins = [], maxSeats = 64,
+  authorize, createEngine, product, eventRequest, publishSeatEvent, oauthResourceMetadata, invitationOrigin, allowedOrigins = [], maxSeats = 64,
 }) {
   const seats = new Map();
   const seatWatchers = new Map();
@@ -755,7 +758,7 @@ export function createMcpServer({
       registerMatchReviewPrompt(mcp);
       registerPostMatchReviewPrompt(mcp);
     }
-    registerTools(mcp, { contextFor, allowedOrigins });
+    registerTools(mcp, { contextFor, invitationOrigin });
     res.once('close', () => { void mcp.close(); });
     try {
       await mcp.connect(transport);

@@ -8,6 +8,37 @@ import { WebSocketServer } from 'ws';
 import { PlaymatEngineSeat } from '../src/engine-seat.mjs';
 import { createMcpServer } from '../src/server.mjs';
 
+const deployments=['https://one.playmat.example','https://two.playmat.example'];
+for(const origin of [...deployments,undefined]) test('[PM-AC-08] invite origins are independent of CORS on '+(origin??'a local relative-link deployment'),async t=>{
+  const clientOrigin='https://authorized-client.example', tableId='22222222-2222-4222-8222-222222222222';
+  const server=createMcpServer({ invitationOrigin:origin, allowedOrigins:[...deployments,clientOrigin],
+    authorize:async()=>({accountId:'owner',engineName:'Pilot',scopes:['play']}),
+    product:async(_token,name,input)=>{
+      assert.equal(name,'list_joinable_games');
+      assert.equal(input.tableId,tableId);
+      return {invites:[{tableId}]};
+    },
+  });
+  server.listen(0,'127.0.0.1');
+  await once(server,'listening');
+  t.after(()=>{server.closeAllConnections();server.close();});
+  const client=new Client({name:'origin-check',version:'1'});
+  await client.connect(new StreamableHTTPClientTransport(new URL('http://127.0.0.1:'+server.address().port+'/mcp'),{
+    requestInit:{headers:{Origin:clientOrigin,Authorization:'Bearer fixture'}},
+  }));
+  t.after(()=>client.close());
+  const list=args=>client.callTool({name:'list_joinable_games',arguments:args});
+  assert.equal((await list({tableId})).isError,false);
+  for(const path of ['/join/'+tableId,'/join/mcp/'+tableId+'#invite='+'x'.repeat(43)]){
+    assert.equal((await list({inviteLink:(origin??'')+path})).isError,false);
+    for(const foreign of [...deployments,clientOrigin].filter(v=>v!==origin)){
+      assert.equal((await list({inviteLink:foreign+path})).isError,true);
+      const reply=await client.callTool({name:'join_game',arguments:{inviteLink:foreign+path,deckId:'fixture'}});
+      assert.equal(JSON.parse(reply.content[0].text).code,'invalid_invite');
+    }
+  }
+});
+
 test('[PM-AC-08] join_game uses a private Playmat link, validates before claim, and conveys an optional alias', async (t) => {
   const origin = 'https://playmat.example';
   const tableId = '22222222-2222-4222-8222-222222222222';
@@ -17,7 +48,7 @@ test('[PM-AC-08] join_game uses a private Playmat link, validates before claim, 
   const inspected = [];
   const claimed = [];
   const server = createMcpServer({
-    allowedOrigins: [origin],
+    invitationOrigin:origin, allowedOrigins: [origin],
     authorize: async (token) => token === 'fixture' ? { accountId: 'owner', engineName: 'FixtureAgent', scopes: ['play'] } : null,
     createEngine: ({ engineName }) => ({
       async joinGame(input, invite, claim) {
@@ -116,7 +147,7 @@ test('[PM-AC-08] the MCP seat receives its chosen display name and chat mode for
     engineUrl: `ws://127.0.0.1:${engineServer.address().port}`, engineName, trustedHeader: 'x-fixture-user', canonicalAgent: true,
   });
   const server = createMcpServer({
-    allowedOrigins: [origin],
+    invitationOrigin:origin, allowedOrigins: [origin],
     authorize: async (token) => token === 'fixture' ? { accountId: 'owner', engineName, scopes: ['play', 'chat'] } : null,
     createEngine: () => engine,
     product: async (_token, operation) => {

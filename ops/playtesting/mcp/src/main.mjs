@@ -10,7 +10,8 @@ const product = createProductClient(productUrl, publicUrl);
 const port = Number(process.env.PLAYMAT_MCP_PORT ?? 8791);
 const allowedOrigins = (process.env.PLAYMAT_MCP_ALLOWED_ORIGINS ?? process.env.XMAGE_ALLOWED_ORIGINS ?? '')
   .split(',').map((origin) => origin.trim()).filter(Boolean);
-if (publicUrl) allowedOrigins.push(new URL(publicUrl).origin);
+const invitationOrigin=publicUrl ? new URL(publicUrl).origin : undefined;
+if (invitationOrigin) allowedOrigins.push(invitationOrigin);
 allowedOrigins.push('https://chatgpt.com');
 
 const server = createMcpServer({
@@ -24,7 +25,7 @@ const server = createMcpServer({
     engineUrl, engineName, canonicalAgent, accountId, recoverySeatId, connectionId, humanTableId,
     playerId, activeTableId, flag, trustedHeader, managedPriorityStops: true,
   }),
-  allowedOrigins,
+  invitationOrigin, allowedOrigins,
 });
 
 server.listen(port, '127.0.0.1', () => console.log('Playmat MCP listening on loopback.'));
