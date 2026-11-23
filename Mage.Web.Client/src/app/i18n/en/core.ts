@@ -3,6 +3,18 @@
  * entry chunk; screens that load later bring their own English (settings.ts, events.ts, about.ts).
  */
 export default {
+  'chat.tooLong': 'Messages can contain up to 500 characters.',
+  'chat.sendFailed': 'Could not send the message.',
+  'watch.bothScope': 'Both hands visible · Spectator access',
+  'spectate.lineSent': 'The agent submitted a line of play',
+  'watch.shareBoth': 'Share both hands with this spectator link',
+  'watch.bothDetail': 'Anyone with this link can see both hands and the cards each seat knows until this table ends. Pilot access is separate.',
+  'watch.expandedEnded': 'This match has ended. Both hands are now hidden.',
+  'watch.openPublic': 'View public board',
+  'watch.knowledge': 'Cards known to each seat',
+  'watch.lookedAt': 'Cards viewed',
+  'watch.revealed': 'Cards revealed',
+  'watch.topCard': 'Top of library',
   'spectate.audienceNote': 'Audience note',
   'spectate.tableChat': 'Table chat',
   'spectate.seatName': '{name} · Seat {seat}',

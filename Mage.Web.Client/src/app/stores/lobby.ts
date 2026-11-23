@@ -1,3 +1,4 @@
+import { sendChatMessage } from '../social/sendChatMessage';
 import { create } from 'zustand';
 import { api, events } from '../connection';
 import { chatText } from '../../core/social/chatText';
@@ -88,8 +89,7 @@ export const useLobby = create<LobbyState>((set, get) => ({
   },
   async send(text) {
     const chatId = get().chatId;
-    if (!chatId || !text.trim()) return;
-    await api.chatSendMessage(chatId, useSession.getState().userName, text.trim());
+    await sendChatMessage(chatId, text);
   },
   async refreshUsers() {
     const roomId = useSession.getState().roomId;

@@ -61,6 +61,7 @@ button.who:focus-visible {
 }
 
 .text {
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
@@ -109,6 +110,8 @@ button.who:focus-visible {
 }
 
 .input {
+  resize: vertical;
+  font-family: inherit;
   flex: 1;
   min-width: 0;
   height: 38px;

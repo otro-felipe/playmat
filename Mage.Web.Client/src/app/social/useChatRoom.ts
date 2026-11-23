@@ -1,3 +1,4 @@
+import { sendChatMessage } from './sendChatMessage';
 import { useEffect, useState } from 'react';
 import { api, events } from '../connection';
 import { toChatLines, type ChatLine } from '../../core/social/chatLine';
@@ -50,7 +51,7 @@ export function useChatRoom(key: string | null, find: (key: string) => Promise<s
   }, [chatId]);
 
   const send = async (text: string) => {
-    if (chatId && text.trim()) await api.chatSendMessage(chatId, useSession.getState().userName, text.trim());
+    await sendChatMessage(chatId, text);
   };
   return { lines, ready: !!chatId, send };
 }

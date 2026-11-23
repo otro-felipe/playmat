@@ -33,7 +33,7 @@ export function toChatLines(message: ChatMessage, key: string, now = Date.now())
   const who = message.username || null;
   if (kind === 'talk' || kind === 'whisperFrom' || kind === 'whisperTo') {
     const text = chatText(message.message);
-    return text ? [{ key, at, kind, who, segments: [{ kind: 'text', text }], text }] : [];
+    return text.trim() ? [{ key, at, kind, who, segments: [{ kind: 'text', text }], text }] : [];
   }
   return (message.message ?? '')
     .split(/<br\s*\/?>/i)

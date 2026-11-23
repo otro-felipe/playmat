@@ -122,3 +122,104 @@ test('the delegated owner watches both hands and creates the share link on reque
   await expect(humanPlate).toContainText('MCP habilitado');
   await expect(rivalPlate).toContainText('Merlín');
 });
+
+for (const visibility of ['both-hands','public-board'] as const) test(`observer knowledge follows the server-issued ${visibility} scope`, async ({page}) => {
+  const frame={...spectatorSnapshot,visibility,
+    lines:[{at:1,playerId:'seat-a',playerName:'Alice',lineId:'new',audience:'public',explanation:'Explicación pública confirmada'},
+      {at:2,playerId:'seat-b',playerName:'Bob',lineId:'legacy',reasoning:'Legacy original-scope fixture'}],
+    chat:visibility==='both-hands' ? [{at:3,messageId:'talk',playerName:'Bob',message:'Comentario real de mesa'}] : [],
+    seatKnowledge:{
+    'seat-a':{lookedAt:[{cards:{a:{name:'Synthetic Look'}}}],revealed:[],topCard:{name:'Synthetic Top'}},
+    'seat-b':{lookedAt:[],revealed:[{cards:{a:{name:'Synthetic Reveal'},b:{name:'Face-down fixture',faceDown:true}}}]}
+  }};
+  const queries:string[]=[];
+  await page.route('**/api/playtesting/**',route=>{
+    const path=new URL(route.request().url()).pathname; queries.push(path);
+    return path.endsWith('/events')?route.fulfill({contentType:'text/event-stream',body:'retry: 30000\n\n'}):route.fulfill({json:frame});
+  });
+  await page.goto('/watch/'+spectatorToken);
+  await expect(page.getByRole('heading',{name:'Modo espectador'})).toBeVisible();
+  const known=page.getByRole('button',{name:'Cartas conocidas por cada asiento'});
+  if(visibility==='both-hands'){
+    await expect(page.getByRole('listitem',{name:'Forest',exact:true})).toBeVisible();
+    await known.click();
+    const dialog=page.getByRole('dialog',{name:'Cartas conocidas por cada asiento'});
+    const mine=dialog.locator('section').filter({has:page.getByRole('heading',{name:'Alice'})});
+    await expect(mine).toContainText('Synthetic Look'); await expect(mine).toContainText('Synthetic Top');
+    await expect(mine).not.toContainText('Synthetic Reveal');
+    await expect(dialog.locator('section').filter({has:page.getByRole('heading',{name:'Bob'})})).toContainText('Synthetic Reveal');
+    await expect(dialog.getByText('Face-down fixture')).toHaveCount(0);
+    await page.keyboard.press('Escape'); await expect(known).toBeFocused();
+  }else{
+    await expect(known).toHaveCount(0);
+    await expect(page.getByRole('button',{name:'Lightning Bolt',exact:true})).toHaveCount(0);
+    await expect(page.getByRole('listitem',{name:'Forest',exact:true})).toHaveCount(0);
+  }
+  await page.getByRole('button',{name:'Chat',exact:true}).click();
+  const event=page.getByRole('button',{name:'El agente envió una línea de juego'});
+  await expect(event).toHaveCount(1);
+  await expect(page.getByText('Comentario real de mesa')).toHaveCount(visibility==='both-hands'?1:0);
+  await event.click();
+  await expect(page.getByRole('dialog').getByText('Explicación pública confirmada')).toBeVisible();
+  await expect(page.getByText('Legacy original-scope fixture')).toHaveCount(0);
+  expect(queries.every(p=>p.startsWith('/api/playtesting/spectate/'+spectatorToken))).toBe(true);
+});
+
+test('an owner switches link visibility with keyboard before sharing an opted-in MCP table', async ({page,context}) => {
+  const {tableId}=spectatorSnapshot;
+  await context.grantPermissions(['clipboard-read','clipboard-write']);
+  const issued:string[]=[];
+  await page.route('**/api/playtesting/**', route=>{
+    const url=new URL(route.request().url());
+    if(url.pathname.endsWith('/spectator-links')) return route.fulfill({json:{tables:[
+      {tableId,tableName:'Mesa opt-in',spectatorVisibility:'both-hands'}, {tableId:'public-fixture',tableName:'Sólo público'}]}});
+    if(url.pathname.endsWith('/spectator-link')){
+      issued.push(url.search);return route.fulfill({json:{path:url.search?'/watch/expanded-fixture':'/watch/public-fixture'}});
+    }
+    return route.fulfill({json:url.pathname.endsWith('/me')?{engineName:'Alice',agent:false}:{decks:[]}});
+  });
+  await page.routeWebSocket(/\/ws$/,socket=>socket.onMessage(raw=>{
+    const rpc=JSON.parse(String(raw));if(rpc.id===undefined)return;
+    const result:Record<string,unknown>={connectUser:true,sessionUserName:'Alice',sessionGetRestoreToken:'',
+      serverGetMainRoomId:'00000000-0000-4000-8000-0000000000aa',serverInfo:{signOn:'Alice',signOnOnly:true},roomGetAllTables:[],roomGetFinishedGames:[],roomGetUsers:[],getServerState:{serverVersion:'fixture',cardInfo:[]}};
+    socket.send(JSON.stringify({jsonrpc:'2.0',id:rpc.id,result:result[rpc.method]??null}));
+  }));
+  await page.goto('/tables');
+  const row=page.getByRole('article').filter({has:page.getByRole('heading',{name:'Mesa opt-in'})});
+  const toggle=row.getByRole('switch',{name:'Compartir ambas manos en este enlace de espectador'});
+  await expect(toggle).toHaveAttribute('aria-checked','false');
+  await toggle.focus();await page.keyboard.press('Space');
+  await expect(toggle).toHaveAttribute('aria-checked','true');
+  await expect(row.getByText(/Quien tenga este enlace/)).toBeVisible();
+  await row.getByRole('button',{name:'Copiar enlace de espectador'}).click();
+  expect(issued).toEqual(['?visibility=both-hands']);
+  await toggle.focus();await page.keyboard.press('Enter');
+  await expect(toggle).toHaveAttribute('aria-checked','false');
+  await expect(page.getByRole('article').filter({hasText:'Sólo público'}).getByRole('switch')).toHaveCount(0);
+});
+
+test('a finished expanded observer can follow only the same-table public link authorized by the server', async ({page}) => {
+  const publicPath='/watch/ordinary-synthetic-finished';
+  await page.route('**/api/playtesting/spectate/**', route=>{
+    const path=new URL(route.request().url()).pathname;
+    return route.fulfill({json:path.endsWith(spectatorToken)?
+      {role:'spectator',visibility:'closed',status:'finished',publicPath}:
+      {...spectatorSnapshot,visibility:'public-board',status:'finished',hands:{},lines:[],chat:[]}});
+  });
+  await page.goto('/watch/'+spectatorToken);
+  await page.getByRole('link',{name:'Ver tablero público'}).click();
+  await expect(page).toHaveURL(new RegExp(publicPath+'$'));
+  await expect(page.getByRole('heading',{name:'Modo espectador'})).toBeVisible();
+  await expect(page.getByRole('listitem',{name:'Forest',exact:true})).toHaveCount(0);
+});
+
+test('a closed observer drops the private board on its final SSE frame and cannot navigate to a foreign URL', async ({page}) => {
+  const closed={role:'spectator',visibility:'closed',status:'finished',publicPath:'https://invalid.example/watch/fake'};
+  await page.route('**/api/playtesting/spectate/**',route=>route.request().url().endsWith('/events')
+    ?route.fulfill({contentType:'text/event-stream',body:'event: snapshot\ndata: '+JSON.stringify(closed)+'\n\n'})
+    :route.fulfill({json:{...spectatorSnapshot,visibility:'both-hands'}}));
+  await page.goto('/watch/'+spectatorToken);
+  await expect(page.getByText('Este enlace de espectador ya no está disponible.')).toBeVisible();
+  await expect(page.getByRole('listitem',{name:'Forest',exact:true})).toHaveCount(0);
+  await expect(page.getByRole('link',{name:'Ver tablero público'})).toHaveCount(0);
+});

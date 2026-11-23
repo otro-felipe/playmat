@@ -1,3 +1,5 @@
+import { sendChatMessage } from '../social/sendChatMessage';
+import { submitOnEnter, useChatSubmit } from '../social/useChatSubmit';
 import { usePlayerNames } from '../ui/usePlayerIdentity';
 import { PlayerLabel } from '../ui/PlayerLabel';
 import {
@@ -9,7 +11,7 @@ import { DelayedRelay } from '../../core/game/broadcastDelay';
 import { explainLog } from '../../core/game/logRules';
 import type { GameNotice } from '../../core/game/gameSession';
 import {
-  buildLogRows, cardInk, collectCards, EMOTES, findLogCard, isEmote, noticeEntry, parseChatMessage, presenceChange,
+  buildLogRows, cardInk, collectCards, EMOTES, findLogCard, noticeEntry, parseChatMessage, presenceChange,
   type LogEntry, type LogIcon, type LogSegment,
 } from '../../core/game/gameLog';
 import type { CardView, ChatMessage, GameView } from '../../protocol/generated/views';
@@ -95,7 +97,7 @@ function useGameChat(gameId: string, view: GameView | null, live: boolean, delay
         if (entry.tone !== 'chat') return;
         const muted = !!useEmotes.getState().muted[gameId];
         if (fromOther && muted) return;
-        if (entry.who && isEmote(entry.text)) useEmotes.getState().show(entry.who, entry.text);
+        if (message.messageType === 'TALK' && entry.who) useEmotes.getState().show(entry.who, entry.text, { gameId });
         if (fromOther) setUnread((count) => count + 1);
       };
       // one's own words show at once
@@ -141,9 +143,7 @@ function useGameChat(gameId: string, view: GameView | null, live: boolean, delay
     // The server removes chat membership on disconnect; every new login must join again.
   }, [gameId, live, loginCount, userName]);
 
-  const send = (text: string) => {
-    if (chatId && text.trim()) api.chatSendMessage(chatId, useSession.getState().userName, text.trim()).catch(() => undefined);
-  };
+  const send = (text: string) => sendChatMessage(chatId, text);
   return { entries, send, ready: !!chatId, unread, clearUnread: () => setUnread(0) };
 }
 
@@ -249,10 +249,9 @@ export function GameLog({ gameId, notices, canChat, view, replayLog, delayMs = 0
   }, [lastDisplayedKey, open, showChat]);
 
   const panelLabel = t(showChat ? 'match.chat.panel' : 'match.chat.logPanel');
-  const onSend = () => {
-    if (!chat.ready || !draft.trim()) return;
-    chat.send(draft);
-    setDraft('');
+  const sender = useChatSubmit();
+  const onSend = async () => {
+    if (chat.ready && await sender.submit(draft, chat.send)) setDraft(current => current === draft ? '' : current);
   };
 
   return (
@@ -302,27 +301,27 @@ export function GameLog({ gameId, notices, canChat, view, replayLog, delayMs = 0
             <footer className={styles.foot}>
               <div className={styles.emotes}>
                 {EMOTES.map((emote) => (
-                  <button key={emote} type="button" className={styles.emote} onClick={() => chat.send(emote)} disabled={!chat.ready}>{emote}</button>
+                  <button key={emote} type="button" className={styles.emote} onClick={() => void sender.submit(emote, chat.send)} disabled={!chat.ready || sender.pending}>{emote}</button>
                 ))}
               </div>
               <form
                 className={styles.form}
                 onSubmit={(event) => {
                   event.preventDefault();
-                  onSend();
+                  void onSend();
                 }}
               >
-                <input
+                <textarea rows={1} onKeyDown={submitOnEnter}
                   className={styles.input}
                   value={draft}
-                  onChange={(event) => setDraft(event.target.value)}
+                  onChange={(event) => { sender.clearError(); setDraft(event.target.value); }}
                   placeholder={t(chat.ready ? 'match.chat.placeholder' : 'match.chat.joining')}
                   disabled={!chat.ready}
                   aria-label={t('match.chat.message')}
-                  maxLength={400}
                 />
-                <button type="submit" className={styles.send} disabled={!chat.ready || !draft.trim()}>{t('match.chat.send')}</button>
+                <button type="submit" className={styles.send} disabled={!chat.ready || sender.pending || !draft.trim()}>{t('match.chat.send')}</button>
               </form>
+              {sender.error && <p role="alert">{sender.error}</p>}
             </footer>
           )}
         </aside>

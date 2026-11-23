@@ -28,11 +28,13 @@ export const CHAT_HELP: { command: string; detail: string }[] = [
   { command: '[[Card name]]', detail: 'Link a card in a message.' },
 ];
 
+export function chatBodyTooLong(text: string) { return Array.from(text).length > 500; }
+
 export function parseChatInput(raw: string): ChatInput | null {
   const text = raw.trim();
   if (!text) return null;
   const match = /^[/\\](\w+)(?:\s+(.*))?$/s.exec(text);
-  if (!match) return { kind: 'send', text };
+  if (!match) return { kind: 'send', text: raw };
   const command = match[1].toLowerCase();
   const rest = (match[2] ?? '').trim();
   if (command === 'help' || command === '?') return { kind: 'help' };
@@ -45,7 +47,7 @@ export function parseChatInput(raw: string): ChatInput | null {
   if ((command === 'w' || command === 'whisper') && !/^\S+\s+\S/.test(rest)) {
     return { kind: 'error', message: 'Whisper with /w name message' };
   }
-  return { kind: 'send', text };
+  return { kind: 'send', text: raw };
 }
 
 /**

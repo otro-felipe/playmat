@@ -6,5 +6,5 @@ import { decodeEntities } from '../game/entities';
  * decoded tags are also literal text, never markup. Server notices use the separate log HTML parser.
  */
 export function chatText(message: string | null | undefined): string {
-  return decodeEntities(message ?? '', { literal: true }).replace(/\s+/g, ' ').trim();
+  return decodeEntities(message ?? '', { literal: true });
 }

@@ -3,7 +3,7 @@ import { completeWhisper, parseChatInput } from './chatInput';
 
 describe('parseChatInput', () => {
   it('sends plain text and server commands as typed', () => {
-    expect(parseChatInput('  hello  ')).toEqual({ kind: 'send', text: 'hello' });
+    expect(parseChatInput('  hello  ')).toEqual({ kind: 'send', text: '  hello  ' });
     expect(parseChatInput('/w Bob gl hf')).toEqual({ kind: 'send', text: '/w Bob gl hf' });
     expect(parseChatInput('\\h Bob')).toEqual({ kind: 'send', text: '\\h Bob' });
     expect(parseChatInput('/card Lightning Bolt')).toEqual({ kind: 'send', text: '/card Lightning Bolt' });

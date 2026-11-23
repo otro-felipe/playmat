@@ -1,3 +1,4 @@
+import { submitOnEnter, useChatSubmit } from './useChatSubmit';
 import { PlayerLabel } from '../ui/PlayerLabel';
 import { playerLabelText } from '../ui/playerIdentity';
 import { Send } from 'lucide-react';
@@ -41,7 +42,7 @@ export function ChatPanel({ names = [], lines, ready, readOnly = false, onSend, 
   const myName = useSession((state) => state.userName);
   const [draft, setDraft] = useState('');
   const [ownLocal, setOwnLocal] = useState<ChatLine[]>([]);
-  const input = useRef<HTMLInputElement>(null);
+  const input = useRef<HTMLTextAreaElement>(null);
   const list = useRef<HTMLOListElement>(null);
 
   const addLocal = (text: string) => {
@@ -75,16 +76,19 @@ export function ChatPanel({ names = [], lines, ready, readOnly = false, onSend, 
     input.current?.focus();
   };
 
-  const submit = () => {
+  const sender = useChatSubmit();
+  const submit = async () => {
     const parsed = parseChatInput(draft);
     if (!parsed) return;
     const social = useSocial.getState();
     switch (parsed.kind) {
-      case 'send':
-        void Promise.resolve(onSend(parsed.text)).catch(() => addLocal("The message didn't go through."));
+      case 'send': {
+        if (!await sender.submit(parsed.text, onSend)) return;
         // keep "/w name " so a whispered conversation can go on
-        setDraft(/^[/\\](w|whisper)\s+\S+\s/i.test(parsed.text) ? parsed.text.replace(/^([/\\]\w+\s+\S+\s+).*$/s, '$1') : '');
+        const nextDraft = /^[/\\](w|whisper)\s+\S+\s/i.test(parsed.text) ? parsed.text.replace(/^([/\\]\w+\s+\S+\s+).*$/s, '$1') : '';
+        setDraft(current => current === draft ? nextDraft : current);
         return;
+      }
       case 'help':
         addLocal('Chat commands:');
         CHAT_HELP.forEach((item) => addLocal(`${item.command} — ${item.detail}`));
@@ -123,7 +127,8 @@ export function ChatPanel({ names = [], lines, ready, readOnly = false, onSend, 
     setDraft('');
   };
 
-  const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    submitOnEnter(event);
     if (event.key !== 'Tab' || event.shiftKey) return;
     const completed = completeWhisper(draft, names.filter((name) => name !== myName));
     if (completed) {
@@ -142,22 +147,22 @@ export function ChatPanel({ names = [], lines, ready, readOnly = false, onSend, 
         className={styles.form}
         onSubmit={(event) => {
           event.preventDefault();
-          submit();
+          void submit();
         }}
       >
-        <input
+        <textarea rows={1}
           ref={input}
           className={styles.input}
           value={draft}
-          onChange={(event) => setDraft(event.target.value)}
+          onChange={(event) => { sender.clearError(); setDraft(event.target.value); }}
           onKeyDown={onKeyDown}
           placeholder={ready ? placeholder ?? 'Say something, or /help' : 'Joining chat…'}
           disabled={!ready}
           aria-label={`${label} message`}
-          maxLength={400}
         />
-        <IconButton label="Send" icon={<Send size={16} />} type="submit" disabled={!ready || !draft.trim()} />
+        <IconButton label="Send" icon={<Send size={16} />} type="submit" disabled={!ready || sender.pending || !draft.trim()} />
       </form>}
+      {sender.error && <p role="alert">{sender.error}</p>}
     </section>
   );
 }

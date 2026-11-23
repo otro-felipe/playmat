@@ -1,3 +1,4 @@
+import { audienceText } from '../match/spectatorFeed';
 import { MatchHumanSeat, useEnabledHumanSeat } from '../ui/humanSeat';
 import { PlayerNames, useRosterNames } from '../ui/usePlayerIdentity';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
@@ -221,6 +222,10 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
     retry: false,
   });
   const recorded = scope ? privateFrameQuery.data?.events.find((item) => item.cursor === frameCursor && item.view) : undefined;
+  const visibleLines = (recorded?.lines ?? []).flatMap(line => {
+    const text = audienceText(line, scope === 'full' || scope === 'seat');
+    return text?.trim() ? [{ ...line, text }] : [];
+  });
   const projection = useMemo(() => {
     if (!frame) return null;
     const ownPerspective = !!ownSeat && ownSeat === playerId;
@@ -413,7 +418,7 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
               <div className={styles.reviewControls}>
                 <ReviewSwitch label={t('replay.showAnalysis')} checked={analysisOpen} onCheckedChange={setAnalysis}
                   controls={analysisOpen && !mobilePanel ? panelId : undefined} />
-                {!!recorded?.lines?.length && <ReviewSwitch label={t('replay.lineExplanations')} checked={showLineExplanations}
+                {visibleLines.length > 0 && <ReviewSwitch label={t('replay.lineExplanations')} checked={showLineExplanations}
                   onCheckedChange={setShowLineExplanations} controls={explanationsId} />}
                 {canShowBoth && <ReviewSwitch label={t('replay.showBothHands')} checked={showBoth}
                   onCheckedChange={(checked) => { setPlaying(false); setBothHands(checked); }} />}
@@ -430,12 +435,12 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
               {partialArchive && <p className={styles.coverage}>{t('replay.partialArchive')}</p>}
               {manifest.status === 'active' && <p className={styles.coverage}>{t('replay.matchActive')}</p>}
               {decision && <RecordedDecision moment={decision} />}
-              {!!recorded?.lines?.length && <section id={explanationsId} hidden={!showLineExplanations}
+              {visibleLines.length > 0 && <section id={explanationsId} hidden={!showLineExplanations}
                 className={styles.lineExplanations} aria-label={t('replay.lineExplanations')}>
-                {showLineExplanations && recorded.lines.map((line) => (
+                {showLineExplanations && visibleLines.map((line) => (
                   <div key={line.cursor} className={styles.lineExplanation}>
                     <Brain size={18} aria-hidden="true" />
-                    <div><strong>{replayName(line.actor, t, formatName)}</strong><p><CardMarkdown text={line.reasoning} /></p></div>
+                    <div><strong>{replayName(line.actor, t, formatName)}</strong><p><CardMarkdown text={line.text} /></p></div>
                   </div>
                 ))}
               </section>}

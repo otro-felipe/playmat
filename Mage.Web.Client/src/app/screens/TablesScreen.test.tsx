@@ -277,8 +277,29 @@ test('the account owner can copy the spectator link for an unlisted MCP table be
   const { page } = mount();
   const button = await page.findByRole('button', { name: 'Copy spectator link' });
   expect(page.getByText('Luna fixture')).toBeTruthy();
+  expect(page.queryByRole('switch', {name:/both hands/i})).toBeNull();
   expect(page.getByRole('button', { name: 'Watch match' })).toBeTruthy();
   expect(button.getAttribute('title')).toContain('public board');
   fireEvent.click(button);
   await waitFor(() => expect(writeText).toHaveBeenCalledWith(window.location.origin + '/watch/public-fixture'));
+});
+
+test('an owner selects the existing both-hands link for one eligible table without granting a pilot permission', async () => {
+  tables = [];
+  const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined);
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url.endsWith('/spectator-links')) return Response.json({ tables:[{ tableId, tableName:'Fixture', spectatorVisibility:'both-hands' }] });
+    return Response.json({path:url.endsWith('?visibility=both-hands') ? '/watch/private-fixture' : '/watch/public-fixture'});
+  }));
+  const {page} = mount();
+  const toggle = await page.findByRole('switch',{name:/both hands/i});
+  expect(toggle.getAttribute('aria-checked')).toBe('false');
+  fireEvent.click(toggle);
+  expect(toggle.getAttribute('aria-checked')).toBe('true');
+  expect(page.getByText(/anyone with this link.*both hands/i)).toBeTruthy();
+  fireEvent.click(page.getByRole('button',{name:'Copy spectator link'}));
+  await waitFor(()=>expect(writeText).toHaveBeenCalledWith(window.location.origin+'/watch/private-fixture'));
+  fireEvent.click(toggle);
+  fireEvent.click(page.getByRole('button',{name:'Copy spectator link'}));
+  await waitFor(()=>expect(writeText).toHaveBeenCalledWith(window.location.origin+'/watch/public-fixture'));
 });

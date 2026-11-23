@@ -1,18 +1,19 @@
 import { Check, Eye, Link2 } from 'lucide-react';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useT } from '../i18n';
 import { Button } from '../ui/Button';
+import { Switch } from '../ui/Switch';
 import { Dialog } from '../ui/Dialog';
 
-export function SpectatorLink({ tableId, path, publicBoard, openable }: {
-  tableId?: string; path?: string; publicBoard?: boolean; openable?: boolean;
+export function SpectatorLink({ tableId, path, publicBoard, openable, bothHands }: {
+  tableId?: string; path?: string; publicBoard?: boolean; openable?: boolean; bothHands?: boolean;
 }) {
   const t = useT();
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [fallback, setFallback] = useState('');
   const [error, setError] = useState(false);
-  const detail = t(publicBoard ? 'watch.publicDetail' : 'watch.linkDetail');
+  const detail = t(bothHands ? 'watch.bothDetail' : publicBoard ? 'watch.publicDetail' : 'watch.linkDetail');
   async function shareLink(action: 'copy' | 'open') {
     setBusy(true);
     setError(false);
@@ -20,7 +21,7 @@ export function SpectatorLink({ tableId, path, publicBoard, openable }: {
     try {
       let watch = path;
       if (!watch) {
-        const response = await fetch('/api/playtesting/tables/' + encodeURIComponent(tableId!) + '/spectator-link', { method: publicBoard ? 'GET' : 'POST' });
+        const response = await fetch('/api/playtesting/tables/' + encodeURIComponent(tableId!) + '/spectator-link' + (bothHands ? '?visibility=both-hands' : ''), { method: publicBoard || bothHands ? 'GET' : 'POST' });
         if (!response.ok) throw new Error();
         watch = (await response.json()).path;
       }
@@ -52,4 +53,19 @@ export function SpectatorLink({ tableId, path, publicBoard, openable }: {
       <p>{detail}</p><input aria-label={t('watch.copy')} value={fallback} readOnly autoFocus onFocus={event => event.currentTarget.select()} />
     </Dialog>
   </>;
+}
+
+
+export function OwnedSpectatorLink({ tableId, canShareHands }: { tableId: string; canShareHands: boolean }) {
+  const t = useT();
+  const [selected, setSelected] = useState(false);
+  const bothHands = canShareHands && selected;
+  const id = useId();
+  return <div>
+    {canShareHands && <Switch checked={bothHands} onCheckedChange={setSelected} controls={id} label={t('watch.shareBoth')} />}
+    <div id={id}>
+      {bothHands && <p>{t('watch.bothDetail')}</p>}
+      <SpectatorLink key={String(bothHands)} tableId={tableId} publicBoard={!bothHands} bothHands={bothHands} openable />
+    </div>
+  </div>;
 }

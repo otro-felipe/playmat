@@ -2,7 +2,9 @@
 .bubble {
   position: absolute;
   z-index: var(--z-lifted);
-  max-width: 260px;
+  max-width: min(260px, 70vw);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   padding: 10px 16px;
   border-radius: 14px 14px 14px 4px;
   background: var(--ink);
@@ -12,7 +14,15 @@
   font-weight: 600;
   line-height: 1.2;
   pointer-events: none;
-  animation: pop var(--dur-place) var(--ease-place), fade 3.2s linear forwards;
+  animation: pop var(--dur-place) var(--ease-place);
+}
+
+.message {
+  max-height: 34dvh;
+  overflow-y: auto;
+  pointer-events: auto;
+  touch-action: pan-y;
+  overscroll-behavior: contain;
 }
 
 @keyframes pop {
@@ -34,7 +44,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .bubble {
-    animation: fade 3.2s linear forwards;
+    animation: none;
   }
 }
 

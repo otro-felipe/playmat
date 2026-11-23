@@ -261,6 +261,8 @@
 }
 
 .chat {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   color: var(--ink-strong);
 }
 
@@ -314,6 +316,8 @@
 }
 
 .input {
+  resize: vertical;
+  font-family: inherit;
   flex: 1;
   min-width: 0;
   height: 44px;
@@ -368,6 +372,8 @@
 
 /* at least 16 window pixels: iOS zooms the page into a smaller field when it takes focus */
 :global([data-touch]) .input {
+  resize: vertical;
+  font-family: inherit;
   height: max(44px, var(--touch-target, 0px));
   font-size: max(17px, calc(var(--touch-target, 0px) * 0.37));
 }

@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { SpectatorLink } from '../spectator/SpectatorLink';
+import { OwnedSpectatorLink, SpectatorLink } from '../spectator/SpectatorLink';
 import { MatchHumanSeat, useEnabledHumanSeat, useHumanInputLock } from '../ui/humanSeat';
 import { PlayerLabel } from '../ui/PlayerLabel';
 import { Switch } from '../ui/Switch';
@@ -79,7 +79,7 @@ export function TablesScreen() {
     queryKey: ['owned-mcp-broadcasts', userName],
     enabled: PRIVATE_PLAYTESTING && Boolean(userName),
     refetchInterval: 8000,
-    queryFn: async ({ signal }): Promise<{ tableId: string; tableName: string }[]> => {
+    queryFn: async ({ signal }): Promise<{ tableId: string; tableName: string; spectatorVisibility?: string }[]> => {
       const response = await fetch('/api/playtesting/tables/spectator-links', { signal });
       if (!response.ok) throw new Error('Could not load spectator tables');
       return (await response.json()).tables;
@@ -123,9 +123,9 @@ export function TablesScreen() {
       {PRIVATE_PLAYTESTING && <p><Link to="/recover">Return to your saved private matches</Link></p>}
       {!!broadcasts.data?.length && <section className={styles.group}>
         <h2 className={styles.groupLabel}>{t('watch.myMcpTables')}</h2>
-        {broadcasts.data.map(({ tableId, tableName }) => <article key={tableId} className={styles.row}>
+        {broadcasts.data.map(({ tableId, tableName, spectatorVisibility }) => <article key={tableId} className={styles.row}>
           <h3 className={styles.tableName}>{tableName}</h3>
-          <div className={styles.rowActions}><SpectatorLink tableId={tableId} publicBoard openable /></div>
+          <div className={styles.rowActions}><OwnedSpectatorLink tableId={tableId} canShareHands={spectatorVisibility === 'both-hands'} /></div>
         </article>)}
       </section>}
       <div className={styles.columns}>

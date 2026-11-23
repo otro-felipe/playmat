@@ -8,17 +8,19 @@ import type { CardView, GameView } from '../../protocol/generated/views';
 import { useT } from '../i18n';
 import { MatchStage } from '../match/MatchStage';
 import { spectatorFeed, type SpectatorLine, type SpectatorChatMessage } from '../match/spectatorFeed';
-import { Button } from '../ui/Button';
+import { Button, ButtonLink } from '../ui/Button';
 import { MatchHumanSeat } from '../ui/humanSeat';
 import type { SeatDisplayNames } from '../match/seatDisplayNames';
 import { PublicBroadcast } from '../ui/usePlayerIdentity';
+import { SeatKnowledge, type KnownCards } from './SeatKnowledge';
 import { SpectatorFrame } from './SpectatorFrame';
 import { SpectatorLink } from './SpectatorLink';
 import styles from './SpectatorBoard.module.css';
 
 interface Snapshot {
   role: 'spectator';
-  visibility?: 'public-board';
+  visibility?: 'public-board' | 'both-hands';
+  seatKnowledge?: Record<string, KnownCards>;
   gameId: string | null;
   status: 'waiting' | 'playing' | 'between_games' | 'finished';
   view: GameView | null;
@@ -40,20 +42,31 @@ function ProjectedBoard({ frame, gameId, seatDisplayNames }: { frame: Snapshot; 
     if (frame.view) session.showFrame(frame.view, frame.players[0]?.playerId ?? null);
   }, [frame, session]);
   const state = useStore(session.store);
-  const broadcast = useMemo(() => ({ events: spectatorFeed(gameId, frame.lines, frame.chat), publicBoardOnly: frame.visibility === 'public-board' }), [gameId, frame.lines, frame.chat, frame.visibility]);
+  const broadcast = useMemo(() => ({ events: spectatorFeed(gameId, frame.lines, frame.chat, frame.visibility), publicBoardOnly: frame.visibility === 'public-board' }), [gameId, frame.lines, frame.chat, frame.visibility]);
   const aliases = useMemo(() => ({ ...seatDisplayNames, ...Object.fromEntries(frame.players.flatMap(player =>
     player.displayName ? [[player.name, player.displayName]] : [])) }), [frame.players, seatDisplayNames]);
-  return <MatchStage state={state} session={session} replayHands={frame.hands} publicSpectator={broadcast} seatDisplayNames={aliases} />;
+  return <MatchStage state={state} session={session} replayHands={frame.visibility === 'public-board' ? {} : frame.hands} publicSpectator={broadcast} seatDisplayNames={aliases} />;
 }
 
-function parseSnapshot(raw: unknown): Snapshot {
-  const data = raw as Partial<Snapshot> | null;
-  if (data?.role !== 'spectator' || !['waiting', 'playing', 'between_games', 'finished'].includes(data.status ?? '')
+type BroadcastState = { frame: Snapshot; problem?: never; closedPath?: never }
+  | { frame?: never; problem: 'loading' | 'missing' | 'error'; closedPath?: never }
+  | { frame?: never; problem?: never; closedPath: string };
+
+function parseSnapshot(raw: unknown): BroadcastState {
+  if (!raw || typeof raw !== 'object') throw new Error('Invalid broadcast');
+  if ('visibility' in raw && raw.visibility === 'closed') {
+    if (!('role' in raw && raw.role === 'spectator' && 'status' in raw && raw.status === 'finished'
+      && 'publicPath' in raw && typeof raw.publicPath === 'string' && /^\/watch\/[A-Za-z0-9_-]+$/.test(raw.publicPath))) {
+      return { problem: 'missing' };
+    }
+    return { closedPath: raw.publicPath };
+  }
+  const data = raw as Partial<Snapshot>;
+  if (data.role !== 'spectator' || !['waiting', 'playing', 'between_games', 'finished'].includes(data.status ?? '')
+    || (data.visibility !== undefined && data.visibility !== 'both-hands' && data.visibility !== 'public-board')
     || !Array.isArray(data.players) || !data.hands) throw new Error('Invalid broadcast');
-  return data as Snapshot;
+  return { frame:data as Snapshot };
 }
-
-type BroadcastState = { frame: Snapshot; problem?: never } | { frame?: never; problem: 'loading' | 'missing' | 'error' };
 
 function useBroadcast(endpoint: string, refresh: number) {
   const [state, setState] = useState<BroadcastState>({ problem: 'loading' });
@@ -75,19 +88,19 @@ function useBroadcast(endpoint: string, refresh: number) {
           return;
         }
         if (!response.ok) throw new Error('Broadcast unavailable');
-        const frame = parseSnapshot(await response.json());
+        const next = parseSnapshot(await response.json());
         if (abort.signal.aborted) return;
-        setState({ frame });
-        if (frame.status === 'finished') return;
+        setState(next);
+        if (next.frame?.status === 'finished' || !next.frame) return;
         if (typeof EventSource === 'undefined') { retry(); return; }
         stream = new EventSource(endpoint + '/events');
         stream.addEventListener('snapshot', event => {
           if (abort.signal.aborted) return;
           try {
-            const frame = parseSnapshot(JSON.parse(event.data));
-            setState({ frame });
-            if (frame.status === 'finished') stream?.close();
-          } catch { retry(); }
+            const next = parseSnapshot(JSON.parse(event.data));
+            setState(next);
+            if (next.frame?.status === 'finished' || !next.frame) stream?.close();
+          } catch { setState({ problem: 'error' }); retry(); }
         });
         stream.onerror = retry;
       } catch {
@@ -106,16 +119,18 @@ export function SpectatorBroadcast({ endpoint, tableId, path, onLeave, humanMcpN
 }) {
   const t = useT();
   const [refresh, setRefresh] = useState(0);
-  const { frame, problem } = useBroadcast(endpoint, refresh);
-  const status = [tableId && t('match.input.delegated'), frame && t(`watch.${frame.status}`),
+  const { frame, problem, closedPath } = useBroadcast(endpoint, refresh);
+  const status = [frame?.visibility === 'both-hands' && t('watch.bothScope'), tableId && t('match.input.delegated'), frame && t(`watch.${frame.status}`),
     frame && t('watch.viewers', { count: frame.spectators })].filter(Boolean).join(' · ');
   return <PublicBroadcast.Provider value><MatchHumanSeat.Provider value={(frame?.humanMcpName || humanMcpName)?.toLowerCase() ?? null}><SpectatorFrame status={status} actions={<>
-    {frame && <SpectatorLink tableId={tableId} path={path} publicBoard={frame.visibility === 'public-board'} />}
+    {frame?.visibility === 'both-hands' && frame.seatKnowledge && <SeatKnowledge players={frame.players} knowledge={frame.seatKnowledge} />}
+    {frame && !(path && frame.visibility === 'both-hands') && <SpectatorLink bothHands={frame.visibility === 'both-hands'} tableId={tableId} path={path} publicBoard={frame.visibility === 'public-board'} />}
     {onLeave && <Button variant="quiet" size="sm" onClick={onLeave}>{t('career.backToPlay')}</Button>}
   </>}>
     {frame?.view && frame.gameId ? <ProjectedBoard key={frame.gameId} frame={frame} gameId={frame.gameId} seatDisplayNames={seatDisplayNames} />
       : <div className={styles.empty} role="status">
-        {t(problem ? `watch.${problem}` : `watch.${frame!.status}`)}
+        {closedPath ? <>{t('watch.expandedEnded')}<ButtonLink href={closedPath}>{t('watch.openPublic')}</ButtonLink></>
+          : t(problem ? `watch.${problem}` : `watch.${frame!.status}`)}
         {problem === 'error' && <Button onClick={() => setRefresh(value => value + 1)}>{t('watch.retry')}</Button>}
       </div>}
   </SpectatorFrame></MatchHumanSeat.Provider></PublicBroadcast.Provider>;

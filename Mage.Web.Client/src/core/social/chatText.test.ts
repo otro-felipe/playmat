@@ -5,6 +5,7 @@ import { parseChatMessage } from '../game/gameLog';
 import { decodeEntities } from '../game/entities';
 
 const examples = [
+  ['  Mi texto &amp;amp; 🌿\n\n' + 'Hola '.repeat(35) + 'Último 🦊.  ', '  Mi texto &amp; 🌿\n\n' + 'Hola '.repeat(35) + 'Último 🦊.  '],
   ['Ahora s&iacute;, revancha sin regalar turnos 😈 Suerte, Felipe.', 'Ahora sí, revancha sin regalar turnos 😈 Suerte, Felipe.'],
   ['La nutria ya lleg&oacute; a la oficina. Hoy s&iacute; 😄', 'La nutria ya llegó a la oficina. Hoy sí 😄'],
   ['El &uacute;nico objetivo tambi&eacute;n deja sin resolver Learn.', 'El único objetivo también deja sin resolver Learn.'],

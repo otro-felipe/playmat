@@ -1,6 +1,6 @@
 import * as RadixDialog from '@radix-ui/react-dialog';
 import { ArrowLeft, X } from 'lucide-react';
-import type { ReactNode } from 'react';
+import type { ReactNode, RefObject } from 'react';
 import { useT } from '../i18n';
 import styles from './Dialog.module.css';
 
@@ -9,6 +9,7 @@ export interface DialogProps {
   onOpenChange(open: boolean): void;
   title: string;
   description?: ReactNode;
+  returnFocusRef?: RefObject<HTMLElement | null>;
   children: ReactNode;
   footer?: ReactNode;
   width?: 'sm' | 'md' | 'lg' | 'xl';
@@ -19,7 +20,7 @@ export interface DialogProps {
 }
 
 /** A printed zone laid over the dimmed mat. Focus is trapped and returned on close. */
-export function Dialog({ open, onOpenChange, title, description, children, footer, width = 'md', dismissible = true, onBack }: DialogProps) {
+export function Dialog({ open, onOpenChange, title, description, returnFocusRef, children, footer, width = 'md', dismissible = true, onBack }: DialogProps) {
   const t = useT();
   return (
     <RadixDialog.Root open={open} onOpenChange={dismissible ? onOpenChange : undefined}>
@@ -27,6 +28,9 @@ export function Dialog({ open, onOpenChange, title, description, children, foote
         <RadixDialog.Overlay className={styles.overlay} />
         <RadixDialog.Content
           className={[styles.content, styles[width]].join(' ')}
+          onCloseAutoFocus={returnFocusRef && (event => {
+            if (returnFocusRef.current?.isConnected) { event.preventDefault(); returnFocusRef.current.focus(); }
+          })}
           onEscapeKeyDown={(event) => {
             if (onBack) {
               event.preventDefault();

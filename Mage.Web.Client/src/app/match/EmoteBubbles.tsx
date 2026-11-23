@@ -39,7 +39,8 @@ function Bubble({ bubble, playerId }: { bubble: EmoteBubble; playerId: string })
     const corner = toStagePoint(stage, box.right, box.top);
     const lower = corner.y > stage.height / 2;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- measuring the DOM must happen after layout
-    setAt(lower ? { left: corner.x + 14, bottom: stage.height - corner.y + 6 } : { left: corner.x + 14, top: corner.y + 6 });
+    const left = Math.max(0, Math.min(corner.x + 14, stage.width - 280));
+    setAt(lower ? { left, bottom: stage.height - corner.y + 6 } : { left, top: corner.y + 6 });
   }, [stage, playerId]);
   if (!at) return null;
   if (bubble.sticker) {
@@ -50,7 +51,7 @@ function Bubble({ bubble, playerId }: { bubble: EmoteBubble; playerId: string })
     );
   }
   return (
-    <div className={styles.bubble} style={at} role="status" aria-label={`${bubble.from}: ${bubble.text}`}>
+    <div className={[styles.bubble, styles.message].join(' ')} style={at} role="status" tabIndex={0} aria-label={`${bubble.from}: ${bubble.text}`}>
       {bubble.text}
     </div>
   );

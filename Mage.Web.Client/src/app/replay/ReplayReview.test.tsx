@@ -530,10 +530,13 @@ test('[PM-REVIEW-UI-8] annotation card links select a face and legacy names reta
 });
 
 
-test('[PM-LINE-REPLAY-1] the viewer can hide an agent explanation independently of the analysis panel', async () => {
+test.each([
+  { reasoning: 'Keep mana available.' },
+  { audience:'public', explanation:'Keep mana available.', reasoning:'Legacy text must not replace the public explanation.' },
+])('[PM-LINE-REPLAY-1] the viewer can hide an authorized explanation independently of the analysis panel', async (note) => {
   const original = request.getMockImplementation()!;
   request.mockImplementation((path, options) => path.includes('/evidence?') && path.includes('scope=full')
-    ? json({ next: null, events: [{ cursor: 0, view, lines: [{ cursor: 1, commandId: 'a', actor: 'Alice', seatId: 'alice-seat', reasoning: 'Keep mana available.' }] }] })
+    ? json({ next: null, events: [{ cursor: 0, view, lines: [{ cursor: 1, commandId: 'a', actor: 'Alice', seatId: 'alice-seat', ...note }] }] })
     : original(path, options));
   openReplay();
   expect(await screen.findByText('Keep mana available.')).toBeTruthy();

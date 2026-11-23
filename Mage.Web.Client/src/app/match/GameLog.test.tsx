@@ -139,10 +139,24 @@ describe('GameLog (#249)', () => {
     const drawer = within(screen.getByRole('complementary', { name: 'Game chat' }));
     const input = drawer.getByRole('textbox', { name: 'Chat message' }) as HTMLInputElement;
     await waitFor(() => expect(input.disabled).toBe(false));
-    fireEvent.change(input, { target: { value: 'Nice play!' } });
+    const sample = '  &amp; 🌿\n\n';
+    const body = sample + 'z'.repeat(498 - [...sample].length) + '🦊 ';
+    expect([...body]).toHaveLength(500);
+    fireEvent.change(input, { target: { value: body + '!' } });
     fireEvent.click(drawer.getByRole('button', { name: /^Send$/ }));
-    expect(connection.api.chatSendMessage).toHaveBeenCalledWith('chat1', expect.any(String), 'Nice play!');
-    expect(input.value).toBe('');
+    expect(drawer.getByRole('alert').textContent).toContain('500');
+    expect(input.value).toBe(body+'!');
+    expect(connection.api.chatSendMessage).not.toHaveBeenCalled();
+    connection.api.chatSendMessage.mockRejectedValueOnce(new Error('fixture rejection'));
+    fireEvent.change(input, { target: { value: body } });
+    fireEvent.click(drawer.getByRole('button', {name:'Send'}));
+    await waitFor(() => expect(drawer.getByRole('alert').textContent).toContain('Could not send'));
+    expect(input.value).toBe(body);
+    connection.api.chatSendMessage.mockResolvedValueOnce(true);
+
+    fireEvent.click(drawer.getByRole('button', { name: /^Send$/ }));
+    expect(connection.api.chatSendMessage).toHaveBeenCalledWith('chat1', expect.any(String), body);
+    await waitFor(() => expect(input.value).toBe(''));
 
     fireEvent.click(drawer.getByRole('button', { name: /^Log$/ }));
     expect(screen.getByRole('complementary', { name: 'Game log' })).toBeTruthy();
@@ -194,11 +208,13 @@ test('chat text keeps accents, literal entities and HTML as text while the MCP o
   act(() => useMatchUi.getState().toggleLog(true));
   await waitFor(() => expect(connection.api.chatJoin).toHaveBeenCalled());
   act(() => connection.rpc.emit({ method: 'CHATMESSAGE', objectId: 'chat1', messageId: 20, data: {
-    username: 'mcp_1234567890', messageType: 'TALK', message: 'Ahora s&iacute; 😈 &amp;iacute; [abc] {G} &lt;img src=x onerror=alert(1)&gt;',
+    username: 'mcp_1234567890', messageType: 'TALK', message: 'Cabecera &amp;amp; 🐾\n\nAhora s&iacute; 😈 &amp;iacute; [abc] {G} &lt;img src=x onerror=alert(1)&gt;',
   } }));
   await screen.findByText('Rakún');
   expect(screen.getByText('MCP')).toBeTruthy();
-  expect(container.textContent).toContain('Ahora sí 😈 &iacute; [abc] {G} <img src=x onerror=alert(1)>');
+  const { useEmotes } = await import('./emotes');
+  expect(useEmotes.getState().bubbles.at(-1)?.text).toBe('Cabecera &amp; 🐾\n\nAhora sí 😈 &iacute; [abc] {G} <img src=x onerror=alert(1)>');
+  expect(container.textContent).toContain('Cabecera &amp; 🐾\n\nAhora sí 😈 &iacute; [abc] {G} <img src=x onerror=alert(1)>');
   expect(container.querySelector('img[src="x"], [onerror], script')).toBeNull();
   expect(container.querySelector('.ms-g')).toBeNull();
   expect(container.textContent).not.toContain('mcp_1234567890');

@@ -1,4 +1,4 @@
-import { SpectatorLineBubble } from './SpectatorCommentary';
+import { SpectatorChatBubble } from './SpectatorCommentary';
 import { PlayerLabel } from '../ui/PlayerLabel';
 import { playerLabelText } from '../ui/playerIdentity';
 import { usePlayerIdentity } from '../ui/usePlayerIdentity';
@@ -159,7 +159,7 @@ export function PlayerPlate({ bubbleSide, player, displayName, isMe, targetable,
       }}
       data-object-id={player.playerId}
     >
-      {bubbleSide && <SpectatorLineBubble playerId={player.playerId} side={bubbleSide} />}
+      {bubbleSide && <SpectatorChatBubble playerId={player.playerId} side={bubbleSide} />}
       <PlateFrame frame={supporterRing ? null : look?.frame}>
         <div
           className={[styles.avatar, supporterRing ? styles.ring : ''].join(' ')}

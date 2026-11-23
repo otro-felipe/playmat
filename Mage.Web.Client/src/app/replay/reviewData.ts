@@ -1,3 +1,4 @@
+import type { LineExplanation } from '../match/spectatorFeed';
 import type { ReplayPage } from '../../protocol/options';
 import type { CardView, GameView } from '../../protocol/generated/views';
 
@@ -135,7 +136,7 @@ export interface ReviewMoment {
 
 export interface ReviewEvent extends ReviewMoment {
   type?: string;
-  lines?: { cursor: number; commandId: string; actor: string; seatId: string; reasoning: string }[];
+  lines?: (LineExplanation & { cursor: number; commandId: string; actor: string; seatId: string })[];
   actorPlayerId?: string;
   decision?: ReviewDecisionContext;
   decisions?: ReviewDecisionContext[];

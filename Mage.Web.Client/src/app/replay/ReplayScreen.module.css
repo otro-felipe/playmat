@@ -139,7 +139,7 @@
 }
 
 .lineExplanation svg { flex-shrink: 0; }
-.lineExplanation p { margin: 0; }
+.lineExplanation p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .coverage {
   margin: 0;

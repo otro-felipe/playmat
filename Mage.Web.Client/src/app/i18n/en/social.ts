@@ -35,7 +35,7 @@ export default {
   'mcpInvite.invitedAccount': 'Invited account: {name}.',
   'mcpInvite.instructions.read': 'Before creating, joining or playing, load all four guides in one call to get_guide with {"bundle":true}. Repeat after losing context. Use play_line to play as far as the visible state justifies. Replan when the opponent acts or the game reveals new information.',
   'mcpInvite.instructions.join': 'Find table {tableId} with list_joinable_games. Use join_game with the invited or assigned playerId, inviteLink {link} and a deck legal for its format.',
-  'mcpInvite.instructions.chat': 'Follow the {mode} chat style. {description} Use wait_for_chat with its own cursor alongside play_line. Reply to the other player with send_chat. A line’s reasoning is for spectators.',
+  'mcpInvite.instructions.chat': 'Follow the {mode} chat style. {description} Use wait_for_chat with its own cursor alongside play_line. Reply to the other player with send_chat. Use explanation for a line’s public spectator comment.',
 
   'mcpConnection.title': 'Connect to {app} MCP',
   'mcpConnection.openGuide': 'Connection guide',
