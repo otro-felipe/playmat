@@ -1,4 +1,5 @@
 import { getDeck, isUuid, ProductError, transaction } from './decks.mjs'
+import { canonicalAccountScope } from './players.mjs'
 
 export async function tournamentActor(pool, actor) {
   if (!actor) return null
@@ -6,11 +7,30 @@ export async function tournamentActor(pool, actor) {
     rows: [account],
   } = await pool.query('SELECT tournament_admin FROM accounts WHERE id=$1 AND enabled', [actor.accountId])
   if (!account) throw new ProductError(401, 'Account unavailable')
+  const isAdmin = !actor.agent && !!actor.browserSession && account.tournament_admin
+  const delegated = !actor.playerId && canonicalAccountScope(actor, 'tournaments:manage')
   return {
     ...actor,
     ownerIsAdmin: account.tournament_admin,
-    isAdmin: !actor.agent && !!actor.browserSession && account.tournament_admin,
+    isAdmin,
+    canCreateTournament: isAdmin || Boolean(account.tournament_admin && delegated),
   }
+}
+
+export async function authorizeTournamentCreator(db, actor) {
+  if (actor?.accountId && !actor.agent && actor.isAdmin) return
+  const denied = () => new ProductError(403, 'Tournament creation requires consent from an administrator account')
+  if (!actor?.canCreateTournament || actor.playerId || !canonicalAccountScope(actor, 'tournaments:manage')) throw denied()
+  // Serialize this write with role changes, connection revocation and grant changes.
+  const {rowCount} = await db.query(`SELECT 1 FROM oauth_connections c
+    JOIN accounts a ON a.id=c.account_id
+    JOIN agent_grants g ON g.engine_key=c.engine_key AND g.account_id=a.id
+    WHERE c.id=$1 AND c.account_id=$2 AND c.expires_at>now() AND c.revoked_at IS NULL
+    AND a.enabled AND a.tournament_admin AND g.oauth_managed AND g.player_id IS NULL
+    AND g.revoked_at IS NULL AND g.engine_key='mcp_' || a.username_key
+    AND 'tournaments:manage'=ANY(c.scopes_approved) AND 'tournaments:manage'=ANY(g.scopes)
+    FOR SHARE OF a,c,g`, [actor.connectionId, actor.accountId])
+  if (!rowCount) throw denied()
 }
 
 // Only configured, already-provisioned account IDs can receive the role.

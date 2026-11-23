@@ -14,6 +14,7 @@ const connectionLifetime = 365 * 24 * 60 * 60
 const tokenPattern = /^[a-zA-Z0-9_-]{43}$/
 const verifierPattern = /^[a-zA-Z0-9_.~-]{43,128}$/
 const statePattern = /^[\x21-\x7e]{1,1024}$/
+const accountPermissions = ['players:manage', 'tournaments:manage']
 const htmlEscapes = { '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }
 const escape = value => String(value).replace(/[<>&"']/g, char => htmlEscapes[char])
 const deadline = seconds => new Date(Date.now() + seconds * 1000)
@@ -75,6 +76,7 @@ async function authRequest(params, audience, registry) {
   }
   const requested = params.get('scope')?.trim()
   const scopes = params.has('scope') ? [...new Set(requested.split(/ +/))] : defaultScopes.filter(scope => client.scopes.includes(scope))
+  if (!params.has('scope') && client.scopes.includes('tournaments:manage')) scopes.push('tournaments:manage')
   const allowOptionalManagement = client.scopes.includes('players:manage') && (!params.has('scope') || scopes.includes('players:manage'))
   if ((!scopes.length && !allowOptionalManagement) || scopes.some(scope => !client.scopes.includes(scope))) {
     return { client, state, error: 'invalid_scope' }
@@ -97,15 +99,21 @@ export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions
       const next = requestUrl.pathname + requestUrl.search
       return res.writeHead(303, { Location: '/login?next=' + encodeURIComponent(next), 'Referrer-Policy': 'no-referrer' }).end()
     }
+    const canOfferTournaments = request.scopes.includes('tournaments:manage') &&
+      (await pool.query('SELECT 1 FROM accounts WHERE id=$1 AND enabled AND tournament_admin', [owner.accountId])).rowCount === 1
+    const requestedScopes = request.scopes.filter(scope => scope !== 'tournaments:manage' || canOfferTournaments)
+    if (!requestedScopes.length && !request.allowOptionalManagement) {
+      return callback(res, issuer, request.client, request.state, { error:'access_denied' })
+    }
     const id = randomUUID()
     await pool.query('DELETE FROM oauth_consent_requests WHERE expires_at<=now()')
     await pool.query(`INSERT INTO oauth_consent_requests(id,browser_session,code_challenge,client_state,client_id,redirect_uri,audience,scopes_requested,expires_at,allow_optional_management)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [id, owner.browserSession, request.challenge, request.state, request.client.clientId,
-      request.client.redirectUri, audience, request.scopes, deadline(consentLifetime),request.allowOptionalManagement])
+      request.client.redirectUri, audience, requestedScopes, deadline(consentLifetime),request.allowOptionalManagement])
     const profiles = (await listPlayers(pool, owner)).players.filter(player => player.mcpEnabled)
     const selectPlayer = profiles.length ? `<label>Acceso de la conexión<select name="playerId"><option value="">Cuenta y jugadores MCP habilitados</option>${profiles.map(p => `<option value="${p.playerId}">${escape(p.displayName)}${p.flag ? ' · '+escape(p.flag) : ''}</option>`).join('')}</select></label>
       <p>Si eliges un jugador por nombre, esta conexión solo podrá controlar a ese jugador y usar la biblioteca MCP compartida.</p>` : ''
-    const permissions = request.scopes.filter(scope => scope !== 'players:manage').map(scope => `<li>${scopeLabels[scope]}</li>`).join('')
+    const permissions = requestedScopes.filter(scope => !accountPermissions.includes(scope)).map(scope => `<li>${scopeLabels[scope]}</li>`).join('')
     return html(res, 'Conectar tu cuenta de Thoughtseize', `
       <p>Autoriza a <strong>${escape(request.client.name)}</strong> a usar tu cuenta de Thoughtseize <strong>${escape(owner.username)}</strong> con estos permisos.</p>
       <p>Cliente: ${escape(request.client.clientId)}<br>Destino: <strong>${escape(request.client.redirectUri)}</strong></p>
@@ -114,6 +122,7 @@ export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions
       ${request.scopes.includes('play') ? '<p>Con acceso a la cuenta, una misma conexión puede jugar con cada jugador que habilites en Administrar jugadores. También puede controlar tu asiento humano en las mesas donde permitas ese acceso.</p>' : ''}
       <form method="post" action="/oauth/authorize"><input type="hidden" name="request" value="${id}">${selectPlayer}
       ${request.allowOptionalManagement ? '<label><input type="checkbox" name="manageSlots" value="yes">Permitir a la conexión de cuenta crear nuevos jugadores MCP</label>' : ''}
+      ${canOfferTournaments ? '<label><input type="checkbox" name="manageTournaments" value="yes">Permitir a la conexión de cuenta crear torneos</label>' : ''}
       <button name="decision" value="allow">Autorizar</button>
       <button name="decision" value="deny">Cancelar</button></form>`, new URL(request.client.redirectUri).origin)
   }
@@ -140,13 +149,17 @@ export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions
         const pilot = selected ? await profileConsent(db, owner, selected) : null
         const engineKey = pilot?.engine_key ?? await ensureOAuthAgent(db, owner.accountId)
         const canonical=!pilot && engineKey==='mcp_'+owner.username.toLowerCase()
-        const allowed=pilot?.scopes ?? (canonical ? scopesSupported : scopesSupported.filter(scope=>scope!=='players:manage'))
-        const requested = request.scopes_requested.filter(scope => scope !== 'players:manage')
+        const allowed=pilot?.scopes ?? (canonical ? scopesSupported : scopesSupported.filter(scope=>!accountPermissions.includes(scope)))
+        const requested = request.scopes_requested.filter(scope => !accountPermissions.includes(scope))
         if (canonical && request.allow_optional_management && form.get('manageSlots') === 'yes') requested.push('players:manage')
+        if (canonical && request.scopes_requested.includes('tournaments:manage') && form.get('manageTournaments') === 'yes') {
+          const {rowCount} = await db.query('SELECT 1 FROM accounts WHERE id=$1 AND enabled AND tournament_admin FOR SHARE',[owner.accountId])
+          if (rowCount) requested.push('tournaments:manage')
+        }
         const scopes = approvedScopes(allowed.filter(scope => client.scopes.includes(scope)), requested)
         // Consent raises the ceiling only on this account grant. Existing connections keep their approved scopes.
-        if (canonical && scopes.includes('players:manage')) {
-          await db.query("UPDATE agent_grants SET scopes=array_append(scopes,'players:manage') WHERE engine_key=$1 AND NOT ('players:manage'=ANY(scopes))",[engineKey])
+        for (const scope of scopes.filter(scope=>accountPermissions.includes(scope))) {
+          await db.query('UPDATE agent_grants SET scopes=array_append(scopes,$2) WHERE engine_key=$1 AND NOT ($2=ANY(scopes))',[engineKey,scope])
         }
         if (!scopes.length) throw new ProductError(400, 'Permisos OAuth vencidos')
         const code = newToken()

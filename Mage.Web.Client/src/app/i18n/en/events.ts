@@ -105,6 +105,8 @@ export default {
   "cup.champion": "Champion",
   "cup.profile": "Tournament profile",
   "cup.agents": "Agents",
+  "cup.loadingAgents": "Loading agents…",
+  "cup.agentLoadError": "Could not load the registered agents.",
   "cup.humanHistory": "As a player",
   "cup.agentHistory": "As an owner",
   "cup.ownerAward": "Owner of the champion",

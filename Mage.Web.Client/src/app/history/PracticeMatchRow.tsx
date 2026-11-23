@@ -28,7 +28,7 @@ export function PracticeMatchRow({ match, account, selected, onSelect, initially
   const fullDate = match.startedAt ? formatDate(match.startedAt, { dateStyle: 'medium', timeStyle: 'short' }) : '—';
   const Icon = result === 'win' ? ArrowUpRight : result === 'loss' ? ArrowDownRight : Minus;
   return <li className={styles.match}>
-    <button className={styles.toggle} type="button" aria-expanded={open} aria-controls={detailId} onClick={() => setOpen(!open)}>
+    <button className={styles.toggle} data-outcome={result} type="button" aria-expanded={open} aria-controls={detailId} onClick={() => setOpen(!open)}>
       <span className={styles.date} title={fullDate}><span className={styles.fullDate}>{fullDate}</span><span className={styles.shortDate}>{shortDate}</span></span>
       <span className={styles.rival}>
         {rivals.length ? rivals.map((rival, index) => <Fragment key={rival.name}>
@@ -40,7 +40,7 @@ export function PracticeMatchRow({ match, account, selected, onSelect, initially
       </span>
       <span className={styles.archetype}>{displayArchetype(t, viewer?.archetype)}</span>
       <span className={styles.format}>{match.format === 'Unknown' ? t('history.unreported') : match.format}</span>
-      <span className={styles.outcome} data-outcome={result}><Icon size={15} aria-hidden="true" />{t(`history.${result}`)}</span>
+      <span className={styles.outcome}><Icon size={15} aria-hidden="true" />{t(`history.${result}`)}</span>
       <strong className={styles.score}>{score}</strong>
       <ChevronRight size={16} className={styles.chevron} aria-hidden="true" />
     </button>

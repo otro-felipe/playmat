@@ -111,6 +111,8 @@ const es: Catalog = {
   "cup.champion": "Campeón",
   "cup.profile": "Perfil de torneos",
   "cup.agents": "Agentes",
+  "cup.loadingAgents": "Cargando agentes…",
+  "cup.agentLoadError": "No se pudieron cargar los agentes registrados.",
   "cup.humanHistory": "Como jugador",
   "cup.agentHistory": "Como dueño",
   "cup.ownerAward": "Dueño del agente campeón",

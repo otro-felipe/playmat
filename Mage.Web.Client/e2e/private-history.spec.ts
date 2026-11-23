@@ -70,6 +70,12 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
       await page.goto('/history');
       const opener = page.getByRole('button', { name: /Felipe MCP.*Victoria/i }).first();
       await expect(opener).toHaveAttribute('aria-expanded', 'false');
+      const defeat = page.getByRole('button', { name: /Camila.*Derrota/i }).first();
+      await expect(defeat).toBeVisible();
+      await expect(opener).toHaveCSS('background-image', /linear-gradient/);
+      await expect(defeat).toHaveCSS('background-image', /linear-gradient/);
+      const rowTint = (button: typeof opener) => button.evaluate(el => getComputedStyle(el).backgroundImage);
+      expect(await rowTint(opener)).not.toEqual(await rowTint(defeat));
       await expect(opener).toContainText('2–1');
       const card = page.getByRole('link', { name: /Golgari Midrange/ });
       await expect(card).toContainText('Pioneer');
@@ -140,6 +146,7 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
       await opener.focus();
       await opener.press('Enter');
       await expect(opener).toHaveAttribute('aria-expanded', 'true');
+      await expect(opener).toHaveCSS('background-image', /linear-gradient/);
       await expect(page.getByText('gpt-5').first()).toBeVisible();
       await expect(page.getByText('high').first()).toBeVisible();
       await expect(page.getByText('mcp_e70ebd2d48')).toHaveCount(0);

@@ -58,7 +58,14 @@
   color: var(--ink-strong);
   font: inherit;
 }
-.toggle:hover, .toggle[aria-expanded='true'] { background: rgb(var(--ink-rgb) / .05); }
+.toggle[data-outcome='win'] { --outcome-ink: var(--sage); }
+.toggle[data-outcome='loss'] { --outcome-ink: var(--danger-text); }
+.toggle[data-outcome='win'], .toggle[data-outcome='loss'] {
+  background-image: linear-gradient(90deg,
+    color-mix(in srgb, var(--outcome-ink) 5%, transparent),
+    color-mix(in srgb, var(--outcome-ink) 13%, transparent));
+}
+.toggle:hover, .toggle[aria-expanded='true'] { background-color: rgb(var(--ink-rgb) / .05); }
 .toggle:focus-visible { outline: 2px solid var(--decision); outline-offset: -2px; }
 .shortDate { display: none; }
 .toggle .date, .toggle .format { color: var(--ink-soft); font-size: var(--text-sm); }
@@ -66,9 +73,7 @@
 .rival small { display: block; color: var(--ink-soft); font-size: var(--text-sm); font-weight: 400; overflow: hidden; text-overflow: ellipsis; }
 .rival .mobileArchetype { display: none; }
 .archetype { overflow-wrap: anywhere; }
-.outcome { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: var(--text-sm); color: var(--ink-dim); }
-.outcome[data-outcome='win'] { color: var(--decision-strong); }
-.outcome[data-outcome='loss'] { color: var(--danger-text); }
+.outcome { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: var(--text-sm); color: var(--outcome-ink, var(--ink-dim)); }
 .score { text-align: center; white-space: nowrap; }
 .chevron { color: var(--ink-dim); }
 .details { padding: 14px; background: var(--mat-800); border-left: 2px solid var(--decision); }

@@ -6,13 +6,14 @@ import { registerMessages, useT } from '../i18n';
 import messages from '../i18n/en/events';
 import { Button, ButtonLink } from '../ui/Button';
 import { Zone } from '../ui/Zone';
+import { RegisteredAgents } from '../social/OwnerAgents';
 import { AdminControls, CreateTournamentForm, Registration } from './TournamentForms';
 import {
   request,
   tournamentApi,
   tournamentPath,
   useTournament,
-  type Profile,
+  useTournamentOwner,
   type Tournament,
   type TournamentList,
 } from './tournamentApi';
@@ -370,10 +371,7 @@ export function TournamentScreen({ admin = false }: { admin?: boolean }) {
 export function TournamentOwnerScreen() {
   const { alias = '' } = useParams();
   const t = useT();
-  const profile = useQuery({
-    queryKey: ['tournament-owner', alias],
-    queryFn: ({ signal }) => request<Profile>(tournamentApi + '/profile/' + encodeURIComponent(alias), undefined, signal),
-  });
+  const profile = useTournamentOwner(alias);
   if (!profile.data)
     return (
       <Frame>
@@ -402,15 +400,7 @@ export function TournamentOwnerScreen() {
         )}
       </Zone>
       <Zone label={t('cup.agents')}>
-        {p.agents.length ? (
-          <ul>
-            {p.agents.map((agent) => (
-              <li key={agent.id}>{agent.name}</li>
-            ))}
-          </ul>
-        ) : (
-          <p>{t('cup.noAgents')}</p>
-        )}
+        <RegisteredAgents agents={p.agents} />
       </Zone>
       {(['human', 'agent'] as const).map((kind) => {
         const events = p.participations.filter((e) => e.kind === kind);

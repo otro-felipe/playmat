@@ -86,10 +86,10 @@ function authPath(fields = {}) {
   })
 }
 
-async function authorizePilot(f,owner,scope,playerId,manageSlots=false) {
+async function authorizePilot(f,owner,scope,playerId,manageSlots=false,manageTournaments=false) {
   const page = await f.request(authPath(scope===undefined ? {} : {scope}),owner)
   const request = /name="request" value="([a-f0-9-]{36})"/.exec(await page.text())?.[1]
-  const consent = await f.request('/oauth/authorize',owner,{request,decision:'allow',...(playerId && {playerId}),...(manageSlots && {manageSlots:'yes'})})
+  const consent = await f.request('/oauth/authorize',owner,{request,decision:'allow',...(playerId && {playerId}),...(manageSlots && {manageSlots:'yes'}),...(manageTournaments && {manageTournaments:'yes'})})
   assert.equal(consent.status,303)
   const code = new URL(consent.headers.get('Location')).searchParams.get('code')
   const token = await f.request('/oauth/token',{}, {grant_type:'authorization_code',code,client_id:clientId,redirect_uri:redirect,code_verifier:verifier,resource})
@@ -108,6 +108,50 @@ async function consent(f, headers, parameters = {}) {
   assert.ok(Boolean(request), 'The browser consent request can be submitted')
   return request
 }
+
+test('only an administrator’s explicitly consented account connection can create tournaments on behalf of its owner', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const owner = await f.login('TournamentOwner'), visitor = await f.login('Challenger')
+  const scope = 'tournaments:manage'
+  const cups = '/api/playtesting/tournaments'
+  const write = (path, actor, data) => f.request(path, {...actor, 'Content-Type':'application/json'}, data)
+  const config = {name:'Friday Cup', format:'Standard', capacity:8, cut:'none', requestId:randomUUID()}
+  const create = actor => write(cups, actor, config)
+  const consentPage = async (actor, scopes) => (await f.request(authPath(scopes ? {scope:scopes} : {}), actor)).text()
+  const accountId = (await (await f.request('/api/playtesting/me', owner)).json()).accountId
+  await f.product.setTournamentAdmins([accountId])
+  assert.ok((await (await f.request('/.well-known/oauth-protected-resource/mcp')).json()).scopes_supported.includes(scope))
+  assert.match(await consentPage(owner), /name="manageTournaments"/)
+  assert.match(await consentPage(owner,scope), /name="manageTournaments"/)
+  assert.doesNotMatch(await consentPage(owner,'play'), /name="manageTournaments"/)
+  assert.doesNotMatch(await consentPage(visitor), /name="manageTournaments"/)
+  const before = await authorizePilot(f,owner,'play')
+  const unchecked = await authorizePilot(f,owner,'play '+scope)
+  const forged = await authorizePilot(f,owner,'play',undefined,false,true)
+  const unauthorized = await authorizePilot(f,visitor,'play '+scope,undefined,false,true)
+  const agent = await write('/api/playtesting/players',owner,{displayName:'Mago',mcpEnabled:true}).then(r=>r.json())
+  const scopedSeat = await authorizePilot(f,owner,'play '+scope,agent.playerId,false,true)
+  const approved = await authorizePilot(f,owner,'play '+scope,undefined,false,true)
+  const onlyManagement = await authorizePilot(f,owner,scope,undefined,false,true)
+  const manual = {Authorization:'Bearer '+await f.product.provisionAgent('TournamentOwner','PracticeSeat',['play'])}
+  for (const denied of [visitor, before, unchecked, forged, unauthorized, manual, scopedSeat,
+    {...approved, 'X-Playmat-Player-Id':agent.playerId}]) {
+    assert.equal((await create(denied)).status,403)
+  }
+  assert.equal((await (await f.request(cups)).json()).tournaments.length,0)
+  const list = await (await f.request(cups, approved)).json()
+  assert.equal(list.mayCreate,true)
+  assert.equal(list.viewer.isAdmin,false)
+  const created = await create(onlyManagement)
+  assert.equal(created.status,201)
+  const cup = await created.json()
+  assert.equal(cup.name,config.name)
+  assert.equal(cup.status,'registration')
+  assert.equal((await write(cups+'/'+cup.id+'/admin',approved,{action:'start'})).status,403)
+  await f.product.setTournamentAdmins([])
+  assert.equal((await create(approved)).status,403)
+  assert.equal((await (await f.request(cups,approved)).json()).mayCreate,false)
+})
 
 test('[PM-AC-18] a Playmat account connects its library and rival without a preconfigured agent, then exchanges a single PKCE code', { skip: !databaseUrl }, async t => {
   const f = await fixture(t)
@@ -1690,4 +1734,49 @@ for(const external of [false,true]) test('[PM-RIVAL-ACCOUNT] blank web rival '+(
     assert.equal((await f.request('/internal/invites/'+table+'?host=RivalOwner&guest='+seat.engineName)).status,i===won?200:404)
   }
   assert.equal((await list(x.headers)).length,0)
+})
+
+test('an opted-in organizer creates one public, unopened tournament over the MCP transport', {
+  skip: !databaseUrl || process.env.PLAYMAT_OAUTH_SDK_TEST !== '1',
+}, async t => {
+  const f = await fixture(t)
+  const owner = await f.login('TournamentOrganizer')
+  const identity = await (await f.request('/api/playtesting/me', owner)).json()
+  await f.product.setTournamentAdmins([identity.accountId])
+  const headers = await authorizePilot(f, owner, 'play tournaments:manage', undefined, false, true)
+
+  const { createMcpServer } = await import('../mcp/src/server.mjs')
+  const { createProductClient } = await import('../mcp/src/product.mjs')
+  const requireMcp = createRequire(new URL('../mcp/package.json', import.meta.url))
+  const { Client } = requireMcp('@modelcontextprotocol/sdk/client/index.js')
+  const { StreamableHTTPClientTransport } = requireMcp('@modelcontextprotocol/sdk/client/streamableHttp.js')
+  const product = createProductClient(f.endpoint, issuer)
+  const server = createMcpServer({ authorize: product.authorize, product: product.operation })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const client = new Client({ name: 'local-tournament-organizer', version: '1' })
+  t.after(async () => {
+    await client.close()
+    server.closeAllConnections()
+    server.close()
+  })
+  await client.connect(new StreamableHTTPClientTransport(new URL('http://127.0.0.1:' + server.address().port + '/mcp'), {
+    requestInit: { headers },
+  }))
+  const create = { name: 'create_tournament', arguments: { requestId: randomUUID(), name: 'Friday Swiss' } }
+  const first = await client.callTool(create)
+  assert.equal(first.isError, false)
+  const receipt = JSON.parse(first.content[0].text)
+  assert.equal(receipt.publicUrl, issuer + '/tournaments/' + receipt.id)
+  assert.equal(receipt.adminUrl, receipt.publicUrl + '/admin')
+  assert.deepEqual(JSON.parse((await client.callTool(create)).content[0].text), receipt)
+  const board = await (await f.request('/api/playtesting/tournaments/' + receipt.id)).json()
+  assert.equal(board.status, 'registration')
+  assert.equal(board.capacity, 8)
+  assert.equal(board.cut, 'none')
+  assert.equal(board.swissBestOf, 3)
+  assert.deepEqual(board.participants, [])
+  assert.deepEqual(board.pairings, [])
+  const list = await (await f.request('/api/playtesting/tournaments')).json()
+  assert.deepEqual(list.tournaments.map(row => row.id), [receipt.id])
 })

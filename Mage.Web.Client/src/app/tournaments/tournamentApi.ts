@@ -131,6 +131,15 @@ export async function request<T>(
   }
   return response.json();
 }
+
+export function useTournamentOwner(alias: string) {
+  return useQuery({
+    queryKey: ['tournament-owner', alias.toLowerCase()],
+    queryFn: ({ signal }) => request<Profile>(tournamentApi + '/profile/' + encodeURIComponent(alias), undefined, signal),
+    retry: false,
+  });
+}
+
 export function useTournament(id: string) {
   const client = useQueryClient();
   const url = tournamentApi + '/' + encodeURIComponent(id);

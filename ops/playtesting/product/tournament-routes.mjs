@@ -116,14 +116,14 @@ export function createTournamentRoutes({
     const read = req.method === 'GET'
     if (!read && !actor) throw new ProductError(401, 'Sign in to register or manage a tournament')
     if (!read && req.method !== 'POST') throw new ProductError(405, 'Use POST')
-    if (!read) requireScope(actor, 'play')
+    if (!read) requireScope(actor, !id && actor.agent ? 'tournaments:manage' : 'play')
     if (!id) {
       if (read)
         send(res, 200, {
           tournaments: await tournaments.list(actor),
           viewer: viewer(actor),
-          mayCreate: actor?.isAdmin === true,
-          ...(actor?.isAdmin && { attendanceStructures: attendanceStructureRanges }),
+          mayCreate: actor?.canCreateTournament === true,
+          ...(actor?.canCreateTournament && { attendanceStructures: attendanceStructureRanges }),
         })
       else send(res, 201, await tournaments.create(actor, await inputObject(req)))
     } else if (id === 'profile' && segments.length === 2 && read && /^[a-z0-9_-]{3,24}$/i.test(operation)) {

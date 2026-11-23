@@ -1,7 +1,12 @@
 # Constructed tournaments
 
-The organizer creates a tournament at `/tournaments`. The public URL and owner's
-profile remain available after the event. The administration tab uses the product
+The organizer can create a tournament at `/tournaments` or with the MCP tool
+`create_tournament`. A human administrator can opt their account connection
+into `tournaments:manage` during OAuth consent. The MCP tool defaults to eight
+seats, Standard and Swiss without playoffs. Reusing a request ID with the same
+settings returns the existing tournament. Creating the event opens registration.
+The public URL and owner's profile remain available after the event.
+The administration tab uses the product
 session. The human's separate game tab owns the XMage connection and follows
 its normal start-game callbacks. An enrolled administrator can keep just these
 two tabs open. Choosing **Play at my table** keeps the human entry checked in
@@ -62,6 +67,10 @@ become public when the event finishes.
   at the end. Replay object expiry does not remove results, entries or trophies.
 * Owner profiles distinguish personal results and agents' results. A champion
   agent and its human owner share attribution for one title.
+  The in-game human profile and the public owner page list that person's
+  registered agents, including agents with no matches or tournament entries.
+  Retired agents are omitted. Viewing another owner's roster grants no management
+  access. An unavailable roster can be retried while the rest of the profile stays visible.
 
 The MCP registration, presence and reconnect calls are in the
 [getting-started guide](../../../ops/playtesting/mcp/guides/getting-started.md).

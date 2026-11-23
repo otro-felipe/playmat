@@ -40,6 +40,10 @@ export function createProductClient(baseUrl, publicUrl) {
     let path;
     let config;
     switch (name) {
+      case 'create_tournament':
+        path = root + '/tournaments';
+        config = { method: 'POST', body: args };
+        break;
       case 'list_tournaments':
         path = root + '/tournaments';
         break;
@@ -166,6 +170,9 @@ export function createProductClient(baseUrl, publicUrl) {
     const response = await request(token, path, { ...config, playerId,
       ...(['list_joinable_games','inspect_game_invite','get_game_invite'].includes(name) && {inviteToken:args.inviteToken}) });
     if (!response.ok) {
+      if (name === 'create_tournament' && response.status === 409) {
+        throw new ToolError('request_conflict', 'This requestId was already used with different tournament settings. Reuse the original settings to recover its links, or choose a new requestId for a different event.');
+      }
       if (name === 'player_reservation' && response.status === 409) {
         throw new ToolError('player_busy', 'This player already has a reservation. Check its current table before retrying.');
       }
@@ -190,6 +197,11 @@ export function createProductClient(baseUrl, publicUrl) {
       throw new ToolError(...known);
     }
     const data = response.status === 204 ? { accepted: true } : await response.json();
+    if (name === 'create_tournament') {
+      const path = '/tournaments/' + encode(data.id);
+      const publicLink = publicUrl ? new URL(path, publicUrl).href : path;
+      return { id: data.id, publicUrl: publicLink, adminUrl: publicLink + '/admin' };
+    }
     if (name === 'export_matches' && typeof data.path === 'string' && data.path.startsWith('/api/playtesting/')) {
       return { ...data, ...(publicUrl ? { downloadUrl: new URL(data.path, publicUrl).href } : {}) };
     }

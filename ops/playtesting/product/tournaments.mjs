@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+import { authorizeTournamentCreator } from './tournament-access.mjs'
 import { ProductError, getDeck, isUuid, normalizeFormat, transaction } from './decks.mjs'
 import { tournamentStructure } from './tournament-rules.mjs'
 import {
@@ -43,6 +45,25 @@ function structureSettings(input, format) {
   return { template, cut, rounds }
 }
 
+const uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+function creationSettings(input) {
+  const name = String(input.name ?? '').trim(),
+    format = normalizeFormat(input.format)
+  if (!name || name.length > 100 || !format)
+    throw new ProductError(400, 'Choose a tournament name and Constructed format')
+  const { template, cut, rounds } = structureSettings(input, format)
+  if (template === 'worlds' && input.coaching === true) throw new ProductError(400, 'Worlds requires autonomous play')
+  const capacity = integral(input.capacity ?? 32, 2, 512, 'capacity')
+  const swiss = input.swissBestOf ?? 3,
+    playoff = input.playoffBestOf ?? (template === 'worlds' ? 5 : 3)
+  if (![3, 5].includes(swiss) || ![3, 5].includes(playoff))
+    throw new ProductError(400, 'Choose best of three or five')
+  const maxAgents = integral(input.maxAgentsPerOwner ?? capacity, 1, capacity, 'maximum agents per owner')
+  const rest = integral(input.breakMinutes ?? 5, 0, 1440, 'round break')
+  return [name, format, template, cut, capacity, rounds, swiss, playoff, maxAgents, input.coaching === true, rest]
+}
+
 export function createTournamentService(
   pool,
   {
@@ -62,41 +83,31 @@ export function createTournamentService(
     return rows.map((t) => ({ ...summary(t), registeredCount: t.count }))
   }
   async function create(actor, input) {
-    requireAdmin(actor)
-    const name = String(input.name ?? '').trim(),
-      format = normalizeFormat(input.format)
-    if (!name || name.length > 100 || !format)
-      throw new ProductError(400, 'Choose a tournament name and Constructed format')
-    const { template, cut, rounds } = structureSettings(input, format)
-    const capacity = integral(input.capacity ?? 32, 2, 512, 'capacity')
-    const swiss = input.swissBestOf ?? 3,
-      playoff = input.playoffBestOf ?? (template === 'worlds' ? 5 : 3)
-    if (![3, 5].includes(swiss) || ![3, 5].includes(playoff))
-      throw new ProductError(400, 'Choose best of three or five')
-    const maxAgents = integral(input.maxAgentsPerOwner ?? capacity, 1, capacity, 'maximum agents per owner')
-    const rest = integral(input.breakMinutes ?? 5, 0, 1440, 'round break')
-    const {
-      rows: [t],
-    } = await pool.query(
-      `INSERT INTO tournaments(name,format,organizer_id,template,cut,capacity,requested_rounds,
-      swiss_best_of,playoff_best_of,max_agents_per_owner,coaching,break_minutes,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
-      [
-        name,
-        format,
-        actor.accountId,
-        template,
-        cut,
-        capacity,
-        rounds,
-        swiss,
-        playoff,
-        maxAgents,
-        input.coaching === true,
-        rest,
-        clock(),
-      ],
-    )
-    return get(t.id, actor)
+    return transaction(pool, async (db) => {
+      await authorizeTournamentCreator(db, actor)
+      const { requestId } = input
+      if ((requestId !== undefined || actor.agent) && !(typeof requestId === 'string' && uuidV4.test(requestId))) {
+        throw new ProductError(400, 'Provide a UUID version 4 creation request ID')
+      }
+      const settings = creationSettings(input)
+      // Fingerprint the initial, normalized settings; organizers can edit the structure after creation.
+      const hash = requestId ? createHash('sha256').update(JSON.stringify(settings)).digest('hex') : null
+      const { rows: [created] } = await db.query(
+        `INSERT INTO tournaments(organizer_id,creation_request_id,creation_request_hash,created_at,
+          name,format,template,cut,capacity,requested_rounds,swiss_best_of,playoff_best_of,max_agents_per_owner,coaching,break_minutes)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+         ON CONFLICT (organizer_id,creation_request_id) WHERE creation_request_id IS NOT NULL DO NOTHING RETURNING *`,
+        [actor.accountId, requestId ?? null, hash, clock(), ...settings],
+      )
+      if (created) return view(db, created, actor, clock(), onlineMs)
+      const { rows: [previous] } = await db.query(
+        'SELECT * FROM tournaments WHERE organizer_id=$1 AND creation_request_id=$2 FOR SHARE',
+        [actor.accountId, requestId],
+      )
+      if (previous?.creation_request_hash !== hash)
+        throw new ProductError(409, 'That creation request ID belongs to different tournament settings')
+      return view(db, previous, actor, clock(), onlineMs)
+    })
   }
   async function join(id, actor, { deckId }) {
     validId(id)

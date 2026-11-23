@@ -251,14 +251,18 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
       || ['list_recoverable_matches', 'get_recovery_status', 'recover_match'].includes(name));
     if (gameTool || ['create_game','join_game'].includes(name)) inputSchema = { ...inputSchema,
       humanTableId: Uuid.optional().describe('Supply the opted-in table ID on every call for the Human Player. Omit to use the MCP Player.') };
-    inputSchema = { ...inputSchema, playerId: Uuid.optional().describe('Persistent Thoughtseize player ID from list_players. Supply it on each seat call when your connection controls named players. A profile-bound grant keeps its own player when omitted. Use game object IDs for targets inside actions.') };
-    mcp.registerTool(name, { description, inputSchema, annotations: { readOnlyHint },
+    inputSchema = name === 'create_tournament' ? z.strictObject(inputSchema) : { ...inputSchema, playerId: Uuid.optional().describe('Persistent Thoughtseize player ID from list_players. Supply it on each seat call when your connection controls named players. A profile-bound grant keeps its own player when omitted. Use game object IDs for targets inside actions.') };
+    mcp.registerTool(name, { description, inputSchema, annotations: { readOnlyHint, ...(name === 'create_tournament' && { idempotentHint: true }) },
       _meta: { securitySchemes: scopes.map(value => ({ type: 'oauth2', scopes: [value] })) },
     }, async (args, extra) => {
       try {
         const selectedContext = await contextFor(args.playerId);
         const { actor, human, terminalReceipt, reauthorize, ownsLegacyGame } = selectedContext;
-        if (!actor.scopes.includes(scope) || actor.playerId && scope === 'history') throw new ToolError('forbidden', 'This credential lacks the required scope.');
+        if (!actor.scopes.includes(scope) || actor.playerId && scope === 'history') {
+          throw new ToolError('forbidden', name === 'create_tournament'
+            ? 'An administrator must authorize the account connection with the optional tournaments:manage permission.'
+            : 'This credential lacks the required scope.');
+        }
         checkPlayerSelection(actor, args, name);
         const humanRoute = args.humanTableId && (gameTool || name === 'start_match');
         if (args.humanTableId && !humanRoute) throw new ToolError('player_forbidden', 'Use the opted-in Human Player tools for this table.');
@@ -425,6 +429,28 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
   }, true);
   tool('list_tournaments', 'Discover constructed tournaments, structures and registration status.', {}, 'play',
     () => fromProduct('list_tournaments', {}), true);
+  const bestOf = z.union([z.literal(3), z.literal(5)]);
+  tool('create_tournament', 'Open registration for a Constructed tournament as the human organizer. Requires an administrator account connection with tournament consent. Reuse the requestId and settings when retrying. The organizer starts play from the returned adminUrl.', {
+    requestId: Uuid.describe('A fresh UUID per event, kept across retries.'),
+    name: z.string().trim().min(1).max(100),
+    format: Format.default('Standard'),
+    template: z.enum(['attendance', 'worlds']).default('attendance').describe('Attendance scales with checked-in players. Worlds uses 14 Standard Swiss rounds and a Top 8.'),
+    capacity: z.number().int().min(2).max(512).optional().describe('Defaults to 8 seats, or 128 for Worlds.'),
+    cut: z.enum(['none', 'auto']).optional().describe('Defaults to rounds only for attendance. Auto uses the attendance cut up to Top 8. Worlds requires auto.'),
+    swissRounds: z.number().int().min(1).max(14).optional().describe('Override the round count for rounds-only events. Eight checked-in players play three rounds by default.'),
+    swissBestOf: bestOf.optional().describe('Defaults to 3.'),
+    playoffBestOf: bestOf.optional().describe('Defaults to 3 for attendance or 5 for Worlds.'),
+    maxAgentsPerOwner: z.number().int().min(1).max(512).optional().describe('Defaults to capacity.'),
+    breakMinutes: z.number().int().min(0).max(1440).optional().describe('Minutes between rounds. Defaults to 5.'),
+    coaching: z.boolean().optional().describe('Allow coaching for a casual tournament. Defaults to false.'),
+  }, 'tournaments:manage', args => {
+    const { actor } = current();
+    if (!actor.accountAgent || !actor.connectionId || actor.playerId) {
+      throw new ToolError('forbidden', 'Authorize tournament creation on the administrator account connection.');
+    }
+    const worlds = args.template === 'worlds';
+    return fromProduct('create_tournament', { ...args, cut: args.cut ?? (worlds ? 'auto' : 'none'), capacity: args.capacity ?? (worlds ? 128 : 8) });
+  });
   tool('get_tournament', 'Read public standings, pairings for a round or a published deck. Entry IDs come from standings.', {
     tournamentId: Uuid,
     section: z.enum(['standings', 'pairings', 'deck']).default('standings'),

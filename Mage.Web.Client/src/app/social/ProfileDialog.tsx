@@ -1,5 +1,5 @@
 import { PlayerLabel } from '../ui/PlayerLabel';
-import { playerLabelText } from '../ui/playerIdentity';
+import { playerIdentity, playerLabelText } from '../ui/playerIdentity';
 import { useQuery } from '@tanstack/react-query';
 import { Ban, Flag as FlagIcon, History, MessageCircle, Star, StarOff } from 'lucide-react';
 import { lazy, Suspense, useMemo } from 'react';
@@ -21,6 +21,7 @@ import { useLook } from '../support/supportData';
 import { THANK_YOU } from '../support/thankYou';
 import { titleColor, titleName } from '../career/progressModel';
 import { LevelBadge } from './LevelBadge';
+import { OwnerAgents } from './OwnerAgents';
 import { gameKind, levelShare, recentGames, shownLevel } from './progressionModel';
 import styles from './ProfileDialog.module.css';
 
@@ -93,7 +94,12 @@ function Profile({ name, onClose }: { name: string; onClose(): void }) {
         <p className={styles.note}><PlayerLabel name={name} /> is not online, so their record isn't available right now.</p>
       )}
 
-      {PRIVATE_PLAYTESTING && <Link onClick={onClose} to={'/tournaments/owners/' + encodeURIComponent(name)}>{t('shell.nav.tournaments')}</Link>}
+      {PRIVATE_PLAYTESTING && !playerIdentity(name).isMcp && (
+        <>
+          <OwnerAgents owner={name} />
+          <Link onClick={onClose} to={'/tournaments/owners/' + encodeURIComponent(name)}>{t('shell.nav.tournaments')}</Link>
+        </>
+      )}
       <Progression name={name} />
 
       {isMe ? <Identity /> : (

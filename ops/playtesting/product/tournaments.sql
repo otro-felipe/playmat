@@ -10,6 +10,10 @@ CREATE TABLE IF NOT EXISTS tournaments (
   cut_size integer NOT NULL DEFAULT 0, deadline_at bigint, next_round_at bigint,
   next_session_at bigint, champion_id uuid
 );
+ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS creation_request_id uuid;
+ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS creation_request_hash text;
+CREATE UNIQUE INDEX IF NOT EXISTS tournament_creation_request ON tournaments(organizer_id,creation_request_id)
+  WHERE creation_request_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS tournament_entries (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tournament_id uuid NOT NULL REFERENCES tournaments(id),

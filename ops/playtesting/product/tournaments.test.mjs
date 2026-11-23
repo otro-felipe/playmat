@@ -216,6 +216,55 @@ async function scheduledFixture(t, count, config = {}) {
 
 const dbTest = (title, run) => test(title, { skip: !process.env.PLAYMAT_TEST_DATABASE_URL }, run)
 
+dbTest('owner profiles include newly registered agents of the viewed owner and omit retired profiles', async (t) => {
+  const f = await scheduledFixture(t, 2)
+  const otherOwner = randomUUID()
+  await f.pool.query("INSERT INTO accounts(id,username,username_key,password_hash) VALUES($1,'Neighbor','neighbor','fixture')", [otherOwner])
+  const freshId = randomUUID(), otherId = randomUUID()
+  await f.pool.query(`INSERT INTO player_profiles(id,account_id,display_name,mcp_enabled,retired_at) VALUES
+    ($1,$2,'New pilot',false,NULL),($3,$4,'Neighbor pilot',true,NULL),($5,$2,'Retired pilot',false,now())`,
+    [freshId, f.owner.accountId, otherId, otherOwner, randomUUID()])
+  const own = await f.service.profile(f.owner.username)
+  assert.deepEqual(own.agents.map(p => p.name), ['Agent 0', 'Agent 1', 'New pilot'])
+  const neighbor = await f.service.profile('Neighbor')
+  assert.deepEqual(neighbor.agents, [{ id: otherId, name: 'Neighbor pilot' }])
+  assert.deepEqual(neighbor.participations, [])
+})
+
+dbTest('tournament creation retries are scoped to the organizer and the original normalized settings', async (t) => {
+  const f = await scheduledFixture(t, 2)
+  const input = { name: '  Friday cup ', format: 'constructed Standard', capacity: 8, cut: 'none', requestId: randomUUID() }
+  const explicit = { ...input, name: 'Friday cup', format: 'Standard', template: 'attendance', maxAgentsPerOwner: 8,
+    coaching: false, breakMinutes: 5, swissBestOf: 3, playoffBestOf: 3 }
+  const create = (body) => f.service.create(f.owner, body)
+  await assert.rejects(create({ ...input, template: 'worlds', cut: 'auto', coaching: true }), { status: 400 })
+  const receipts = await Promise.all([create(input), create(explicit), create(input)])
+  assert.deepEqual(receipts[0], receipts[1])
+  assert.deepEqual(receipts[1], receipts[2])
+  assert.equal((await f.service.list()).filter(cup => cup.name === 'Friday cup').length, 1)
+  for (const different of [{ name: 'Saturday cup' }, { format: 'Pioneer' }, { capacity: 16 }, { cut: 'auto' },
+    { swissRounds: 3 }, { maxAgentsPerOwner: 1 }, { coaching: true }, { breakMinutes: 0 }, { swissBestOf: 5 }, { playoffBestOf: 5 }]) {
+    await assert.rejects(create({ ...explicit, ...different }), { status: 409 })
+  }
+  const cupId = receipts[0].id
+  await f.service.action(cupId, f.owner, { action: 'structure', template: 'worlds', cut: 'auto' })
+  assert.equal((await f.restart().create(f.owner, input)).id, cupId)
+  await assert.rejects(create({ ...explicit, template: 'worlds', cut: 'auto' }), { status: 409 })
+  const otherOwner = { ...f.owner, username: 'secondowner', accountId: randomUUID() }
+  await f.pool.query("INSERT INTO accounts(id,username,username_key,password_hash) VALUES($1,$2,$2,'fixture')",
+    [otherOwner.accountId, otherOwner.username])
+  assert.notEqual((await f.service.create(otherOwner, input)).id, cupId)
+  const { requestId, ...legacy } = input
+  assert.notEqual((await create(legacy)).id, (await create(legacy)).id)
+  for (const invalid of ['', 'not-a-uuid', '00000000-0000-1000-8000-000000000000']) {
+    await assert.rejects(create({ ...input, requestId: invalid }), { status: 400 })
+  }
+  const raceId = randomUUID()
+  const race = await Promise.allSettled(['A', 'B'].map(name => create({ ...input, requestId: raceId, name })))
+  assert.equal(race.filter(result => result.status === 'fulfilled').length, 1)
+  assert.equal(race.find(result => result.status === 'rejected')?.reason.status, 409)
+})
+
 async function observedWaiting(fixture, pairing, seconds) {
   const observe = () => fixture.service.observeWaitingTable(fixture.id, pairing.pairingId, pairing.tableId)
   await observe()
