@@ -107,6 +107,7 @@ export async function verifyPlayerIdentities({ base, issuer, Cookie, authorizePi
 
   // Identical gameId and commandId on opposite seats must resolve within each selected ledger.
   const commandId='keep-the-observed-hand'
+  const explanation='Acepto la decisión de apertura y cedo prioridad; el rival puede responder.'
   const receipts = new Map()
   await Promise.all([0,2,1,3].map(async i => {
     let state = await as(i,'get_game_state')
@@ -117,6 +118,7 @@ export async function verifyPlayerIdentities({ base, issuer, Cookie, authorizePi
         const keep = decision.choices.find(c=>/^Keep\b/i.test(c.label))
         assert.ok(keep,'The mulligan prompt offers Keep')
         const reply=await as(i,'play_line',{gameId,cursor,commandId,waitMs:25000,view:'compact',
+          ...(spectatorOnly && i===0 ? {explanation}:{}),
           actions:[{kind:'choose',decisionId:decision.id,choiceId:keep.id}]})
         if (reply.status==='rejected' && reply.code==='stale_decision') {
           // The peer may have advanced the shared cursor without answering this seat's question.
@@ -151,6 +153,12 @@ export async function verifyPlayerIdentities({ base, issuer, Cookie, authorizePi
   const {path:priv}=await shared.json()
   const address=base+priv.replace('/watch/','/api/playtesting/spectate/')
   assert.ok(address!==broadcasts[0])
+  const publicLine=spectatorOnly && await until(async()=>{
+    const {lines,chat}=await (await fetch(broadcasts[0])).json()
+    assert.deepEqual(chat,[])
+    const row=lines?.find(row=>row.explanation===explanation)
+    return row?.audience==='public' && row.playerId===states[0].players.find(p=>p.yourSeat).id && row
+  },'the public broadcast to receive the marked explanation for the host seat')
   function checkBoth(snapshot){
     assert.equal(snapshot.gameId,states[0].gameId)
     assert.equal(snapshot.visibility,'both-hands')
@@ -166,6 +174,7 @@ export async function verifyPlayerIdentities({ base, issuer, Cookie, authorizePi
     assert.ok(!JSON.stringify(snapshot).includes('"name":"'+basics[2]+'"'))
     assert.ok(!JSON.stringify(snapshot).includes('"name":"'+basics[3]+'"'))
     assert.deepEqual(snapshot.chat,[])
+    if(publicLine)assert.deepEqual(snapshot.lines.find(row=>row.lineId===publicLine.lineId),publicLine)
   }
   checkBoth(await (await fetch(address)).json())
   // Two independent subscriptions read the same immutable entitlement after reconnecting.
@@ -185,10 +194,12 @@ export async function verifyPlayerIdentities({ base, issuer, Cookie, authorizePi
   }
   if(spectatorOnly){
     const gameId=states[0].gameId
-    const message='Prueba &amp; áβ\n'.padEnd(500,'x')
+    const start='Prueba &amp; áβ🧠\n'
+    const message=start+'x'.repeat(500-[...start].length)
     await as(0,'send_chat',{gameId,message})
     await until(async()=>{
       const logs=await Promise.all([0,1].map(i=>as(i,'list_chat',{gameId})))
+      assert.ok(logs.every(log=>log.messages.every(row=>row.message!==explanation)))
       return logs.every(log=>log.messages.some(row=>row.message===message))
     },'both match peers to receive the complete 500-character chat')
     await until(async()=>{
