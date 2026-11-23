@@ -295,6 +295,47 @@ export function Registration({ cup, refresh }: { cup: Tournament; refresh(): voi
   );
 }
 
+function RetryFailedStart({ cup, refresh }: { cup: Tournament; refresh(): void }) {
+  const t = useT();
+  const [tableId, setTableId] = useState('');
+  const [confirmed, setConfirmed] = useState(false);
+  const candidates = cup.pairings.filter(p => p.roundNumber === cup.roundNumber && p.b && p.tableId && !p.completed && !p.matchId);
+  const selected = candidates.find(p => p.tableId === tableId);
+  const retry = useMutation({
+    mutationFn: (pairingId: string) => request(tournamentApi + '/' + encodeURIComponent(cup.id) + '/admin', {
+      action: 'retryFailedStart', pairingId, tableId, confirmedPreGameFailure: true,
+    }),
+    onSuccess: () => { setTableId(''); setConfirmed(false); refresh(); },
+  });
+  return (
+    <details>
+      <summary>{t('cup.recoverStart')}</summary>
+      <form className={styles.form} onSubmit={event => {
+        event.preventDefault();
+        if (selected && confirmed && !retry.isPending) retry.mutate(selected.id);
+      }}>
+        <Select label={t('cup.recoverTable')} value={selected ? tableId : ''} disabled={retry.isPending}
+          onChange={id => { setTableId(id); setConfirmed(false); retry.reset(); }}>
+          <option value="">{t('cup.chooseTable')}</option>
+          {candidates.map(p =>
+            <option key={p.tableId} value={p.tableId}>
+              {t('cup.table', { n: p.number })} · {cup.participants.find(e => e.id === p.a)?.name} / {cup.participants.find(e => e.id === p.b)?.name}
+            </option>
+          )}
+        </Select>
+        <label className={styles.check}>
+          <input type="checkbox" checked={!!selected && confirmed} disabled={!selected || retry.isPending}
+            onChange={event => setConfirmed(event.target.checked)} />
+          {t('cup.confirmFailedStart')}
+        </label>
+        <div><Button type="submit" disabled={!selected || !confirmed} busy={retry.isPending}>{t('cup.retryStart')}</Button></div>
+        {retry.isSuccess && <p role="status">{t('cup.recoveryQueued')}</p>}
+        {retry.error && <p role="alert" className={styles.error}>{retry.error.message}</p>}
+      </form>
+    </details>
+  );
+}
+
 export function AdminControls({ cup, refresh }: { cup: Tournament; refresh(): void }) {
   const t = useT();
   const [when, setWhen] = useState('');
@@ -312,6 +353,7 @@ export function AdminControls({ cup, refresh }: { cup: Tournament; refresh(): vo
   });
   return (
     <div className={styles.stack}>
+      {cup.status === 'playing' && <RetryFailedStart key={cup.id + '/' + cup.roundNumber} cup={cup} refresh={refresh} />}
       {cup.status === 'registration' && (
         <div>
           <Button variant="decision" busy={admin.isPending} onClick={() => admin.mutate({ action: 'start' })}>

@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS tournament_pairings (
   UNIQUE(tournament_id,round_number,number)
 );
 ALTER TABLE tournament_pairings ADD COLUMN IF NOT EXISTS launched boolean NOT NULL DEFAULT false;
+ALTER TABLE tournament_pairings ADD COLUMN IF NOT EXISTS launch_requested_at bigint;
 ALTER TABLE tournament_pairings ADD COLUMN IF NOT EXISTS attendance_elapsed_ms bigint NOT NULL DEFAULT 0;
 ALTER TABLE tournament_pairings ADD COLUMN IF NOT EXISTS attendance_observed_at bigint;
 CREATE INDEX IF NOT EXISTS tournament_pending_tables ON tournament_pairings(tournament_id) WHERE NOT completed;
@@ -56,6 +57,7 @@ ALTER TABLE tournament_pairings ADD COLUMN IF NOT EXISTS original_engine_table_i
 CREATE TABLE IF NOT EXISTS tournament_pairing_tables (
   table_id uuid PRIMARY KEY, pairing_id uuid NOT NULL REFERENCES tournament_pairings(id) ON DELETE CASCADE
 );
+ALTER TABLE tournament_pairing_tables ADD COLUMN IF NOT EXISTS failed_start_retried_at bigint;
 CREATE INDEX IF NOT EXISTS tournament_pairing_tables_pair ON tournament_pairing_tables(pairing_id);
 CREATE OR REPLACE FUNCTION remember_tournament_pairing_table() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN

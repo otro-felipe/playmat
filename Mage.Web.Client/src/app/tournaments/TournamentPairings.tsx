@@ -8,7 +8,7 @@ import { Identity } from './TournamentStandings';
 import { tournamentPath, type Entry, type Pairing, type Tournament } from './tournamentApi';
 import styles from './TournamentScreen.module.css';
 
-function PairingRow({ pair, entries, tournamentId }: { pair: Pairing; entries: Map<string, Entry>; tournamentId: string }) {
+function PairingRow({ pair, entries, cup }: { pair: Pairing; entries: Map<string, Entry>; cup: Tournament }) {
   const t = useT();
   const tiebreakWinner = pair.completed && pair.winsA === pair.winsB && pair.winner ? entries.get(pair.winner) : null;
   const a = entries.get(pair.a),
@@ -25,6 +25,9 @@ function PairingRow({ pair, entries, tournamentId }: { pair: Pairing; entries: M
           <div className={styles.score}>
             {pair.completed ? pair.winsA + ' – ' + pair.winsB : t(pair.tableId ? 'cup.active' : 'cup.pending')}
           </div>
+        )}
+        {!pair.completed && pair.tableId && pair.deadlineAt && pair.deadlineAt !== cup.deadlineAt && (
+          <p>{t('cup.tableClock')} · <Countdown at={pair.deadlineAt} expired={t('cup.extraTurns')} /></p>
         )}
         {tiebreakWinner && <p>{t('cup.matchWinner', { name: tiebreakWinner.name })}</p>}
         {!!pair.absentWarningIds?.length && (
@@ -54,7 +57,7 @@ function PairingRow({ pair, entries, tournamentId }: { pair: Pairing; entries: M
           </Link>
         )}
         {pair.playUrl && !pair.completed && (
-          <ButtonLink target="_blank" rel="noopener" href={tournamentPath(tournamentId) + '/play'}>
+          <ButtonLink target="_blank" rel="noopener" href={tournamentPath(cup.id) + '/play'}>
             {t('cup.openSeat')}
           </ButtonLink>
         )}
@@ -90,7 +93,7 @@ export function EliminationBracket({ cup, entries }: { cup: Tournament; entries:
             <h3>{title}</h3>
             <ul className={styles.branch}>
               {pairs.map((p) => (
-                <PairingRow tournamentId={cup.id} key={p.id} pair={p} entries={entries} />
+                <PairingRow cup={cup} key={p.id} pair={p} entries={entries} />
               ))}
             </ul>
           </section>
@@ -114,7 +117,7 @@ export function Tables({ cup, entries }: { cup: Tournament; entries: Map<string,
         const list = (
           <ul className={styles.list}>
             {pairs.map((p) => (
-              <PairingRow tournamentId={cup.id} key={p.id} pair={p} entries={entries} />
+              <PairingRow cup={cup} key={p.id} pair={p} entries={entries} />
             ))}
           </ul>
         );

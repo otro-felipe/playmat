@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { retryFailedStart } from './tournament-start-recovery.mjs'
 import { registeredDecklists } from './tournament-decklists.mjs'
 import { isUuid, ProductError, transaction } from './decks.mjs'
 
@@ -29,22 +30,33 @@ export async function storeTournamentScore(pool, marker) {
     ![score.winsA, score.winsB, score.draws].every((n) => Number.isSafeInteger(n) && n >= 0)
   )
     throw new Error('Invalid tournament score')
-  await pool.query(
-    `INSERT INTO tournament_engine_results(pairing_id,table_id,seat_a,seat_b,wins_a,wins_b,draws,disqualified,winner_engine_name,match_id)
-    VALUES($1,$2,lower($3),lower($4),$5,$6,$7,$8,$9,$10) ON CONFLICT(pairing_id) DO NOTHING`,
-    [
-      score.pairingId,
-      score.tableId,
-      score.seatA,
-      score.seatB,
-      score.winsA,
-      score.winsB,
-      score.draws,
-      score.disqualified ?? null,
-      marker.winner ?? null,
-      marker.matchId,
-    ],
-  )
+  await transaction(pool, async (db) => {
+    // Serialize native scores with retirement. An unexpected marker for a
+    // retired table stays in archive staging for inspection and cannot claim
+    // the replacement's unique result slot.
+    const { rowCount } = await db.query(
+      `SELECT table_id FROM tournament_pairing_tables WHERE pairing_id=$1 AND table_id=$2
+       AND failed_start_retried_at IS NULL FOR SHARE`,
+      [score.pairingId, score.tableId],
+    )
+    if (!rowCount) throw new Error('Tournament score belongs to an unbound or retired table')
+    await db.query(
+      `INSERT INTO tournament_engine_results(pairing_id,table_id,seat_a,seat_b,wins_a,wins_b,draws,disqualified,winner_engine_name,match_id)
+      VALUES($1,$2,lower($3),lower($4),$5,$6,$7,$8,$9,$10) ON CONFLICT(pairing_id) DO NOTHING`,
+      [
+        score.pairingId,
+        score.tableId,
+        score.seatA,
+        score.seatB,
+        score.winsA,
+        score.winsB,
+        score.draws,
+        score.disqualified ?? null,
+        marker.winner ?? null,
+        marker.matchId,
+      ],
+    )
+  })
 }
 
 // Called in the same trusted transaction that rebinds both engine seats during checkpoint recovery.
@@ -124,7 +136,7 @@ export function createTournamentTableBridge(
           await tournaments.suspendWaitingTable(...key)
           return false
         }
-        if (status.gameId || ['DUELING', 'SIDEBOARDING', 'FINISHED'].includes(status.state)) {
+        if (status.gameStarted === true) {
           await tournaments.markLaunched(pair.tournamentId, pair.pairingId, pair.tableId)
           return false
         }
@@ -157,14 +169,16 @@ export function createTournamentTableBridge(
           players.map((p) => p.entryId),
         )
         if (decks.length !== 2) throw new Error('Missing registered tournament deck snapshot')
+        const timing = await tournaments.beginTableLaunch(pair.tournamentId, pair.pairingId, tableId)
+        if (!timing) return
         const live = await request({
           action: 'launch',
           tableId,
           pairingId: pair.pairingId,
-          deadlineAt: pair.deadlineAt,
+          deadlineAt: timing.deadlineAt,
           decks,
         })
-        if (live?.gameId || live?.state === 'DUELING')
+        if (live?.tableId === tableId && live.gameStarted === true)
           await tournaments.markLaunched(pair.tournamentId, pair.pairingId, tableId)
       },
     })
@@ -223,5 +237,5 @@ export function createTournamentTableBridge(
     }
     return receipt
   }
-  return { tick, connectSeat }
+  return { tick, connectSeat, retryFailedStart: (id, actor, input) => retryFailedStart(pool, id, actor, input, request) }
 }

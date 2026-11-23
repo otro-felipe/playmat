@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
-# a4be2b6 and the 54c8cb2 base share the identical Mage.Sets tree
-# (05e3a7e3a9e8f9413818dbcabfe579a57a1efc74). Reuse its card jar and warm catalog.
+# Reuse the published card catalog and base card classes. Recompile the callers of
+# the changed token-factory constructor against the freshly assembled engine below.
 FROM ghcr.io/arcanite24/playmat-server@sha256:9bd49de1eacf7664d5f29640c90e664e858da7d2225fe2036a62812d9699aa14 AS cards
 FROM maven:3.9-eclipse-temurin-17 AS engine
 WORKDIR /source
@@ -15,6 +15,8 @@ RUN mvn -B -q -N install \
     && cp config/config.xml config/config.template.xml \
     && rm -rf db saved \
     && date -u +%s > .build-id
+RUN sh ops/playtesting/package-snapshot-cards.sh /engine/lib \
+    && java -cp '/engine/lib/*' ops/playtesting/test/VerifyPackagedCardSnapshots.java
 COPY --from=cards /opt/xmage/cards-prebuilt/ /engine/cards-prebuilt/
 
 FROM node:22-bookworm-slim AS web

@@ -86,7 +86,6 @@ public final class PvpRecovery {
                         || live.players.values().stream().anyMatch(p -> !ProductGateway.recoveryPrincipalValid(p))) {
                     throw new IllegalStateException("Both admitted participants require current durable principals");
                 }
-                service.tables.put(controller.getTable().getId(), live);
             }
             Live entry = live;
             Match match = controller.getMatch();
@@ -123,6 +122,7 @@ public final class PvpRecovery {
                         "pregame", entry.chooser, game.getState());
             }
             entry.restored = null;
+            service.tables.put(controller.getTable().getId(), entry);
         } catch (Exception e) {
             // An opted-in match must not silently start with a partially applied restore or unbound participants.
             throw new IllegalStateException("The private match checkpoint could not be prepared; the game was not started", e);

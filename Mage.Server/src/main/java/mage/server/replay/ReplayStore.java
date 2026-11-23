@@ -5,6 +5,8 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
+import com.google.gson.stream.JsonReader;
+import com.google.gson.stream.JsonToken;
 import mage.server.playtesting.ProductGateway;
 import mage.server.websocket.rpc.JsonCodec;
 import org.apache.log4j.Logger;
@@ -74,6 +76,43 @@ public final class ReplayStore {
 
     public ReplaySettings settings() {
         return settings;
+    }
+
+    /** Inspect only metadata identifiers. Missing or unreadable metadata for an event file cannot prove absence. */
+    public static boolean hasChampionshipEvidence(Path directory, UUID tableId, UUID pairingId) throws IOException {
+        if (Files.notExists(directory)) return false;
+        try (DirectoryStream<Path> files = Files.newDirectoryStream(directory)) {
+            for (Path file : files) {
+                String name = file.getFileName().toString();
+                if (name.endsWith(INFO_SUFFIX)) {
+                    try (JsonReader json = new JsonReader(Files.newBufferedReader(file, StandardCharsets.UTF_8))) {
+                        if (containsIdentifiers(json, tableId.toString(), pairingId.toString(), true)) return true;
+                    }
+                } else if (name.endsWith(EVENTS_SUFFIX) || name.endsWith(PART_SUFFIX)) {
+                    String game = name.substring(0, name.length() - (name.endsWith(PART_SUFFIX) ? PART_SUFFIX.length() : EVENTS_SUFFIX.length()));
+                    if (!Files.isRegularFile(directory.resolve(game + INFO_SUFFIX))
+                            && !Files.isRegularFile(directory.resolve(game + ".active.json"))
+                            && !Files.isRegularFile(directory.resolve(game + ".interrupted.json"))) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean containsIdentifiers(JsonReader json, String tableId, String pairingId, boolean topLevel) throws IOException {
+        json.beginObject();
+        while (json.hasNext()) {
+            String key = json.nextName();
+            if (("tableId".equals(key) || "pairingId".equals(key)) && json.peek() == JsonToken.STRING) {
+                if (("tableId".equals(key) ? tableId : pairingId).equals(json.nextString())) return true;
+            } else if (topLevel && "tournamentScore".equals(key) && json.peek() == JsonToken.BEGIN_OBJECT) {
+                if (containsIdentifiers(json, tableId, pairingId, false)) return true;
+            } else {
+                json.skipValue();
+            }
+        }
+        json.endObject();
+        return false;
     }
 
     Path eventsFile(String gameId) {

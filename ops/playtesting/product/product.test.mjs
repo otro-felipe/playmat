@@ -2397,6 +2397,11 @@ test('casual tournament registration is public to watch and restricted to human 
   assert.equal(detail.name, config.name)
   assert.equal(detail.viewer, null)
   assert.equal((await f.path(url + '/' + event.id + '/admin', json('POST', visitor, {action:'start'}))).status, 403)
+  const retry = { action: 'retryFailedStart', pairingId: randomUUID(), tableId: randomUUID(), confirmedPreGameFailure: true }
+  const adminUrl = url + '/' + event.id + '/admin'
+  for (const actor of [visitor, delegated])
+    assert.equal((await f.path(adminUrl, json('POST', actor, retry))).status, 403)
+  assert.equal((await f.path(adminUrl, json('POST', organizer, retry))).status, 409)
   assert.equal((await f.path(url + '/' + event.id + '/join', json('POST', delegated, {deckId:'someone'}))).status, 403)
 })
 

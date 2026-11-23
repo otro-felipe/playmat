@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import mage.cards.decks.DeckCardLists;
 import mage.constants.TableState;
+import mage.game.Game;
 import mage.game.Table;
 import mage.game.match.ChampionshipRules;
 import mage.game.match.MatchOptions;
@@ -11,8 +12,16 @@ import mage.players.PlayerType;
 import mage.server.TableController;
 import mage.server.User;
 import mage.server.managers.ManagerFactory;
+import mage.server.game.GameController;
+import mage.server.recovery.CheckpointStore;
+import mage.server.replay.ReplaySettings;
+import mage.server.replay.ReplayStore;
 import mage.server.websocket.rpc.JsonCodec;
 
+import java.io.IOException;
+import java.nio.file.Paths;
+import java.sql.SQLException;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -25,6 +34,9 @@ public final class ChampionshipTables {
     public synchronized JsonObject execute(JsonObject command) throws Exception {
         UUID pairing = UUID.fromString(command.get("pairingId").getAsString());
         String action = command.get("action").getAsString();
+        if ("inspectFailedStart".equals(action)) {
+            return inspectFailedStart(UUID.fromString(command.get("tableId").getAsString()), pairing);
+        }
         TableController controller;
         if (action.equals("prepare")) {
             Optional<TableController> existing = managers.tableManager().getControllers().stream()
@@ -64,11 +76,39 @@ public final class ChampionshipTables {
             if (seat != null) view.addProperty("ownGamePlayerId", seat.toString());
         } else if (!"prepare".equals(action)) throw new IllegalArgumentException();
         view.addProperty("tableId",table.getId().toString());
-        view.addProperty("state",table.getState().name());
+        view.addProperty("pairingId", pairing.toString());
+        boolean registeredTable = managers.tableManager().getController(table.getId()).orElse(null) == controller;
+        view.addProperty("state", registeredTable ? table.getState().name() : "UNAVAILABLE");
         view.addProperty("seatAOnline",online(rules.seatA) != null);
         view.addProperty("seatBOnline",online(rules.seatB) != null);
-        if (table.getMatch().getGame() != null) view.addProperty("gameId",table.getMatch().getGame().getId().toString());
+        addGameStatus(view, table, registeredTable, managers.gameManager().getGameController());
         return view;
+    }
+
+    static void addGameStatus(JsonObject view, Table table, boolean registeredTable, Map<UUID, GameController> activeGames) {
+        Game current = table.getMatch().getGame();
+        GameController session = current == null ? null : activeGames.get(current.getId());
+        boolean live = registeredTable && session != null && table.getId().equals(session.getTableId());
+        boolean betweenGames = registeredTable && !table.getMatch().getGamesInfo().isEmpty()
+                && (table.getState() == TableState.SIDEBOARDING || table.getState() == TableState.FINISHED);
+        view.addProperty("gameStarted", live || betweenGames);
+        if (live) view.addProperty("gameId", current.getId().toString());
+    }
+
+    private JsonObject inspectFailedStart(UUID tableId, UUID pairing) throws IOException, SQLException {
+        boolean inUse = managers.tableManager().getController(tableId).isPresent()
+                || managers.tableManager().getControllers().stream().anyMatch(c -> c.getOptions() != null
+                    && c.getOptions().championship != null && pairing.equals(c.getOptions().championship.pairingId))
+                || managers.gameManager().getGameController().values().stream().anyMatch(c -> tableId.equals(c.getTableId()));
+        boolean absent = !inUse
+                && !CheckpointStore.hasTableHistory(Paths.get("db", "pvp-recovery.db"), tableId)
+                && !CheckpointStore.hasTableHistory(Paths.get("db", "pvp-checkpoints.db"), tableId)
+                && !ReplayStore.hasChampionshipEvidence(ReplaySettings.fromSystemProperties().dir, tableId, pairing);
+        JsonObject result = new JsonObject();
+        result.addProperty("tableId", tableId.toString());
+        result.addProperty("pairingId", pairing.toString());
+        result.addProperty("canRetry", absent);
+        return result;
     }
 
     private TableController prepare(UUID pairing, JsonObject command) {

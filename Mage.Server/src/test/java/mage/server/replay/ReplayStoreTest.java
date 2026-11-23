@@ -20,6 +20,8 @@ import java.util.stream.Collectors;
 import java.util.zip.GZIPOutputStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Web client replays: what the store lists, how it pages a recording out (each reader sees only their own hand), and
@@ -32,6 +34,31 @@ public class ReplayStoreTest {
 
     private ReplayStore store(int retentionDays, int maxCount) {
         return new ReplayStore(new ReplaySettings(true, dir, retentionDays, maxCount));
+    }
+
+    @Test
+    void stagedGameOrScorePreventsRetryEvenIfTheEngineHasRestarted() throws IOException {
+        ReplayStore store = store(7, 100);
+        UUID pairing = UUID.randomUUID(), table = UUID.randomUUID();
+        ReplayInfo info = new ReplayInfo();
+        info.gameId = UUID.randomUUID().toString();
+        info.tableId = table.toString();
+        assertFalse(ReplayStore.hasChampionshipEvidence(dir, table, pairing));
+        store.markActive(info);
+        assertTrue(ReplayStore.hasChampionshipEvidence(dir, table, UUID.randomUUID()));
+        assertFalse(ReplayStore.hasChampionshipEvidence(dir, UUID.randomUUID(), UUID.randomUUID()));
+        Files.createFile(store.partFile(info.gameId));
+        Files.move(dir.resolve(info.gameId + ".active.json"), dir.resolve(info.gameId + ".interrupted.json"));
+        assertTrue(ReplayStore.hasChampionshipEvidence(dir, table, pairing));
+        assertFalse(ReplayStore.hasChampionshipEvidence(dir, UUID.randomUUID(), UUID.randomUUID()));
+        Files.delete(dir.resolve(info.gameId + ".interrupted.json"));
+        assertTrue(ReplayStore.hasChampionshipEvidence(dir, UUID.randomUUID(), UUID.randomUUID()));
+        Files.delete(store.partFile(info.gameId));
+        JsonObject score = new JsonObject(), result = new JsonObject();
+        score.addProperty("pairingId", pairing.toString());
+        result.add("tournamentScore", score);
+        store.markMatchEnded(UUID.randomUUID(), result);
+        assertTrue(ReplayStore.hasChampionshipEvidence(dir, UUID.randomUUID(), pairing));
     }
 
     /** a finished recording of `frames` snapshots, each followed by a log line */

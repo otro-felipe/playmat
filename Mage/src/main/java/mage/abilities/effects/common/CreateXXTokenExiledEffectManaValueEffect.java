@@ -10,6 +10,7 @@ import mage.game.permanent.Permanent;
 import mage.game.permanent.token.Token;
 import mage.util.CardUtil;
 
+import java.io.Serializable;
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
@@ -21,9 +22,14 @@ import java.util.function.Function;
  */
 public class CreateXXTokenExiledEffectManaValueEffect extends OneShotEffect {
 
-    private final Function<Integer, Token> tokenMaker;
+    /** The factory travels with its card in game snapshots and must survive a JVM restart. */
+    @FunctionalInterface
+    public interface TokenFactory extends Function<Integer, Token>, Serializable {
+    }
 
-    public CreateXXTokenExiledEffectManaValueEffect(Function<Integer, Token> tokenMaker, String description) {
+    private final TokenFactory tokenMaker;
+
+    public CreateXXTokenExiledEffectManaValueEffect(TokenFactory tokenMaker, String description) {
         super(Outcome.Benefit);
         this.tokenMaker = tokenMaker;
         staticText = "the exiled card's owner creates an X/X " + description +

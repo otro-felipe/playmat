@@ -3,6 +3,7 @@ import { ProductError } from './decks.mjs'
 import { rankStandings, swissPairings, eliminationPairs } from './tournament-rules.mjs'
 
 export const minute = 60_000
+export const roundDurationMs = 50 * minute
 // The table bridge normally polls every two seconds. A gap beyond this window
 // disconnects two samples and earns no presentation time.
 export const attendanceSampleWindowMs = 30_000
@@ -183,7 +184,7 @@ export async function startRound(db, t, now) {
     return finish(db, t.id, ranked.find((p) => p.state === 'qualified' || p.state === 'active')?.id ?? null)
   const number = t.round_number + 1
   const bestOf = stage === 'swiss' ? t.swiss_best_of : t.playoff_best_of
-  const deadline = stage === 'playoffs' && t.template === 'worlds' ? null : now + 50 * minute
+  const deadline = stage === 'playoffs' && t.template === 'worlds' ? null : now + roundDurationMs
   await db.query(
     `UPDATE tournaments SET status='playing',stage=$2,round_number=$3,deadline_at=$4,next_round_at=NULL,next_session_at=NULL WHERE id=$1`,
     [t.id, stage, number, deadline],

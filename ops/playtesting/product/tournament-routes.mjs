@@ -174,6 +174,9 @@ export function createTournamentRoutes({
           }
         }
         send(res, 200, await tournaments.join(id, seat, input))
+      } else if (operation === 'admin' && input.action === 'retryFailedStart') {
+        const recovery = await bridge.retryFailedStart(id, actor, input)
+        send(res, 200, { tournament: await snapshot(id, actor), recovery })
       } else if (operation === 'admin') send(res, 200, await tournaments.action(id, actor, input))
       else if (operation === 'wait') {
         const retry = limitHeartbeat('seat', actor.playerId ?? actor.accountId)

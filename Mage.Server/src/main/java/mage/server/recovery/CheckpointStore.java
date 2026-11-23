@@ -79,6 +79,21 @@ public final class CheckpointStore implements AutoCloseable {
         }
     }
 
+    /** Inspect identifiers only, including tables reassigned by restore. Never open an absent store for writing. */
+    public static boolean hasTableHistory(Path file, UUID table) throws SQLException {
+        if (Files.notExists(file)) return false;
+        String sql = "SELECT 1 FROM checkpoints WHERE table_id=? UNION ALL "
+                + "SELECT 1 FROM recovery_claims WHERE table_id=? UNION ALL "
+                + "SELECT 1 FROM recovery_mappings WHERE original_table_id=? OR table_id=? LIMIT 1";
+        try (Connection reader = DriverManager.getConnection("jdbc:sqlite:" + file.toAbsolutePath().toUri() + "?mode=ro");
+             PreparedStatement query = reader.prepareStatement(sql)) {
+            for (int i = 1; i <= 4; i++) query.setString(i, table.toString());
+            try (ResultSet result = query.executeQuery()) {
+                return result.next();
+            }
+        }
+    }
+
     private static void privateFile(Path path) throws IOException {
         if (Files.isSymbolicLink(path)) throw new IOException("Checkpoint files must not be symlinks");
         try {

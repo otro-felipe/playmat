@@ -778,8 +778,13 @@ public class TableController {
                     DiscordNotifier.instance().matchStarted(table, options.getPassword(), userPlayerMap.size(), match.getPlayers());
                 }
             } catch (GameException e) {
-                logger.fatal("Error starting match: " + e, e);
-                match.endGame();
+                if (options.championship != null) {
+                    logChampionshipStartFailure(e);
+                    managerFactory.tableManager().removeTable(table.getId());
+                } else {
+                    logger.fatal("Error starting match: " + e, e);
+                    match.endGame();
+                }
             }
         }
     }
@@ -872,7 +877,11 @@ public class TableController {
             }
             return true;
         } catch (Exception ex) {
-            logger.fatal("Error starting game table: " + table.getId(), ex);
+            if (options != null && options.championship != null) {
+                logChampionshipStartFailure(ex);
+            } else {
+                logger.fatal("Error starting game table: " + table.getId(), ex);
+            }
             if (table != null) {
                 managerFactory.tableManager().removeTable(table.getId());
             }
@@ -885,6 +894,16 @@ public class TableController {
             }
             return false;
         }
+    }
+
+    private void logChampionshipStartFailure(Throwable failure) {
+        // Exception messages and stack frames can disclose cards from unrevealed registered decks.
+        Throwable cause = failure;
+        while (cause.getCause() != null && cause.getCause() != cause) cause = cause.getCause();
+        String reason = cause instanceof java.io.NotSerializableException ? "unserializable-checkpoint"
+                : cause instanceof java.sql.SQLException ? "storage" : "engine";
+        logger.error("Championship game start failed table=" + table.getId()
+                + " pairing=" + options.championship.pairingId + " reason=" + reason);
     }
 
     public synchronized void startTournament(UUID userId) {

@@ -49,7 +49,12 @@ test('only a native waiting table with both presence bits advances presentation 
     await bridge.tick()
     assert.deepEqual(events.splice(0), ['frozen'])
   }
-  native = { tableId, gameId: randomUUID(), state: 'DUELING' }
+  for (const state of ['DUELING', 'SIDEBOARDING', 'FINISHED']) {
+    native = { tableId, state }
+    await bridge.tick()
+    assert.deepEqual(events.splice(0), ['frozen'])
+  }
+  native = { tableId, gameId: randomUUID(), gameStarted: true, state: 'DUELING' }
   await bridge.tick()
   assert.deepEqual(events.splice(0), ['playing'])
   code = 503

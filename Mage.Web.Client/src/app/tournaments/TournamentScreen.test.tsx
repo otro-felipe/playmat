@@ -228,3 +228,22 @@ test('registration scopes a library read to the owner shown on screen if another
     'X-Playmat-Deck-Owner': 'Felipe',
   });
 });
+
+test('the organizer retries only the selected physical table after confirming its first game never started', async () => {
+  const pair = { id: 'pair1', tableId: 'old1', roundNumber: 1, stage: 'swiss', number: 1, a: 'e1', b: 'e2', winsA: 0, winsB: 0, draws: 0, completed: false };
+  const { view, fetcher } = mount('/tournaments/cup/admin', {
+    ...cup, status: 'playing', participants: [entrant, { ...entrant, id: 'e2', name: 'Sol' }],
+    pairings: [pair, { ...pair, id: 'pair2', number: 2, tableId: 'finished2', completed: true }],
+  });
+  fireEvent.click(await view.findByText('Recover a failed table start'));
+  const select = view.getByRole('combobox', { name: 'Table to recover' });
+  expect(select.querySelectorAll('option')).toHaveLength(2);
+  const retry = view.getByRole('button', { name: 'Retry table start' }) as HTMLButtonElement;
+  expect(retry.disabled).toBe(true);
+  fireEvent.change(select, {target: {value: 'old1'}});
+  expect(retry.disabled).toBe(true);
+  fireEvent.click(view.getByRole('checkbox', { name: /confirmed.*first game/i }));
+  fireEvent.click(retry);
+  await waitFor(() => expect(fetcher.mock.calls.some(([url, init]) => url === root + '/cup/admin' && init?.method === 'POST' &&
+    JSON.stringify(JSON.parse(String(init.body))) === JSON.stringify({action:'retryFailedStart', pairingId:'pair1', tableId:'old1', confirmedPreGameFailure:true}))).toBe(true));
+});

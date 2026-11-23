@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto'
-import { authorizeTournamentCreator } from './tournament-access.mjs'
+import { authorizeTournamentCreator, requireTournamentAdmin } from './tournament-access.mjs'
 import { ProductError, getDeck, isUuid, normalizeFormat, transaction } from './decks.mjs'
 import { tournamentStructure } from './tournament-rules.mjs'
 import {
   minute,
+  roundDurationMs,
   attendanceSampleWindowMs,
   timestamp,
   tournamentRow,
@@ -15,10 +16,6 @@ import {
   advanceIfComplete,
 } from './tournament-state.mjs'
 
-function requireAdmin(actor) {
-  if (!actor?.accountId || actor.agent || !actor.isAdmin)
-    throw new ProductError(403, 'Tournament administrator required')
-}
 function checkSeat(actor) {
   if (!actor?.accountId || (actor.agent && !actor.playerId))
     throw new ProductError(403, 'Choose your registered player profile')
@@ -233,7 +230,7 @@ export function createTournamentService(
   }
   async function action(id, actor, input) {
     validId(id)
-    requireAdmin(actor)
+    requireTournamentAdmin(actor)
     return transaction(pool, async (db) => {
       let t = await tournamentRow(db, id, 'FOR UPDATE')
       const now = clock()
@@ -306,8 +303,12 @@ export function createTournamentService(
       await tournamentRow(db, id, 'FOR UPDATE')
       const { rowCount } = await db.query(
         `UPDATE tournament_pairings SET opened_at=CASE WHEN table_id IS NULL THEN $4 ELSE opened_at END,
-        table_id=$3 WHERE tournament_id=$1 AND id=$2 AND (table_id=$3 OR (table_id IS NULL AND NOT completed))`,
-        [id, pairingId, tableId, clock()],
+        deadline_at=CASE WHEN table_id IS NULL AND deadline_at IS NOT NULL AND EXISTS
+          (SELECT FROM tournament_pairing_tables WHERE pairing_id=$2 AND failed_start_retried_at IS NOT NULL)
+          THEN $4::bigint + $5::bigint ELSE deadline_at END,
+        table_id=$3 WHERE tournament_id=$1 AND id=$2 AND (table_id=$3 OR (table_id IS NULL AND NOT completed))
+        AND NOT EXISTS (SELECT FROM tournament_pairing_tables WHERE table_id=$3 AND failed_start_retried_at IS NOT NULL)`,
+        [id, pairingId, tableId, clock(), roundDurationMs],
       )
       if (!rowCount) throw new ProductError(409, 'This pairing has a different table or has finished')
       return { pairingId, tableId }
@@ -378,6 +379,21 @@ export function createTournamentService(
       [id, pairingId, tableId, engineName, clock()],
     )
     return { accepted: rowCount > 0 }
+  }
+  async function beginTableLaunch(id, pairingId, tableId) {
+    // Set the restored clock once when both pilots first confirm the new table.
+    // A repeated launch RPC retains the same deadline.
+    const { rows: [pair] } = await pool.query(
+      `UPDATE tournament_pairings SET deadline_at=CASE
+        WHEN launch_requested_at IS NULL AND deadline_at IS NOT NULL AND EXISTS
+          (SELECT FROM tournament_pairing_tables WHERE pairing_id=$2 AND failed_start_retried_at IS NOT NULL)
+        THEN $4::bigint + $5::bigint ELSE deadline_at END,
+        launch_requested_at=COALESCE(launch_requested_at,$4::bigint)
+       WHERE tournament_id=$1 AND id=$2 AND table_id=$3 AND NOT launched AND NOT completed
+         AND ack_a IS NOT NULL AND ack_b IS NOT NULL RETURNING deadline_at AS "deadlineAt"`,
+      [id, pairingId, tableId, clock(), roundDurationMs],
+    )
+    return pair ? { deadlineAt: timestamp(pair.deadlineAt) } : null
   }
   async function markLaunched(id, pairingId, tableId) {
     await pool.query(
@@ -535,6 +551,7 @@ export function createTournamentService(
     action,
     bindTable,
     acceptTable,
+    beginTableLaunch,
     markLaunched,
     observeWaitingTable,
     suspendWaitingTable,

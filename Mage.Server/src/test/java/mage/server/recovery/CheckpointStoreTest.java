@@ -41,6 +41,17 @@ public class CheckpointStoreTest {
     static final UUID GAME = UUID.fromString("00000000-0000-0000-0000-000000000003");
 
     @Test
+    void completedCheckpointsStillProtectTablesFromRelaunch() throws Exception {
+        try (CheckpointStore store = new CheckpointStore(dir.resolve("checkpoint.db"))) {
+            assertFalse(CheckpointStore.hasTableHistory(dir.resolve("checkpoint.db"), TABLE));
+            store.commit(MATCH, TABLE, GAME, 1, 1, ENGINE, new byte[]{1}, new byte[]{2});
+            store.gameEnded(MATCH, GAME, true);
+            assertTrue(CheckpointStore.hasTableHistory(dir.resolve("checkpoint.db"), TABLE));
+            assertFalse(CheckpointStore.hasTableHistory(dir.resolve("checkpoint.db"), UUID.randomUUID()));
+        }
+    }
+
+    @Test
     void commitsArePrivateAtomicAndVersionChecked() throws Exception {
         Path path = dir.resolve("checkpoint.db");
         try (CheckpointStore store = new CheckpointStore(path)) {

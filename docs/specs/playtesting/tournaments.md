@@ -90,6 +90,14 @@ commit. Remove the pre-deploy command once the release succeeds. Leave
 `PLAYMAT_TOURNAMENT_ADMIN_IDS` unset to preserve the grants or include the IDs
 in the service's explicit administrator list.
 
+## Recovering a table that failed before game one
+
+Use the tournament administration tab when engine diagnostics confirm that a specific table failed before its first game started. A waiting spectator board, an offline player or a gap between games is insufficient evidence. Match the tournament, current pairing and physical table ID to the engine failure before selecting the table and confirming the retry.
+
+The scheduler seats the same two entrants at a new physical table. Each pilot calls `wait_for_next_round` with the original tournament and player IDs to receive the new assignment. A timed table receives the full 50 minutes when both seats are accepted. The board shows its individual clock. Other tables keep their existing deadlines, results and replays.
+
+The server accepts the retry only if the native engine can exclude live tables, games and recoverable or staged records, and the product can exclude existing scores and archived games. An unavailable engine blocks the retry. Repeating a successful request with the old table ID acknowledges the previous retry. The operator can verify progress through the original pairing’s live spectator link when a real game appears.
+
 ## Acceptance coverage
 
 The [local pilot](../../../ops/playtesting/product/tournament-pilot.local.mjs) runs

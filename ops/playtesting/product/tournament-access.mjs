@@ -97,3 +97,8 @@ export async function validateTournamentDeck(_db, _actor, deck, format) {
   if (result.valid !== true)
     throw new ProductError(422, result.errors?.[0]?.message || 'Illegal deck for this tournament')
 }
+
+export function requireTournamentAdmin(actor) {
+  if (!actor?.accountId || actor.agent || actor.isAdmin !== true)
+    throw new ProductError(403, 'Tournament administrator required')
+}
