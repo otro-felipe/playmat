@@ -615,6 +615,22 @@ Before committing an animated land, compare combat with the opponent's plausible
 
 The executor tracks your currently visible stack objects by default. When planning through the known resolution of an object already on the stack, `expectedStackIds` can name the exact visible stack objects to adopt. Supplying it replaces the default list, so include any of your own existing objects that the line expects to resolve. A future response is new information.
 
+### Guard a target prompt
+
+Use these as individual actions inside `play_line.actions`. When the visible source and its zero-based target role are known, put the source in `guard.targetSourceId` and the intended legal target in `select.objectId`. A role such as `0` can occur on many different spells and abilities. Inside a `play` action, `targets[].role` already refers to the card being played.
+
+```json
+{"kind":"choose","guard":{"kind":"target","targetSourceId":"<source-id>","targetRole":0},"select":{"objectId":"<target-id>"}}
+```
+
+When the exact instruction is known, copy its text with the same capitalization and punctuation. For example, this action matches a prompt that says `Select target player`.
+
+```json
+{"kind":"choose","guard":{"kind":"target","instruction":"Select target player"},"select":{"objectId":"<target-id>"}}
+```
+
+If neither the source and role nor the exact wording is known, stop at the prompt and answer using the observed `decisionId` and legal `choiceId`.
+
 ## Stop when your information changes
 
 During Liliana of the Veil’s +1, each player discards a card. If you receive `reevaluation_required` with zero decisions applied while choosing your discard, send only the visible choice. Use a fresh command ID and copy the cursor, decision ID and choice ID from the returned state. Inspect the public discards in the next state before deciding whether to pass.

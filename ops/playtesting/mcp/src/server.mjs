@@ -130,7 +130,9 @@ const TurnChoose = TurnChooseShape.refine(({ choiceId, select }) => !!choiceId !
     || guard.kind === 'panel' && (guard.sourceObjectId || guard.modePicker) && (select?.abilityId || select?.manaColor)
     || guard.kind === 'question' && guard.sourceObjectId && select?.answer !== undefined
     || guard.kind === 'target' && guard.targetSourceId && guard.targetRole !== undefined && select?.objectId
-  ), 'Use the observed decisionId, or guard a future mandatory choice with exact instruction or typed source and option.');
+  ), { error: ({ input }) => input?.guard?.kind === 'target'
+    ? 'For a target choose, use guard.targetSourceId with guard.targetRole and select.objectId, or copy the exact prompt text into guard.instruction and select a legal option. For a prompt already open, use its decisionId and choiceId.'
+    : 'Use the observed decisionId, or guard a future mandatory choice with exact instruction or typed source and option.' });
 const TurnAttackShape = z.object({ kind: z.literal('attack'), attackers: z.union([z.literal('all'), z.array(StringId).max(16)]).optional(),
   assignments: z.array(z.object({ attackerId: StringId, defenderId: StringId }).strict()).max(16)
     .optional().describe('Exact visible attacker–defender pairs. A defender can be a player, planeswalker or battle. Supply assignments or attackers.'),

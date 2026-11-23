@@ -88,6 +88,47 @@ test('[PM-LINE-MCP-1] a cross-field schema rejection returns the failing action 
   assert.deepEqual(f.applied, []);
 });
 
+test('a target role alone rejects the whole line and identifies both supported target guards', async (t) => {
+  const f = await fixture(t);
+  const { result } = await f.call('play_line', { ...f.request, actions: [...f.request.actions, {
+    kind: 'choose', guard: { kind: 'target', targetRole: 0 }, select: { objectId: 'visible-target' },
+  }] });
+  assert.equal(result.code, 'invalid_line_arguments');
+  assert.equal(result.actionIndex, 1);
+  for (const field of ['guard.targetSourceId', 'guard.targetRole', 'select.objectId', 'guard.instruction'])
+    assert.ok(result.message.includes(field), 'Missing repair field '+field);
+  assert.equal(result.appliedDecisions, 0);
+  assert.deepEqual(f.applied, []);
+});
+
+test('both documented choose target guards match and apply the exact public option', async (t) => {
+  const guide = await readFile(new URL('../guides/turn-planning.md', import.meta.url), 'utf8');
+  const section = guide.split('### Guard a target prompt')[1]?.split(/\n#{1,3} /)[0] ?? '';
+  const actions = [...section.matchAll(/```json\s*([\s\S]*?)```/g)].map(match => JSON.parse(match[1]));
+  assert.equal(actions.length, 2);
+  const ids = { '<source-id>': 'visible-source', '<target-id>': 'rival' };
+  for (const action of actions) {
+    const step = JSON.parse(JSON.stringify(action), (_key, value) => typeof value === 'string' ? ids[value] ?? value : value);
+    const first = { id: 'current', kind: 'target', targetSourceId: 'visible-source', targetRole: 0,
+      instruction: 'Select target player', choices: [
+        { id: 'option-self', type: 'player', objectId: 'pilot', label: 'Pilot' },
+        { id: 'option-rival', type: 'player', objectId: 'rival', label: 'Rival' },
+      ] };
+    const f = await fixture(t, { first, onResponse: (_, update) => update({ decision: readyToPass('after-target') }) });
+    const {result} = await f.call('play_line', { ...f.request, actions: [step] });
+    assert.equal(result.status, 'completed', result.stopReason);
+    assert.deepEqual(f.applied.map(answer => answer.choiceId), ['option-rival']);
+
+    const differentPrompt = step.guard.instruction
+      ? { ...first, instruction: first.instruction + '?' }
+      : { ...first, targetSourceId: 'a-different-visible-source' };
+    const mismatch = await fixture(t, { first: differentPrompt });
+    const stopped = await mismatch.call('play_line', { ...mismatch.request, actions: [step], waitMs: 100 });
+    assert.equal(stopped.result.status, 'interrupted');
+    assert.deepEqual(mismatch.applied, []);
+  }
+});
+
 test('[PM-LINE-MCP-1] native stale line transport preserves the preflight rejection and safe retry details', async (t) => {
   const f = await fixture(t);
   f.update({ decision: choice('new') });
