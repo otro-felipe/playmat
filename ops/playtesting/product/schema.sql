@@ -284,3 +284,9 @@ ALTER TABLE invitations
   ADD COLUMN IF NOT EXISTS spectator_guest_consent_required boolean NOT NULL DEFAULT false;
 ALTER TABLE spectator_links ADD COLUMN IF NOT EXISTS hands_token text UNIQUE;
 ALTER TABLE invitations ADD COLUMN IF NOT EXISTS spectator_settings_locked boolean NOT NULL DEFAULT false;
+
+-- A browser host can share a separate capability for an external MCP rival.
+CREATE TABLE IF NOT EXISTS external_mcp_invite_links (
+  table_id uuid PRIMARY KEY REFERENCES invitations(table_id) ON DELETE CASCADE,
+  capability text NOT NULL UNIQUE
+);

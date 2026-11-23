@@ -477,17 +477,22 @@ export async function createProduct({
         return send(res, 200, { deleted: true })
       }
     }
+    if (endpoint==='invites' || endpoint.startsWith('invites/')) {
+      res.setHeader('Cache-Control','private, no-store')
+      res.setHeader('Referrer-Policy','no-referrer')
+    }
     if (endpoint === 'invites') {
       requireScope(actor, 'play')
-      if (req.method === 'GET') return send(res, 200, await invitations.list(actor, url.searchParams.get('limit'),url.searchParams.get('tableId')))
+      if (req.method === 'GET') return send(res, 200, await invitations.list(actor, url.searchParams.get('limit'),url.searchParams.get('tableId'),req.headers['x-playmat-invite-token']))
       if (req.method === 'POST') return send(res, 201, await invitations.create(actor, await body(req), {trustedPilot:!proxied}))
     }
     if (endpoint.startsWith('invites/')) {
       requireScope(actor, 'play')
       const [, tableId, action, extra] = endpoint.split('/')
       if (!extra && isUuid(tableId)) {
-        if (req.method === 'GET' && action === undefined) return send(res, 200, await invitations.inspect(actor, tableId))
-        if (req.method === 'POST' && action === 'claim') return send(res, 200, await invitations.claim(actor, tableId, await body(req, 'optional-json', 4096)))
+        if (req.method === 'GET' && action==='share-link') return send(res,200,await invitations.shareLink(actor,tableId))
+        if (req.method === 'GET' && action === undefined) return send(res, 200, await invitations.inspect(actor, tableId,req.headers['x-playmat-invite-token']))
+        if (req.method === 'POST' && action === 'claim') return send(res, 200, await invitations.claim(actor, tableId, await body(req, 'optional-json', 4096),req.headers['x-playmat-invite-token']))
       }
     }
     const statisticsExclusion = /^matches\/([^/]+)\/statistics-exclusion$/.exec(endpoint)

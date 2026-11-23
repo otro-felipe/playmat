@@ -35,6 +35,11 @@ test('[PM-AC-08] join_game uses a private Playmat link, validates before claim, 
         assert.equal(input.deckId, deckId);
         return { id: deckId, library: 'agent', data: { ...deck, sideboard: [] } };
       }
+      if (name === 'list_joinable_games') {
+        assert.equal(input.tableId,tableId);
+        assert.ok(input.inviteToken==='x'.repeat(43));
+        return {invites:[{tableId,format:'Pioneer'}]};
+      }
       if (name === 'inspect_game_invite') {
         inspected.push(input);
         return access;
@@ -73,6 +78,17 @@ test('[PM-AC-08] join_game uses a private Playmat link, validates before claim, 
   assert.equal(accepted.isError,false);
   assert.equal(claimed.at(-1).acceptSpectatorVisibility,'both-hands');
   assert.equal(claimed.at(-1).expectedSpectatorVisibility,'both-hands');
+  Object.assign(access,{mode:'mcp',requiresSpectatorAcceptance:false});
+  const externalLink=origin+'/join/mcp/'+tableId+'#invite='+'x'.repeat(43);
+  const listed=await client.callTool({name:'list_joinable_games',arguments:{inviteLink:externalLink}});
+  assert.equal(listed.isError,false);
+  assert.ok(!listed.content[0].text.includes('#invite='));
+  const external=await client.callTool({name:'join_game',arguments:{inviteLink:externalLink,deckId,displayName:'Angels'}});
+  assert.equal(external.isError,false);
+  assert.ok(inspected.at(-1).inviteToken==='x'.repeat(43) && claimed.at(-1).inviteToken==='x'.repeat(43));
+  for(const link of [externalLink.replace('/join/mcp/','/join/'),externalLink.replace('#invite=','?invite='),externalLink.split('#')[0]]) {
+    assert.equal((await client.callTool({name:'list_joinable_games',arguments:{inviteLink:link}})).isError,true);
+  }
 });
 
 test('[PM-AC-08] the MCP seat receives its chosen display name and chat mode for the invited match', { timeout: 5_000 }, async (t) => {

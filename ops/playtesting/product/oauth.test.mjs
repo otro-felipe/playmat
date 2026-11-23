@@ -1481,3 +1481,119 @@ test('[PM-SPECTATE-SETUP] the browser host can change both-hands sharing only be
   assert.equal((await discover(unassigned)).canConfigureSpectatorVisibility,true)
   assert.equal((await change(unassigned,'both-hands')).status,200)
 })
+
+for(const external of [false,true]) test('[PM-RIVAL-ACCOUNT] blank web rival '+(external?'with an external link':'within the owning account'),{skip:!databaseUrl},async t=>{
+  const f=await fixture(t), owner=await f.login('RivalOwner'), other=await f.login('RivalVisitor')
+  const post=(path,headers,data)=>f.request(path,{...headers,'Content-Type':'application/json'},data)
+  const base='/api/playtesting/invites'
+  const own=await authorizePilot(f,owner,'play'), away=await authorizePilot(f,other,'play')
+  const participant=async (cookie,bearer,displayName)=>{
+    const r=await post('/api/playtesting/players',cookie,{displayName,mcpEnabled:true})
+    assert.equal(r.status,201)
+    const seat=await r.json()
+    return {...seat,headers:{...bearer,'X-Playmat-Player-Id':seat.playerId}}
+  }
+  const a=await participant(owner,own,'Local A'), b=await participant(owner,own,'Local B'), x=await participant(other,away,'Visitor')
+  const fixed=await authorizePilot(f,owner,'play',a.playerId)
+  const table=randomUUID(), route=base+'/'+table
+  const form={tableId:table,roomId:randomUUID(),mode:'mcp',format:'Pioneer',password:'synthetic-rival-pass',...(external && {allowExternalMcp:true})}
+  assert.equal((await post(base,owner,form)).status,201)
+  const list=async (headers,id=table)=>(await (await f.request(base+'?tableId='+id,headers)).json()).invites
+  for(const actor of [own,a.headers,b.headers]){
+    const [invite]=await list(actor)
+    assert.equal(invite?.tableId,table,'The owner can dispatch this invitation to either enabled profile')
+    assert.equal(invite.requiresPlayerAssignment,true)
+    assert.equal(invite.guestAccountName,'RivalOwner')
+    assert.equal((await f.request(route,actor)).status,200)
+  }
+  for(const h of [fixed,away,x.headers]){
+    assert.equal((await list(h)).length,0)
+    assert.equal((await f.request(route,h)).status,404)
+  }
+  const share=await f.request(route+'/share-link',owner)
+  let linked=x.headers
+  if(external){
+    assert.equal(share.status,200)
+    assert.match(share.headers.get('cache-control'),/no-store/)
+    const capability=new URL((await share.json()).path,'https://fixture.invalid').hash.slice('#invite='.length)
+    assert.ok(/^[a-zA-Z0-9_-]{43}$/.test(capability))
+    linked={...x.headers,'X-Playmat-Invite-Token':capability}
+    assert.equal((await f.request(route,linked)).status,200)
+    const [available]=await list(linked)
+    assert.equal(available.tableId,table)
+    assert.equal(available.allowExternalMcp,true)
+    assert.equal(available.requiresPlayerAssignment,true)
+    assert.equal(available.guestAccountName,undefined)
+    assert.equal((await (await f.request(base,linked)).json()).invites.length,0,'A capability applies only to the exact lookup')
+    assert.equal((await f.request(route+'/share-link',other)).status,403)
+    assert.equal((await f.request(route+'/share-link',own)).status,403)
+    const second=randomUUID()
+    assert.equal((await post(base,owner,{...form,tableId:second})).status,201)
+    assert.equal((await f.request(base+'/'+second,linked)).status,404)
+    const y=await participant(other,away,'Second visitor')
+    const extra=base+'/'+second
+    const publicInfo=await f.request(extra+'/share-link',owner)
+    assert.equal(publicInfo.status,200)
+    const sharing=new URL((await publicInfo.json()).path,'https://fixture.invalid')
+    assert.ok(sharing.pathname==='/join/mcp/'+second && sharing.search==='')
+    const visitor={...y.headers,'X-Playmat-Invite-Token':sharing.hash.slice('#invite='.length)}
+    const lease=randomUUID(),change=(operation,fields)=>post('/internal/player-reservations/'+y.playerId,y.headers,{operation,reservationId:lease,...fields})
+    assert.equal((await change('reserve',{joinTableId:second})).status,200)
+    assert.equal((await change('bind',{tableId:second})).status,200)
+    const foreignClaim=await post(extra+'/claim',visitor,{})
+    assert.equal(foreignClaim.status,200)
+    const assigned=await foreignClaim.json()
+    assert.equal(assigned.guestPlayerId,y.playerId)
+    assert.equal(assigned.guestAccountName,'RivalVisitor')
+    assert.equal(assigned.requiresPlayerAssignment,false)
+    assert.equal((await post(extra+'/claim',y.headers,{})).status,404)
+    assert.equal((await f.request(extra+'/share-link',owner)).status,200)
+    assert.equal((await post(extra+'/claim',visitor,{})).status,200)
+    assert.equal((await list(away,second)).length,0)
+    assert.equal((await f.request('/internal/invites/'+second+'?host=RivalOwner&guest='+y.engineName)).status,200)
+    const changed=await f.request('/api/playtesting/players/'+y.playerId,{...other,'Content-Type':'application/json'},{mcpEnabled:false},'PATCH')
+    assert.equal(changed.status,200)
+    assert.equal((await f.request('/internal/invites/'+second+'?host=RivalOwner&guest='+y.engineName)).status,404)
+    assert.equal((await post(base,owner,{...form,tableId:randomUUID(),mode:'friend'})).status,400)
+    assert.equal((await post(base,owner,{...form,tableId:randomUUID(),guestPlayerId:x.playerId})).status,400)
+    assert.equal((await post(base,owner,{...form,tableId:randomUUID(),allowExternalMcp:'yes'})).status,400)
+    assert.equal((await f.request(route,{...x.headers,'X-Playmat-Invite-Token':'f'.repeat(43)})).status,404)
+    assert.equal((await f.request('/api/playtesting/spectate/'+capability)).status,404)
+    const linkOnly={...other,'X-Playmat-Invite-Token':capability}
+    assert.equal((await f.request(route,linkOnly)).status,404)
+    assert.ok(!(await (await f.request(route,linked)).text()).includes(capability))
+  }else{
+    assert.equal(share.status,404)
+    // A pending invitation written by the previous version has exactly this owner and blank recipient.
+    const legacy=randomUUID()
+    const pool=new pg.Pool({connectionString:databaseUrl,options:'-c search_path='+f.schema})
+    try{await pool.query(`INSERT INTO invitations(table_id,room_id,creator_key,owner_account_id,format,table_password,mode,expires_at)
+      SELECT $1,$2,a.username_key,a.id,'Pioneer','historical-fixture','mcp',now()+interval '1 hour'
+      FROM accounts a WHERE a.username_key='rivalowner'`,[legacy,randomUUID()])} finally {await pool.end()}
+    assert.equal((await list(b.headers,legacy)).length,1)
+    assert.equal((await list(x.headers,legacy)).length,0)
+    const exact=randomUUID()
+    assert.equal((await post(base,owner,{...form,tableId:exact,guestPlayerId:b.playerId})).status,201)
+    assert.equal((await list(a.headers,exact)).length,0)
+    assert.equal((await list(b.headers,exact)).length,1)
+  }
+  const challengers=external?[a,x]:[a,b],auth=[a.headers,external?linked:b.headers]
+  for(const seat of challengers){
+    const path='/internal/player-reservations/'+seat.playerId, reservationId=randomUUID()
+    assert.equal((await post(path,seat.headers,{operation:'reserve',reservationId,joinTableId:table})).status,200)
+    assert.equal((await post(path,seat.headers,{operation:'bind',reservationId,tableId:table})).status,200)
+  }
+  const claim=h=>post(route+'/claim',h,{})
+  if(external) assert.equal((await claim(x.headers)).status,404)
+  const answers=await Promise.all(auth.map(claim))
+  assert.deepEqual(answers.map(r=>r.status).sort(),[200,404])
+  const won=answers[0].status===200?0:1
+  assert.equal((await answers[won].json()).guestPlayerId,challengers[won].playerId)
+  assert.equal((await claim(auth[won])).status,200)
+  assert.equal((await claim(auth[1-won])).status,404)
+  assert.equal((await list(auth[1-won])).length,0)
+  for(const [i,seat] of challengers.entries()){
+    assert.equal((await f.request('/internal/invites/'+table+'?host=RivalOwner&guest='+seat.engineName)).status,i===won?200:404)
+  }
+  assert.equal((await list(x.headers)).length,0)
+})

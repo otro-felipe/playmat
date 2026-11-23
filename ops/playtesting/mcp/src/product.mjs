@@ -8,13 +8,14 @@ export function createProductClient(baseUrl, publicUrl) {
     throw new Error('The Thoughtseize product service must bind on loopback.');
   }
 
-  async function request(token, path, { method = 'GET', body, playerId } = {}) {
+  async function request(token, path, { method = 'GET', body, playerId, inviteToken } = {}) {
     return fetch(new URL(path, base), {
       method, redirect: 'error', signal: AbortSignal.timeout(12_000),
       headers: {
         accept: 'application/json',
         authorization: `Bearer ${token}`,
         ...(playerId && { 'X-Playmat-Player-Id': playerId }),
+        ...(inviteToken && { 'X-Playmat-Invite-Token': inviteToken }),
         ...(body === undefined ? {} : { 'content-type': 'application/json' }),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -151,7 +152,8 @@ export function createProductClient(baseUrl, publicUrl) {
       default:
         throw new ToolError('invalid_operation', 'No such Thoughtseize operation.');
     }
-    const response = await request(token, path, { ...config, playerId });
+    const response = await request(token, path, { ...config, playerId,
+      ...(['list_joinable_games','inspect_game_invite','get_game_invite'].includes(name) && {inviteToken:args.inviteToken}) });
     if (!response.ok) {
       if (name === 'player_reservation' && response.status === 409) {
         throw new ToolError('player_busy', 'This player already has a reservation. Check its current table before retrying.');

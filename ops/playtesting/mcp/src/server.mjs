@@ -416,8 +416,22 @@ function registerTools(mcp, { contextFor, allowedOrigins }) {
     return { players: players.map(({ playerId, displayName, flag, engineName, mcpEnabled, activeTableId, availability }) =>
       ({ playerId, displayName, flag, engineName, mcpEnabled, activeTableId, availability })) };
   }, true);
-  tool('list_joinable_games', 'List this account’s incoming invitations, including its enabled profiles. Optionally check one exact table before selecting a slot.', { tableId:Uuid.optional(), limit: z.number().int().min(1).max(50).default(25) },
-    'play', (args) => fromProduct('list_joinable_games', args), true);
+  const inviteLocator={tableId:Uuid.optional(), inviteLink:z.url().max(2048).optional()};
+  function locateInvitation(tableId,inviteLink) {
+    if (!inviteLink) return tableId ? {tableId} : {};
+    if (tableId) throw new ToolError('invalid_invite','Provide either the invite link or the table ID.');
+    const url=new URL(inviteLink);
+    const path=/^\/join\/(mcp\/)?([0-9a-f-]+)$/i.exec(url.pathname);
+    const capability=/^#invite=([A-Za-z0-9_-]{43})$/.exec(url.hash);
+    if (!allowedOrigins.includes(url.origin) || url.username || url.password || url.search || !path
+        || !Uuid.safeParse(path[2]).success || (path[1] ? !capability : Boolean(url.hash))) {
+      throw new ToolError('invalid_invite','Provide the private link copied from this Thoughtseize deployment.');
+    }
+    return {tableId:path[2],...(capability && {inviteToken:capability[1]})};
+  }
+  tool('list_joinable_games', 'List incoming invitations to your account and enabled players. Inspect one external invitation using its complete private inviteLink.', {
+    ...inviteLocator, limit:z.number().int().min(1).max(50).default(25),
+  }, 'play', ({tableId,inviteLink,limit}) => fromProduct('list_joinable_games', {limit,...locateInvitation(tableId,inviteLink)}), true);
   const playDeck = {
     deck: Deck.optional(),
     deckId: LibraryDeckId.optional().describe('ID from list_decks. Supply this or an inline deck.'),
@@ -488,25 +502,18 @@ function registerTools(mcp, { contextFor, allowedOrigins }) {
       record => fromProduct('create_game_invite', { ...record, tableName: args.name, spectatorVisibility, guestEngineName, guestPlayerId, guestAccountName, model, reasoningEffort }), lease));
   });
   tool('join_game', 'Join a private table from its Thoughtseize invite link or table ID. Use a legal deck and an optional seat display name.', {
-    tableId: Uuid.optional(), inviteLink: z.url().max(2048).optional(),
+    ...inviteLocator,
     displayName: z.string().trim().min(1).max(24).optional(), ...playDeck, ...agentRuntime,
     acceptSpectatorVisibility:z.literal('both-hands').optional().describe('Accept the advertised private broadcast on a cross-account invitation.'),
   }, 'play', async ({ tableId, inviteLink, displayName, acceptSpectatorVisibility, model, reasoningEffort, deck, deckId }) => {
-      if (Boolean(tableId) === Boolean(inviteLink)) throw new ToolError('invalid_invite', 'Provide either the invite link or the table ID.');
-      if (inviteLink) {
-        const url = new URL(inviteLink);
-        const [, , id] = url.pathname.split('/');
-        if (!allowedOrigins.includes(url.origin) || url.username || url.password || url.search || url.hash
-          || url.pathname !== `/join/${id}` || !Uuid.safeParse(id).success) {
-          throw new ToolError('invalid_invite', 'Provide the private link copied from this Thoughtseize deployment.');
-        }
-        tableId = id;
-      }
-      const invitation = await fromProduct('inspect_game_invite', { tableId });
+      const destination=locateInvitation(tableId,inviteLink);
+      tableId=destination.tableId;
+      if (!tableId) throw new ToolError('invalid_invite','Provide the invite link or table ID.');
+      const invitation = await fromProduct('inspect_game_invite', destination);
       if (invitation.requiresSpectatorAcceptance && acceptSpectatorVisibility!=='both-hands') throw new ToolError('spectator_consent_required','This invitation shares both hands with its spectator. Explicitly accept this visibility to join.');
       const selectedDeck = await resolvePlayDeck(deck, deckId);
       return withTableReservation(tableId, (engine, lease) => engine.joinGame({ tableId, deck: selectedDeck }, invitation,
-        () => fromProduct('get_game_invite', { tableId, displayName, ...(invitation.mode==='friend' && {expectedSpectatorVisibility:invitation.spectatorVisibility??'public-board'}), ...(acceptSpectatorVisibility && {acceptSpectatorVisibility}), model, reasoningEffort }), lease));
+        () => fromProduct('get_game_invite', { ...destination, displayName, ...(invitation.mode==='friend' && {expectedSpectatorVisibility:invitation.spectatorVisibility??'public-board'}), ...(acceptSpectatorVisibility && {acceptSpectatorVisibility}), model, reasoningEffort }), lease));
     });
   tool('start_match', 'Start a ready table as its host. For the MCP Player provide tableId. For the Human Player provide humanTableId, including to finish setup of an MCP-created table with human gameplay disabled.', {
     tableId: Uuid.optional(), humanTableId: Uuid.optional(),
