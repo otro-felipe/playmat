@@ -183,10 +183,16 @@ const Catalog = {
   keywords: z.array(z.string().trim().min(1).max(40)).max(12).optional(),
   offset: z.number().int().min(0).max(40_000).default(0), limit: z.number().int().min(1).max(50).default(25),
 };
+function withoutNullPrinting(card) {
+  if (card.setCode!==null && card.cardNumber!==null) return card;
+  const {setCode,cardNumber,...entry}=card;
+  return {...entry,...(setCode!=null && {setCode}),...(cardNumber!=null && {cardNumber})};
+}
+
 const DeckCard = z.object({
-  cardName: z.string().min(1).max(250), setCode: z.string().max(12).optional(),
-  cardNumber: z.string().max(20).optional(), amount: z.number().int().min(1).max(250),
-}).strict();
+  cardName: z.string().min(1).max(250), setCode: z.string().max(12).nullish(),
+  cardNumber: z.string().max(20).nullish(), amount: z.number().int().min(1).max(250),
+}).strict().transform(withoutNullPrinting);
 const Deck = z.object({
   name: z.string().min(1).max(120), cards: z.array(DeckCard).min(1).max(250),
   sideboard: z.array(DeckCard).max(40).default([]),
@@ -439,10 +445,19 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
     deck: Deck.optional(),
     deckId: LibraryDeckId.optional().describe('ID from list_decks. Supply this or an inline deck.'),
   };
+  async function getLibraryDeck(args) {
+    const saved=await fromProduct('get_deck',args);
+    if (!saved?.data) return saved;
+    const data={...saved.data};
+    for (const zone of ['cards','sideboard']) {
+      if (Array.isArray(data[zone])) data[zone]=data[zone].map(withoutNullPrinting);
+    }
+    return {...saved,data};
+  }
   async function resolvePlayDeck(deck, deckId, library = 'agent') {
     if (Boolean(deck) === Boolean(deckId)) throw new ToolError('invalid_deck', 'Choose one library deck ID or supply an inline deck.');
     if (!deckId) return deck;
-    const saved = await fromProduct('get_deck', { deckId });
+    const saved = await getLibraryDeck({ deckId });
     if (saved?.id !== deckId || saved.library !== library || !saved.data) {
       throw new ToolError('deck_unavailable', 'Choose a saved deck from the playing seat’s library.');
     }
@@ -555,10 +570,11 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
   tool('find_possible_responses', 'Suggest possible cards from public archetype examples and catalog filters. The rival list and hand are never queried.', {
     ...Catalog, format: Format, archetype: z.string().trim().min(1).max(120).optional(),
   }, 'catalog', (args) => possibleResponses(getSeat().engine, args), true);
-  tool('validate_deck', 'Check the submitted list against XMage constructed rules and card implementation.', { format: Format, deck: Deck }, 'decks',
-    (args) => getSeat().engine.validateDeck(args), true);
+  tool('validate_deck', 'Check the submitted list or the data field from get_deck against XMage constructed rules.', {
+    format: Format, deck:z.looseObject(Deck.shape),
+  }, 'decks', ({format,deck:{name,cards,sideboard}})=>getSeat().engine.validateDeck({format,deck:{name,cards,sideboard}}), true);
   tool('list_decks', 'List the reusable MCP opponent decks in your private account library. These appear in the web library under MCP opponent decks.', {}, 'decks', () => fromProduct('list_decks', {}), true);
-  tool('get_deck', 'Read one deck in your library.', { deckId: LibraryDeckId }, 'decks', (args) => fromProduct('get_deck', args), true);
+  tool('get_deck', 'Read one deck in your library. Pass its format and data directly to validate_deck.', { deckId: LibraryDeckId }, 'decks', getLibraryDeck, true);
   tool('list_deck_archetypes', 'List all predefined library archetypes for the format. Use one label in create_deck and update_deck.', { format: Format },
     'decks', args => fromProduct('list_deck_archetypes', args), true);
   tool('create_deck', 'Save a reusable MCP opponent deck in your private library. It remains available in later sessions and appears under MCP opponent decks on the web.', { name: z.string().min(1).max(120), format: Format, archetype: z.string().min(1).max(150), deck: Deck },

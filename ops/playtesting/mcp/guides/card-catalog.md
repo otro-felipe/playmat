@@ -12,7 +12,14 @@ Use `search_cards` when you know features instead of a name. This example finds 
 
 Use `list_archetypes` for dated public examples. With a suspected archetype and available mana, use `find_possible_responses` with `format`, `archetype`, and relevant search filters. Check the provenance and `inPublicSample` flag, then decide which possibilities matter now. For example, look for instant-speed interaction, but also check relevant activated abilities on public permanents and the possibility of reduced or alternate costs. The result tells you what might be played. It has no access to the opposing player's hand or deck.
 
-For your own deck, use `validate_deck` where authorized to check the whole list against XMage. For dated format policies and bans beyond the pinned engine's catalog, consult [Wizards' banned and restricted list](https://magic.wizards.com/en/banned-restricted-list).
+To validate your library deck, pass its saved format and data to `validate_deck`.
+
+```js
+const saved = await call("get_deck", {deckId});
+const result = await call("validate_deck", {format:saved.format, deck:saved.data});
+```
+
+For dated format policies and bans beyond the pinned engine's catalog, consult [Wizards' banned and restricted list](https://magic.wizards.com/en/banned-restricted-list).
 
 ## Track an opponent response range
 
