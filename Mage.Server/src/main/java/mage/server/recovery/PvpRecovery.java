@@ -299,6 +299,7 @@ public final class PvpRecovery {
         try {
             MatchOptions options=saved.options;
             options.setPassword(UUID.randomUUID().toString()); options.setSpectatorsAllowed(false); options.setRated(false);
+            mage.game.match.ChampionshipRules restoredChampionship = options.championship;
             tableId=server.roomCreateTable(sessionId,room,options).getTableId();
             if (!ProductGateway.restoreHumanSeat(saved.tableId, tableId)) {
                 throw new IllegalStateException("Could not restore the original human seat policy");
@@ -306,6 +307,7 @@ public final class PvpRecovery {
             Live live=new Live(); live.originalTable=saved.tableId; live.restored=saved; live.snapshot=snapshot;
             tables.put(tableId,live);
             TableController controller=managers.tableManager().getController(tableId).orElseThrow(IllegalStateException::new);
+            controller.getOptions().championship = restoredChampionship;
             for (CheckpointContext.Seat seat:saved.seats) {
                 User admitted=managers.userManager().getUser(present.get(seat.principal)).orElseThrow(IllegalStateException::new);
                 if (!admitted.isConnected() || !seat.principal.equals(admitted.getRecoveryPrincipal())

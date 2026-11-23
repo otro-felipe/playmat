@@ -31,6 +31,9 @@ public interface Match {
 
     boolean hasEnded();
 
+    /** Close a championship match at time after scoring the current game or while between games. */
+    void finishTournamentAtTime();
+
     boolean hasStarted();
 
     boolean checkIfMatchEnds();

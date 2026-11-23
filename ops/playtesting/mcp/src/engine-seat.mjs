@@ -259,6 +259,14 @@ export class PlaymatEngineSeat {
   }
 
   #restoredProfileTable = null;
+  acceptTournamentTable(tableId) {
+    if (!this.profileId) throw new ToolError('player_required', 'Use a registered agent profile.');
+    this.profileTableId = tableId;
+    this.#tableId = tableId;
+  }
+  resumeTournamentGame(tableId, gameId, ownGamePlayerId) {
+    if (tableId === this.profileTableId) this.#joinStartedGame({ currentTableId:tableId, gameId, playerId:ownGamePlayerId });
+  }
   matchesPlayerGrant(actor) {
     return this.profileId === actor.playerId && this.profileConnectionId === actor.connectionId
       && this.profileTableId === (actor.activeTableId ?? null);

@@ -1,6 +1,8 @@
 import { ClipboardPaste, Cloud, CloudOff, Copy, Download, PencilLine, PencilRuler, RefreshCw, Trash2 } from 'lucide-react';
 import { lazy, Suspense, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { useSession } from '../stores/session';
 import { siteById } from '../../core/deckImport/sites';
 import { DeckOrganizer, SharedDecksButton, ShelfFilterBar } from '../decks/DeckShelf';
 import { ExportMenu } from '../decks/ExportMenu';
@@ -43,9 +45,21 @@ const GhostActions = lazy(() => import('../solo/Ghosts').then((m) => ({ default:
 export function DecksScreen() {
   const decks = useDecks();
   const t = useT();
-  const [library, setLibrary] = useState<'personal' | 'agent'>('personal');
+  const [library, setLibrary] = useState<'personal' | 'agent' | 'private'>('personal');
+  const account = useSession(s => s.userName);
+  const profiles = useQuery({ queryKey: ['private-library-profiles', account], enabled: PRIVATE_PLAYTESTING && !!account,
+    queryFn: async ({signal}) => {
+      const res = await fetch('/api/playtesting/players', {signal, cache: 'no-store'});
+      if (!res.ok) throw new Error(t('decks.unavailable'));
+      const {players} = await res.json() as {players:{id:string;displayName:string}[]};
+      return players;
+    } });
+  const [pilot, setPilot] = useState('');
+  const ownerPlayer = profiles.data?.find(p => p.id === pilot) ?? profiles.data?.[0];
+  const [copyId, setCopyId] = useState('');
+  const shared = useDeckRoster('agent');
   const [moving, setMoving] = useState(false);
-  const roster = useDeckRoster(library);
+  const roster = useDeckRoster(library, ownerPlayer?.id);
   const libraryReady = useLibraryReady();
   const syncing = useDeckSyncStatus((state) => state.status === 'syncing');
   const libraryError = useDeckSyncStatus((state) => state.status === 'error');
@@ -76,6 +90,20 @@ export function DecksScreen() {
   const source = selected?.source;
   const sourceSite = siteById(source?.site);
   const updatable = !!sourceSite && sourceSite.tier === 'direct' && !degraded.has(sourceSite.id);
+
+  async function privateDeck(sourceId?: string) {
+    if (!ownerPlayer || moving) return;
+    setMoving(true);
+    try {
+      const source = sourceId ? await useDecks.getState().loadList(sourceId) : null;
+      if (sourceId && !source) throw new Error(t('decks.unavailable'));
+      const id = await useDecks.getState().saveImported({ ...(source ?? {name: t('decks.newPrivate'), format: 'Standard', cards: [], sideboard: []}),
+        library: 'private', playerId: ownerPlayer.id, id: undefined });
+      await (await import('../stores/deckSync')).uploadNow(id);
+      navigate('/decks/' + encodeURIComponent(id));
+    } catch (error) { notify(t('decks.unavailable'), error instanceof Error ? error.message : String(error), 'error'); }
+    finally { setMoving(false); }
+  }
 
   async function duplicate(deck: RosterDeck) {
     try {
@@ -142,8 +170,17 @@ export function DecksScreen() {
           <div className={styles.libraries} role="group" aria-label={t('decks.libraries')}>
             <Button variant={library === 'personal' ? 'decision' : 'quiet'} aria-pressed={library === 'personal'} onClick={() => setLibrary('personal')}>{t('decks.personalLibrary')}</Button>
             <Button variant={library === 'agent' ? 'decision' : 'quiet'} aria-pressed={library === 'agent'} onClick={() => setLibrary('agent')}>{t('decks.agentLibrary')}</Button>
+            {Boolean(profiles.data?.length) && <Button variant={library === 'private' ? 'decision' : 'quiet'} aria-pressed={library === 'private'} onClick={() => setLibrary('private')}>{t('decks.privateLibrary')}</Button>}
           </div>
-          <p className={styles.libraryHint}>{t(library === 'agent' ? 'decks.agentHint' : 'decks.personalHint')}</p>
+          {library === 'private' && ownerPlayer && <div className={styles.libraries}>
+            <label>{t('decks.agentProfile')} <select value={ownerPlayer.id} onChange={e => setPilot(e.target.value)}>{profiles.data?.map(p =>
+              <option key={p.id} value={p.id}>{p.displayName}</option>)}</select></label>
+            <Button onClick={() => void privateDeck()} busy={moving}>{t('decks.build')}</Button>
+            {shared.length > 0 && <><label>{t('decks.agentLibrary')} <select value={copyId} onChange={e => setCopyId(e.target.value)}>
+              <option value="">—</option>{shared.map(d => <option value={d.id} key={d.id}>{d.name}</option>)}</select></label>
+            <Button disabled={!copyId} busy={moving} onClick={() => void privateDeck(copyId)}>{t('decks.copyPrivate')}</Button></>}
+          </div>}
+          <p className={styles.libraryHint}>{t(library === 'private' ? 'decks.privateHint' : library === 'agent' ? 'decks.agentHint' : 'decks.personalHint')}</p>
         </>}
         {dragging && (
           <div className={styles.dropHint} aria-hidden="true">
@@ -156,7 +193,7 @@ export function DecksScreen() {
           {!libraryReady && <div role="listitem"><p role="status" className={styles.emptyShelf}>{t('decks.loading')}</p></div>}
           {libraryReady && decks.loaded && roster.length === 0 && (
             <p role="listitem" className={styles.emptyShelf}>
-              {PRIVATE_PLAYTESTING && libraryError ? t('decks.unavailable') : PRIVATE_PLAYTESTING && library === 'agent' ? t('decks.agentEmpty') : <RichText text={t('decks.empty')} parts={{ keys: <kbd>{PASTE_KEYS}</kbd> }} />}
+              {PRIVATE_PLAYTESTING && libraryError ? t('decks.unavailable') : PRIVATE_PLAYTESTING && library === 'private' ? t('decks.privateEmpty') : PRIVATE_PLAYTESTING && library === 'agent' ? t('decks.agentEmpty') : <RichText text={t('decks.empty')} parts={{ keys: <kbd>{PASTE_KEYS}</kbd> }} />}
             </p>
           )}
           {decks.loaded && roster.length > 0 && shelf.length === 0 && (
@@ -177,7 +214,7 @@ export function DecksScreen() {
           <div className={styles.detailBody}>
             <h2 className={styles.detailName}>{selected.name}</h2>
             <p className={styles.detailNote}>{selected.note}</p>
-            {PRIVATE_PLAYTESTING && <p className={styles.libraryHint}>{t(library === 'agent' ? 'decks.agentLibrary' : 'decks.personalLibrary')}</p>}
+            {PRIVATE_PLAYTESTING && <p className={styles.libraryHint}>{t(library === 'private' ? 'decks.privateLibrary' : library === 'agent' ? 'decks.agentLibrary' : 'decks.personalLibrary')}</p>}
             {source && sourceSite && (
               <div className={styles.source}>
                 <SourceLine source={source} />
@@ -236,7 +273,7 @@ export function DecksScreen() {
               </Suspense>}
             </div>
             {!selected.starter && <DeckOrganizer key={selected.id} deck={selected} />}
-            {PRIVATE_PLAYTESTING && !selected.starter && <Button variant="print" size="sm" busy={moving} onClick={() => void moveLibrary(selected)}>{t(library === 'agent' ? 'decks.moveToPersonal' : 'decks.moveToAgent')}</Button>}
+            {PRIVATE_PLAYTESTING && library !== 'private' && !selected.starter && <Button variant="print" size="sm" busy={moving} onClick={() => void moveLibrary(selected)}>{t(library === 'agent' ? 'decks.moveToPersonal' : 'decks.moveToAgent')}</Button>}
             {!selected.starter && (
               <Button variant="danger" size="sm" className={styles.remove} icon={<Trash2 size={16} />} onClick={() => setRemoving(selected)}>{t('decks.remove')}</Button>
             )}

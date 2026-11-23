@@ -23,7 +23,8 @@ export interface StarterDeck {
 export interface RosterDeck {
   format?: string;
   archetype?: string;
-  library?: 'personal' | 'agent';
+  library?: DeckCardLists['library'];
+  playerId?: string;
   id: string;
   name: string;
   note: string;
@@ -63,6 +64,7 @@ function summaryToRoster(deck: DeckSummary): RosterDeck {
   const size = `${deck.cardCount ?? 0} cards${deck.sideboardCount ? ` + ${deck.sideboardCount}` : ''}`;
   return {
     library: deck.library,
+    playerId: deck.playerId,
     format: deck.format,
     archetype: deck.archetype,
     id: deck.id,
@@ -259,7 +261,7 @@ export const useDecks = create<DeckLibraryState>((set, get) => ({
     const starter = id.startsWith(STARTER_PREFIX);
     const name = copyName(deck.name, taken);
     // a copy is the player's own deck: it no longer follows the site it was imported from
-    const copy: DeckCardLists = { ...deck, id: undefined, library: undefined, name, source: undefined, createdAt: undefined };
+    const copy: DeckCardLists = { ...deck, id: undefined, library: undefined, playerId: undefined, name, source: undefined, createdAt: undefined };
     if (starter) copy.format = starterFormat(get().starters, id);
     const newId = await deckStorage.saveDeck(copy, { forceNew: true });
     await get().refresh();

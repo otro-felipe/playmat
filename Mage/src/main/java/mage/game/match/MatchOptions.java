@@ -18,6 +18,8 @@ import java.util.*;
  */
 public class MatchOptions implements Serializable {
 
+    private static final long serialVersionUID = 294469171960441544L;
+    public ChampionshipRules championship;
     protected String name;
     protected MultiplayerAttackOption attackOption = MultiplayerAttackOption.LEFT;
     protected RangeOfInfluence range = RangeOfInfluence.ALL;

@@ -12,6 +12,11 @@ import { libraryArchetypeCoverage, migrateDeckLists, refineMigratedDeckLists, re
 import { excludeAsParticipant } from './match-statistics.mjs'
 import { listPlayers, createPlayer, createPlayerSlot, updatePlayer, retirePlayer } from './players.mjs'
 import { changeReservation, restorePlayerReservations } from './player-reservations.mjs'
+import { ownedPlayer, readTournamentDeck, setTournamentAdmins, tournamentActor, validateTournamentDeck as engineDeckCheck } from './tournament-access.mjs'
+import { createTournamentRoutes } from './tournament-routes.mjs'
+import { createTournamentService } from './tournaments.mjs'
+import { createTournamentTableBridge, restoreTournamentTable } from './tournament-table-bridge.mjs'
+import { createTournamentBroadcast } from './tournament-broadcast.mjs'
 import { createArchive } from './archive.mjs'
 import { resetMatchHistory, setUnlimitedMatchHistory } from './history-retention.mjs'
 import { createTheoryStore, evaluateTheoryTactics } from './theory-store.mjs'
@@ -123,7 +128,7 @@ function rejectMissing(value, message) {
 export async function createProduct({
   databaseUrl, schema = 'playmat_product', replayDirectory, store, insecureCookie = false, enableInternal = true,
   purgeExpiredHistory = false,
-  publicUrl, oauthClients = [], oauthClientOptions, eventOptions, signup, turnstile, readSpectatorEngine,
+  publicUrl, oauthClients = [], oauthClientOptions, eventOptions, signup, turnstile, readSpectatorEngine, validateTournamentDeck = engineDeckCheck,
 }) {
   if (!databaseUrl || !/^[a-z_][a-z0-9_]{0,60}$/.test(schema)) throw Error('A valid product database configuration is required')
   const challenge = createTurnstile(publicUrl, turnstile)
@@ -138,6 +143,9 @@ export async function createProduct({
     await pool.query(await readFile(resolve(directory, 'review-schema.sql'), 'utf8'))
     await pool.query(await readFile(resolve(directory, 'review-permissions.sql'), 'utf8'))
     await pool.query(await readFile(resolve(directory, 'theory-schema.sql'), 'utf8'))
+    await pool.query(await readFile(resolve(directory, 'tournament-access.sql'), 'utf8'))
+    await pool.query(await readFile(resolve(directory, 'tournaments.sql'), 'utf8'))
+    await pool.query(await readFile(resolve(directory, 'tournament-table-bridge.sql'), 'utf8'))
     await pool.query(await readFile(resolve(directory, 'history-retention.sql'), 'utf8'))
     await migrateDeckLists(pool)
     await refineMigratedDeckLists(pool)
@@ -159,6 +167,12 @@ export async function createProduct({
   const id = createIdentity(pool, insecureCookie, oauth.resolve)
   const registration = createSignup(pool, id, publicUrl, signup, challenge)
   const archive = createArchive(pool, replayDirectory, store, { purgeExpiredHistory })
+  const tournaments = createTournamentService(pool, {readDeck:readTournamentDeck, validateDeck:validateTournamentDeck})
+  const tournamentBridge = createTournamentTableBridge(pool, tournaments)
+  const tournamentRoutes = createTournamentRoutes({
+    pool, tournaments, bridge:tournamentBridge, broadcast:createTournamentBroadcast(pool,archive,readSpectatorEngine),
+    resolveActor:async req=>tournamentActor(pool,await id.resolve(req)), body, send, requireScope,
+  })
   const spectators = createSpectators({storage:spectatorStorage(pool, archive),readEngine:readSpectatorEngine})
   const review = createPostMatchReview(pool, archive, permissions)
   const theory = createTheoryStore(pool, review)
@@ -256,6 +270,7 @@ export async function createProduct({
     }
     if (await oauth.route(req, res, url, id.resolve)) return
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !sameOrigin(req, insecureCookie)) throw new ProductError(403, 'Cross-origin request')
+    if (await tournamentRoutes.route(req,res,url)) return
     if (await spectatorRoute(req,res,path,id.resolve,spectators,send,body)) return
     if (path === '/api/playtesting/signup/config' && req.method === 'GET') {
       return send(res, 200, { turnstileSiteKey: challenge?.siteKey ?? null })
@@ -298,6 +313,7 @@ export async function createProduct({
       await transaction(pool, async db => {
         await restoreHumanSeat(db,input)
         await restorePlayerReservations(db,input.originalTableId,input.tableId)
+        await restoreTournamentTable(db,input.originalTableId,input.tableId)
         await restoreSpectatorLink(db,input.originalTableId,input.tableId)
       })
       return send(res, 200, {})
@@ -421,7 +437,7 @@ export async function createProduct({
       if (req.method === 'PATCH') return send(res,200,await updatePlayer(pool,actor,playerId,await body(req,'json',2048)))
       if (req.method === 'DELETE') return send(res,200,await retirePlayer(pool,actor,playerId))
     }
-    if (endpoint === 'me' && req.method === 'GET') return send(res, 200, identityView(actor))
+    if (endpoint === 'me' && req.method === 'GET') return send(res, 200, {...identityView(actor),isTournamentAdmin:(await tournamentActor(pool,actor)).isAdmin})
     if (endpoint.startsWith('human-seat/') && req.method === 'GET') {
       requireScope(actor, 'play')
       return send(res, 200, await readHumanSeat(pool, actor, endpoint.slice('human-seat/'.length)))
@@ -447,9 +463,12 @@ export async function createProduct({
     if (endpoint === 'decks' && req.method === 'GET') {
       requireScope(actor, 'library')
       const library = url.searchParams.get('library') ?? (actor.playerId ? 'agent' : null)
-      if (actor.playerId && library !== 'agent') throw new ProductError(403,'Pilots use the shared MCP library')
-      if (library !== null && !['personal', 'agent'].includes(library)) throw new ProductError(400, 'Invalid deck library')
-      return send(res, 200, { decks: await listDecks(pool, actor.accountId, url.searchParams.get('deleted') === '1', library) })
+      if (actor.agent && library === 'private' && !actor.playerId) throw new ProductError(403,'Choose a player profile')
+      if (actor.playerId && !['agent','private'].includes(library)) throw new ProductError(403,'Pilots use their private and shared MCP libraries')
+      let scope = actor.playerId ?? (actor.agent ? '' : null)
+      if (!actor.agent && url.searchParams.has('playerId')) scope = (await ownedPlayer(pool,actor,url.searchParams.get('playerId'))).id
+      if (library !== null && !['personal', 'agent','private'].includes(library)) throw new ProductError(400, 'Invalid deck library')
+      return send(res, 200, { decks: await listDecks(pool, actor.accountId, url.searchParams.get('deleted') === '1', library,scope) })
     }
     if (endpoint.startsWith('decks/')) {
       requireScope(actor, 'library')
@@ -467,15 +486,23 @@ export async function createProduct({
         const { library, expectedRevision } = await body(req)
         return send(res, 200, await moveDeckLibrary(pool, actor.accountId, deckId, library, expectedRevision))
       }
+      const scope = actor.playerId ?? (actor.agent ? '' : null)
       if (req.method === 'GET') {
         const revision = url.searchParams.get('revision')
         if (revision && !/^\d{1,8}$/.test(revision)) throw new ProductError(400, 'Invalid revision')
-        return send(res, 200, rejectMissing(await getDeck(pool, actor.accountId, deckId, revision, actor.playerId ? 'agent' : null), 'Deck not found'))
+        return send(res, 200, rejectMissing(await getDeck(pool, actor.accountId, deckId, revision, actor.playerId ? 'agent' : null, scope), 'Deck not found'))
       }
-      if (req.method === 'PUT') return send(res, 200, await putDeck(pool, actor.accountId, deckId, await body(req), actor.agent ? 'agent' : 'personal', actor.playerId ? 'agent' : null))
+      if (req.method === 'PUT') {
+        const input = await body(req)
+        const privateDeck = input.library === 'private'
+        let playerScope = scope
+        if (privateDeck && !actor.playerId) playerScope = (await ownedPlayer(pool,actor,input.playerId)).id
+        const shelf = privateDeck ? 'private' : actor.agent ? 'agent' : 'personal'
+        return send(res,200,await putDeck(pool,actor.accountId,deckId,input,shelf,actor.playerId ? 'agent' : null,playerScope))
+      }
       if (req.method === 'DELETE') {
         const data = await body(req)
-        await deleteDeck(pool, actor.accountId, deckId, data.expectedRevision, undefined, actor.playerId ? 'agent' : null)
+        await deleteDeck(pool, actor.accountId, deckId, data.expectedRevision, undefined, actor.playerId ? 'agent' : null, scope)
         return send(res, 200, { deleted: true })
       }
     }
@@ -601,11 +628,15 @@ export async function createProduct({
     setUnlimitedMatchHistory: (usernames, unlimited) => setUnlimitedMatchHistory(pool, usernames, unlimited),
     archiveGames: archive.archiveGames,
     startMcpEvents: events.start,
+    startTournaments: tournamentRoutes.start,
+    stopTournaments: tournamentRoutes.stop,
+    setTournamentAdmins: ids=>setTournamentAdmins(pool,ids),
     async dropTestSchema() {
       if (!schema.startsWith('test_')) throw Error('Refusing to remove data outside an isolated test schema')
       await pool.query('DROP SCHEMA ' + schema + ' CASCADE')
     },
     async close() {
+      await tournamentRoutes.stop()
       spectators.close()
       await events.stop()
       return pool.end()

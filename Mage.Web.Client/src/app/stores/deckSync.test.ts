@@ -164,3 +164,56 @@ test('[PM-AC-20] a failed deck operation preserves local work and allows other d
   });
   expect(useDeckSyncStatus.getState().error).toContain('Conservamos tus cambios');
 });
+
+test('an owner creating a private agent deck uploads its scope and can find it on that agent shelf', async () => {
+  vi.resetModules();
+  vi.doMock('../connection', () => createFakeConnection());
+  vi.doMock('../playtesting', () => ({ PRIVATE_PLAYTESTING: true }));
+  const { useSession } = await import('./session');
+  const { useDecks } = await import('./decks');
+  const { useDeckSyncStatus } = await import('./deckSyncStatus');
+  const bodies: object[] = [];
+  vi.stubGlobal('fetch', async (_url: string, init?: RequestInit) => {
+    if (init?.method === 'PUT') { bodies.push(JSON.parse(String(init.body))); return Response.json({revision:1}); }
+    return Response.json({ decks: [] });
+  });
+  const sync = await import('./deckSync');
+  useSession.setState({ phase: 'signedIn', loginCount: 1, userName: 'Alice', serverUrl: SERVER });
+  await vi.waitFor(() => expect(useDeckSyncStatus.getState().ready).toBe(true));
+  const playerId = '7b562c35-890e-42d8-b196-e6049338cad1';
+  const id = await useDecks.getState().saveImported({name:'Luna Standard', cards:[], sideboard:[], format:'Standard', library:'private', playerId});
+  await sync.uploadNow(id);
+  expect(bodies).toEqual([expect.objectContaining({library:'private', playerId})]);
+  expect(useDecks.getState().saved.find(d => d.id === id)).toMatchObject({library:'private', playerId});
+});
+
+test('logout and login to an empty account private library isolates the previous owner’s agent list and pending local edits', async () => {
+  vi.resetModules();
+  vi.doMock('../connection', () => createFakeConnection());
+  vi.doMock('../playtesting', () => ({PRIVATE_PLAYTESTING:true}));
+  const {useSession}=await import('./session');
+  const {useDecks}=await import('./decks');
+  const {deckStorage}=await import('../../core/decks/DeckStorageService');
+  const {useDeckSyncStatus}=await import('./deckSyncStatus');
+  const list={...deck('luna-private','Luna private list',10),library:'private',playerId:'7b562c35-890e-42d8-b196-e6049338cad1'};
+  const writes: string[]=[];
+  vi.stubGlobal('fetch',async (url: string, init?: RequestInit)=>{
+    const owner=(init?.headers as Record<string,string>)?.['X-Playmat-Deck-Owner'];
+    if(init?.method==='PUT') writes.push(owner);
+    if(url===ROOT+'?deleted=1') return Response.json({decks:owner==='Alice'?[{id:list.id,revision:1,updatedAt:10}]:[]});
+    if(url===ROOT+'/'+list.id && owner==='Alice') return Response.json({revision:1,data:list});
+    return Response.json({});
+  });
+  await import('./deckSync');
+  useSession.setState({phase:'signedIn',loginCount:1,userName:'Alice',serverUrl:SERVER});
+  await vi.waitFor(()=>expect(useDecks.getState().saved[0]).toMatchObject({playerId:list.playerId,library:'private'}));
+  await useDecks.getState().rename(list.id,'Only Alice');
+  useSession.setState({phase:'signedOut'});
+  expect(await deckStorage.loadDeck(list.id)).toBeNull();
+  useSession.setState({phase:'signedIn',loginCount:2,userName:'Bob'});
+  await vi.waitFor(()=>expect(useDeckSyncStatus.getState()).toMatchObject({status:'synced',ready:true}));
+  expect(await deckStorage.listDecks()).toEqual([]);
+  expect(useDecks.getState().saved).toEqual([]);
+  expect(await deckStorage.loadDeck(list.id)).toBeNull();
+  expect(writes).not.toContain('Bob');
+});

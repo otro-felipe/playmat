@@ -1,7 +1,7 @@
 import { SpectatorBroadcast } from '../spectator/SpectatorScreen';
 import { MatchHumanSeat, useEnabledHumanSeat } from '../ui/humanSeat';
-import { invitedPlayerLabel } from '../playtesting';
-import { useMemo } from 'react';
+import { invitedPlayerLabel, PRIVATE_PLAYTESTING } from '../playtesting';
+import { lazy, Suspense, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useStore } from 'zustand';
 import { useEvents } from '../stores/events';
@@ -16,6 +16,8 @@ import { usePlaytestingInvitation } from '../usePlaytestingInvitation';
 import { Button } from '../ui/Button';
 import { isSiteToolOrigin } from '../webmcp';
 import styles from './GameScreen.module.css';
+
+const TournamentGameClock = lazy(() => import('../tournaments/TournamentGameClock').then(m => ({ default: m.TournamentGameClock })));
 
 /** A running game: the match stage, full screen. */
 export function GameScreen() {
@@ -88,6 +90,7 @@ function ConnectedStage({ gameId, leaveLabel, onLeave }: { gameId: string; leave
   }
   return (
     <>
+      {PRIVATE_PLAYTESTING && <Suspense fallback={null}><TournamentGameClock tableId={tableId || gameId} /></Suspense>}
       <MatchHumanSeat.Provider value={enabledHuman}><MatchStage session={session} state={state} seatDisplayNames={seatDisplayNames} onLeave={state.browserInputLock ? onLeave : undefined} leaveLabel={leaveLabel} /></MatchHumanSeat.Provider>
       {(offline || state.resyncing) && !state.gameOver && state.mode !== 'replay' && (
         <ReconnectScrim offline={offline} onLeave={onLeave} leaveLabel={leaveLabel} />

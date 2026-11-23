@@ -1,3 +1,4 @@
+import { storeTournamentScore } from './tournament-table-bridge.mjs'
 import { canonicalAccountScope } from './players.mjs'
 import { seatArchetype } from './archived-archetypes.mjs'
 import { exclusionView } from './match-statistics.mjs'
@@ -210,7 +211,8 @@ const selectGame = `
         'isMcp',a.id IS NOT NULL,'model',p.model,'reasoningEffort',p.reasoning_effort)
         || CASE WHEN profile.id IS NOT NULL THEN jsonb_build_object('profileId',profile.id,'flag',profile.flag) ELSE '{}'::jsonb END
         || CASE WHEN p.engine_key=delegated_owner.username_key THEN '{"humanMcpAllowed":true}'::jsonb ELSE '{}'::jsonb END
-        || CASE WHEN m.status='completed' AND p.archetype IS NOT NULL THEN jsonb_build_object('archetype',p.archetype)
+        || CASE WHEN m.status='completed' AND p.archetype IS NOT NULL
+             AND (p.engine_key=ANY($1::text[]) OR match_deck_published(m.table_id,p.engine_key)) THEN jsonb_build_object('archetype',p.archetype)
                 ELSE '{}'::jsonb END ORDER BY p.engine_name)
        FROM game_players p LEFT JOIN agent_grants seat ON p.human AND seat.engine_key=p.engine_key
        LEFT JOIN accounts a ON a.id=seat.account_id LEFT JOIN player_profiles profile ON profile.id=seat.player_id WHERE p.game_id=g.id) AS players,
@@ -274,6 +276,7 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
         const raw = JSON.parse(await readFile(join(stage, file), 'utf8'))
         if (variant === '.match') {
           if (raw.matchId === id && Number.isSafeInteger(raw.endedAt)) {
+            await storeTournamentScore(pool, raw)
             const saved = await pool.query(`WITH finished AS (UPDATE matches SET status='completed', ended_at=$2, winner=$3 WHERE id=$1 RETURNING table_id),
               released AS (DELETE FROM player_table_reservations r USING finished f WHERE f.table_id IN (r.table_id,r.original_table_id))
               SELECT table_id FROM finished`, [id, raw.endedAt, raw.winner ?? null])

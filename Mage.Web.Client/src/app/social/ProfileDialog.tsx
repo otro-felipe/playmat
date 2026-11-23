@@ -3,9 +3,10 @@ import { playerLabelText } from '../ui/playerIdentity';
 import { useQuery } from '@tanstack/react-query';
 import { Ban, Flag as FlagIcon, History, MessageCircle, Star, StarOff } from 'lucide-react';
 import { lazy, Suspense, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { DEFAULT_AVATAR_ID, flagChoices, SIGILS } from '../../core/social/identity';
 import { api } from '../connection';
+import { PRIVATE_PLAYTESTING } from '../playtesting';
 import { useT } from '../i18n';
 import { useServerInfo } from '../queries';
 import { useLobby } from '../stores/lobby';
@@ -41,6 +42,7 @@ export function ProfileDialog() {
 
 function Profile({ name, onClose }: { name: string; onClose(): void }) {
   const navigate = useNavigate();
+  const t = useT();
   const me = useSession((state) => state.userName);
   const isMe = name === me;
   const user = useLobby((state) => state.users.find((candidate) => candidate.userName === name) ?? null);
@@ -91,6 +93,7 @@ function Profile({ name, onClose }: { name: string; onClose(): void }) {
         <p className={styles.note}><PlayerLabel name={name} /> is not online, so their record isn't available right now.</p>
       )}
 
+      {PRIVATE_PLAYTESTING && <Link onClick={onClose} to={'/tournaments/owners/' + encodeURIComponent(name)}>{t('shell.nav.tournaments')}</Link>}
       <Progression name={name} />
 
       {isMe ? <Identity /> : (

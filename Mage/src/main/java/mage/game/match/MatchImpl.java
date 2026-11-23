@@ -119,6 +119,19 @@ public abstract class MatchImpl implements Match {
     }
 
     @Override
+    public void finishTournamentAtTime() {
+        if (endTime != null || options.championship == null || !options.championship.timeCalled(System.currentTimeMillis())) return;
+        int high = players.stream().mapToInt(MatchPlayer::getWins).max().orElse(0);
+        List<MatchPlayer> leaders = players.stream().filter(p -> p.getWins() == high).collect(java.util.stream.Collectors.toList());
+        if (leaders.size() == 1) leaders.get(0).setMatchWinner(true);
+        else if (options.championship.playoffs) {
+            options.championship.tiedBetweenGames();
+            return;
+        }
+        endTime = new Date();
+    }
+
+    @Override
     public boolean hasEnded() {
         // Some workarounds to end match if for unknown reason the match was not ended regularly
         if (getGame() == null && isDoneSideboarding()) {
@@ -256,6 +269,7 @@ public abstract class MatchImpl implements Match {
             addDraw();
         }
         checkIfMatchEnds();
+        finishTournamentAtTime();
         game.fireGameEndInfo();
         gamesInfo.add(createGameInfo(game));
     }

@@ -32,7 +32,7 @@ const NAV: { to: string; label: MessageKey; end?: boolean }[] = [
   { to: '/train', label: 'shell.nav.train' },
   { to: '/history', label: 'shell.nav.history' },
 ];
-const PRIVATE_NAV = NAV.filter((item) => ['/', '/decks', '/tables', '/history'].includes(item.to));
+const PRIVATE_NAV = [...NAV.filter((item) => ['/', '/decks', '/tables', '/history'].includes(item.to)), { to: '/tournaments', label: 'shell.nav.tournaments' as const }];
 
 // the import sheet loads the first time it opens, then stays mounted so it can animate out
 const ImportSheet = lazy(() => import('./decks/import/ImportSheet').then((module) => ({ default: module.ImportSheet })));

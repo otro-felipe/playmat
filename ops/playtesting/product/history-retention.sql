@@ -16,7 +16,7 @@ WITH account_seats AS (
   JOIN game_players p USING (engine_key)
   JOIN games g ON g.id=p.game_id
 ), position AS (
-  SELECT p.account_id, p.match_id, m.status, a.unlimited_match_history,
+  SELECT p.account_id, p.match_id, m.status, (a.unlimited_match_history OR a.tournament_admin) AS unlimited_match_history,
     row_number() OVER (PARTITION BY p.account_id, (m.status='active') ORDER BY m.started_at DESC, m.id DESC) AS recent
   FROM participation p
   JOIN matches m ON m.id=p.match_id

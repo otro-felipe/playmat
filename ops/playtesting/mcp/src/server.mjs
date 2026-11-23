@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from 'node:timers/promises';
 import { McpError } from '@modelcontextprotocol/sdk/types.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { publicExplanationLimit } from '../../product/line-explanations.mjs';
@@ -262,7 +263,7 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
         const humanRoute = args.humanTableId && (gameTool || name === 'start_match');
         if (args.humanTableId && !humanRoute) throw new ToolError('player_forbidden', 'Use the opted-in Human Player tools for this table.');
         if (actor.playerSelectionEnabled && ['play', 'chat'].includes(scope)
-            && !['list_players','list_joinable_games', 'list_human_matches', 'create_human_match'].includes(name)
+            && !['list_players','list_tournaments','get_tournament','list_joinable_games', 'list_human_matches', 'create_human_match'].includes(name)
             && !humanRoute && !(gameTool && ownsLegacyGame(args.gameId))) {
           throw new ToolError('player_required', 'Choose a playerId from list_players and supply it on every seat call.');
         }
@@ -422,6 +423,55 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
     return { players: players.map(({ playerId, displayName, flag, engineName, mcpEnabled, activeTableId, availability }) =>
       ({ playerId, displayName, flag, engineName, mcpEnabled, activeTableId, availability })) };
   }, true);
+  tool('list_tournaments', 'Discover constructed tournaments, structures and registration status.', {}, 'play',
+    () => fromProduct('list_tournaments', {}), true);
+  tool('get_tournament', 'Read public standings, pairings for a round or a published deck. Entry IDs come from standings.', {
+    tournamentId: Uuid,
+    section: z.enum(['standings', 'pairings', 'deck']).default('standings'),
+    roundNumber: z.number().int().positive().optional(),
+    entryId: Uuid.optional(),
+    offset: z.number().int().nonnegative().default(0),
+    limit: z.number().int().min(1).max(64).default(16),
+  }, 'play', async ({ tournamentId, section, roundNumber, entryId, offset, limit }) => {
+    const event = await fromProduct('get_tournament', { tournamentId });
+    const summary = { tournamentId, name:event.name, status:event.status, stage:event.stage, roundNumber:event.roundNumber, roundsTotal:event.roundsTotal, cutSize:event.cutSize, championId:event.championId };
+    if (section === 'deck') {
+      if (!entryId) throw new ToolError('invalid_input', 'Supply an entryId from standings.');
+      const deck = event.deckLists.find(item => item.entryId === entryId);
+      if (!deck) throw new ToolError('not_found', 'No published decklist for this entry.');
+      return { ...summary, deck };
+    }
+    const rows = section === 'standings' ? event.standings : event.pairings.filter(pair => pair.roundNumber === (roundNumber ?? event.roundNumber));
+    return { ...summary, [section]:rows.slice(offset, offset + limit), total:rows.length };
+  }, true);
+  tool('join_tournament', 'Register your persistent agent with a saved deck. Repeating this before registration closes can replace the registered list.', {
+    tournamentId: Uuid, deckId: LibraryDeckId,
+  }, 'play', args => {
+    if (!current().actor.playerId) throw new ToolError('player_required', 'Choose your persistent agent playerId.');
+    return fromProduct('join_tournament', args);
+  });
+  tool('wait_for_next_round', 'Check in as online, recover your existing table, or wait for the next tournament assignment. Call again while waiting; close your session between tournament days.', {
+    tournamentId: Uuid, waitMs: z.number().int().min(0).max(25_000).default(20_000),
+  }, 'play', async ({ tournamentId, waitMs }, signal) => {
+    if (!current().actor.playerId) throw new ToolError('player_required', 'Choose your persistent agent playerId.');
+    const deadline = Date.now() + waitMs;
+    do {
+      const result = await fromProduct('wait_for_next_round', { tournamentId });
+      if (result.tableId) {
+        // A Product assignment verifies membership and reserves this exact table first.
+        const engine = getSeat(true).engine;
+        await engine.open();
+        engine.acceptTournamentTable(result.tableId);
+        const confirmed = await fromProduct('wait_for_next_round', { tournamentId, readyTableId: result.tableId });
+        const { ownGamePlayerId, ...assignment } = confirmed;
+        if (ownGamePlayerId && assignment.gameId) engine.resumeTournamentGame(assignment.tableId, assignment.gameId, ownGamePlayerId);
+        return assignment;
+      }
+      const remaining = deadline - Date.now();
+      if (remaining <= 0 || !['waiting','registration','preparing','break'].includes(result.state)) return result;
+      await sleep(Math.min(remaining, 2000), undefined, { signal });
+    } while (true);
+  });
   const inviteLocator={tableId:Uuid.optional(), inviteLink:z.string().min(1).max(2048).optional()};
   function locateInvitation(tableId,inviteLink) {
     if (!inviteLink) return tableId ? {tableId} : {};
@@ -458,7 +508,7 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
     if (Boolean(deck) === Boolean(deckId)) throw new ToolError('invalid_deck', 'Choose one library deck ID or supply an inline deck.');
     if (!deckId) return deck;
     const saved = await getLibraryDeck({ deckId });
-    if (saved?.id !== deckId || saved.library !== library || !saved.data) {
+    if (saved?.id !== deckId || (saved.library !== library && !(library === 'agent' && saved.library === 'private')) || !saved.data) {
       throw new ToolError('deck_unavailable', 'Choose a saved deck from the playing seat’s library.');
     }
     const { name, cards, sideboard } = saved.data;
@@ -573,14 +623,15 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
   tool('validate_deck', 'Check the submitted list or the data field from get_deck against XMage constructed rules.', {
     format: Format, deck:z.looseObject(Deck.shape),
   }, 'decks', ({format,deck:{name,cards,sideboard}})=>getSeat().engine.validateDeck({format,deck:{name,cards,sideboard}}), true);
-  tool('list_decks', 'List the reusable MCP opponent decks in your private account library. These appear in the web library under MCP opponent decks.', {}, 'decks', () => fromProduct('list_decks', {}), true);
+  const DeckLibrary = z.enum(['agent','private']).optional().describe('Shared account agent library, or the selected agent’s own private library.');
+  tool('list_decks', 'List the reusable MCP opponent decks in your private account library. These appear in the web library under MCP opponent decks.', { library: DeckLibrary }, 'decks', args => fromProduct('list_decks', args), true);
   tool('get_deck', 'Read one deck in your library. Pass its format and data directly to validate_deck.', { deckId: LibraryDeckId }, 'decks', getLibraryDeck, true);
   tool('list_deck_archetypes', 'List all predefined library archetypes for the format. Use one label in create_deck and update_deck.', { format: Format },
     'decks', args => fromProduct('list_deck_archetypes', args), true);
-  tool('create_deck', 'Save a reusable MCP opponent deck in your private library. It remains available in later sessions and appears under MCP opponent decks on the web.', { name: z.string().min(1).max(120), format: Format, archetype: z.string().min(1).max(150), deck: Deck },
+  tool('create_deck', 'Save a reusable MCP opponent deck in your private library. It remains available in later sessions and appears under MCP opponent decks on the web.', { library: DeckLibrary, name: z.string().min(1).max(120), format: Format, archetype: z.string().min(1).max(150), deck: Deck },
     'decks', (args) => fromProduct('create_deck', args));
   tool('update_deck', 'Save a revision if your current deck revision still matches.', {
-    deckId: LibraryDeckId, expectedRevision: z.number().int().positive(), name: z.string().min(1).max(120), format: Format, archetype: z.string().min(1).max(150), deck: Deck,
+    library: DeckLibrary, deckId: LibraryDeckId, expectedRevision: z.number().int().positive(), name: z.string().min(1).max(120), format: Format, archetype: z.string().min(1).max(150), deck: Deck,
   }, 'decks', (args) => fromProduct('update_deck', args));
   tool('list_matches', 'List your finished and interrupted matches, filtered by format.', {
     format: Format.optional(), cursor: z.string().max(160).optional(), limit: z.number().int().min(1).max(50).default(25),

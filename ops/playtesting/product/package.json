@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.922.0",
+    "edmonds-blossom": "1.0.0",
     "fflate": "^0.8.2",
     "oidc-provider": "9.15.0",
     "pg": "^8.16.3"

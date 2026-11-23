@@ -640,6 +640,12 @@ public class GameController implements GameCallback {
     public void quitMatch(UUID userId) {
         UUID playerId = getPlayerId(userId);
         if (playerId != null) {
+            // During initial join the player can only leave the game, which does not set Player.hasQuit.
+            // Record this match action before the game worker can advance to sideboarding.
+            Table table = managerFactory.tableManager().getTable(tableId);
+            if (table != null && table.getMatch() != null && table.getMatch().getGame() == game) {
+                table.getMatch().quitMatch(playerId);
+            }
             if (isAllJoined()) {
                 GameSessionPlayer gameSessionPlayer = gameSessions.get(playerId);
                 if (gameSessionPlayer != null) {
@@ -1056,6 +1062,9 @@ public class GameController implements GameCallback {
                     + " has timed out (player had priority and was not active for "
                     + getResponseIdleTimeoutSecs() + " seconds ) - Auto concede.";
             managerFactory.chatManager().broadcast(chatId, "", sb, MessageColor.BLACK, true, game, MessageType.STATUS, null);
+            if (gameOptions.championship != null) {
+                gameOptions.championship.disqualified = player.getName();
+            }
             game.idleTimeout(playerId);
         }
     }
@@ -1425,9 +1434,16 @@ public class GameController implements GameCallback {
                 onResponseIdleTimeout(playerId);
             }
         });
+        if (gameOptions.championship != null) responseIdleTimer.warnAfter(playerId, 180, () -> {
+            Player waiting = game.getPlayer(playerId);
+            if (waiting != null) managerFactory.chatManager().broadcast(chatId, "",
+                    waiting.getLogName() + " has a pending decision. Seven minutes remain before tournament disqualification.",
+                    MessageColor.BLACK, true, game, MessageType.STATUS, null);
+        });
     }
 
     private long getResponseIdleTimeoutSecs() {
+        if (gameOptions.championship != null) return 600;
         long ordinary = Main.isTestMode() ? 3600 : mage.server.admin.RuntimeSettings.get().maxSecondsIdle(managerFactory.configSettings().getMaxSecondsIdle());
         if (!mage.server.playtesting.ProductGateway.enabled()) return ordinary;
         Optional<mage.server.TableController> controller = managerFactory.tableManager().getController(tableId);

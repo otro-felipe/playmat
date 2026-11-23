@@ -50,7 +50,8 @@ export interface SideboardPlan {
 export interface DeckCardLists {
   archetype?: string;
   /** Product-owned shelf classification; legacy decks remain personal. */
-  library?: 'personal' | 'agent';
+  library?: 'personal' | 'agent' | 'private';
+  playerId?: string;
   id?: string;
   name?: string;
   description?: string;

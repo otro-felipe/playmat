@@ -1,5 +1,6 @@
 import { createMcpServer } from './server.mjs';
 import { PlaymatEngineSeat } from './engine-seat.mjs';
+import { configuredSeatCapacity } from './player-seats.mjs';
 import { createProductClient } from './product.mjs';
 
 const engineUrl = process.env.PLAYMAT_ENGINE_URL ?? 'ws://127.0.0.1:17172/ws';
@@ -15,6 +16,7 @@ if (invitationOrigin) allowedOrigins.push(invitationOrigin);
 allowedOrigins.push('https://chatgpt.com');
 
 const server = createMcpServer({
+  maxSeats: configuredSeatCapacity(process.env.PLAYMAT_MCP_MAX_SEATS),
   authorize: product.authorize,
   product: product.operation,
   eventRequest: product.eventRequest,

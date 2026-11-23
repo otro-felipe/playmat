@@ -19,6 +19,7 @@ import java.util.function.Consumer;
  */
 public class GameOptions implements Serializable, Copyable<GameOptions> {
 
+    private static final long serialVersionUID = -167447694519037662L;
     private static final GameOptions deinstance = new GameOptions();
 
     public static GameOptions getDefault() {
@@ -28,6 +29,8 @@ public class GameOptions implements Serializable, Copyable<GameOptions> {
     /**
      * Defines the running mode. There are some exclusions made for test mode.
      */
+    public mage.game.match.ChampionshipRules championship;
+
     public boolean testMode = false;
 
     /**
@@ -122,6 +125,7 @@ public class GameOptions implements Serializable, Copyable<GameOptions> {
     }
 
     private GameOptions(final GameOptions options) {
+        this.championship = options.championship;
         this.testMode = options.testMode;
         this.stopOnTurn = options.stopOnTurn;
         this.stopAtStep = options.stopAtStep;

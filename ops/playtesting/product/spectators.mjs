@@ -10,7 +10,7 @@ const sharedRoute = /^\/api\/playtesting\/spectate\/([A-Za-z0-9_-]{43})(\/events
 const tableRoute = /^\/api\/playtesting\/tables\/([^/]+)\/(spectator-link|spectator)(\/events)?$/
 const key = /^[A-Za-z0-9_-]{43}$/
 
-async function engine(tableId,privateSeats=false) {
+export async function readSpectatorEngine(tableId,privateSeats=false) {
   const url = new URL('http://127.0.0.1:17173/internal/spectator')
   url.searchParams.set('table', tableId)
   if (privateSeats) url.searchParams.set('seatKnowledge','true')
@@ -34,6 +34,10 @@ function board(view) {
 
 export function spectatorStorage(pool, archive) {
   return {
+    async tournamentTable(tableId) {
+      const {rows:[row]}=await pool.query('SELECT tournament_pairing_for_table($1) IS NOT NULL AS tournament',[tableId])
+      return row.tournament
+    },
     async privateToken(tableId,owner) {
       const {rows:[row]}=await pool.query(`SELECT owner_id=$2 AS owned,CASE WHEN owner_id=$2 THEN hands_token END AS token
         FROM spectator_links WHERE table_id=$1 OR live_table_id=$1`,[tableId,owner])
@@ -54,7 +58,8 @@ export function spectatorStorage(pool, archive) {
     },
     async table(token) {
       const {rows:[row]}=await pool.query(`SELECT table_id AS id,(public_host IS NOT NULL) AS "publicBoard",(hands_token=$1) IS TRUE AS "privateSeats"
-        FROM spectator_links WHERE token=$1 OR hands_token=$1`,[token])
+        FROM spectator_links l WHERE (token=$1 OR hands_token=$1)
+        AND tournament_pairing_for_table(l.table_id) IS NULL AND tournament_pairing_for_table(l.live_table_id) IS NULL`,[token])
       return row
     },
     listOwned: accountId => listPublicSpectatorLinks(pool,accountId),
@@ -122,13 +127,13 @@ export function spectatorStorage(pool, archive) {
   }
 }
 
-export function createSpectators({storage, readEngine=engine}) {
+export function createSpectators({storage, readEngine=readSpectatorEngine}) {
   const groups=new Map(), cache=new Map(), identities=new Map()
   let connections=0
   const browser = actor=>{ if (!actor?.accountId || actor.agent) throw forbidden() }
   async function share(actor,tableId,issue=true,privateSeats=false) {
     browser(actor)
-    if (!isUuid(tableId)) throw missing()
+    if (!isUuid(tableId) || await storage.tournamentTable?.(tableId)) throw missing()
     if (privateSeats) return {path:'/watch/'+await storage.privateToken(tableId,actor.accountId)}
     const existing=await storage.existing?.(tableId,actor.accountId)
     if (existing) return {path:'/watch/'+existing}
@@ -149,7 +154,7 @@ export function createSpectators({storage, readEngine=engine}) {
   }
   async function privateTableId(actor,id) {
     browser(actor)
-    if (!isUuid(id) || !await storage.mayObserve(id,actor.accountId)) throw forbidden()
+    if (!isUuid(id) || await storage.tournamentTable?.(id) || !await storage.mayObserve(id,actor.accountId)) throw forbidden()
     return id
   }
   const channel=(id,publicBoard,capability)=>capability?'both-hands/'+capability:publicBoard?'public/'+id:id

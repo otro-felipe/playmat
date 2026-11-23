@@ -149,12 +149,15 @@ public class MageServerImpl implements MageServer {
     @Override
     public TableView roomCreateTable(final String sessionId, final UUID roomId, final MatchOptions options) throws MageException {
         Maintenance.get().refuseNewTables();
+        // Championship seats and clocks are issued by the internal tournament scheduler.
+        options.championship = null;
         return executeWithResult("createTable", sessionId, new CreateTableAction(sessionId, options, roomId));
     }
 
     @Override
     public TableView roomCreateTournament(final String sessionId, final UUID roomId, final TournamentOptions options) throws MageException {
         Maintenance.get().refuseNewTables();
+        options.getMatchOptions().championship = null;
         return executeWithResult("createTournamentTable", sessionId, new ActionWithTableViewResult() {
             @Override
             public TableView execute() throws MageException {

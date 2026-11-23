@@ -1,4 +1,4 @@
-import { StrictMode, useEffect } from 'react';
+import { lazy, StrictMode, Suspense, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { QueryClientProvider } from '@tanstack/react-query';
 import * as Tooltip from '@radix-ui/react-tooltip';
@@ -13,6 +13,7 @@ import { queryClient } from './queries';
 import { ImportRoute } from './decks/import/ImportRoute';
 import { HomeScreen } from './screens/HomeScreen';
 import { LoginScreen } from './screens/LoginScreen';
+import { tournamentPlaySeat } from './tournaments/tournamentPlaySeat';
 import { PRIVATE_PLAYTESTING } from './playtesting';
 import { PrivateSession } from './PrivateSession';
 import { PublicLanding } from './publicSite/PublicLanding';
@@ -30,9 +31,12 @@ import './career/progressionEvents';
 import { NATIVE_APP } from './brand';
 import { imageResolver } from '../core/images/useCardImage';
 
+const TournamentPlayTab = lazy(() => import('./tournaments/TournamentPlayTab').then(m => ({default:m.TournamentPlayTab})));
+
 /** Screens that need a signed-in player; also opens games when the server starts them. */
 function SignedIn() {
   const phase = useSession((state) => state.phase);
+  const username = useSession((state) => state.userName);
   const navigate = useNavigate();
   const latestGameId = useGames((state) => state.latestGameId);
   const location = useLocation();
@@ -55,6 +59,7 @@ function SignedIn() {
   if (phase !== 'signedIn') return PRIVATE_PLAYTESTING ? <PrivateSession anonymousHome={<PublicLanding />} /> : <Navigate to="/login" replace state={{ from: location.pathname + location.search + location.hash }} />;
   return (
     <>
+      {PRIVATE_PLAYTESTING && tournamentPlaySeat() && <Suspense fallback={null}><TournamentPlayTab username={username} /></Suspense>}
       <Outlet />
       <RequestDialog />
     </>
@@ -85,6 +90,14 @@ if (import.meta.env.PROD && !NATIVE_APP && 'serviceWorker' in navigator) {
 const router = createBrowserRouter([
   { path: '/login', element: <LoginScreen /> },
   ...(PRIVATE_PLAYTESTING ? [
+    // These cookie-authenticated views never claim an engine seat or redirect the organizer's tab into a game.
+    { path: '/tournaments', lazy: () => import('./tournaments/TournamentScreen').then(m => ({ Component: m.TournamentsScreen })) },
+    { path: '/tournaments/owners/:alias', lazy: () => import('./tournaments/TournamentScreen').then(m => ({ Component: m.TournamentOwnerScreen })) },
+    { path: '/tournaments/:id', lazy: () => import('./tournaments/TournamentScreen').then(m => ({ Component: m.TournamentScreen })) },
+    { path: '/tournaments/:id/play', lazy: () => import('./tournaments/TournamentPlayTab').then(m => ({Component:m.TournamentSeatLauncher})) },
+    { path: '/tournaments/:id/admin', lazy: () => import('./tournaments/TournamentScreen').then(m => ({ Component: () => <m.TournamentScreen admin /> })) },
+    { path: '/tournaments/:id/pairings/:pairingId/watch', lazy: () => import('./tournaments/TournamentBroadcast').then(m => ({ Component: m.TournamentWatch })) },
+    { path: '/tournaments/:id/pairings/:pairingId/replay', lazy: () => import('./tournaments/TournamentBroadcast').then(m => ({ Component: m.TournamentReplay })) },
     { path: '/join/mcp/:tableId', lazy: () => import('./screens/ExternalMcpInviteScreen').then((m) => ({ Component: m.ExternalMcpInviteScreen })) },
     { path: '/watch/:token', lazy: () => import('./spectator/SpectatorScreen').then((m) => ({ Component: m.SpectatorScreen })) },
     { path: '/register', lazy: () => import('./publicSite/SignupScreen').then((m) => ({ Component: m.SignupScreen })) },

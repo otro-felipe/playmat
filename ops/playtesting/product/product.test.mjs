@@ -2376,3 +2376,101 @@ test('one-match operator exclusion preserves provenance and inspect only reports
     await pool.end()
   }
 })
+
+test('casual tournament registration is public to watch and restricted to human organizers to manage', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t, new Map(), { validateTournamentDeck: async () => {} })
+  const url = '/api/playtesting/tournaments'
+  const config = { name: 'Eight at the kitchen table', format: 'Standard', template: 'attendance',
+    cut: 'none', capacity: 8, swissRounds: 3, swissBestOf: 3, coaching: true }
+  const organizer = await signIn(f, 'FixtureOrganizer')
+  const visitor = await signIn(f, 'FixtureVisitor')
+  const delegated = { Authorization: 'Bearer ' + await f.product.provisionAgent('FixtureOrganizer', 'FixturePilot', ['play']) }
+  await f.product.setTournamentAdmins([(await (await f.path('/api/playtesting/me',{headers:organizer})).json()).accountId])
+  assert.equal((await f.path(url)).status, 200)
+  assert.equal((await (await f.path(url, {headers: organizer})).json()).mayCreate, true)
+  assert.equal((await f.path(url, json('POST', visitor, config))).status, 403)
+  assert.equal((await f.path(url, json('POST', delegated, config))).status, 403)
+  const created = await f.path(url, json('POST', organizer, config))
+  assert.equal(created.status, 201)
+  const event = await created.json()
+  const detail = await (await f.path(url + '/' + event.id)).json()
+  assert.equal(detail.name, config.name)
+  assert.equal(detail.viewer, null)
+  assert.equal((await f.path(url + '/' + event.id + '/admin', json('POST', visitor, {action:'start'}))).status, 403)
+  assert.equal((await f.path(url + '/' + event.id + '/join', json('POST', delegated, {deckId:'someone'}))).status, 403)
+})
+
+test('private deck revisions belong to one player profile and stay visible to its owner', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const owner = await signIn(f, 'FixtureLibrarian')
+  const legacySeat = { Authorization: 'Bearer ' + await f.product.provisionAgent('FixtureLibrarian', 'FixtureOther', ['library']) }
+  const create = name => f.path('/api/playtesting/players', json('POST', owner, {displayName:name,flag:'CL',mcpEnabled:true})).then(r=>r.json())
+  const first = await create('PrivAlpha'), second = await create('PrivBravo')
+  const path = '/api/playtesting/decks/mine'
+  const data = {name:'Private forest',format:'Standard',cards:[{cardName:'Forest',amount:60}],sideboard:[]}
+  const saved = await f.path(path, json('PUT', owner,{library:'private',playerId:first.playerId,data,expectedRevision:0}))
+  assert.equal(saved.status,200)
+  assert.equal((await saved.json()).library,'private')
+  const list = id => f.path('/api/playtesting/decks?library=private&playerId='+id, {headers:owner}).then(r=>r.json())
+  assert.deepEqual((await list(first.playerId)).decks.map(deck=>deck.id),['mine'])
+  assert.deepEqual((await list(second.playerId)).decks,[])
+  assert.equal((await f.path(path+'?revision=1',{headers:legacySeat})).status,404)
+  assert.equal((await f.path(path,json('PUT',legacySeat,{data,expectedRevision:1}))).status,404)
+})
+
+test('tournament board, administrative hands and completed replay share a pairing without exposing an active rival hand', { skip: !databaseUrl }, async t => {
+  const tableId=randomUUID(), gameId=randomUUID(), cardId=randomUUID()
+  const seats=['ReplayOwner','ReplayRival'].map(name=>({name,playerId:randomUUID()}))
+  const hand={ [cardId]:{id:cardId,name:'Forest'} }
+  const frame={tableId,gameId,status:'playing',players:seats,view:{players:seats},
+    hands:{[seats[0].playerId]:hand},lines:[],chat:[]}
+  const f=await fixture(t,new Map(),{validateTournamentDeck:async()=>{},
+    readSpectatorEngine:async id=>id===tableId?{snapshot:frame}:null})
+  const humans=[]
+  for(const seat of seats) humans.push(await signIn(f,seat.name))
+  const admin=(await (await f.path('/api/playtesting/me',{headers:humans[0]})).json()).accountId
+  await f.product.setTournamentAdmins([admin])
+  const root='/api/playtesting/tournaments'
+  const cup=await (await f.path(root,json('POST',humans[0],{name:'Replays',format:'Pioneer',cut:'none',capacity:2}))).json()
+  const uri=root+'/'+cup.id
+  for (const h of humans) {
+    const deck={name:'Private list',format:'Pioneer',cards:[{cardName:'Forest',amount:60}],sideboard:[]}
+    await f.path('/api/playtesting/decks/deck',json('PUT',h,{data:deck,expectedRevision:0}))
+    assert.equal((await f.path(uri+'/join',json('POST',h,{deckId:'deck'}))).status,200)
+  }
+  const started=await (await f.path(uri+'/admin',json('POST',humans[0],{action:'start'}))).json()
+  const pairing=started.pairings[0].id
+  const original=randomUUID()
+  await withTestDatabase(f,async db=>{
+    await db.query('UPDATE tournament_pairings SET table_id=$1 WHERE id=$2',[original,pairing])
+    await db.query('UPDATE tournament_pairings SET original_engine_table_id=table_id,table_id=$1 WHERE id=$2',[tableId,pairing])
+  })
+  const base=uri+'/pairings/'+pairing
+  assert.equal((await f.path('/api/playtesting/tables/'+tableId+'/spectator-link', json('POST',humans[0],{}))).status,404)
+  const publicBoard=await (await f.path(base+'/watch')).json()
+  assert.deepEqual(publicBoard.hands,{})
+  assert.equal(publicBoard.visibility,'public-board')
+  assert.equal((await f.path(base+'/watch?hands=1',{headers:humans[1]})).status,403)
+  const privateBoard=await (await f.path(base+'/watch?hands=1',{headers:humans[0]})).json()
+  assert.equal(privateBoard.hands[seats[0].playerId][cardId].name,'Forest')
+  assert.equal((await f.path(base+'/replay')).status,404)
+  await addReplay(f,tableId,gameId,seats.map(p=>p.name),[{t:100,view:frame.view,hands:{ReplayOwner:hand}}])
+  await writeFile(join(f.replayDirectory,tableId+'.match.json'),JSON.stringify({matchId:tableId,endedAt:Date.now()}))
+  await f.product.archiveGames()
+  const betweenGames=await (await f.path(uri,{headers:humans[0]})).json()
+  assert.equal(betweenGames.pairings[0].playUrl,'/')
+  await withTestDatabase(f,db=>db.query('UPDATE tournament_pairings SET completed=true,match_id=$1 WHERE id=$2',[tableId,pairing]))
+  const replay=await(await f.path(base+'/replay')).json()
+  assert.deepEqual(replay.games,[{gameId,frameCount:1}])
+  const projected=await(await f.path(base+'/replay?gameId='+gameId+'&frame=0')).json()
+  assert.equal(projected.hands[seats[0].playerId][cardId].name,'Forest')
+  // A second recovery leaves the archived game on an intermediate physical table.
+  await withTestDatabase(f,db=>db.query('UPDATE tournament_pairings SET table_id=$1 WHERE id=$2',[randomUUID(),pairing]))
+  assert.deepEqual((await (await f.path(base+'/replay')).json()).games,replay.games)
+  const recoveredClock=await (await f.path(root+'/table/'+gameId,{headers:humans[0]})).json()
+  assert.equal(recoveredClock.tournamentId,cup.id)
+  assert.equal((await f.path('/api/playtesting/tables/'+tableId+'/spectator-link',json('POST',humans[0],{}))).status,404)
+  await withTestDatabase(f,db=>db.query('UPDATE tournament_pairings SET match_id=NULL WHERE id=$1',[pairing]))
+  assert.deepEqual((await (await f.path(base+'/replay')).json()).games,replay.games)
+  assert.equal((await f.path(uri+'/pairings/'+randomUUID()+'/replay?gameId='+gameId)).status,404)
+})

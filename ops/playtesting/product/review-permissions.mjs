@@ -58,9 +58,10 @@ export function createReviewPermissions(pool) {
 
   async function reviewAccess(actor, matchId, db = pool) {
     if (!isUuid(matchId)) throw new ProductError(404, 'Match not found')
-    const { rows: [match] } = await db.query(`SELECT m.status, c.match_id AS capture_match_id FROM matches m
+    const { rows: [match] } = await db.query(`SELECT m.status, c.match_id AS capture_match_id, pairing.completed AS tournament_match_completed FROM matches m
       JOIN retained_match_history h ON h.match_id=m.id AND h.account_id=$2
-      LEFT JOIN replay_review_captures c ON c.match_id=m.id AND c.table_id=m.table_id WHERE m.id=$1`, [matchId, actor.accountId])
+      LEFT JOIN replay_review_captures c ON c.match_id=m.id AND c.table_id=m.table_id
+      LEFT JOIN tournament_pairings pairing ON pairing.id=tournament_pairing_for_table(m.table_id) WHERE m.id=$1`, [matchId, actor.accountId])
     if (!match) throw new ProductError(404, 'Match not found')
     const { rows: players } = await db.query(`SELECT p.engine_key, min(p.engine_name) AS name, bool_or(p.human) AS human
       FROM games g JOIN game_players p ON p.game_id=g.id WHERE g.match_id=$1
@@ -72,10 +73,12 @@ export function createReviewPermissions(pool) {
     const owners = captured ? new Map(captured.map(row => [row.engine_key, row.account_id]))
       : await ownerAccounts(db, humanKeys, false)
     const perspectives = players.map(player => ({ seatId: player.engine_key, name: player.name,
-      owned: owners.get(player.engine_key) === actor.accountId }))
+      owned: owners.get(player.engine_key) === actor.accountId
+        && (!actor.playerId || player.engine_key===normalize(actor.engineName))
+        && (match.tournament_match_completed !== false || player.engine_key===normalize(actor.engineName)) }))
     const viewer = viewerNames(actor).map(name => perspectives.find(seat => seat.owned && seat.seatId === name)).find(Boolean)
     if (!viewer) throw new ProductError(404, 'Match not found')
-    const atEnd = match.status === 'completed'
+    const atEnd = match.status === 'completed' && match.tournament_match_completed !== false
     const ownersKnown = humanKeys.length > 0 && humanKeys.every(key => owners.get(key))
     const stableSeats = !captured || exactSeats(captured, players)
     const fullAvailable = atEnd && ownersKnown && stableSeats

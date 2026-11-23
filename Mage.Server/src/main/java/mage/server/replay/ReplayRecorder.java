@@ -290,6 +290,20 @@ public final class ReplayRecorder {
         result.addProperty("endedAt", System.currentTimeMillis());
         match.getPlayers().stream().filter(MatchPlayer::isMatchWinner).findFirst()
                 .ifPresent(winner -> result.addProperty("winner", winner.getName()));
+        mage.game.match.ChampionshipRules rules = match.getOptions().championship;
+        if (rules != null) {
+            JsonObject score = new JsonObject();
+            score.addProperty("pairingId", rules.pairingId.toString());
+            score.addProperty("tableId", table.getId().toString());
+            score.addProperty("draws", match.getDraws());
+            score.addProperty("seatA", rules.seatA);
+            score.addProperty("seatB", rules.seatB);
+            for (MatchPlayer seat : match.getPlayers()) {
+                score.addProperty(rules.seatA.equalsIgnoreCase(seat.getName()) ? "winsA" : "winsB", seat.getWins());
+            }
+            if (rules.disqualified != null) score.addProperty("disqualified", rules.disqualified);
+            result.add("tournamentScore", score);
+        }
         ReplayStore.get().markMatchEnded(match.getId(), result);
     }
 

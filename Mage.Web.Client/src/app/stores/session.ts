@@ -3,6 +3,7 @@ import { api, DEFAULT_SERVER_URL, rpc } from '../connection';
 import { ConnectionError, RpcError, type ConnectionStatus } from '../../core/rpc/RpcClient';
 import { forgetOpenGames } from './openGames';
 import { readJson, writeJson } from './persist';
+import { clearTournamentPlaySeat } from '../tournaments/tournamentPlaySeat';
 import { PRIVATE_PLAYTESTING } from '../playtesting';
 
 export type SessionPhase = 'signedOut' | 'signingIn' | 'signedIn';
@@ -302,6 +303,7 @@ export const useSession = create<SessionState>((set, get) => ({
   },
 
   async signOut(keepGames = false) {
+    clearTournamentPlaySeat();
     // every sign-out asks the server for the provider's end-session URL (RFC 7063): it is fetched before the
     // session is gone (the call needs it), and the server knows whether there is a provider session to end -
     // the sign-in's own ID token, or, for any other kind of session of a linked account, the account's last

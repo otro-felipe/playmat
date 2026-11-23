@@ -35,6 +35,9 @@ test('uses only the proxy-normalized header and groups rotating IPv6 addresses',
 })
 
 test('maps public entry points and expensive work to shared quotas regardless of identifier', () => {
+  const wait = '/api/playtesting/tournaments/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/wait'
+  assert.equal(productLimitGroup(wait, 'POST', false), undefined, 'internal pilots get independent authenticated seat budgets')
+  assert.equal(productLimitGroup(wait, 'POST', true), 'read', 'public traffic retains the ingress budget')
   assert.equal(productLimitGroup('/api/playtesting/signup/request', 'POST'), 'signup')
   assert.equal(productLimitGroup('/api/playtesting/signup/complete', 'POST'), 'signup')
   assert.equal(productLimitGroup('/oauth/register', 'POST'), 'oauthRegister')

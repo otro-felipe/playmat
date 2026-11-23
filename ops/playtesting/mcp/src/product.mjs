@@ -40,6 +40,17 @@ export function createProductClient(baseUrl, publicUrl) {
     let path;
     let config;
     switch (name) {
+      case 'list_tournaments':
+        path = root + '/tournaments';
+        break;
+      case 'get_tournament':
+        path = root + '/tournaments/' + encode(args.tournamentId);
+        break;
+      case 'join_tournament':
+      case 'wait_for_next_round':
+        path = root + '/tournaments/' + encode(args.tournamentId) + (name === 'join_tournament' ? '/join' : '/wait');
+        config = { method: 'POST', body: name === 'join_tournament' ? { deckId: args.deckId } : (args.readyTableId ? { readyTableId: args.readyTableId } : {}) };
+        break;
       case 'list_players':
         path = root + '/players'+(args.availableOnly?'?availableOnly=true':'');
         break;
@@ -86,7 +97,7 @@ export function createProductClient(baseUrl, publicUrl) {
         path = `${root}/decks?library=personal`;
         break;
       case 'list_decks':
-        path = `${root}/decks?library=agent`;
+        path = `${root}/decks?library=${encode(args.library ?? 'agent')}`;
         break;
       case 'get_deck':
         path = `${root}/decks/${encode(args.deckId)}`;
@@ -96,7 +107,7 @@ export function createProductClient(baseUrl, publicUrl) {
         path = `${root}/decks/${args.deckId ? encode(args.deckId) : randomUUID()}`;
         config = {
           method: 'PUT',
-          body: { name: args.name, format: args.format, archetype: args.archetype, data: args.deck, expectedRevision: args.expectedRevision ?? 0 },
+          body: { ...(args.library && { library: args.library }), name: args.name, format: args.format, archetype: args.archetype, data: args.deck, expectedRevision: args.expectedRevision ?? 0 },
         };
         break;
       case 'list_matches': {

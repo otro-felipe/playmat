@@ -3,7 +3,8 @@ import { DeckSerializer } from "./DeckSerializer.js";
 import { newId } from "../util/uuid.js";
 
 export interface DeckSummary {
-    library?: 'personal' | 'agent';
+    library?: 'personal' | 'agent' | 'private';
+    playerId?: string;
     id: string;
     name: string;
     description?: string;
@@ -54,7 +55,8 @@ const TOMBSTONES_KEY = "playmat.deckTombstones";
 export type DeckChange = { type: "saved"; id: string } | { type: "deleted"; id: string; at: number };
 
 interface DeckMeta {
-    library?: 'personal' | 'agent';
+    library?: 'personal' | 'agent' | 'private';
+    playerId?: string;
     id: string;
     name: string;
     description?: string;
@@ -146,6 +148,7 @@ export class LocalDeckStorage implements IDeckStorage {
         localStorage.setItem(this.storageKey(STORAGE_PREFIX + deck.id), JSON.stringify(deck));
         const newMetaItem: DeckMeta = {
             library: deck.library,
+            playerId: deck.playerId,
             id: deck.id,
             name: deck.name || "Untitled Deck",
             description: deck.description,
@@ -249,6 +252,7 @@ export class LocalDeckStorage implements IDeckStorage {
         const meta = this.getMeta();
         return meta.map(m => ({
             library: m.library,
+            playerId: m.playerId,
             id: m.id,
             name: m.name,
             description: m.description,

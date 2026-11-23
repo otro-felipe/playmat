@@ -260,6 +260,21 @@ public class TableController {
      * Check and join real player
      */
     public synchronized boolean joinTable(UUID userId, String name, PlayerType playerType, int skill, DeckCardLists deckList, String password) throws MageException {
+        // Only the trusted scheduler may submit one of these registered lists.
+        if (options != null && options.championship != null
+                && !mage.server.recovery.PvpRecovery.reserved(table.getId())) return false;
+        return joinTable(userId, name, playerType, skill, deckList, password, false);
+    }
+
+    public synchronized boolean joinChampionshipTable(User user, DeckCardLists deck) throws MageException {
+        if (options == null || options.championship == null
+                || !(options.championship.seatA.equalsIgnoreCase(user.getName()) || options.championship.seatB.equalsIgnoreCase(user.getName()))) return false;
+        if (hasPlayer(user.getId())) return true;
+        return joinTable(user.getId(), user.getName(), PlayerType.HUMAN, 1, deck, options.getPassword(), true);
+    }
+
+    private boolean joinTable(UUID userId, String name, PlayerType playerType, int skill, DeckCardLists deckList,
+                              String password, boolean registeredTournamentSeat) throws MageException {
         // user - must exist
         Optional<User> _user = managerFactory.userManager().getUser(userId);
         if (!_user.isPresent()) {
@@ -273,7 +288,7 @@ public class TableController {
                 && !mage.server.recovery.PvpRecovery.mayJoin(table.getId(), user.getRecoveryPrincipal(), playerType)) {
             return false;
         }
-        if (mage.server.playtesting.ProductGateway.enabled() && playerType == PlayerType.HUMAN && !isOwner(userId)
+        if (!registeredTournamentSeat && mage.server.playtesting.ProductGateway.enabled() && playerType == PlayerType.HUMAN && !isOwner(userId)
                 && !mage.server.recovery.PvpRecovery.reserved(table.getId())
                 && !mage.server.playtesting.ProductGateway.canJoin(table.getId(), controllerName, user.getName())) {
             user.showUserMessage("Join Table", "An invitation is required for this seat.");
@@ -749,14 +764,17 @@ public class TableController {
             try {
                 if (table.isTournamentSubTable()) {
                     logger.info("Tourney MATCH started id:" + match.getId() + " tournId: " + table.getTournament().getId());
-                } else {
+                } else if (userId != null) {
                     managerFactory.userManager().getUser(userId).ifPresent(user -> {
                         logger.info("Single MATCH started [" + match.getName() + "] " + match.getId() + " (" + user.getName() + ')');
                         logger.debug("- " + match.getOptions().getGameType() + " - " + match.getOptions().getDeckType());
                     });
                 }
                 match.startMatch();
-                if (startGame(null)) {
+                UUID firstChooser = options.championship != null && options.championship.playoffs
+                        ? match.getPlayers().stream().filter(p -> p.getName().equalsIgnoreCase(options.championship.choosingSeat))
+                            .map(p -> p.getPlayer().getId()).findFirst().orElse(null) : null;
+                if (startGame(firstChooser)) {
                     DiscordNotifier.instance().matchStarted(table, options.getPassword(), userPlayerMap.size(), match.getPlayers());
                 }
             } catch (GameException e) {
@@ -775,6 +793,10 @@ public class TableController {
             match.startGame();
             table.initGame();
             GameOptions gameOptions = new GameOptions();
+            gameOptions.championship = match.getOptions().championship;
+            if (gameOptions.championship != null) {
+                gameOptions.championship.gamesTiedOnEntry = match.getPlayers().stream().map(MatchPlayer::getWins).distinct().count() == 1;
+            }
             gameOptions.rollbackTurnsAllowed = match.getOptions().isRollbackTurnsAllowed();
             gameOptions.bannedUsers = match.getOptions().getBannedUsers();
             gameOptions.planeChase = match.getOptions().isPlaneChase();
@@ -802,7 +824,7 @@ public class TableController {
             }
             match.getGame().setGameOptions(gameOptions);
             // the Rust host plays it, when it qualifies (docs/rust/GameHost.md); otherwise Java does
-            if (!RustHost.host(managerFactory, table.getId(), match, userPlayerMap, gameOptions, choosingPlayerId, this::skillOf)) {
+            if (gameOptions.championship != null || !RustHost.host(managerFactory, table.getId(), match, userPlayerMap, gameOptions, choosingPlayerId, this::skillOf)) {
                 managerFactory.gameManager().createGameSession(match.getGame(), userPlayerMap, table.getId(), choosingPlayerId, gameOptions);
             }
             String creator = null;
@@ -961,9 +983,11 @@ public class TableController {
 
         try {
             if (!match.hasEnded()) {
-                if (match.getGame() != null && match.getGame().getGameType().isSideboardingAllowed()) {
+                if (match.getGame() != null && match.getGame().getGameType().isSideboardingAllowed()
+                        && (options.championship == null || (options.championship.allowsSideboard(match.getNumGames()) && !options.championship.timeCalled(System.currentTimeMillis())))) {
                     sideboard();
                 }
+                match.finishTournamentAtTime();
                 if (!match.hasEnded()) {
                     startGame(choosingPlayerId);
                 } else {
@@ -1128,7 +1152,9 @@ public class TableController {
             String oldName = Thread.currentThread().getName();
             Thread.currentThread().setName(ThreadUtils.THREAD_PREFIX_GAME + " recovery-sideboard " + table.getId());
             try {
-                sideboard();
+                if (options.championship == null || (options.championship.allowsSideboard(match.getNumGames())
+                        && !options.championship.timeCalled(System.currentTimeMillis()))) sideboard();
+                match.finishTournamentAtTime();
                 if (!match.hasEnded()) {
                     if (!startGame(chooser)) throw new IllegalStateException("Recovered next game did not start");
                 }

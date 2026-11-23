@@ -28,6 +28,7 @@ export function PublicLanding() {
     <div className={styles.site}>
       <header className={styles.header}>
         <span className={styles.brand}><Mark size={38} />{APP_NAME}</span>
+        <Link className={styles.secondary} to="/tournaments">{t('shell.nav.tournaments')}</Link>
         <a className={styles.secondary} href="/login">{t('public.signIn')}</a>
       </header>
       <main className={styles.content}>

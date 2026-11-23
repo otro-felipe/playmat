@@ -50,6 +50,8 @@ public final class Health {
 
     /** What the endpoint reads and does: the running server, or a stand-in in tests. */
     interface Operations {
+        default com.google.gson.JsonObject championship(com.google.gson.JsonObject command) throws Exception { return null; }
+
         Map<String, Object> snapshot();
 
         Map<String, String> humanTables(String owner);
@@ -62,6 +64,42 @@ public final class Health {
 
         /** False when nothing was planned. */
         boolean cancelMaintenance();
+    }
+
+    private static void validateTournamentDeck(HttpExchange exchange) throws IOException {
+        try {
+            if (!"POST".equals(exchange.getRequestMethod())
+                    || !"/internal/tournament/deck-validation".equals(exchange.getRequestURI().getPath())) {
+                respond(exchange, 405, error("Use POST"));
+                return;
+            }
+            java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
+            byte[] buffer = new byte[8192];
+            int bytes;
+            while ((bytes = exchange.getRequestBody().read(buffer)) != -1) {
+                if (body.size() + bytes > 320 * 1024) {
+                    respond(exchange, 413, error("Deck too large"));
+                    return;
+                }
+                body.write(buffer, 0, bytes);
+            }
+            Gson gson = new Gson();
+            try {
+                com.google.gson.JsonObject input = gson.fromJson(body.toString("UTF-8"), com.google.gson.JsonObject.class);
+                String format = input.get("format").getAsString();
+                if (!java.util.Arrays.asList("Standard", "Pioneer", "Modern").contains(format)) {
+                    respond(exchange, 422, error("Unsupported tournament format"));
+                    return;
+                }
+                mage.cards.decks.DeckCardLists deck = gson.fromJson(input.get("deck"), mage.cards.decks.DeckCardLists.class);
+                Object validation = new mage.server.websocket.service.DeckValidationService().validate("Constructed - " + format, deck);
+                respond(exchange, 200, gson.toJson(validation));
+            } catch (Exception invalid) {
+                respond(exchange, 422, error("Deck could not be validated"));
+            }
+        } finally {
+            exchange.close();
+        }
     }
 
     public static String version() {
@@ -115,7 +153,13 @@ public final class Health {
         if (port <= 0) {
             return;
         }
+        mage.server.playtesting.ChampionshipTables championship = new mage.server.playtesting.ChampionshipTables(managers);
         Operations operations = new Operations() {
+            @Override
+            public com.google.gson.JsonObject championship(com.google.gson.JsonObject command) throws Exception {
+                return championship.execute(command);
+            }
+
             @Override
             public Map<String, Object> snapshot() {
                 return Health.snapshot(managers);
@@ -177,6 +221,29 @@ public final class Health {
                 respond(exchange, result == null ? 404 : 200, result == null ? error("Table not found") : result.toString());
             } finally { exchange.close(); }
         });
+        server.createContext("/internal/tournament/table", exchange -> {
+            try {
+                if (!"POST".equals(exchange.getRequestMethod()) || !"/internal/tournament/table".equals(exchange.getRequestURI().getPath())
+                        || !"tournament".equals(exchange.getRequestHeaders().getFirst("X-Playmat-Internal"))
+                        || exchange.getRequestHeaders().containsKey("Origin")) {
+                    respond(exchange, 403, error("Internal tournament request required")); return;
+                }
+                java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+                byte[] chunk = new byte[8192];
+                int count;
+                while ((count = exchange.getRequestBody().read(chunk)) != -1) {
+                    if (bytes.size() + count > 256 * 1024) { respond(exchange, 413, error("Request too large")); return; }
+                    bytes.write(chunk, 0, count);
+                }
+                com.google.gson.JsonObject body = gson.fromJson(bytes.toString("UTF-8"), com.google.gson.JsonObject.class);
+                com.google.gson.JsonObject result = operations.championship(body);
+                respond(exchange, result == null ? 409 : 200, result == null ? error("Table unavailable") : result.toString());
+            } catch (Exception invalid) {
+                respond(exchange, 400, error("Invalid tournament table operation"));
+            } finally { exchange.close(); }
+        });
+
+        server.createContext("/internal/tournament/deck-validation", Health::validateTournamentDeck);
         server.createContext("/internal/human-tables", exchange -> {
             try {
                 String owner = query(exchange.getRequestURI().getRawQuery()).get("owner");

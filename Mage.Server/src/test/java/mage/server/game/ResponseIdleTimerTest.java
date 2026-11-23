@@ -89,4 +89,24 @@ class ResponseIdleTimerTest {
         executor.shutdownNow();
     }
 
+    @Test void tournamentWarningBelongsToThePendingDecisionAndCannotDisqualifyItsPilot() {
+        FakeExecutor executor = new FakeExecutor();
+        ResponseIdleTimer timer = new ResponseIdleTimer(executor, () -> 1000L);
+        UUID player = UUID.randomUUID();
+        AtomicInteger notices = new AtomicInteger(), losses = new AtomicInteger();
+        timer.start(player, 600, ignored -> losses.incrementAndGet());
+        timer.warnAfter(player, 180, notices::incrementAndGet);
+        assertEquals(180_000L, executor.left.get());
+        final Runnable warning = executor.callbacks.get(1);
+        warning.run();
+        assertEquals(1, notices.get());
+        assertEquals(0, losses.get());
+        timer.cancel();
+        timer.start(UUID.randomUUID(), 600, ignored -> losses.incrementAndGet());
+        warning.run();
+        assertEquals(1, notices.get());
+        assertEquals(0, losses.get());
+        executor.shutdownNow();
+    }
+
 }

@@ -105,3 +105,11 @@ export async function cancelPlayerReservation(actor, { reservationId, tableId },
   }
   return { playerId: actor.playerId, phase: 'available' };
 }
+
+export function configuredSeatCapacity(raw = '64') {
+  const seats = Number(raw);
+  if (!/^[1-9]\d*$/.test(raw) || !Number.isSafeInteger(seats)) {
+    throw new Error('PLAYMAT_MCP_MAX_SEATS must be a positive integer.');
+  }
+  return seats;
+}

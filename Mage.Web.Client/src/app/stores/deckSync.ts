@@ -112,10 +112,12 @@ async function upload(id: string): Promise<void> {
   const deck = await deckStorage.exportForSync(id);
   if (!deck || started !== generation || account !== accountKey()) return;
   if (PRIVATE_PLAYTESTING) {
+    const data = JSON.parse(deck.data);
     const version = await productRequest<ProductDeckStamp>('/' + encodeURIComponent(id), {
       method: 'PUT',
       body: JSON.stringify({
-        data: JSON.parse(deck.data), updatedAt: deck.updatedAt,
+        data, updatedAt: deck.updatedAt,
+        ...(data.library === 'private' && {library: 'private', playerId: data.playerId}),
         expectedRevision: revisions()[account]?.[id] ?? 0,
       }),
     });

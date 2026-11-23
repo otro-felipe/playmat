@@ -95,6 +95,9 @@ export function productLimitGroup(path, method, proxied = false, scope = null) {
   if (!path.startsWith('/api/playtesting/')) return undefined
   const endpoint = path.slice('/api/playtesting/'.length)
   const [family] = endpoint.split('/')
+  // Colocated MCP pilots all have the same loopback address. Their authenticated
+  // tournament heartbeats are limited per seat in the tournament router.
+  if (!proxied && method==='POST' && /^tournaments\/[a-f0-9-]{36}\/wait$/i.test(endpoint)) return undefined
   if (family === 'signup') return method === 'POST' ? 'signup' : 'read'
   if (family === 'exports') return 'export'
   if (['review', 'replays', 'evaluations', 'matches', 'stats'].includes(family)) return 'archive'

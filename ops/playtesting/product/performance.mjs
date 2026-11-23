@@ -42,7 +42,8 @@ async function finishedGames(pool, actor, format) {
     ) p ON TRUE
     LEFT JOIN match_deck_registrations reg ON reg.table_id=m.table_id AND reg.engine_key=p.engine_key AND reg.account_id=h.account_id
     LEFT JOIN LATERAL (
-      SELECT MAX(COALESCE(NULLIF(r.archetype,'Other'),NULLIF(other.archetype,'Other'))) AS archetype, MAX(other.mulligans) AS mulligans
+      SELECT MAX(COALESCE(NULLIF(r.archetype,'Other'),NULLIF(other.archetype,'Other')))
+        FILTER (WHERE other.engine_key=ANY($1::text[]) OR match_deck_published(m.table_id,other.engine_key)) AS archetype, MAX(other.mulligans) AS mulligans
       FROM game_players other LEFT JOIN match_deck_registrations r ON r.table_id=m.table_id AND r.engine_key=other.engine_key
       WHERE other.game_id=g.id AND other.engine_key<>p.engine_key HAVING COUNT(*)=1
     ) opponent ON TRUE
@@ -97,7 +98,7 @@ function identifyMatch(games, index) {
 }
 
 async function history(pool, actor, format) {
-  const [decks, games] = await Promise.all([performanceCatalog(pool, actor.accountId), finishedGames(pool, actor, format)])
+  const [decks, games] = await Promise.all([performanceCatalog(pool, actor.accountId, actor.agent ? actor.playerId ?? '' : null), finishedGames(pool, actor, format)])
   const index = catalogIndex(decks)
   const matches = new Map()
   for (const game of games) group(matches, game.match_id, () => []).push(game)

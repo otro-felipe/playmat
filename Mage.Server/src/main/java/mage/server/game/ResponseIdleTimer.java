@@ -14,6 +14,7 @@ final class ResponseIdleTimer {
     private final ScheduledExecutorService executor;
     private final LongSupplier now;
     private ScheduledFuture<?> future;
+    private ScheduledFuture<?> warning;
     private UUID playerId;
     private long timeoutSeconds;
     private long generation;
@@ -47,7 +48,19 @@ final class ResponseIdleTimer {
         return generation == expectedGeneration && expiredGeneration == expectedGeneration;
     }
 
+    synchronized void warnAfter(UUID recipient, long seconds, Runnable notify) {
+        final long expected = generation;
+        if (warning != null) warning.cancel(false);
+        warning = executor.schedule(() -> {
+            synchronized (ResponseIdleTimer.this) {
+                if (generation != expected || !recipient.equals(playerId)) return;
+            }
+            notify.run();
+        }, seconds, TimeUnit.SECONDS);
+    }
+
     synchronized void cancel() {
+        if (warning != null) warning.cancel(false);
         generation++;
         if (future != null) future.cancel(false);
         playerId = null;

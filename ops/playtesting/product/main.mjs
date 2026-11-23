@@ -27,6 +27,9 @@ async function start() {
     if (Buffer.byteLength(provision) > 16384) throw new Error('Provisioning input too large')
     await product.importProvisionBundle(JSON.parse(provision))
   }
+  if (process.env.PLAYMAT_TOURNAMENT_ADMIN_IDS !== undefined) {
+    await product.setTournamentAdmins(process.env.PLAYMAT_TOURNAMENT_ADMIN_IDS.split(',').map(id=>id.trim()).filter(Boolean))
+  }
   const unlimitedHistoryUsers = process.env.PLAYMAT_UNLIMITED_HISTORY_USERS?.trim()
   if (unlimitedHistoryUsers) await product.setUnlimitedMatchHistory(unlimitedHistoryUsers.split(','), true)
   await product.archiveGames({ markInterrupted: true })
@@ -39,11 +42,12 @@ async function start() {
   }
   product.server.listen(Number(process.env.PRODUCT_PORT ?? '8790'), '127.0.0.1')
   product.startMcpEvents()
+  product.startTournaments()
   const archive = setInterval(() => product.archiveGames().catch(() => console.warn('Playmat archive scan delayed')), 5000)
   for (const signal of ['SIGINT', 'SIGTERM']) {
     process.once(signal, () => {
       clearInterval(archive)
-      product.server.close(() => void product.close())
+      void product.stopTournaments().finally(()=>product.server.close(() => void product.close()))
     })
   }
 }

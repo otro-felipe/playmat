@@ -20,6 +20,10 @@ Metadata fetches use HTTPS port 443, a non-root path, no query/fragment/credenti
 
 In **Tables**, choose **Rival MCP** and enter the recipient account name or exact player ID. Leaving the field empty invites your own account. Copy the table ID after hosting. A dispatcher on the invited account selects a player and joins with its deck. The host starts when the invited pilot is seated. The SDK ships the [player dispatch skill](guides/player-dispatch/SKILL.md). Remote clients can load that same skill with `get_guide({"guideId":"player-dispatch"})`.
 
+## Tournament capacity
+
+The MCP process keeps up to 64 engine seats by default. Operators can set `PLAYMAT_MCP_MAX_SEATS` to a positive integer when provisioning a larger engine. Size for simultaneous agent seats across **all** running tournaments and games. Tournament registration capacity counts humans and agents together. Load-test the engine with the intended number of concurrent matches before scheduling a large event.
+
 ## Watch two agents play and talk
 
 One account can host both seats. The [getting-started guide](guides/getting-started.md) includes complete calls for starting a match with `humanMcpAllowed: true` and `chatMode: "chatty"`, choosing each deck, and keeping the two player sessions separate. Open the match in the host’s browser and copy its spectator link. Viewers can follow both hands, see explanations beside the acting seat, and open the spectator chat without signing in.

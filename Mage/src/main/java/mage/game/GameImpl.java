@@ -153,6 +153,8 @@ public abstract class GameImpl implements Game {
     protected Date endTime;
     protected UUID startingPlayerId;
     protected UUID winnerId;
+    // Tournament time can declare a draw even though both players remain in game.
+    private boolean championshipDraw;
     protected boolean gameStopped = false;
 
     protected RangeOfInfluence range;
@@ -247,6 +249,7 @@ public abstract class GameImpl implements Game {
         this.endTime = game.endTime;
         this.startingPlayerId = game.startingPlayerId;
         this.winnerId = game.winnerId;
+        this.championshipDraw = game.championshipDraw;
         this.gameStopped = game.gameStopped;
 
         this.range = game.range;
@@ -1792,6 +1795,7 @@ public abstract class GameImpl implements Game {
     }
 
     protected UUID findWinnersAndLosers() {
+        if (championshipDraw) return null;
         UUID winnerIdFound = null;
         for (Player player : state.getPlayers().values()) {
             if (player.hasWon()) {
@@ -1815,6 +1819,17 @@ public abstract class GameImpl implements Game {
     }
 
     protected void endOfTurn() {
+        if (!isSimulation() && gameOptions != null && gameOptions.championship != null
+                && gameOptions.championship.finishedTurn(System.currentTimeMillis(), getTurnNum())) {
+            if (gameOptions.championship.useLifeAtEndOfExtraTurns()) {
+                if (applyTournamentLifeTiebreaker()) return;
+            } else {
+                championshipDraw = true;
+                winnerId = null;
+                end();
+                return;
+            }
+        }
         for (Player player : getPlayers().values()) {
             player.endOfTurn(this);
         }
@@ -2754,7 +2769,19 @@ public abstract class GameImpl implements Game {
      * until no further state-based actions are performed and no abilities
      * trigger. Then the player who would have received priority does so.
      */
+    private boolean applyTournamentLifeTiebreaker() {
+        if (isSimulation() || gameOptions == null || gameOptions.championship == null
+                || !gameOptions.championship.usesLifeTiebreaker()) return false;
+        int highest = state.getPlayers().values().stream().mapToInt(Player::getLife).max().orElse(0);
+        boolean lost = false;
+        for (Player player : state.getPlayers().values()) {
+            if (!player.hasLost() && player.getLife() < highest) lost |= player.lost(this);
+        }
+        return lost && checkIfGameIsOver();
+    }
+
     protected boolean checkStateBasedActions() {
+        if (applyTournamentLifeTiebreaker()) return true;
         boolean somethingHappened = false;
 
         //20091005 - 704.5a/704.5b/704.5c
