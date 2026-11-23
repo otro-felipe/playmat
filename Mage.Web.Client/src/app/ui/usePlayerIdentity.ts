@@ -36,10 +36,21 @@ function lookup(name: string): Promise<PlayerIdentity | null> {
   });
 }
 
+function identityKey(name: string) {
+  return ['playerIdentity', name.toLowerCase()] as const;
+}
+
+/** Refetch through the ordinary permission-checked directory after an owner edits a seat. */
+export async function refreshPlayerIdentity(name: string) {
+  const filter = { queryKey: identityKey(name), exact: true };
+  await identities.cancelQueries(filter);
+  await identities.invalidateQueries(filter);
+}
+
 function options(name: string, enabled = true) {
   const key = name.toLowerCase();
   return queryOptions({
-    queryKey: ['playerIdentity', key],
+    queryKey: identityKey(key),
     queryFn: () => lookup(key),
     enabled: PRIVATE_PLAYTESTING && enabled && engineName.test(key),
     staleTime: 10 * 60_000,

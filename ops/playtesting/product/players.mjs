@@ -61,7 +61,7 @@ export async function listPlayers(pool, actor, availableOnly=false) {
     return {players:rows.map(row => view(row,actor)).filter(p=>!availableOnly || p.availability==='available')}
   }
   if (!actor?.playerId) owner(actor)
-  const {rows} = await pool.query(profileQuery+` WHERE p.account_id=$1 AND ($2::uuid IS NULL OR p.id=$2) ORDER BY p.display_name,p.id`,
+  const {rows} = await pool.query(profileQuery+` WHERE p.account_id=$1 AND p.retired_at IS NULL AND ($2::uuid IS NULL OR p.id=$2) ORDER BY p.display_name,p.id`,
     [actor.accountId,actor.playerId ?? null])
   return {players:rows.map(row => view(row,actor)).filter(p=>!availableOnly || p.availability==='available')}
 }
@@ -95,8 +95,8 @@ async function insertPlayer(pool,actor,[name,flag,enabled],requestId=null) {
     const inserted=await db.query(`INSERT INTO player_profiles(id,account_id,display_name,flag,mcp_enabled,creation_request,creation_signature)
       VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (account_id,creation_request) DO NOTHING`,[id,actor.accountId,name,flag,enabled,requestId,signature])
     if (!inserted.rowCount) {
-      const {rows:[prior]}=await db.query(profileQuery+' WHERE p.account_id=$1 AND p.creation_request=$2 AND p.creation_signature=$3',[actor.accountId,requestId,signature])
-      if (!prior) throw new ProductError(409,'This request ID already belongs to different player settings')
+      const {rows:[prior]}=await db.query(profileQuery+' WHERE p.account_id=$1 AND p.creation_request=$2 AND p.creation_signature=$3 AND p.retired_at IS NULL',[actor.accountId,requestId,signature])
+      if (!prior) throw new ProductError(409,'This request ID already belongs to another or retired player')
       return view(prior,actor)
     }
     await db.query(`INSERT INTO agent_grants(player_id,digest,account_id,engine_name,engine_key,scopes,oauth_managed,revoked_at)
@@ -106,22 +106,44 @@ async function insertPlayer(pool,actor,[name,flag,enabled],requestId=null) {
   })
 }
 
-export async function updatePlayer(pool, actor, id, input) {
+async function lockOwnedPlayer(db, actor, id) {
   owner(actor)
   if (!isUuid(id)) throw new ProductError(404,'Player not found')
+  const {rows:[current]} = await db.query(profileQuery+' WHERE p.id=$1 AND p.account_id=$2 AND p.retired_at IS NULL FOR UPDATE OF p,g',[id,actor.accountId])
+  if (!current) throw new ProductError(404,'Player not found')
+  return current
+}
+
+async function revokePlayer(db, engineName) {
+  await db.query('UPDATE agent_grants SET revoked_at=COALESCE(revoked_at,now()) WHERE engine_key=$1',[engineName])
+  await db.query('UPDATE oauth_connections SET revoked_at=now() WHERE engine_key=$1 AND revoked_at IS NULL',[engineName])
+  await db.query('DELETE FROM oauth_authorization_codes WHERE engine_key=$1',[engineName])
+}
+
+export async function updatePlayer(pool, actor, id, input) {
   return transaction(pool,async db => {
-    const {rows:[current]} = await db.query(profileQuery+' WHERE p.id=$1 AND p.account_id=$2 FOR UPDATE OF p,g',[id,actor.accountId])
-    if (!current) throw new ProductError(404,'Player not found')
+    const current = await lockOwnedPlayer(db,actor,id)
     const [name,flag,enabled] = fields(input,current)
     await db.query('UPDATE player_profiles SET display_name=$2,flag=$3,mcp_enabled=$4 WHERE id=$1',[id,name,flag,enabled])
     if (enabled !== current.mcpEnabled) {
-      await db.query('UPDATE agent_grants SET revoked_at=CASE WHEN $2 THEN NULL ELSE now() END WHERE player_id=$1',[id,enabled])
-      if (!enabled) {
-        await db.query('UPDATE oauth_connections SET revoked_at=now() WHERE engine_key=$1 AND revoked_at IS NULL',[current.engineName])
-        await db.query('DELETE FROM oauth_authorization_codes WHERE engine_key=$1',[current.engineName])
-      }
+      if (enabled) await db.query('UPDATE agent_grants SET revoked_at=NULL WHERE player_id=$1',[id])
+      else await revokePlayer(db,current.engineName)
     }
     return view((await db.query(profileQuery+' WHERE p.id=$1',[id])).rows[0],actor)
+  })
+}
+
+export async function retirePlayer(pool, actor, id) {
+  return transaction(pool,async db => {
+    const current = await lockOwnedPlayer(db,actor,id)
+    // Take a fresh snapshot after acquiring the same profile lock as reserve.
+    const {rowCount} = await db.query(`SELECT 1 FROM player_table_reservations WHERE player_id=$1
+      UNION ALL SELECT 1 FROM game_players seat JOIN games g ON g.id=seat.game_id JOIN matches m ON m.id=g.match_id
+        WHERE seat.engine_key=$2 AND m.status='active' LIMIT 1`,[id,current.engineName])
+    if (rowCount) throw new ProductError(409,'This player is reserved or has a match in progress')
+    await db.query('UPDATE player_profiles SET retired_at=now(),mcp_enabled=false WHERE id=$1',[id])
+    await revokePlayer(db,current.engineName)
+    return {playerId:current.playerId}
   })
 }
 

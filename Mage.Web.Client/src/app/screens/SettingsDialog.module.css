@@ -491,3 +491,16 @@
   text-transform: uppercase;
   vertical-align: 1px;
 }
+
+.playerList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.playerIdentity {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

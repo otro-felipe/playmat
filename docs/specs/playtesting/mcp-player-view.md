@@ -62,3 +62,5 @@ GET and SSE enforce the same game, roster and entitlement on every connection. T
 
 
 The browser host can PATCH an eligible waiting MCP table's `spectator-link` with `{"spectatorVisibility":"both-hands"}` or `{"spectatorVisibility":"public-board"}`. Owned table listings advertise `canConfigureSpectatorVisibility:true` while they allow this action. Disabling the expanded link immediately revokes it, including open streams. Re-enabling it creates a different private link and keeps the public link stable. The first guest reservation or claim locks the mode permanently, including after an abandoned join. Started matches cannot change. A join from a stale inspection must recheck the invitation before entering.
+
+**PM-PLAYER-SETTINGS-01.** In private playtesting, the signed-in owner opens Settings → MCP players to see their players and seat availability. They can add a player, edit its name, optional country and MCP access, and confirm or cancel its removal. All profiles use the account's shared agent deck library. A reserved or occupied player cannot be removed. Load failures allow retry, and a failed change preserves the draft.

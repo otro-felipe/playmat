@@ -905,6 +905,100 @@ test('owner delegates four named players to isolated OAuth pilots with exclusive
   assert.equal((await (await f.request('/internal/verify',renewed)).json()).activeTableId,null)
 })
 
+test('an owner retires an idle MCP player while retaining its identity and shared decks', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const owner = await f.login('Owner')
+  const other = await f.login('OtherOwner')
+  const players = '/api/playtesting/players'
+  const decks = '/api/playtesting/decks'
+  const write = (path, headers, data, method = 'POST') =>
+    f.request(path, { ...headers, 'Content-Type':'application/json' }, data, method)
+  const account = await authorizePilot(f, owner, 'play library players:manage', undefined, true)
+  const slot = { requestId:randomUUID(), displayName:'First pilot' }
+  const first = await write('/api/playtesting/player-slots', account, slot)
+  assert.equal(first.status, 201)
+  const { playerId, engineName } = await first.json()
+  const path = players + '/' + playerId
+  const remove = headers => f.request(path, headers, undefined, 'DELETE')
+  const list = async headers => (await (await f.request(players, headers)).json()).players.map(p => p.playerId)
+  const pilot = await authorizePilot(f, owner, 'play library', playerId)
+  const deck = { expectedRevision:0, data:{ name:'Shared deck', format:'Pioneer', cards:[], sideboard:[] } }
+  assert.equal((await write(decks+'/shared', pilot, deck, 'PUT')).status, 200)
+  const renamed = await write(path, owner, { displayName:'The Chronicler' }, 'PATCH')
+  assert.equal((await renamed.json()).engineName, engineName)
+  assert.equal((await remove({ ...owner, Origin:'https://foreign.example' })).status, 403)
+  assert.equal((await remove({})).status, 401)
+  assert.equal((await remove(other)).status, 404)
+  for (const agent of [account, pilot]) assert.equal((await remove(agent)).status, 403)
+
+  const reservationId = randomUUID()
+  const reserve = operation => write('/internal/player-reservations/'+playerId, pilot, { operation, reservationId })
+  assert.equal((await reserve('reserve')).status, 200)
+  assert.equal((await remove(owner)).status, 409)
+  assert.equal((await reserve('release')).status, 200)
+
+  const matchId = randomUUID(), gameId = randomUUID()
+  const db = new pg.Client({ connectionString:databaseUrl, options:'-c search_path='+f.schema })
+  await db.connect()
+  try {
+    // Old archives may only identify a participant by engine key, without a lease or profile ID.
+    await db.query("INSERT INTO matches(id,table_id,started_at,status) VALUES ($1,$2,0,'active')", [matchId, randomUUID()])
+    await db.query("INSERT INTO games(id,match_id,game_number,started_at,status,archive_state) VALUES ($1,$2,1,0,'completed','partial')", [gameId, matchId])
+    await db.query('INSERT INTO game_players(game_id,engine_key,engine_name,human) VALUES ($1,$2,$2,true)', [gameId, engineName])
+    assert.equal((await remove(owner)).status, 409)
+  } finally {
+    await db.end()
+  }
+  await writeFile(join(f.replayDirectory,matchId+'.match.json'), JSON.stringify({ matchId, endedAt:Date.now() }))
+  await f.product.archiveGames()
+  const deleted = await remove(owner)
+  assert.equal(deleted.status, 200)
+  assert.deepEqual(await deleted.json(), { playerId })
+  assert.deepEqual(await list(owner), [])
+  assert.deepEqual(await list(account), [])
+  assert.equal((await remove(owner)).status, 404)
+  assert.equal((await write(path, owner, { mcpEnabled:true }, 'PATCH')).status, 404)
+  assert.equal((await write('/api/playtesting/player-slots', account, slot)).status, 409)
+  assert.equal((await f.request('/internal/verify', pilot)).status, 401)
+  assert.equal((await f.request('/internal/verify', { ...account, 'X-Playmat-Player-Id':playerId })).status, 403)
+  const historical = await f.request('/api/playtesting/player-identities?names='+engineName, owner)
+  assert.equal((await historical.json()).players[0].displayName, 'The Chronicler')
+  const archived = await f.request('/api/playtesting/matches', owner)
+  const [match] = (await archived.json()).matches
+  assert.equal(match.id, matchId)
+  assert.equal(match.games[0].players[0].profileId, playerId)
+  assert.equal(match.games[0].players[0].displayName, 'The Chronicler')
+  const next = await write(players, owner, { displayName:'Next pilot', mcpEnabled:true })
+  assert.equal(next.status, 201)
+  const sibling = await authorizePilot(f, owner, 'play library', (await next.json()).playerId)
+  assert.deepEqual((await (await f.request(decks, sibling)).json()).decks.map(d => d.id), ['shared'])
+})
+
+test('a concurrent reservation and retirement leave either an available lease or a retired player', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const owner = await f.login('Owner')
+  const path = '/api/playtesting/players'
+  const json = { 'Content-Type':'application/json' }
+  const account = await authorizePilot(f, owner, 'play')
+  const created = await f.request(path, { ...owner, ...json }, { displayName:'Contested', mcpEnabled:true })
+  const { playerId } = await created.json()
+  const seat = { ...account, ...json, 'X-Playmat-Player-Id':playerId }
+  const request = { operation:'reserve', reservationId:randomUUID() }
+  const [reservation, retirement] = await Promise.all([
+    f.request('/internal/player-reservations/'+playerId, seat, request),
+    f.request(path+'/'+playerId, owner, undefined, 'DELETE'),
+  ])
+  const { players } = await (await f.request(path, owner)).json()
+  if (reservation.status === 200) {
+    assert.equal(retirement.status, 409)
+    assert.equal(players[0].availability, 'reserved')
+  } else {
+    assert.equal(reservation.status, 403)
+    assert.equal(retirement.status, 200)
+    assert.deepEqual(players, [])
+  }
+})
+
 test('owners manage pilot profiles from their browser connections page', { skip: !databaseUrl }, async t => {
   const f = await fixture(t)
   const alice = await f.login('Alice')

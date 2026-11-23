@@ -138,7 +138,8 @@ const BUDGET_KB = {
   // Public board, two-hand broadcast, copy link and shared commentary: private app 884.95 KiB.
   // Owner controls for spectator consent, full chat and line explanations bring the private app to 889.5 KiB.
   // The external MCP invitation page and localized table controls add to the lazy-loaded screens.
-  app: 896,
+  // The private Settings dialog includes player administration and its English and Spanish messages.
+  app: 899,
 };
 
 const dist = new URL('../dist/', import.meta.url).pathname;

@@ -28,6 +28,7 @@ import { Dialog } from '../ui/Dialog';
 import { TokenArtPicker } from '../ui/TokenArtPicker';
 import { useTokenArt } from '../stores/tokenArt';
 import { useServerInfo } from '../queries';
+import { McpPlayerSettings } from './McpPlayerSettings';
 import { AccountSettings } from './AccountSettings';
 import { useSupportPerks } from '../support/supportData';
 import { LockedSwatch } from '../support/SupporterPicks';
@@ -105,10 +106,12 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
           <Tabs.Trigger value="alerts" className={styles.trigger}>{t('settings.tab.alerts')}</Tabs.Trigger>
           <Tabs.Trigger value="import" className={styles.trigger}>{t('settings.tab.import')}</Tabs.Trigger>
           <Tabs.Trigger value="language" className={styles.trigger}>{t('settings.tab.language')}</Tabs.Trigger>
+          {PRIVATE_PLAYTESTING && <Tabs.Trigger value="players" className={styles.trigger}>{t('settings.mcp.players')}</Tabs.Trigger>}
           {accounts && <Tabs.Trigger value="cosmetics" className={styles.trigger}>{t('settings.tab.cosmetics')}</Tabs.Trigger>}
           {accounts && <Tabs.Trigger value="account" className={styles.trigger}>{t('settings.tab.account')}</Tabs.Trigger>}
         </Tabs.List>
 
+        {PRIVATE_PLAYTESTING && <Tabs.Content value="players" className={styles.panel}><McpPlayerSettings /></Tabs.Content>}
         <Tabs.Content value="play" className={styles.panel}>
           <div className={styles.style}>
             <span className={styles.styleLabel}>{t('settings.style')}</span>

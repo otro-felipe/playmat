@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS player_profiles (
   mcp_enabled boolean NOT NULL DEFAULT false,
   UNIQUE (account_id,id)
 );
+-- Keep retired seats and their engine names available to match history.
+ALTER TABLE player_profiles ADD COLUMN IF NOT EXISTS retired_at timestamptz;
 
 CREATE TABLE IF NOT EXISTS agent_grants (
   digest text PRIMARY KEY,

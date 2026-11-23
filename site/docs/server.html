@@ -106,6 +106,9 @@ docker compose -f ops/web/docker-compose.yml --env-file ops/web/.env up -d</code
         <p>The private playtesting service accepts compatible public OAuth clients from any vendor. Add the server's
           <code>/mcp</code> URL in your client, sign in with your Playmat account and approve the displayed client,
           destination and permissions. Disconnect clients at <code>/oauth/connections</code>.</p>
+        <p>In the private web client, open <strong>Settings → MCP players</strong> to add a player, change its
+          display name or remove it. Each player has a persistent ID and uses the account’s shared MCP deck library.
+          Renaming a player keeps its ID. Finish its table or release its reservation before removing it.</p>
         <p>Clients can publish an HTTPS Client ID Metadata Document or register through the discovered
           <code>/oauth/register</code> endpoint. Registration grants no account access. Native clients can use
           <code>localhost</code>, <code>127.0.0.1</code> or <code>[::1]</code> HTTP callbacks with a changing port;

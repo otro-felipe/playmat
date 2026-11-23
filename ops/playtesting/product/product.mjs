@@ -10,7 +10,7 @@ import pg from 'pg'
 import { archetypesFor } from './deck-performance-identity.mjs'
 import { libraryArchetypeCoverage, migrateDeckLists, refineMigratedDeckLists, refineTournamentArchetypes } from './deck-list-migration.mjs'
 import { excludeAsParticipant } from './match-statistics.mjs'
-import { listPlayers, createPlayer, createPlayerSlot, updatePlayer } from './players.mjs'
+import { listPlayers, createPlayer, createPlayerSlot, updatePlayer, retirePlayer } from './players.mjs'
 import { changeReservation, restorePlayerReservations } from './player-reservations.mjs'
 import { createArchive } from './archive.mjs'
 import { resetMatchHistory, setUnlimitedMatchHistory } from './history-retention.mjs'
@@ -416,8 +416,10 @@ export async function createProduct({
       if (req.method === 'GET') return send(res,200,await listPlayers(pool,actor,url.searchParams.get('availableOnly')==='true'))
       if (req.method === 'POST') return send(res,201,await createPlayer(pool,actor,await body(req,'json',2048)))
     }
-    if (req.method === 'PATCH' && /^players\/[^/]+$/.test(endpoint)) {
-      return send(res,200,await updatePlayer(pool,actor,endpoint.slice('players/'.length),await body(req,'json',2048)))
+    if (/^players\/[^/]+$/.test(endpoint)) {
+      const playerId = endpoint.slice('players/'.length)
+      if (req.method === 'PATCH') return send(res,200,await updatePlayer(pool,actor,playerId,await body(req,'json',2048)))
+      if (req.method === 'DELETE') return send(res,200,await retirePlayer(pool,actor,playerId))
     }
     if (endpoint === 'me' && req.method === 'GET') return send(res, 200, identityView(actor))
     if (endpoint.startsWith('human-seat/') && req.method === 'GET') {
