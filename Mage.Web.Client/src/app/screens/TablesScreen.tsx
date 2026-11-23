@@ -355,6 +355,7 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
   const { data: serverState } = useServerState();
   const roomId = useSession((state) => state.roomId);
   const userName = useSession((state) => state.userName);
+  const defaultName = t('hostTable.defaultName', { name: userName ?? '' });
   const loadForPlay = useDecks((state) => state.loadForPlay);
   const loadList = useDecks((state) => state.loadList);
   const [name, setName] = useState('');
@@ -410,6 +411,7 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
 
   function chooseOpponent(next: HostOpponent) {
     setOpponent(next);
+    if (next !== 'mcp') setAllowExternalMcp(false);
     if (next === 'mcp' && !mcpConnectionGuideHidden()) setMcpGuideOpen(true);
   }
 
@@ -425,7 +427,7 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
       const playerTypes = Array.from({ length: seatCount }, (_, index) => (index > 0 && index <= aiCount ? 'COMPUTER_MAD' : 'HUMAN'));
       const tablePassword = PRIVATE_PLAYTESTING ? crypto.randomUUID() : password;
       const table = await api.roomCreateTable(roomId, matchOptions({
-        name: name.trim() || `${userName}'s table`,
+        name: name.trim() || defaultName,
         gameType: chosenGame,
         humanMcpAllowed: PRIVATE_PLAYTESTING ? humanMcpAllowed : undefined,
         deckType,
@@ -433,16 +435,15 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
         winsNeeded: seatCount > 2 ? 1 : wins,
         password: tablePassword,
         playerTypes,
-    if (next !== 'mcp') setAllowExternalMcp(false);
         advanced,
         // players you ignore can't sit at your table or watch it
         bannedUsers: useSocial.getState().ignored,
       }));
-      if (!table?.tableId) throw new Error('The server did not create the table.');
+      if (!table?.tableId) throw new Error(t('hostTable.createError'));
       createdTableId = table.tableId;
       const wire = selectedDeckForPlay(deck, id);
       if (!await api.roomJoinTable(roomId, table.tableId, userName, 'HUMAN', 1, wire, tablePassword)) {
-        throw new Error(`Your deck is not legal in ${formatRules(deckType).label}.`);
+        throw new Error(t('hostTable.illegalDeck', { format: formatRules(deckType).label }));
       }
       if (PRIVATE_PLAYTESTING && opponent !== 'ai') {
         await createPlaytestingInvite({ tableId: table.tableId, roomId, format: deckType, password: tablePassword },
@@ -457,7 +458,7 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
           const rival = rivals[seat - 1] ? toWire(rivals[seat - 1]) : wire;
           const joined = await api.roomJoinTable(roomId, table.tableId, `AI ${seat}`, 'COMPUTER_MAD', 4, rival, tablePassword);
           if (!joined && (rival === wire || !await api.roomJoinTable(roomId, table.tableId, `AI ${seat}`, 'COMPUTER_MAD', 4, wire, tablePassword))) {
-            throw new Error('The AI could not join with a legal deck.');
+            throw new Error(t('hostTable.aiError'));
           }
         }
       }
@@ -480,66 +481,66 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
     <Dialog
       open={open}
       onOpenChange={(next) => next ? onOpenChange(true) : closeDialog()}
-      title="Host a table"
-      description={PRIVATE_PLAYTESTING ? undefined : 'Friends on this server will see it under Open tables.'}
+      title={t('hostTable.title')}
+      description={PRIVATE_PLAYTESTING ? undefined : t('hostTable.visibilityHint')}
       width="lg"
       footer={
         <>
-          <Button variant="quiet" onClick={closeDialog}>Cancel</Button>
-          <Button variant="decision" busy={busy} disabled={!deckId} onClick={() => void host()}>Host</Button>
+          <Button variant="quiet" onClick={closeDialog}>{t('home.cancel')}</Button>
+          <Button variant="decision" busy={busy} disabled={!deckId} onClick={() => void host()}>{t('hostTable.submit')}</Button>
         </>
       }
     >
       <div className={styles.form}>
-        <Field label="Table name" value={name} placeholder={`${userName}'s table`} onChange={(event) => setName(event.target.value)} />
+        <Field label={t('hostTable.name')} value={name} placeholder={defaultName} onChange={(event) => setName(event.target.value)} />
         <div className={styles.pair}>
           <label className={styles.selectField}>
-            <span>Format</span>
+            <span>{t('ai.life.format')}</span>
             <select value={deckType} onChange={(event) => setDeckType(event.target.value)}>
               {!listed && <option value={deckType}>{formatRules(deckType).label}</option>}
               {menu.map((group) => (
-                <optgroup key={group.label} label={group.label}>
+                <optgroup key={group.label} label={group.label === 'Constructed' ? t('hostTable.groupConstructed') : group.label === 'Block' ? t('hostTable.groupBlock') : group.label}>
                   {group.types.map((item) => <option key={item} value={item}>{formatRules(item).label}</option>)}
                 </optgroup>
               ))}
             </select>
           </label>
           <label className={styles.selectField}>
-            <span>Game</span>
+            <span>{t('hostTable.game')}</span>
             <select value={chosenGame} onChange={(event) => setGameType(event.target.value)}>
-              {gameTypes.map((item) => <option key={item} value={item}>{item}</option>)}
+              {gameTypes.map((item) => <option key={item} value={item}>{item === 'Two Player Duel' ? t('hostTable.duel') : item === 'Free For All' ? t('hostTable.ffa') : item}</option>)}
             </select>
           </label>
         </div>
         <div className={styles.pair}>
           {maxSeats > 2 ? (
             <label className={styles.selectField}>
-              <span>Players</span>
+              <span>{t('hostTable.players')}</span>
               <select value={seatCount} onChange={(event) => setSeats(Number(event.target.value))}>
                 {Array.from({ length: maxSeats - minSeats + 1 }, (_, index) => minSeats + index).map((count) => <option key={count} value={count}>{count}</option>)}
               </select>
             </label>
           ) : (
             <label className={styles.selectField}>
-              <span>Games to win</span>
+              <span>{t('hostTable.wins')}</span>
               <select value={wins} onChange={(event) => setWins(Number(event.target.value))}>
-                {!PRIVATE_PLAYTESTING && <option value={1}>1 (single game)</option>}
-                <option value={2}>2 (best of three)</option>
-                {!PRIVATE_PLAYTESTING && <option value={3}>3 (best of five)</option>}
+                {!PRIVATE_PLAYTESTING && <option value={1}>{t('hostTable.one')}</option>}
+                <option value={2}>{t('hostTable.three')}</option>
+                {!PRIVATE_PLAYTESTING && <option value={3}>{t('hostTable.five')}</option>}
               </select>
             </label>
           )}
           {PRIVATE_PLAYTESTING ? <label className={styles.selectField}>
-            <span>Opponent</span>
+            <span>{t('home.opponent')}</span>
             <select value={opponent} onChange={(event) => chooseOpponent(event.target.value as HostOpponent)}>
-              <option value="friend">Friend</option>
-              <option value="mcp">Rival MCP</option>
+              <option value="friend">{t('home.mode.friend')}</option>
+              <option value="mcp">{t('hostTable.mcp')}</option>
               <option value="ai">{t('home.mode.ai')}</option>
             </select>
           </label> : <label className={styles.selectField}>
-            <span>AI players</span>
+            <span>{t('hostTable.aiPlayers')}</span>
             <select value={Math.min(aiSeats, seatCount - 1)} onChange={(event) => setAiSeats(Number(event.target.value))}>
-              {Array.from({ length: seatCount }, (_, index) => <option key={index} value={index}>{index === 0 ? 'None' : index}</option>)}
+              {Array.from({ length: seatCount }, (_, index) => <option key={index} value={index}>{index === 0 ? t('hostTable.none') : index}</option>)}
             </select>
           </label>}
         </div>
@@ -552,7 +553,7 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
             </select>
           </label>
         ))
-          : <Field label="Password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} hint="Leave empty for an open table." />}
+          : <Field label={t('login.password')} type="password" value={password} onChange={(event) => setPassword(event.target.value)} hint={t('hostTable.openHint')} />}
         {PRIVATE_PLAYTESTING && opponent === 'mcp' && (
           <div>
             <Switch checked={allowExternalMcp} onCheckedChange={setAllowExternalMcp} disabled={busy}

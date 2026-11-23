@@ -98,11 +98,3 @@
   flex-wrap: wrap;
   gap: 8px 20px;
 }
-
-.check {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--ink-soft);
-  font-size: var(--text-sm);
-}

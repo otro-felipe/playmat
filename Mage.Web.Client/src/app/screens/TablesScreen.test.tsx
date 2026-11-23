@@ -19,7 +19,7 @@ const calls = vi.hoisted(() => ({ create: vi.fn(), join: vi.fn(), notify: vi.fn(
 vi.mock('../playtesting', async (original) => ({ ...await original<typeof import('../playtesting')>(), PRIVATE_PLAYTESTING: true }));
 vi.mock('../connection', () => ({ api: { roomCreateTable: calls.create, roomJoinTable: calls.join } }));
 vi.mock('../queries', () => ({
-  useTables: () => ({ data: tables }), useServerState: () => ({ data: {} }), refreshTables: vi.fn(),
+  useTables: () => ({ data: tables }), useServerState: () => ({ data: { gameTypes: [{ name: 'Two Player Duel', minPlayers: 2, maxPlayers: 2 }] } }), refreshTables: vi.fn(),
 }));
 vi.mock('../stores/session', () => ({
   useSession: Object.assign((pick: (state: object) => unknown) => pick({ userName: 'Host', roomId, phase: 'signedIn' }), { subscribe: vi.fn() }),
@@ -134,6 +134,8 @@ test.each([
   ['en', 'Allow external players', 'Only MCP players enabled on your account can join.', 'An MCP player from another account can also join with the invitation link.'],
   ['es', 'Permitir externos', 'Solo pueden unirse los jugadores MCP habilitados en tu cuenta.', 'Un jugador MCP de otra cuenta también puede unirse con el enlace de invitación.'],
 ])('[PM-AC-16] %s explains the guest scope and lets the host opt in by keyboard', async (locale, label, defaultHint, externalHint) => {
+  const heading = locale === 'es' ? 'Crear una mesa' : 'Host a table';
+  const opponentLabel = locale === 'es' ? 'Rival' : 'Opponent';
   const originalLanguage = useI18n.getState();
   if (locale === 'es') useI18n.setState({ locale: 'es', t: createTranslator({ locale: 'es', messages: spanish, fallback: spanish }) });
   const user = userEvent.setup();
@@ -146,25 +148,40 @@ test.each([
       : Response.json({ tables: [] }));
     vi.stubGlobal('fetch', fetcher);
     const { page } = mount();
-    await user.click(page.getByRole('button', { name: 'Host a table' }));
-    let dialog = within(await page.findByRole('dialog', { name: 'Host a table' }));
+    await user.click(page.getByRole('button', { name: heading }));
+    let dialog = within(await page.findByRole('dialog', { name: heading }));
     expect(dialog.queryByRole('switch', { name: label })).toBeNull();
-    await user.selectOptions(dialog.getByLabelText('Opponent'), 'mcp');
+    await user.selectOptions(dialog.getByLabelText(opponentLabel), 'mcp');
     const guide = within(await page.findByRole('dialog', { name: /Thoughtseize/ }));
     await user.click(guide.getByRole('button', { name: /Continue|Continuar/ }));
-    dialog = within(await page.findByRole('dialog', { name: 'Host a table' }));
+    dialog = within(await page.findByRole('dialog', { name: heading }));
+    if (locale === 'es') {
+      expect(dialog.getByLabelText('Nombre de la mesa').getAttribute('placeholder')).toBe('Mesa de Host');
+      expect(dialog.getByLabelText<HTMLSelectElement>('Formato').selectedOptions[0].textContent).toBe('Pioneer');
+      const game = dialog.getByLabelText<HTMLSelectElement>('Tipo de juego').selectedOptions[0];
+      expect([game.value, game.textContent]).toEqual(['Two Player Duel', 'Duelo entre dos jugadores']);
+      expect(dialog.getByLabelText<HTMLSelectElement>('Victorias necesarias').selectedOptions[0].textContent).toBe('2 (al mejor de tres)');
+      expect(dialog.getByLabelText<HTMLSelectElement>('Rival').selectedOptions[0].textContent).toBe('Jugar contra MCP');
+      expect(dialog.getByLabelText<HTMLSelectElement>('Estilo de chat MCP').selectedOptions[0].textContent).toBe('Silencioso');
+      expect(dialog.getByRole('button', {name: 'Cancelar'})).toBeTruthy();
+      await user.click(dialog.getByRole('button', {name: 'Opciones avanzadas Reglas estándar'}));
+      expect(dialog.getByLabelText('Tiempo de la partida')).toBeTruthy();
+      const seed = dialog.getByLabelText('Semilla');
+      await user.type(seed, '77');
+      expect(dialog.getByRole('button', {name: /Opciones avanzadas.*Semilla 77/})).toBeTruthy();
+    }
     const toggle = dialog.getByRole('switch', { name: label, description: defaultHint, checked: false });
     expect(dialog.queryByRole('textbox', { name: /Invited account|Cuenta invitada/ })).toBeNull();
     toggle.focus();
     await user.keyboard(' ');
     expect(dialog.getByRole('switch', { name: label, description: externalHint, checked: true })).toBe(toggle);
-    await user.selectOptions(dialog.getByLabelText('Opponent'), 'friend');
+    await user.selectOptions(dialog.getByLabelText(opponentLabel), 'friend');
     expect(dialog.queryByRole('switch', { name: label })).toBeNull();
-    await user.selectOptions(dialog.getByLabelText('Opponent'), 'mcp');
+    await user.selectOptions(dialog.getByLabelText(opponentLabel), 'mcp');
     await user.click(within(await page.findByRole('dialog', { name: /Thoughtseize/ })).getByRole('button', { name: /Continue|Continuar/ }));
-    dialog = within(await page.findByRole('dialog', { name: 'Host a table' }));
+    dialog = within(await page.findByRole('dialog', { name: heading }));
     await user.click(dialog.getByRole('switch', { name: label, checked: false }));
-    await user.click(dialog.getByRole('button', { name: /^Host$/ }));
+    await user.click(dialog.getByRole('button', { name: locale === 'es' ? 'Crear mesa' : 'Host' }));
     await waitFor(() => expect(fetcher.mock.calls.some(([url]) => url === '/api/playtesting/invites')).toBe(true));
     const [, request] = fetcher.mock.calls.find(([url]) => url === '/api/playtesting/invites')!;
     const invite = JSON.parse(String(request?.body));
