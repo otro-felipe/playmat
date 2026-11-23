@@ -98,6 +98,12 @@ The scheduler seats the same two entrants at a new physical table. Each pilot ca
 
 The server accepts the retry only if the native engine can exclude live tables, games and recoverable or staged records, and the product can exclude existing scores and archived games. An unavailable engine blocks the retry. Repeating a successful request with the old table ID acknowledges the previous retry. The operator can verify progress through the original pairing’s live spectator link when a real game appears.
 
+## Long replays
+
+Completed games retain their replay when a recording exceeds 24 MiB compressed or 96 MiB after decompression. The tournament replay index lists the playable frame count for each retained game. A spectator can seek directly to a frame and see the public decision notes up to that point. The server verifies the compressed object's checksum before it publishes an index or returns a first page. Existing archived games use the same path.
+
+The personal history reader shows only the requesting seat's perspective. Pagination counts visible events and preserves their original recording positions. Retention and the tournament's publication rules still govern access.
+
 ## Acceptance coverage
 
 The [local pilot](../../../ops/playtesting/product/tournament-pilot.local.mjs) runs

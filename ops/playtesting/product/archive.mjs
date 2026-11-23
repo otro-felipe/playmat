@@ -214,7 +214,7 @@ async function sha256Stream(stream) {
 }
 
 // Keep the per-record guard while allowing any number of recorded turns in an archive.
-// Verify the compressed checksum before the caller publishes the completed index.
+// Verify the compressed checksum before returning any page or publishing an index.
 async function* streamReplayRecords(store, game) {
   if (!game.object_key) throw new ProductError(409, 'Replay is still being archived')
   const input = await openReplay(store, game.object_key)
