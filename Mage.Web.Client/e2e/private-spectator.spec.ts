@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { spectatorSnapshot, spectatorToken } from './fixtures/spectatorSnapshot';
 
 test.skip(process.env.VITE_PRIVATE_PLAYTESTING !== 'true', 'private playtesting routes');
@@ -178,12 +178,7 @@ test('an owner switches link visibility with keyboard before sharing an opted-in
     }
     return route.fulfill({json:url.pathname.endsWith('/me')?{engineName:'Alice',agent:false}:{decks:[]}});
   });
-  await page.routeWebSocket(/\/ws$/,socket=>socket.onMessage(raw=>{
-    const rpc=JSON.parse(String(raw));if(rpc.id===undefined)return;
-    const result:Record<string,unknown>={connectUser:true,sessionUserName:'Alice',sessionGetRestoreToken:'',
-      serverGetMainRoomId:'00000000-0000-4000-8000-0000000000aa',serverInfo:{signOn:'Alice',signOnOnly:true},roomGetAllTables:[],roomGetFinishedGames:[],roomGetUsers:[],getServerState:{serverVersion:'fixture',cardInfo:[]}};
-    socket.send(JSON.stringify({jsonrpc:'2.0',id:rpc.id,result:result[rpc.method]??null}));
-  }));
+  await ownerConnection(page);
   await page.goto('/tables');
   const row=page.getByRole('article').filter({has:page.getByRole('heading',{name:'Mesa opt-in'})});
   const toggle=row.getByRole('switch',{name:'Compartir ambas manos en este enlace de espectador'});
@@ -222,4 +217,67 @@ test('a closed observer drops the private board on its final SSE frame and canno
   await expect(page.getByText('Este enlace de espectador ya no está disponible.')).toBeVisible();
   await expect(page.getByRole('listitem',{name:'Forest',exact:true})).toHaveCount(0);
   await expect(page.getByRole('link',{name:'Ver tablero público'})).toHaveCount(0);
+});
+
+async function ownerConnection(page: Page) {
+  await page.routeWebSocket(/\/ws$/,socket=>socket.onMessage(raw=>{
+    const rpc=JSON.parse(String(raw));if(rpc.id===undefined)return;
+    const result:Record<string,unknown>={connectUser:true,sessionUserName:'Alice',sessionGetRestoreToken:'',
+      serverGetMainRoomId:'00000000-0000-4000-8000-0000000000aa',serverInfo:{signOn:'Alice',signOnOnly:true},roomGetAllTables:[],roomGetFinishedGames:[],roomGetUsers:[],getServerState:{serverVersion:'fixture',cardInfo:[]}};
+    socket.send(JSON.stringify({jsonrpc:'2.0',id:rpc.id,result:result[rpc.method]??null}));
+  }));
+}
+
+for (const width of [390, 1440]) test(`owner configures a waiting MCP table before sharing, at ${width}px`, async ({page}, info) => {
+  await page.setViewportSize({width,height:width===390?844:900});
+  const {tableId}=spectatorSnapshot;
+  let visibility: 'public-board'|'both-hands'='public-board';
+  let locked=false;
+  const mutations:string[]=[];
+  const links:string[]=[];
+  await page.route('**/api/playtesting/**', async route => {
+    const {pathname,search}=new URL(route.request().url());
+    if(pathname.endsWith('/spectator-links')) return route.fulfill({json:{tables:[
+      {tableId, tableName:'Golgari vs. Mono-Red', spectatorVisibility:visibility, canConfigureSpectatorVisibility:!locked}
+    ]}});
+    if(pathname.endsWith('/spectator-link') && route.request().method()==='PATCH'){
+      const desired=route.request().postDataJSON().spectatorVisibility;
+      mutations.push(desired);
+      if(locked)return route.fulfill({status:409,json:{}});
+      visibility=desired;
+      return route.fulfill({json:{tableId,spectatorVisibility:visibility}});
+    }
+    if(pathname.endsWith('/spectator-link')){
+      links.push(search);
+      return route.fulfill({json:{path:search?'/watch/expanded-synthetic':'/watch/public-synthetic'}});
+    }
+    return route.fulfill({json:pathname.endsWith('/me')?{engineName:'Alice',agent:false}:{decks:[]}});
+  });
+  await ownerConnection(page);
+  await page.goto('/tables');
+  const row=page.getByRole('article').filter({has:page.getByRole('heading',{name:'Golgari vs. Mono-Red'})});
+  const config=row.getByRole('switch',{name:'Mostrar ambas manos a los espectadores'});
+  const sharing=row.getByRole('switch',{name:'Compartir ambas manos en este enlace de espectador'});
+  await expect(config).toHaveAttribute('aria-checked','false');
+  await expect(sharing).toHaveCount(0);
+  await config.focus(); await page.keyboard.press('Space');
+  await expect(sharing).toHaveAttribute('aria-checked','false');
+  await expect(config).toHaveAttribute('aria-checked','true');
+  await page.reload();
+  await expect(config).toHaveAttribute('aria-checked','true');
+  await expect(sharing).toHaveAttribute('aria-checked','false');
+  await expect(row.getByText(/Quien reciba el enlace ampliado/)).toBeVisible();
+  expect(await row.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
+  await config.focus();
+  await row.screenshot({path:info.outputPath(`configurar-ambas-manos-${width}.png`),animations:'disabled'});
+  await config.click();
+  await expect(sharing).toHaveCount(0);
+  await page.reload();
+  await expect(config).toHaveAttribute('aria-checked','false');
+  locked=true; // A guest claims the invitation after the last list fetch.
+  await config.focus(); await page.keyboard.press('Enter');
+  await expect(row.getByRole('alert')).toContainText('bloqueada');
+  await expect(config).toHaveCount(0); await expect(sharing).toHaveCount(0);
+  expect(mutations).toEqual(['both-hands','public-board','both-hands']);
+  expect(links).toEqual([]);
 });

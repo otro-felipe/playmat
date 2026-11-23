@@ -303,3 +303,74 @@ test('an owner selects the existing both-hands link for one eligible table witho
   fireEvent.click(page.getByRole('button',{name:'Copy spectator link'}));
   await waitFor(()=>expect(writeText).toHaveBeenCalledWith(window.location.origin+'/watch/public-fixture'));
 });
+
+test('an eligible owner changes the table permission independently of the spectator link and rolls back a rejected save', async () => {
+  tables = [];
+  let visibility = 'public-board';
+  let failure = false;
+  let locked = false;
+  const changes: string[] = [];
+  let linksRead = 0;
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith('/spectator-links')) return Response.json({ tables: [
+      { tableId, tableName: 'Waiting fixture', spectatorVisibility: visibility, canConfigureSpectatorVisibility: !locked },
+    ] });
+    if (init?.method === 'PATCH') {
+      const proposed = JSON.parse(String(init.body)).spectatorVisibility;
+      changes.push(proposed);
+      if (locked || failure) return new Response(null, { status: locked ? 409 : 503 });
+      visibility = proposed;
+      return Response.json({ tableId, spectatorVisibility: visibility });
+    }
+    if (url.includes('/spectator-link')) linksRead++;
+    return Response.json({});
+  }));
+  const { page } = mount();
+  const permission = () => page.getByRole('switch', { name: 'Show both hands to spectators' });
+  const sharing = () => page.queryByRole('switch', { name: 'Share both hands with this spectator link' });
+  await page.findByText('Waiting fixture');
+  expect(permission().getAttribute('aria-checked')).toBe('false');
+  expect(sharing()).toBeNull();
+  fireEvent.click(permission());
+  await waitFor(() => expect(sharing()).not.toBeNull());
+  expect(sharing()?.getAttribute('aria-checked')).toBe('false');
+  fireEvent.click(permission());
+  await waitFor(() => expect(sharing()).toBeNull());
+  failure = true;
+  fireEvent.click(permission());
+  await page.findByRole('alert');
+  expect(permission().getAttribute('aria-checked')).toBe('false');
+  expect(sharing()).toBeNull();
+  locked = true;
+  fireEvent.click(permission());
+  await waitFor(() => expect(page.queryByRole('switch', {name:'Show both hands to spectators'})).toBeNull());
+  expect(page.getByRole('alert').textContent).toMatch(/locked/i);
+  expect(changes).toEqual(['both-hands','public-board','both-hands','both-hands']);
+  expect(linksRead).toBe(0);
+});
+
+test('a guest claiming before revoke freezes the enabled permission and keeps the owner’s link selector available', async () => {
+  tables = [];
+  let eligible = true;
+  const links: string[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith('/spectator-links')) return Response.json({ tables: [
+      { tableId, tableName:'Claim race fixture', canConfigureSpectatorVisibility:eligible, spectatorVisibility:'both-hands' },
+    ] });
+    if (init?.method === 'PATCH') {
+      eligible = false;
+      return new Response(null, {status:409});
+    }
+    if (url.includes('/spectator-link')) links.push(url);
+    return Response.json({});
+  }));
+  const {page} = mount();
+  const config = await page.findByRole('switch', {name:'Show both hands to spectators'});
+  expect(config.getAttribute('aria-checked')).toBe('true');
+  fireEvent.click(config);
+  await page.findByRole('alert');
+  expect(page.queryByRole('switch', {name:'Show both hands to spectators'})).toBeNull();
+  const share = page.getByRole('switch', {name:'Share both hands with this spectator link'});
+  expect(share.getAttribute('aria-checked')).toBe('false');
+  expect(links).toEqual([]);
+});

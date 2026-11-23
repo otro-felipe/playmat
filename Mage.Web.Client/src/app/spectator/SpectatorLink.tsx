@@ -4,6 +4,7 @@ import { useT } from '../i18n';
 import { Button } from '../ui/Button';
 import { Switch } from '../ui/Switch';
 import { Dialog } from '../ui/Dialog';
+import styles from './SpectatorBoard.module.css';
 
 export function SpectatorLink({ tableId, path, publicBoard, openable, bothHands }: {
   tableId?: string; path?: string; publicBoard?: boolean; openable?: boolean; bothHands?: boolean;
@@ -61,9 +62,9 @@ export function OwnedSpectatorLink({ tableId, canShareHands }: { tableId: string
   const [selected, setSelected] = useState(false);
   const bothHands = canShareHands && selected;
   const id = useId();
-  return <div>
+  return <div className={styles.shareControls}>
     {canShareHands && <Switch checked={bothHands} onCheckedChange={setSelected} controls={id} label={t('watch.shareBoth')} />}
-    <div id={id}>
+    <div id={id} className={styles.shareActions}>
       {bothHands && <p>{t('watch.bothDetail')}</p>}
       <SpectatorLink key={String(bothHands)} tableId={tableId} publicBoard={!bothHands} bothHands={bothHands} openable />
     </div>

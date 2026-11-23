@@ -27,3 +27,10 @@
 @media (max-width: 48rem) {
   .title h1 { font-size: 1rem; }
 }
+
+.ownerControls { display: grid; gap: 12px; min-width: 0; }
+.ownerControls p { max-width: 60ch; margin: 0; color: var(--ink-soft); line-height: 1.45; }
+.shareControls { display: grid; gap: 6px; justify-items: start; }
+.shareActions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.shareActions > p { flex-basis: 100%; }
+.permission { padding-bottom: 10px; border-bottom: 1px solid var(--ink-faint); }
