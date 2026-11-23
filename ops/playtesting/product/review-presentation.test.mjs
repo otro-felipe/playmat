@@ -318,3 +318,22 @@ test('[PM-LINE-REPLAY-1] a frame groups both agents’ explanations according to
   assert.deepEqual(frames[1].lines, [own, rival], 'the follow-up board still shows the last explained line')
   assert.equal(frames[2].lines, undefined, 'an unexplained later turn does not inherit an earlier plan')
 })
+
+test('[PM-LINE-PUBLIC] explicit spectator lines survive archival and never publish legacy notes or table talk', async () => {
+  const explanation='A'.repeat(4000)
+  const {read}=fixture(({alice,bob,frame})=>{
+    const entry={kind:'line',actorPlayerId:alice.playerId,commandId:'same',audience:'public',explanation}
+    return {rows:[frame(),{kind:'line',actorPlayerId:alice.playerId,commandId:'old',reasoning:'old private note'},
+      entry,{...entry},{...entry,actorPlayerId:bob.playerId,explanation:'Block.'},
+      {...entry,commandId:'unsigned',audience:undefined},{...entry,commandId:'too-long',explanation:explanation+'!'},
+      {kind:'spectatorTalk',chat:{message:'ordinary chat'}},frame(),frame({turn:3})]}
+  })
+  for(const scope of ['public','seat','full']) {
+    const frames=(await read({scope,purpose:'replay'})).events.filter(row=>row.type==='frame')
+    assert.deepEqual(frames[0].lines.filter(row=>row.audience==='public').map(row=>row.explanation),[explanation,'Block.'])
+    assert.deepEqual(frames[1].lines,frames[0].lines)
+    assert.equal(frames[2].lines,undefined)
+    assert.equal(JSON.stringify(frames).includes('old private note'),scope!=='public')
+    assert.ok(!JSON.stringify(frames).includes('ordinary chat'))
+  }
+})

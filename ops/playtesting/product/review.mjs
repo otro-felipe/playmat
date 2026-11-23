@@ -1,3 +1,4 @@
+import { lineText, publicLineId } from './line-explanations.mjs'
 import { canonicalRows, legacyKeptHand, plainReplayText as plainText } from './replay-opening.mjs'
 import { createHash } from 'node:crypto'
 import { projectReplayEvent } from './archive.mjs'
@@ -234,15 +235,19 @@ function cardReference(card) {
 
 function replayLinesByFrame(rows, perspectives, seat, scope) {
   const byFrame = new Map()
-  if (scope === 'public') return byFrame
+  const seen = new Set()
   for (const { cursor, frameCursor, event } of rows) {
-    if (event.kind !== 'line' || frameCursor === null || typeof event.reasoning !== 'string'
-      || !event.reasoning.trim() || event.reasoning.length > 600 || typeof event.commandId !== 'string'
+    if (event.kind !== 'line' || frameCursor === null || typeof event.commandId !== 'string'
       || !event.commandId || event.commandId.length > 120) continue
     const actor = perspectives.find(player => player.playerId && player.playerId === event.actorPlayerId)
-    if (!actor || scope !== 'full' && seat?.seatId !== actor.seatId) continue
+    if (!actor) continue
+    const note = lineText(event, scope === 'full' || scope === 'seat' && seat?.seatId === actor.seatId)
+    const key = JSON.stringify([actor.playerId, event.commandId])
+    if (!note || seen.has(key)) continue
+    seen.add(key)
     if (!byFrame.has(frameCursor)) byFrame.set(frameCursor, [])
-    byFrame.get(frameCursor).push({ cursor, commandId: event.commandId, actor: actor.name, seatId: actor.seatId, reasoning: event.reasoning })
+    byFrame.get(frameCursor).push({ cursor, commandId: scope === 'full' || scope === 'seat' && seat?.seatId === actor.seatId ? event.commandId : publicLineId(key),
+      actor: actor.name, seatId: actor.seatId, ...note })
   }
   // A decision and its resulting board often occupy adjacent frames. Keep the last
   // explained line in view through this turn until the next authored line begins.

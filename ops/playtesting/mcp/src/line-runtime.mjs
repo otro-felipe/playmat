@@ -55,10 +55,10 @@ async function lineResult(seat, { gameId, commandId, sequenceId }, timeoutMs, si
   };
 }
 
-export function playLine(seat, { gameId, cursor, commandId, actions, expectedStackIds, declineExiledCard, waitMs, reasoning }, reauthorize, signal) {
+export function playLine(seat, { gameId, cursor, commandId, actions, expectedStackIds, declineExiledCard, waitMs, reasoning, explanation }, reauthorize, signal) {
   signal?.throwIfAborted();
   const commands = commandIndex(seat);
-  const fingerprint = createHash('sha256').update(JSON.stringify([gameId, cursor, actions, expectedStackIds, reasoning, declineExiledCard])).digest('hex');
+  const fingerprint = createHash('sha256').update(JSON.stringify([gameId, cursor, actions, expectedStackIds, reasoning, declineExiledCard, ...(explanation ? [explanation] : [])])).digest('hex');
   const known = commands.get(commandId);
   if (known) {
     if (known.fingerprint !== fingerprint) {
@@ -73,7 +73,7 @@ export function playLine(seat, { gameId, cursor, commandId, actions, expectedSta
     // An exact prompt response may only select an option. Settle an announced
     // line of plays, but do not assume a choose-only line also authorizes passes.
     const settle = actions.some(({ kind }) => ['play', 'activate', 'attack'].includes(kind));
-    const line = reasoning ? { commandId, reasoning } : undefined;
+    const line = explanation ? { commandId, explanation } : reasoning ? { commandId, reasoning } : undefined;
     started = seat.startTurn({ gameId, cursor, actions, expectedStackIds, declineExiledCard, finish: 'none', settle, line }, reauthorize);
   } catch (error) {
     if (error instanceof ToolError && error.code !== 'forbidden_game') {

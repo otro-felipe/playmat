@@ -1,5 +1,7 @@
 package mage.server.replay;
 
+import com.google.common.hash.HashCode;
+import com.google.common.hash.Hashing;
 import com.google.gson.JsonObject;
 import mage.game.Game;
 import mage.game.Table;
@@ -26,6 +28,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -53,6 +57,7 @@ public final class ReplayRecorder {
     private final UUID watcherId = UUID.randomUUID();
     private Writer out;
     private SpectatorTable broadcast;
+    private final Map<String, HashCode> authoredLines = new HashMap<>();
     private String lastFrame;
     private int lastFrameCursor = -1;
     private long replayBranch;
@@ -228,27 +233,36 @@ public final class ReplayRecorder {
         }
     }
 
-    public static boolean recordLine(UUID gameId, UUID playerId, String commandId, String reasoning) {
+    public static boolean recordLine(UUID gameId, UUID playerId, String commandId, LineExplanation explanation) {
         ReplayRecorder recorder = BY_GAME.get(gameId);
-        return recorder != null && recorder.appendLine(playerId, commandId, reasoning);
+        return recorder != null && recorder.appendLine(playerId, commandId, explanation);
     }
 
-    private synchronized boolean appendLine(UUID playerId, String commandId, String reasoning) {
+    private synchronized boolean appendLine(UUID playerId, String commandId, LineExplanation explanation) {
         if (!canWrite() || lastFrameCursor < 0) {
             return false;
         }
-        JsonObject row = new JsonObject();
+        // A single engine decision can submit multiple RPCs. They share the annotation
+        // of the first answer, including when a transport retries that exact answer.
+        String key = playerId + ":" + commandId;
+        JsonObject note = new JsonObject();
+        explanation.writeTo(note);
+        HashCode fingerprint = Hashing.sha256().hashString(note.toString(), StandardCharsets.UTF_8);
+        HashCode previous = authoredLines.get(key);
+        if (previous != null) return previous.equals(fingerprint);
+        JsonObject row = note.deepCopy();
         row.addProperty("kind", "line");
         row.addProperty("t", elapsed());
         row.addProperty("actorPlayerId", playerId.toString());
         row.addProperty("commandId", commandId);
-        row.addProperty("reasoning", reasoning);
         long at = System.currentTimeMillis();
         row.addProperty("at", at);
         row.addProperty("turn", game.getTurnNum());
         write(row.toString());
-        if (!broken && broadcast != null) broadcast.line(playerId, commandId, reasoning, game.getTurnNum(), at);
-        return !broken;
+        if (broken) return false;
+        authoredLines.put(key, fingerprint);
+        if (broadcast != null) broadcast.line(playerId, commandId, explanation, game.getTurnNum(), at);
+        return true;
     }
 
     private synchronized void rollback(int turn) {

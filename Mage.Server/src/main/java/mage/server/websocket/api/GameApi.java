@@ -9,6 +9,7 @@ import mage.server.game.GameController;
 import mage.server.game.PracticeTools;
 import mage.server.playtesting.ProductGateway;
 import mage.server.replay.ReplayRecorder;
+import mage.server.replay.LineExplanation;
 import mage.server.replay.ReplayStore;
 import mage.server.recovery.RecoveryPrincipal;
 import mage.server.websocket.rpc.RpcCall;
@@ -297,7 +298,12 @@ final class GameApi {
         }
         JsonObject line = call.jsonObject(lineIndex);
         String commandId = lineField(line, "commandId", 120);
-        String reasoning = lineField(line, "reasoning", 600);
+        LineExplanation explanation;
+        try {
+            explanation = LineExplanation.read(line);
+        } catch (IllegalArgumentException e) {
+            throw RpcException.invalidParams(e.getMessage());
+        }
         UUID gameId = call.uuid(gameIndex);
         GameController game = ctx.managers.gameManager().getGameController().get(gameId);
         UUID playerId = game == null ? null : ctx.managers.sessionManager().getSession(call.sessionId())
@@ -305,7 +311,7 @@ final class GameApi {
         if (playerId == null) {
             throw RpcException.notAuthorized("The connected seat does not play this game");
         }
-        if (!ReplayRecorder.recordLine(gameId, playerId, commandId, reasoning)) {
+        if (!ReplayRecorder.recordLine(gameId, playerId, commandId, explanation)) {
             throw RpcException.invalidParams("The replay recorder could not save this line");
         }
     }

@@ -1,5 +1,6 @@
 import { McpError } from '@modelcontextprotocol/sdk/types.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { publicExplanationLimit } from '../../product/line-explanations.mjs';
 import { clientKey, createConcurrencyLimit, createLimits } from '../../product/limits.mjs';
 import { createServer } from 'node:http';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -145,7 +146,8 @@ const TurnBlockShape = z.object({ kind: z.literal('block'),
 }).strict();
 const TurnBlock = TurnBlockShape.refine(({ assignments }) => new Set(assignments.map(({ blockerId }) => blockerId)).size === assignments.length,
   'Name each blocker once. Use the live engine decision for a creature that can block multiple attackers.');
-const Turn = { gameId: Uuid, cursor: Cursor, actions: z.array(z.union([TurnPlay, TurnActivation, TurnChoose, TurnAttack, TurnBlock, Pace])).max(32),
+const PublicExplanation = z.string().trim().min(1).max(publicExplanationLimit).optional().describe('Publish a spectator explanation when the first action is submitted. Describe the play, its purpose, possible replies and relevant alternatives from public information. Keep hidden cards, credentials and private deliberation out of this audience text. Use send_chat for table conversation.');
+const Turn = { explanation: PublicExplanation, gameId: Uuid, cursor: Cursor, actions: z.array(z.union([TurnPlay, TurnActivation, TurnChoose, TurnAttack, TurnBlock, Pace])).max(32),
   expectedStackIds: z.array(StringId).max(16).optional(), finish: z.enum(['next_turn', 'end_step', 'none']).default('next_turn') };
 const LinePassUntilShape = z.object({
   kind: z.literal('pass_until'),
@@ -161,7 +163,8 @@ const LinePassPriority = z.object({ kind: z.literal('pass_priority') }).strict()
 const LineActions = z.array(z.discriminatedUnion('kind', [TurnPlay, TurnActivation, TurnChoose, TurnAttack, TurnBlock, Pace, LinePassUntil, LinePassPriority])).min(1).max(32);
 const Line = {
   gameId: Uuid, cursor: Cursor, commandId: StringId.describe('Choose a unique ID for this line. For an uncertain result, reuse this ID with the same game, cursor and actions.'),
-  reasoning: z.string().trim().min(1).max(600).optional().describe('A brief comment for the live spectator audience and authorized replay. Describe the line’s objective and an observation. Use send_chat to speak to the opponent.'),
+  explanation: PublicExplanation,
+  reasoning: z.string().trim().min(1).max(600).optional().describe('Legacy comment for delegated broadcasts and previously authorized replay perspectives. Supply this or explanation.'),
   actions: z.array(z.union([TurnPlayShape, TurnActivation, TurnChooseShape, TurnAttackShape, TurnBlockShape, Pace, LinePassUntilShape, LinePassPriority])).min(1).max(32)
     .describe('Plan as far as current information justifies. Use exact choices for visible engine prompts. A current_turn step or phase with priority:self may precede a planned action in that window. Before attack or block, request BEGIN_COMBAT or its exact declaration step. Use at most one terminal pass (pass_priority or pass_until) and put it last.'),
   declineExiledCard: z.object({ sourceId: StringId, abilityText: z.string().min(1).max(2000), stackId: StringId.optional() }).strict().optional()
@@ -377,6 +380,7 @@ function registerTools(mcp, { contextFor, allowedOrigins }) {
     'play', ({ gameId, cursor }) => getSeat().startSequence({ gameId, cursor, steps: [{ kind: 'advance_to_own_turn' }] }, current().reauthorize));
   const playSequence = (args) => getSeat().startSequence(args, current().reauthorize);
   tool('play_line', 'Submit the longest justified line of plays, activations, choices, attacks and passes from the current cursor, on either turn. Ordinary handoffs are automatic. The line stops on new information, rival actions or a required choice it cannot answer. Returns applied progress and seat-visible game state. Check status, code and recovery when a line is rejected. Copy ordered payWith entries from the chosen sources’ payWithOptions. At a payment prompt or other discrete choice, an option’s playLineAction contains its exact current decisionId and choiceId. Read the turn-planning guide for complete JSON examples, including two targets, Ward, activation, combat and command recovery.', Line, 'play', async (args, signal) => {
+    if (args.explanation && args.reasoning) throw new ToolError('invalid_input', 'Supply either explanation or legacy reasoning.');
     const actions = LineActions.safeParse(args.actions);
     if (!actions.success) return lineArgumentRejection(args, actions.error);
     const seat = getSeat();

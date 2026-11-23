@@ -1,3 +1,4 @@
+import { lineText } from './line-explanations.mjs'
 import { publicSpectatorBoard } from './public-spectator-board.mjs'
 import { listPublicSpectatorLinks, newSpectatorToken } from './spectator-links.mjs'
 import { isUuid, normalize, ProductError } from './decks.mjs'
@@ -80,17 +81,22 @@ export function spectatorStorage(pool, archive) {
       const frame=rows.findLast(r=>r.view)
       const finish=rows.findLast(r=>r.kind==='spectatorEnd')
       const players=finish?.players??registered
-      if (publicTarget) return {role:'spectator',tableId,gameId:game.id,status:'finished',revision:rows.length,players,view:frame?.view}
-      const lines=[], chat=[]
+      const lines=[], chat=[], seen=new Set()
       for (const row of rows) {
-        if (row.kind==='spectatorTalk' && row.chat && players.some(player=>player.name===row.chat.playerName)) {
+        if (!publicTarget && row.kind==='spectatorTalk' && row.chat && players.some(player=>player.name===row.chat.playerName)) {
           chat.push(select(row.chat,['messageId','playerName','message','at']))
         }
         if (row.kind!=='line') continue
         const player=players.find(p=>p.playerId===row.actorPlayerId)
-        if (player) lines.push({lineId:game.id+':'+player.playerId+':'+row.commandId, playerId:player.playerId,playerName:player.name,
-          reasoning:row.reasoning,at:row.at??Number(game.started_at)+row.t,turn:row.turn??null})
+        const note=lineText(row,true)
+        if (!player || !note || typeof row.commandId!=='string' || !row.commandId || row.commandId.length>120) continue
+        const lineId=game.id+':'+player.playerId+':'+row.commandId
+        if (seen.has(lineId)) continue
+        seen.add(lineId)
+        lines.push({lineId,playerId:player.playerId,playerName:player.name,...note,
+          at:row.at??Number(game.started_at)+row.t,turn:row.turn??null})
       }
+      if (publicTarget) return {role:'spectator',tableId,gameId:game.id,status:'finished',revision:rows.length,players,view:frame?.view,lines:lines.slice(-100).filter(line=>line.audience==='public')}
       const hands=Object.fromEntries(players.map(p=>[p.playerId,finish?.hands?.[p.playerId]??frame?.hands?.[p.name]??frame?.review?.seatViews?.[p.playerId]?.myHand??{}]))
       return {role:'spectator',tableId,gameId:game.id,status:'finished',revision:rows.length,players,view:board(frame?.view),hands,lines:lines.slice(-100),chat:chat.slice(-100)}
     },

@@ -44,13 +44,13 @@ public final class SpectatorTable {
         revision++;
     }
 
-    synchronized void line(UUID player, String command, String reasoning, int turn, long at) {
+    synchronized void line(UUID player, String command, LineExplanation explanation, int turn, long at) {
         if (!names.has(player.toString())) return;
         JsonObject row = new JsonObject();
         row.addProperty("lineId", gameId + ":" + player + ":" + command);
         row.addProperty("playerId", player.toString());
         row.add("playerName", names.get(player.toString()));
-        row.addProperty("reasoning", reasoning);
+        explanation.writeTo(row);
         row.addProperty("at", at);
         row.addProperty("turn", turn);
         append(lines, row);

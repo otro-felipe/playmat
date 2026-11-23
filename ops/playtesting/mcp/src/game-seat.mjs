@@ -387,12 +387,12 @@ export class GameSeat {
     this.#current = sequence;
     this.#sequences.set(sequence.id, sequence);
     if (this.#sequences.size > 40) this.#sequences.delete(this.#sequences.keys().next().value);
-    void this.#runSequence(sequence, initial, steps, authorize, responsePolicy, { expectedStackIds, allowPlannedCombatDamage, autoAdvance, branchContinuation, impulsePlan, line });
+    void this.#runSequence(sequence, initial, steps, authorize, responsePolicy, { expectedStackIds, allowPlannedCombatDamage, autoAdvance, branchContinuation, impulsePlan, line: line && {commandId: sequence.id, ...line} });
     return this.sequenceStatus({ gameId, sequenceId: sequence.id });
   }
 
   /** Compile significant intentions; ordinary priority handoffs are the executor's responsibility. */
-  startTurn({ gameId, cursor, actions, expectedStackIds, declineExiledCard, finish = 'next_turn', settle = true, line }, authorize) {
+  startTurn({ gameId, cursor, actions, expectedStackIds, declineExiledCard, finish = 'next_turn', settle = true, line, explanation }, authorize) {
     const initial = this.snapshot(gameId);
     if (initial.cursor !== cursor || initial.status !== 'active') throw new ToolError('stale_decision', 'Plan from the latest game state.');
     const first = actions[0];
@@ -584,7 +584,7 @@ export class GameSeat {
     const adopted = expectedStackIds ?? (singleObservedChoice ? [] : initial.stack.filter((card) => card.controllerId === ownId).map((card) => card.id));
     if (adopted.length > 16) throw new ToolError('bad_stack_expectation', 'A semantic turn may adopt at most sixteen visible objects.');
     return this.startSequence({ gameId, cursor, steps, autoAdvance: !singleObservedChoice, allowPlannedCombatDamage: !singleObservedChoice, branchContinuation,
-      expectedStackIds: adopted, impulsePlan, line }, authorize);
+      expectedStackIds: adopted, impulsePlan, line: explanation ? { explanation } : line }, authorize);
   }
 
   sequenceStatus({ gameId, sequenceId, startCursor }) {

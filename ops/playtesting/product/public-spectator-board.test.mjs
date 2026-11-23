@@ -104,3 +104,32 @@ test('nested identities inside a concealed permanent cannot reappear in mirrors 
   assert.ok(!JSON.stringify(projected).includes(originalId))
   assert.ok(!JSON.stringify(projected).includes(privateText))
 })
+
+test('[PM-LINE-PUBLIC] public board publishes only marked lines with authenticated roster and no table chat',()=>{
+  const f=frame(), explanation='A'.repeat(4000)
+  const first={lineId:gameId+':'+playerId+':internal-command-name',playerId,playerName:'forged',explanation,audience:'public',at:10,turn:2,reasoning:privateText}
+  f.lines=[{...first,audience:undefined},first,{...first},{...first,lineId:'bad',playerId:randomUUID()},
+    {...first,lineId:'too-long',explanation:explanation+'!'},{...first,lineId:gameId+':'+playerId+':b',at:11,explanation:'Pass.'}]
+  const r=publicSpectatorBoard(f)
+  assert.deepEqual(r.lines.map(({explanation,at,playerName})=>[explanation,at,playerName]),[[explanation,10,'MCP_A'],['Pass.',11,'MCP_A']])
+  assert.deepEqual(r.chat,[])
+  assert.ok(!JSON.stringify(r).includes(privateText))
+  assert.ok(!JSON.stringify(r).includes('internal-command-name'))
+  assert.deepEqual(publicSpectatorBoard(f).lines,r.lines)
+})
+
+test('[PM-LINE-PUBLIC] restart rebuilds the same public feed alongside separately authorized historical talk', async()=>{
+  const {spectatorStorage}=await import('./spectators.mjs')
+  const marker={kind:'line',actorPlayerId:playerId,commandId:'same',audience:'public',explanation:'Attack.',at:50,turn:4}
+  const pool={query:async sql=>({rows:sql.includes('FROM matches')?[{id:gameId,object_key:'test',started_at:0}]:[{playerId,name:'MCP_A'}]})}
+  const storage=spectatorStorage(pool,{readReviewArchive:async()=>[
+    {view:frame().view},{kind:'line',commandId:'old',actorPlayerId:playerId,reasoning:'Legacy only',at:42},marker,{...marker},
+    {kind:'spectatorTalk',chat:{playerName:'MCP_A',message:'Talk only',messageId:1,at:43}}]})
+  const archived=await storage.finished(tableId,{live_table_id:tableId})
+  const publicFrame=publicSpectatorBoard(archived)
+  assert.deepEqual(publicFrame.lines.map(x=>x.explanation),['Attack.'])
+  assert.deepEqual(publicFrame.chat,[])
+  const legacy=await storage.finished(tableId,null)
+  assert.deepEqual(legacy.lines.map(x=>x.explanation??x.reasoning),['Legacy only','Attack.'])
+  assert.deepEqual(legacy.chat.map(x=>x.message),['Talk only'])
+})

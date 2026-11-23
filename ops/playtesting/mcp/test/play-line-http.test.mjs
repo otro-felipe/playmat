@@ -138,6 +138,10 @@ test('[PM-LINE-MCP-2] the turn guide examples pass the published native MCP inpu
     'land-cast-attack-001', 'burst-at-own-nemesis-001', 'rage-valiant-001', 'cast-valiant-attack-001', 'valiant-attack-002', 'saga-entry-001', 'opening-land-after-bottom', 'pass-to-own-draw-001', 'opening-upkeep-draw-001', 'shock-to-combat-001']) {
     assert.ok(commandIds.has(id), `Missing guide example ${id}`);
   }
+  const explained = lines.find(line => line.commandId === 'shock-to-combat-001');
+  assert.match(explained.explanation, /before combat/i);
+  assert.match(explained.explanation, /if they respond/i);
+  assert.match(explained.explanation, /waiting could/i);
   const forecast = lines.find(line => line.commandId === 'cast-valiant-attack-001');
   assert.equal(forecast.expectedStackIds, undefined);
   assert.equal(forecast.declineExiledCard.stackId, undefined);
@@ -1785,3 +1789,25 @@ for (const variant of ['free spell', 'alternate life cost', 'missing witness', '
     }
   });
 }
+
+test('[PM-LINE-PUBLIC] play_line publishes at first dispatch, once per command, accepting up to 4000 characters', async t => {
+  const f = await fixture(t, {onResponse: (_, update) => update({decision:null, status:'ended'})});
+  const explanation = 'Keep pressure. '.repeat(300).slice(0,4000).trimEnd().padEnd(4000,'!');
+  const args = {...f.request, explanation};
+  for (const invalid of [{explanation:explanation+'!'}, {explanation:'   '}, {explanation,reasoning:'legacy'}]) {
+    assert.equal((await f.rawCall('play_line',{...args,...invalid})).isError,true);
+    assert.equal(f.applied.length,0);
+  }
+  await f.call('play_line',args);
+  await f.call('play_line',args);
+  assert.deepEqual(f.applied.map(answer=>answer.line),[{commandId:args.commandId,explanation}]);
+  assert.equal((await f.call('play_line',{...args,explanation:'Revised'})).result.code,'key_conflict');
+});
+
+test('[PM-LINE-PUBLIC] play_turn uses its sequence ID for the authored explanation', async t => {
+  const f = await fixture(t, {onResponse: (_, update) => update({decision:null, status:'ended'})});
+  const {gameId,cursor,actions}=f.request;
+  const {result}=await f.call('play_turn',{gameId,cursor,actions,finish:'none',explanation:'   Attack before blockers.   '});
+  await f.call('get_sequence_status',{gameId,sequenceId:result.sequenceId});
+  assert.deepEqual(f.applied.map(answer=>answer.line),[{commandId:result.sequenceId,explanation:'Attack before blockers.'}]);
+});

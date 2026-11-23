@@ -1,3 +1,4 @@
+import { publicLineExplanations } from './line-explanations.mjs'
 import { createHmac, randomBytes } from 'node:crypto'
 import { isUuid } from './decks.mjs'
 
@@ -136,5 +137,5 @@ export function publicSpectatorBoard(snapshot) {
   return {role:'spectator',visibility:'public-board',...pick(snapshot,['tableId'],isUuid),
     gameId,status:statuses.has(snapshot.status) ? snapshot.status : 'waiting',
     ...numbers(snapshot,['revision','spectators']),players,view:gameId ? publicView(snapshot.view,roster,gameId) : null,
-    hands:{},lines:[],chat:[]}
+    hands:{},lines:gameId ? publicLineExplanations(snapshot.lines,roster,gameId) : [],chat:[]}
 }

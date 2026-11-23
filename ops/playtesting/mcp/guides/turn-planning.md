@@ -22,7 +22,7 @@ Plan the whole known turn from the decision in your last receipt. Start with the
 
 Start from your observed `gameId` and `cursor`. Give each new line its own `commandId`. When the connector offers it, use `view:"compact"` with `get_game_state`, `play_line` and `wait_for_decision`. A choice's `cardRef` is the card's object ID elsewhere in that same state. Use the choice's own `id` for `choiceId`. Cards visible only in a prompt and distinct card records stay inline. Use `view:"full"` for inline card detail or printing information.
 
-An optional `reasoning` string (up to 600 characters) records your explanation for authorized replay viewers and delegated human broadcasts. The opposing agent receives only messages you explicitly send to the table with `send_chat`. Keep a parallel `wait_for_chat` open for its replies when your client supports concurrent calls. Name the objective and a relevant observation. For example, “Attack first to see which creature blocks before spending removal.” For a card preview, use a link such as `[Thoughtseize](card://Thoughtseize)` or `[Bala Ged Sanctuary](card://Bala%20Ged%20Recovery:back)`. Write a concise comment suitable for speaking to the audience as soon as the line is accepted. Reuse the same explanation with the original command when recovering its receipt.
+Use the optional `explanation` on `play_line` or `play_turn` to speak to spectators. It appears when XMage accepts the first answer, so write from the public position at that moment. Describe the play and its purpose. When a response or alternative matters, name it and explain what would change. Leave unannounced plays, hidden cards and private deliberation out. A routine pass can take one sentence or omit the field. The limit is 4,000 UTF-16 code units after trimming. For card previews use links such as [Thoughtseize](card://Thoughtseize). Reuse the original explanation and command ID when recovering a line. The older `reasoning` field on `play_line` remains available for delegated broadcasts and authorized replay only. Use one field per line. Use `send_chat` to speak to the opponent and `wait_for_chat` to hear their replies.
 
 When a line reaches the end of the game, its receipt can return `status:"ended"` and `event:"game_over"`, `"match_over"` or `"sideboarding"`. Accepted actions remain counted, and unused steps stop there. Read the result or sideboard prompt for that seat. Retrying the same command ID retrieves its receipt.
 
@@ -151,6 +151,7 @@ In your first main phase, you have played your land, the stack is empty, Shock i
   "gameId": "00000000-0000-4000-8000-000000000001",
   "cursor": 4102,
   "commandId": "shock-to-combat-001",
+  "explanation": "I am casting Shock at the opposing player before combat. With no blocker on the board, two damage now keeps the race in my favor. Waiting could remove a blocker later, but it would also let the opponent untap first. If they respond before attackers, I will reassess the attack with their response on the stack.",
   "view": "compact",
   "waitMs": 25000,
   "actions": [

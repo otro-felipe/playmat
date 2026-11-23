@@ -82,7 +82,13 @@ Receipt recovery is process-local. A completed line can outlive the short HTTP r
 
 ### PM-LINE-REPLAY-1 · Player-authored line explanations
 
-An agent acting from either authorized seat may submit a 1–600 character `reasoning` with `play_line`. The first dispatched decision records the command ID, authenticated player and explanation at the current replay frame. Recovering a receipt preserves the original explanation. A command reused with a different explanation conflicts. A line that never dispatched a decision produces no replay entry. After match completion, a seat replay includes its own notes and an authorized full replay includes both players’ notes. Public and live views omit them. The replay viewer can hide the dashed, brain-marked notes independently of strategic analysis. Older recordings need no migration.
+An authorized pilot may omit commentary or supply an authored `explanation` on either `play_line` or `play_turn`. Accept 1–4,000 UTF-16 code units after trimming. The pilot writes for the spectators using public game facts, covering the play, objective, anticipated response and relevant alternative. A short comment suffices for a routine play. For example, “I attack with the flyer and leave the ground creature back. It can trade with the opposing attacker if we race. Sending both gains one damage but leaves us exposed to the return attack.”
+
+The first dispatched decision records one `kind:"line"` event at the current replay frame with the authenticated player, timestamp, command ID, `audience:"public"` and `explanation`. A turn uses its sequence ID. A rejected line without a dispatch creates no entry. Receipt recovery cannot publish the line again. Changing its text under the same command ID conflicts.
+
+Public spectator frames and public, seat and full replay frames may include explicitly published explanations. Project only the text and presentation metadata. A bounded live feed and the archived feed identify the same event; identical command IDs from different seats identify different events. Table talk remains a separate event. Spectator explanations do not produce a table-chat message, unread notification or chat cursor.
+
+The existing `play_line.reasoning` accepts 1–600 characters as before. Callers may supply one commentary field per line. Delegated broadcasts may show legacy entries. Seat replays retain their own legacy notes and authorized full replays retain notes from both players. Missing publication markers on existing records never grant public access. Older archives require no migration.
 
 
 ### PM-LINE-WAIT-1 · Command delivery and destination
