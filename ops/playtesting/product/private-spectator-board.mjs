@@ -1,12 +1,12 @@
 import { isUuid } from './decks.mjs'
-import { publicSpectatorBoard } from './public-spectator-board.mjs'
+import { concealedCardFace, publicSpectatorBoard } from './public-spectator-board.mjs'
 
 const text = (value, length=200) => typeof value==='string' && value.length>0 && value.length<=length && !/[\u0000-\u001f\u007f]/u.test(value)
 
 // Keep only the visible printed face. A seat CardView can carry nested originals,
 // command IDs and helper state even when its current face is concealed.
 function face(id,card) {
-  if (!isUuid(id) || !card || card.id && card.id!==id || card.faceDown || card.hideInfo || !text(card.name)) return null
+  if (!isUuid(id) || !card || card.id && card.id!==id || concealedCardFace(card) || !text(card.name)) return null
   const out={id,name:card.name}
   if (text(card.expansionSetCode,8)) out.expansionSetCode=card.expansionSetCode
   if (text(card.cardNumber,16)) out.cardNumber=card.cardNumber

@@ -9,6 +9,7 @@ const steps = new Set(['UNTAP','UPKEEP','DRAW','PRECOMBAT_MAIN','BEGIN_COMBAT','
 const cardTypes = new Set(['ARTIFACT','BATTLE','CONSPIRACY','CREATURE','DUNGEON','ENCHANTMENT','INSTANT','LAND',
   'PHENOMENON','PLANE','PLANESWALKER','SCHEME','SORCERY','KINDRED','VANGUARD'])
 const concealedFlags = ['faceDown','hideInfo','cloaked','disguised','manifested','morphed']
+export const concealedCardFace = card => concealedFlags.some(flag => Object.hasOwn(card,flag) && card[flag] !== false)
 const privateZones = new Set(['HAND','LIBRARY','SIDEBOARD'])
 const counterNames = new Set(['+1/+1','-1/-1','poison','loyalty','defense','shield','energy','experience','rad','stun',
   'charge','time','lore','oil','finality','flying','first strike','double strike','deathtouch','haste','hexproof',
@@ -53,7 +54,7 @@ function concealedObjects(objects) {
     }
     if (visited.has(c)) continue
     visited.add(c)
-    if (concealedFlags.some(flag => Object.hasOwn(c,flag) && c[flag] !== false) || privateZones.has(c.zone)) concealed.add(c)
+    if (concealedCardFace(c) || privateZones.has(c.zone)) concealed.add(c)
     for (const child of [c.original,c.sourceCard,c.ability,c.secondCardFace,...cardEntries(c.mutateView).map(([,part]) => part)]) {
       if (!record(child)) continue
       if (!related.has(child)) related.set(child,new Set())
