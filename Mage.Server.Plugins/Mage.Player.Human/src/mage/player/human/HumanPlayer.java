@@ -8,6 +8,7 @@ import mage.abilities.costs.common.TapSourceCost;
 import mage.abilities.costs.mana.ManaCost;
 import mage.abilities.costs.mana.ManaCostsImpl;
 import mage.abilities.effects.Effects;
+import mage.abilities.effects.common.continuous.TargetAnimation;
 import mage.abilities.effects.RequirementEffect;
 import mage.abilities.hint.HintUtils;
 import mage.abilities.mana.ActivatedManaAbilityImpl;
@@ -67,6 +68,8 @@ import static mage.constants.PlayerAction.TRIGGER_AUTO_ORDER_RESET_ALL;
  * @author BetaSteward_at_googlemail.com, JayDi85
  */
 public class HumanPlayer extends PlayerImpl {
+
+    private static final long serialVersionUID = -1068380132101616107L;
 
     private static final boolean ALLOW_USERS_TO_PUT_NON_PLAYABLE_SPELLS_ON_STACK_WORKAROUND = false; // warning, see workaround's info on usage
 
@@ -1000,7 +1003,7 @@ public class HumanPlayer extends PlayerImpl {
         }
     }
 
-    private Map<String, Serializable> getOptions(Target target, Map<String, Serializable> options, Ability source) {
+    static Map<String, Serializable> getOptions(Target target, Map<String, Serializable> options, Ability source) {
         if (options == null) {
             options = new HashMap<>();
         }
@@ -1009,11 +1012,16 @@ public class HumanPlayer extends PlayerImpl {
             options.put("UI.right.btn.text", "Done");
         }
         options.put("targetZone", target.getZone());
+        options.remove("targetAnimation");
         if (source != null) {
             options.put("targetSourceId", source.getSourceId());
             int role = source.getTargets().indexOf(target);
             if (role >= 0) {
                 options.put("targetRole", role);
+                TargetAnimation animation = TargetAnimation.forRole(source, role);
+                if (animation != null) {
+                    options.put("targetAnimation", animation.wireValue());
+                }
             }
         }
         return options;

@@ -15,6 +15,8 @@ import java.util.*;
  */
 public abstract class NthTargetPointer extends TargetPointerImpl {
 
+    private static final long serialVersionUID = 1264555648638997437L;
+
     private static final List<UUID> emptyTargets = Collections.unmodifiableList(new ArrayList<>());
 
     // TODO: rework to list of MageObjectReference instead zcc
@@ -30,6 +32,11 @@ public abstract class NthTargetPointer extends TargetPointerImpl {
         super(nthTargetPointer);
         this.targetIndex = nthTargetPointer.targetIndex;
         this.zoneChangeCounter.putAll(nthTargetPointer.zoneChangeCounter);
+    }
+
+    /** Zero-based target role in the active mode. */
+    public int getTargetIndex() {
+        return targetIndex;
     }
 
     @Override
