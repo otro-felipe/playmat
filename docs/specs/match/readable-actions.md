@@ -39,6 +39,12 @@ A public reveal marks the card even after the reveal panel expires. If the card 
 #### Scenario: READ-AC-008 — Announced Room door
 When a Room half is cast, the live stack SHALL name the public spell face. The combined Room card can supply the artwork and context. A door that opens on entry or through the unlock special action SHALL be identified in recent actions from its public battlefield state. If the public state does not identify the exact door, retain the available public label.
 
+### Land animation choices
+
+Before a player chooses a land to animate, the battlefield and target picker identify lands that player has gained since their most recent turn began. The hint follows the permanent's continuous control history, including changes of controller. Both older and newly controlled lands remain legal targets when the effect permits them.
+
+An untapped noncreature land can use its tap ability for mana as soon as it comes under the player’s control. After it becomes a creature, recent control prevents it from attacking or paying a tap or untap symbol in an activation cost unless it has haste. The hint accounts for haste granted by the animation and uses conditional wording when another effect could change the outcome. Tests should distinguish two otherwise identical lands and cover an animation that grants haste. [Magic Origins release notes](https://magic.wizards.com/en/news/feature/magic-origins-release-notes-2015-07-08) · [Wilds of Eldraine release notes](https://magic.wizards.com/en/news/feature/wilds-of-eldraine-release-notes)
+
 ## Traceability
 The previous target-panel implementation's regressions executed successfully in the combined main candidate's [web run](https://github.com/otro-felipe/playmat/actions/runs/44164549318): 1,568 unit tests passed, 42 skipped, with TypeScript, ESLint and accessibility checks passing. That run's overall size gate failed; functional test success alone did not approve deployment. This does not validate the subsequent READ-AC-004 arrow-only change; its gates and browser screenshots are pending execution.
 
