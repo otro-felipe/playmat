@@ -1,6 +1,7 @@
 import { isUuid, normalize, ProductError } from './decks.mjs'
 import { publicSpectatorBoard } from './public-spectator-board.mjs'
 import { privateSpectatorBoard } from './private-spectator-board.mjs'
+import { lineText } from './line-explanations.mjs'
 import { readSpectatorEngine } from './spectators.mjs'
 
 const missing = () => new ProductError(404, 'This tournament broadcast is unavailable')
@@ -68,10 +69,30 @@ export function createTournamentBroadcast(pool, archive, engine = readSpectatorE
     const pending = archive
       .readReviewArchive(game)
       .then((records) => {
-        const playable = records.filter((r) => r.view?.players?.length === 2)
+        const playable = []
+        const lines = []
+        const seen = new Set()
+        for (const record of records) {
+          const note = record.kind === 'line' && lineText(record)
+          if (note && isUuid(record.actorPlayerId) && typeof record.commandId === 'string' &&
+              record.commandId.length > 0 && record.commandId.length <= 120) {
+            const lineId = game.id + ':' + record.actorPlayerId + ':' + record.commandId
+            if (!seen.has(lineId)) {
+              seen.add(lineId)
+              lines.push({ lineId, playerId: record.actorPlayerId, ...note, turn: record.turn,
+                at: record.at ?? Number(game.started_at) + record.t })
+            }
+          }
+          if (record.view?.players?.length === 2) {
+            playable.push({ record, lineCount: lines.length })
+          }
+        }
+        // A terminal play may be recorded after the final board update.
+        if (playable.length) playable.at(-1).lineCount = lines.length
+        const indexed = { playable, lines }
         if (cache.size >= 2) cache.delete(cache.keys().next().value)
-        cache.set(key, playable)
-        return playable
+        cache.set(key, indexed)
+        return indexed
       })
       .finally(() => loading.delete(key))
     loading.set(key, pending)
@@ -82,7 +103,7 @@ export function createTournamentBroadcast(pool, archive, engine = readSpectatorE
     const match = await pairing(id, pairId)
     if (!match.completed && !actor?.isAdmin) throw missing()
     const { rows: games } = await pool.query(
-      `SELECT g.id,g.object_key,g.checksum,g.game_number FROM matches m
+      `SELECT g.id,g.object_key,g.checksum,g.game_number,g.started_at FROM matches m
       JOIN games g ON m.id=g.match_id
       WHERE (m.id=$2 OR ($2 IS NULL AND m.table_id IN
         (SELECT table_id FROM tournament_pairing_tables WHERE pairing_id=$1)))
@@ -93,14 +114,16 @@ export function createTournamentBroadcast(pool, archive, engine = readSpectatorE
     const gameId = query.get('gameId')
     if (!gameId) {
       const result = []
-      for (const game of games) result.push({ gameId: game.id, frameCount: (await frames(game)).length })
+      for (const game of games) result.push({ gameId: game.id, frameCount: (await frames(game)).playable.length })
       return { games: result }
     }
     const game = games.find((g) => g.id === gameId)
     const value = query.get('frame') ?? '0'
     if (!game || !/^\d{1,9}$/.test(value)) throw missing()
-    const f = (await frames(game))[Number(value)]
-    if (!f) throw missing()
+    const { playable, lines } = await frames(game)
+    const frame = playable[Number(value)]
+    if (!frame) throw missing()
+    const f = frame.record
     const players = roster(f.view.players, match)
     const hands = Object.fromEntries(
       players.map((p) => [
@@ -115,6 +138,7 @@ export function createTournamentBroadcast(pool, archive, engine = readSpectatorE
       players,
       view: f.view,
       hands,
+      lines: lines.slice(Math.max(0, frame.lineCount - 100), frame.lineCount),
       revision: Number(value),
     })
   }
