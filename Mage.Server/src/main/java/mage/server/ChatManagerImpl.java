@@ -171,9 +171,8 @@ public class ChatManagerImpl implements ChatManager {
                     }
                     lastUserMessages.put(userName, messageId);
 
-                    // message limit
-                    if (message.length() > Constants.MAX_CHAT_MESSAGE_SIZE) {
-                        // too big messages must be ignored in parent code, so only system messages possible here
+                    // TALK was limited before escaping. HTML entities may expand an accepted message.
+                    if (messageType != MessageType.TALK && message.length() > Constants.MAX_CHAT_MESSAGE_SIZE) {
                         message = message.replaceFirst("^(.{" + Constants.MAX_CHAT_MESSAGE_SIZE + "}).*", "$1 (rest of message truncated)");
                     }
 

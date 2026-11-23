@@ -43,7 +43,12 @@ public final class Constants {
     public static final int MAX_AVATAR_ID = 32;
     public static final int DEFAULT_AVATAR_ID = 10;
 
-    public static final int MAX_CHAT_MESSAGE_SIZE = 500; // ignore too big messages
+    /** Maximum Unicode code points in a chat message before HTML transport escaping. */
+    public static final int MAX_CHAT_MESSAGE_SIZE = 500;
+
+    public static boolean isChatMessageWithinLimit(String text) {
+        return text != null && text.codePointCount(0, text.length()) <= MAX_CHAT_MESSAGE_SIZE;
+    }
 
     /**
      * Time each player has during the game to play using his\her priority.

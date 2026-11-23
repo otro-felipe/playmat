@@ -398,7 +398,7 @@ public class ChatPanelBasic extends javax.swing.JPanel {
     public void handleKeyTyped(java.awt.event.KeyEvent evt) {
         if (evt.getKeyChar() == KeyEvent.VK_ENTER) {
 
-            if (this.txtMessage.getText().length() > Constants.MAX_CHAT_MESSAGE_SIZE) {
+            if (!Constants.isChatMessageWithinLimit(this.txtMessage.getText())) {
                 JOptionPane.showMessageDialog(null, "Can't send too long message", "Chat", JOptionPane.WARNING_MESSAGE);
                 return;
             }

@@ -446,9 +446,8 @@ public class MageServerImpl implements MageServer {
     @Override
     //FIXME: why no sessionId here???
     public void chatSendMessage(final UUID chatId, final String userName, final String message) throws MageException {
-        if (message.length() > Constants.MAX_CHAT_MESSAGE_SIZE) {
-            logger.error("Chat message too big: " + message.length() + ", from user " + userName);
-            return;
+        if (!Constants.isChatMessageWithinLimit(message)) {
+            throw new MageException("A chat message must be at most " + Constants.MAX_CHAT_MESSAGE_SIZE + " characters.");
         }
 
         try {

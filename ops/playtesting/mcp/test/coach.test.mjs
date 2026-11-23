@@ -186,3 +186,15 @@ test('chat waits require chat access and never expose messages through play-only
   assert.equal((await call('wait_for_chat', {gameId,timeoutMs:100}, true)).code, 'forbidden');
   assert.equal((await call('get_game_state', {gameId})).chatCursor, undefined);
 });
+
+test('send_chat accounts for the raw message and preserves all accepted text', async t => {
+  const { client, call, messages } = await fixture(t, 'chatty');
+  const prefix = '  Mesa &amp; 🦦\nSegundo párrafo ';
+  const text = prefix + '&'.repeat(498 - Array.from(prefix).length) + '  ';
+  assert.equal(Array.from(text).length, 500);
+  assert.equal((await call('send_chat', { gameId, message: text })).sent, true);
+  assert.deepEqual(messages, [text]);
+  const tooLong = await client.callTool({ name: 'send_chat', arguments: { gameId, message: text + ' ' } });
+  assert.equal(tooLong.isError, true);
+  assert.equal(messages.length, 1);
+});

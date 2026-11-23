@@ -525,7 +525,7 @@ function registerTools(mcp, { contextFor, allowedOrigins }) {
     gameId: Uuid, afterCursor: Cursor.optional(), timeoutMs: z.number().int().min(100).max(25_000).optional(),
   }, 'chat', (args, signal) => getSeat().engine.waitChat(args, signal), true);
   tool('send_chat', 'Send a chat message as this seat in its active match. Follow the host chatMode and the coaching procedure in getting-started. A comment never answers or pauses a pending engine decision; keep play moving and private information out of chat.', {
-    gameId: Uuid, message: z.string().trim().min(1).max(500),
+    gameId: Uuid, message: z.string().max(500).regex(/\S/u, 'A chat message cannot be blank.'),
   }, 'chat', (args) => getSeat().engine.sendChat(args));
 
   tool('search_cards', 'Filter the engine catalog by name/text, format, color, mana value or symbols, type and keywords.',
