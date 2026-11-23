@@ -1,5 +1,6 @@
 package mage.abilities.effects.common;
 
+import mage.MageObjectReference;
 import mage.abilities.Ability;
 import mage.abilities.Mode;
 import mage.abilities.dynamicvalue.DynamicValue;
@@ -7,6 +8,7 @@ import mage.abilities.dynamicvalue.common.StaticValue;
 import mage.abilities.effects.ContinuousEffect;
 import mage.abilities.effects.Effect;
 import mage.abilities.effects.OneShotEffect;
+import mage.cards.Card;
 import mage.cards.Cards;
 import mage.cards.CardsImpl;
 import mage.constants.PutCards;
@@ -17,6 +19,9 @@ import mage.game.Game;
 import mage.players.Player;
 import mage.target.TargetCard;
 import mage.util.CardUtil;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * @author LevelX, awjackson
@@ -128,7 +133,21 @@ public class LookLibraryAndPickControllerEffect extends LookLibraryControllerEff
      * Can be overriden for additional effect
      */
     protected boolean actionWithPickedCards(Game game, Ability source, Player player, Cards pickedCards, Cards otherCards) {
+        // Only a public choice with a direct move into hand allows following that physical card.
+        List<MageObjectReference> enteringHand = new ArrayList<>();
+        if (revealPickedCards && putPickedCards == PutCards.HAND) {
+            for (Card picked : pickedCards.getCards(game)) {
+                if (game.getState().getZone(picked.getId()) == Zone.LIBRARY) {
+                    enteringHand.add(new MageObjectReference(picked, game, 1));
+                }
+            }
+        }
         boolean result = putPickedCards.moveCards(player, pickedCards, source, game);
+        if (result && !enteringHand.isEmpty()) {
+            Cards arrived = new CardsImpl();
+            for (MageObjectReference expected : enteringHand) arrived.add(expected.getCard(game));
+            game.getState().notePublicHandReveal(arrived, game);
+        }
         result |= putLookedCards.moveCards(player, otherCards, source, game);
         if (!pickedCards.isEmpty() || otherwiseEffect == null) {
             return result;

@@ -90,6 +90,7 @@ export class GameSession {
   private paymentCancelSent = false;
   /** the newest game event a view has carried; a view repeated from the server's cache carries old ones again */
   private lastEventSeq = 0;
+  private needsFreshFrame = false;
   /** every server event for this game passes through here: at once, or after the broadcast delay when watching */
   private readonly relay = new DelayedRelay<() => void>((apply) => apply());
 
@@ -141,6 +142,7 @@ export class GameSession {
         this.paymentCancelSent = false;
         this.store.setState((state) => ({
           rollbackRevision: state.rollbackRevision + 1,
+          view: null, // the next full view belongs to the restored timeline
           prompt: null,
           awaitingServer: false,
           prediction: null,
@@ -209,6 +211,7 @@ export class GameSession {
   /** The board may be out of date (connection lost, page reloaded) until the server sends the game again. */
   markResyncing(): void {
     if (this.store.getState().gameOver) return;
+    this.needsFreshFrame = true;
     this.clearReplyTimer();
     this.clearHold();
     this.store.setState({ resyncing: true, awaitingServer: false, stalled: false, prediction: null });
@@ -375,7 +378,9 @@ export class GameSession {
       ? { ...incoming, canPlayObjects: previous!.canPlayObjects }
       : incoming;
     view = this.freshEvents(view);
-    const next = previous ? structuralShare(previous, view) : view;
+    // The first actual view after reconnect establishes a fresh boundary even if all its values match.
+    const next = this.needsFreshFrame ? { ...view } : previous ? structuralShare(previous, view) : view;
+    this.needsFreshFrame = false;
     if (this.store.getState().resyncing) this.store.setState({ resyncing: false });
     if (!fromPrompt && awaitingServer && decidingElsewhere(view, this.store.getState().playerId ?? view.myPlayerId ?? null)) {
       // the server took the answer and another player is deciding now: nothing more comes until they act, and that

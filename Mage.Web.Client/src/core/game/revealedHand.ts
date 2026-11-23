@@ -32,6 +32,15 @@ function physicalId(card: CardView, fallback: string): string {
 
 /** The memory after one more game view. */
 export function rememberRevealedHands(previous: RevealedHands, view: GameView): RevealedHands {
+  if (view.knownHandCards) {
+    const hands = new Map<string, RevealedHand>();
+    for (const player of view.players ?? []) {
+      if (!player.playerId) continue;
+      const cards = new Map(Object.entries(view.knownHandCards).filter(([, card]) => card.ownerId === player.playerId));
+      hands.set(player.playerId, { cards, handCount: player.handCount ?? cards.size, forgotten: new Set(), inPublic: new Set() });
+    }
+    return hands;
+  }
   // every card in a public zone (none of them is in a hand), and whose each one is
   const seen = new Map<string, string | undefined>();
   const addSeen = (cards: Record<string, CardView> | undefined) => {

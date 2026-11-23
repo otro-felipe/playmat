@@ -912,6 +912,11 @@ public abstract class GameImpl implements Game {
 
     @Override
     public void setZone(UUID objectId, Zone zone) {
+        // Opening-hand mulligans put cards straight into the library without a ZonesHandler move.
+        if (zone == Zone.LIBRARY && state.getZone(objectId) == Zone.HAND) {
+            Card card = getCard(objectId);
+            if (card != null) state.forgetHandDeparture(card, false);
+        }
         state.setZone(objectId, zone);
     }
 

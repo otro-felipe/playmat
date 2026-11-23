@@ -1506,6 +1506,7 @@ export interface GameView extends Serializable {
     sequenceEvidence?: SequenceEvidenceView;
     exiles?: { [index: string]: CardView }[];
     gameCycle?: number;
+    knownHandCards?: { [index: string]: CardView };
     lookedAt?: LookedAtView[];
     myHand?: { [index: string]: CardView };
     myHelperEmblems?: { [index: string]: CardView };

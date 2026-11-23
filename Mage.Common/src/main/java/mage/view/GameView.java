@@ -54,6 +54,8 @@ public class GameView implements Serializable {
     private final List<PlayerView> players = new ArrayList<>();
     private UUID myPlayerId = null; // null for watcher
     private final CardsView myHand = new CardsView();
+    // Present only in the live seat projection. An empty map authoritatively clears its hand markers.
+    private final CardsView knownHandCards;
     private final CardsView myHelperEmblems = new CardsView();
     private PlayableObjectsList canPlayObjects;
     private final Map<String, SimpleCardsView> opponentHands = new HashMap<>();
@@ -98,7 +100,7 @@ public class GameView implements Serializable {
         return new GameView(game.getState(), game, playerId, watcherId, false);
     }
 
-    private GameView(GameState state, Game game, UUID createdForPlayerId, UUID watcherUserId, boolean updateStackObjects) {
+    private GameView(GameState state, Game game, UUID createdForPlayerId, UUID watcherUserId, boolean liveView) {
         // debug only
         // LOGGER.info("GameView create: game cycle " + game.getState().getApplyEffectsCounter() 
         //     + ", player " + createdForPlayerId 
@@ -107,6 +109,7 @@ public class GameView implements Serializable {
         // );
         CREATED_COUNT.incrementAndGet();
 
+        this.knownHandCards = liveView && state.getPlayer(createdForPlayerId) != null ? new CardsView() : null;
         Player createdForPlayer = null;
         this.priorityTime = game.getPriorityTime();
         this.bufferTime = game.getBufferTime();
@@ -114,6 +117,13 @@ public class GameView implements Serializable {
         for (Player player : state.getPlayers().values()) {
             PlayerView playerView = new PlayerView(player, state, game, createdForPlayerId, watcherUserId);
             players.add(playerView);
+            if (knownHandCards != null) {
+                for (UUID id : state.getKnownHandCards(player.getId())) {
+                    if (player.getHand().contains(id) && state.getZone(id) == Zone.HAND) {
+                        knownHandCards.put(id, new CardView(game.getCard(id)));
+                    }
+                }
+            }
             if (player.getId().equals(createdForPlayerId)) {
                 createdForPlayer = player;
                 this.myPlayerId = player.getId();
@@ -162,7 +172,7 @@ public class GameView implements Serializable {
                     } else if (object instanceof Emblem) {
                         CardView cardView = new CardView(new EmblemView((Emblem) object, game));
                         // Card sourceCard = (Card) ((Emblem) object).getSourceObject();
-                        if (updateStackObjects) {
+                        if (liveView) {
                             stackObject.setName(object.getName());
                         }
                         // ((StackAbility) stackObject).setExpansionSetCode(sourceCard.getExpansionSetCode());
@@ -171,7 +181,7 @@ public class GameView implements Serializable {
                         checkPaid(stackObject.getId(), ((StackAbility) stackObject));
                     } else if (object instanceof Dungeon) {
                         CardView cardView = new CardView(new DungeonView((Dungeon) object));
-                        if (updateStackObjects) {
+                        if (liveView) {
                             stackObject.setName(object.getName());
                         }
                         stack.put(stackObject.getId(),
@@ -179,7 +189,7 @@ public class GameView implements Serializable {
                         checkPaid(stackObject.getId(), ((StackAbility) stackObject));
                     } else if (object instanceof Plane) {
                         CardView cardView = new CardView(new PlaneView((Plane) object, game));
-                        if (updateStackObjects) {
+                        if (liveView) {
                             stackObject.setName(object.getName());
                         }
                         stack.put(stackObject.getId(),
@@ -193,7 +203,7 @@ public class GameView implements Serializable {
                             throw new IllegalArgumentException("Designation object not found: " + object + " - " + object.getClass().toString());
                         }
                     } else if (object instanceof StackAbility) {
-                        if (updateStackObjects) {
+                        if (liveView) {
                             ((StackAbility) object).newId();
                         }
                         stack.put(stackObject.getId(), new CardView(stackObject, game));

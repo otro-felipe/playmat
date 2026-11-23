@@ -161,6 +161,7 @@ public class GameController implements GameCallback {
                             case ROLLBACK_COMMITTED:
                                 ReplayRecorder.onRollbackCommitted(game);
                                 getGameSessions().forEach(session -> session.rollbackCommitted(game.getTurnNum()));
+                                getGameSessionWatchers().forEach(session -> session.rollbackCommitted(game.getTurnNum()));
                                 updateGame();
                                 break;
                             case INFO:

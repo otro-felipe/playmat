@@ -77,6 +77,13 @@ public class GameSessionWatcher {
         }
     }
 
+    public void rollbackCommitted(int turn) {
+        if (!killed) {
+            userManager.getUser(userId).ifPresent(user ->
+                    user.fireCallback(new ClientCallback(ClientCallbackMethod.GAME_ROLLBACK, game.getId(), turn)));
+        }
+    }
+
     public void update() {
         if (!killed) {
             userManager.getUser(userId).ifPresent(user -> user.fireCallback(new ClientCallback(ClientCallbackMethod.GAME_UPDATE, game.getId(), getGameView())));

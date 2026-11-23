@@ -55,6 +55,9 @@ import java.util.stream.Collectors;
  */
 public class GameState implements Serializable, Copyable<GameState> {
 
+    // Preserve turn snapshots written before the reveal windows became replaceable.
+    private static final long serialVersionUID = -9175216345795667269L;
+
     private static final Logger logger = Logger.getLogger(GameState.class);
     private static final ThreadLocalStringBuilder threadLocalBuilder = new ThreadLocalStringBuilder(1024);
 
@@ -67,9 +70,11 @@ public class GameState implements Serializable, Copyable<GameState> {
     private UUID choosingPlayerId; // player that makes a choice at game start
 
     // revealed cards <Name, <Cards>>, will be reset if all players pass priority
-    private final Revealed revealed;
+    private Revealed revealed;
     private final Map<UUID, LookedAt> lookedAt = new HashMap<>();
-    private final Revealed companion;
+    private Revealed companion;
+    // Only publicly revealed hand cards. Old saved games have no record of earlier reveals.
+    private Map<UUID, Cards> knownHandCards;
 
     private SpecialActions specialActions;
     private Watchers watchers;
@@ -144,11 +149,12 @@ public class GameState implements Serializable, Copyable<GameState> {
 
     protected GameState(final GameState state) {
         this.players = state.players.copy();
+        copyKnownHands(state);
         this.playerList = state.playerList.copy();
         this.choosingPlayerId = state.choosingPlayerId;
         this.random = state.random == null ? null : state.random.copy();
         this.revealed = state.revealed.copy();
-        this.lookedAt.putAll(state.lookedAt);
+        state.lookedAt.forEach((seat, looks) -> this.lookedAt.put(seat, looks.copy()));
         this.companion = state.companion.copy();
         this.gameOver = state.gameOver;
         this.paused = state.paused;
@@ -218,6 +224,7 @@ public class GameState implements Serializable, Copyable<GameState> {
         seenPlanes.clear();
         isPlaneChase = false;
         revealed.clear();
+        knownHandCards = null;
         lookedAt.clear();
         companion.clear();
         turnNum = 1;
@@ -242,6 +249,10 @@ public class GameState implements Serializable, Copyable<GameState> {
     public void restoreForRollBack(GameState state) {
         restore(state, false);
         this.turn = state.turn;
+        this.revealed = state.revealed.copy();
+        this.companion = state.companion.copy();
+        this.lookedAt.clear();
+        state.lookedAt.forEach((seat, looks) -> this.lookedAt.put(seat, looks.copy()));
     }
 
     /**
@@ -257,6 +268,7 @@ public class GameState implements Serializable, Copyable<GameState> {
                 this.random.restoreFrom(state.random);
             }
         }
+        copyKnownHands(state);
         this.activePlayerId = state.activePlayerId;
         this.playerList.setCurrent(state.activePlayerId);
         this.playerByOrderId = state.playerByOrderId;
@@ -602,6 +614,40 @@ public class GameState implements Serializable, Copyable<GameState> {
 
     public Revealed getCompanion() {
         return companion;
+    }
+
+    private void copyKnownHands(GameState state) {
+        knownHandCards = null;
+        if (state.knownHandCards != null) {
+            knownHandCards = new HashMap<>();
+            state.knownHandCards.forEach((owner, cards) -> knownHandCards.put(owner, cards.copy()));
+        }
+    }
+
+    public Set<UUID> getKnownHandCards(UUID owner) {
+        Cards cards = knownHandCards == null ? null : knownHandCards.get(owner);
+        return cards == null ? Collections.emptySet() : Collections.unmodifiableSet(cards);
+    }
+
+    public void notePublicHandReveal(Cards cards, Game game) {
+        for (UUID id : cards) {
+            if (getZone(id) != Zone.HAND) continue;
+            Card card = game.getCard(id);
+            Player owner = card == null ? null : getPlayer(card.getOwnerId());
+            if (owner == null || !owner.getHand().contains(id) || card.isFaceDown(game)) continue;
+            if (knownHandCards == null) knownHandCards = new HashMap<>();
+            knownHandCards.computeIfAbsent(owner.getId(), ignored -> new CardsImpl()).add(id);
+        }
+    }
+
+    void forgetHandDeparture(Card card, boolean identifiable) {
+        if (knownHandCards == null) return;
+        Cards known = knownHandCards.get(card.getOwnerId());
+        if (known == null) return;
+        if (identifiable) known.remove(card.getMainCard().getId());
+        else known.clear(); // removing just the real card would identify a hidden choice
+        if (known.isEmpty()) knownHandCards.remove(card.getOwnerId());
+        if (knownHandCards.isEmpty()) knownHandCards = null;
     }
 
     public void clearRevealed() {

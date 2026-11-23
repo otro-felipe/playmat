@@ -168,13 +168,6 @@ public class GameSessionPlayer extends GameSessionWatcher {
         }
     }
 
-    public void rollbackCommitted(int turn) {
-        if (!killed) {
-            userManager.getUser(userId).ifPresent(user ->
-                    user.fireCallback(new ClientCallback(ClientCallbackMethod.GAME_ROLLBACK, game.getId(), turn)));
-        }
-    }
-
     public void requestPermissionToSeeHandCards(UUID watcherId) {
         if (!killed) {
             Optional<User> watcher = userManager.getUser(watcherId);

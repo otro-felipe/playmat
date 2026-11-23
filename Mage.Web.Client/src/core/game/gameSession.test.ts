@@ -23,6 +23,27 @@ const playable = { canPlayObjects: { objects: { land: { basicPlayAbilities: [{}]
 const base: GameView = { myPlayerId: 'me', turn: 4, step: 'PRECOMBAT_MAIN' };
 
 describe('GameSession', () => {
+  it('delivers an identical server snapshot as a fresh frame after reconnect', () => {
+    const { bus, emit } = fakeBus();
+    const session = new GameSession({} as never, bus, { gameId: 'g1', playerId: 'me', mode: 'play' });
+    emit('GAME_UPDATE', base);
+    const stale = session.getState().view;
+    session.markResyncing();
+    emit('GAME_INIT', base);
+    expect(session.getState().view).toEqual(stale);
+    expect(session.getState().view).not.toBe(stale);
+  });
+
+  it('withdraws the abandoned view immediately until a fresh rollback frame arrives', () => {
+    const { bus, emit } = fakeBus();
+    const session = new GameSession({} as never, bus, { gameId: 'g1', playerId: 'me', mode: 'play' });
+    emit('GAME_UPDATE', { ...base, lookedAt: [{ name: 'discarded branch', cards: {} }] });
+    emit('GAME_ROLLBACK', 3);
+    expect(session.getState().view).toBeNull();
+    emit('GAME_UPDATE', { ...base, turn: 3 });
+    expect(session.getState().view?.lookedAt).toBeUndefined();
+  });
+
   it('keeps the playables of an open priority prompt when an update arrives without them', () => {
     const { bus, emit } = fakeBus();
     const session = new GameSession({} as never, bus, { gameId: 'g1', playerId: 'me', mode: 'play' });

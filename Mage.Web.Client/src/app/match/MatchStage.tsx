@@ -5,7 +5,7 @@ import { PlayerLabel } from '../ui/PlayerLabel';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { Menu } from 'lucide-react';
 import { PRIVATE_PLAYTESTING } from '../playtesting';
-import { Fragment, lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { GameSession, GameSessionState } from '../../core/game/gameSession';
 import { deriveInteraction, type Command } from '../../core/game/interaction';
@@ -65,7 +65,6 @@ import { damageCorner, useDamageSplit } from './useDamageSplit';
 import { EmoteBubbles } from './EmoteBubbles';
 import { EmoteButton } from './emotes/EmoteButton';
 import { useOpponentVoice } from './useOpponentVoice';
-import { useRevealedHands } from './useRevealedHands';
 import { setCardMotion, useFlipOrigin } from './flip';
 import { GameLog } from './GameLog';
 import { SpectatorCommentary, SpectatorCommentaryProvider } from './SpectatorCommentary';
@@ -198,7 +197,7 @@ export function MatchStage(props: MatchStageProps) {
   const visible = state.browserInputLock
     ? { ...state, prompt: null, interaction: deriveInteraction(null, null), prediction: null }
     : state;
-  const stage = <MatchBoard {...props} state={visible} publicSpectator={state.mode === 'watch' ? props.publicSpectator : undefined} />;
+  const stage = <MatchBoard key={`${state.gameId}:${state.mode}:${state.playerId}`} {...props} state={visible} publicSpectator={state.mode === 'watch' ? props.publicSpectator : undefined} />;
   return <PlayerNames.Provider value={formatName}>{state.mode === 'watch' && props.publicSpectator
     ? <SpectatorCommentaryProvider gameId={state.gameId} events={props.publicSpectator.events}
         players={state.view?.players ?? []} names={props.seatDisplayNames}>{stage}</SpectatorCommentaryProvider>
@@ -209,8 +208,7 @@ function MatchBoard({ session, state, replayLog, replayHands, publicSpectator, r
   const formatName = usePlayerNames();
   const { view, interaction, playerId, awaitingServer, prediction } = state;
   const mode = state.browserInputLock ? 'observeHuman' : state.mode;
-  const revealedHands = useRevealedHands(view, mode === 'replay' ? null : `${state.gameId}:${state.rollbackRevision ?? 0}`);
-  const reveals = useReveals(view, mode !== 'replay');
+  const { hands: revealedHands, groups: reveals } = useReveals(session, state);
   const t = useT();
   const navigate = useNavigate();
   const animations = useSettings((settings) => settings.settings.animations);
@@ -275,6 +273,9 @@ function MatchBoard({ session, state, replayLog, replayHands, publicSpectator, r
   }, [setFullControl]);
 
   useEffect(() => setCardMotion(animations), [animations]);
+  useLayoutEffect(() => {
+    if (state.rollbackRevision) useMatchUi.setState({ viewer: null, zoom: null, detail: null });
+  }, [state.rollbackRevision]);
   // a new game starts with a clean table
   useEffect(() => () => useMatchUi.setState({ zoom: null, dragging: null, viewer: null, logOpen: false, detail: null, sourceHover: null, stackFocus: null, promptSource: null }), []);
 
@@ -761,7 +762,7 @@ function MatchBoard({ session, state, replayLog, replayHands, publicSpectator, r
               </>
             )}
 
-            <Reveals groups={reveals} myPlayerId={myId} opponentIds={opponentIds} autoDismiss={autoDismissReveals} />
+            <Reveals key={state.rollbackRevision} groups={reveals} myPlayerId={myId} opponentIds={opponentIds} autoDismiss={autoDismissReveals} />
             <StackZone items={stack} view={view} seatDisplayNames={seatDisplayNames} clickable={clickable} selected={interaction.selected} sleeveOf={sleeveOf} onClick={onClick} originOf={originOf} />
             {mode !== 'replay' && <RecentActions key={`actions:${state.gameId}`} session={session} seatDisplayNames={seatDisplayNames} />}
             {board.me && seatHand && (

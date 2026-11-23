@@ -151,6 +151,17 @@ public final class ZonesHandler {
         Zone toZone = event.getToZone();
         Card targetCard = getTargetCard(game, event.getTargetId());
 
+        if (targetCard != null && event.getFromZone() == Zone.HAND && toZone != Zone.HAND) {
+            // Exile can become face down immediately after the move (e.g. foretell).
+            boolean identifiable = !info.faceDown && (toZone == Zone.GRAVEYARD || toZone == Zone.BATTLEFIELD || toZone == Zone.STACK);
+            if (toZone == Zone.BATTLEFIELD && event.getTarget() != null && event.getTarget().isFaceDown(game)) identifiable = false;
+            if (info instanceof ZoneChangeInfo.Stack) {
+                Spell spell = ((ZoneChangeInfo.Stack) info).spell;
+                if (spell != null && spell.isFaceDown(game)) identifiable = false;
+            }
+            game.getState().forgetHandDeparture(targetCard, identifiable);
+        }
+
         Cards cardsToMove = null; // moving real cards
         Map<Zone, Cards> cardsToUpdate = new LinkedHashMap<>(); // updating all card's parts (must be ordered LinkedHashMap)
         cardsToUpdate.put(toZone, new CardsImpl());

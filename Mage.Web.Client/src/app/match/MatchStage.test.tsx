@@ -149,6 +149,70 @@ test('[READ-AC-007] clears the mark after a private zone change and accepts a fr
   game.dispose();
 });
 
+test('[READ-AC-007] restores only the hand knowledge from before the target turn and reopens repeated reveals', () => {
+  const game = match();
+  const forest = { id: 'forest', name: 'Forest', ownerId: 'me', zone: 'HAND' as const };
+  const shock = { id: 'shock', name: 'Shock', ownerId: 'them', zone: 'HAND' as const };
+  const board = { ...BOARD, myHand: { forest }, players: BOARD.players!.map(p => ({ ...p, handCount: 2 })) };
+  const reveal = (card: typeof forest) => [{ name: 'Fixture reveal', cards: { [card.id]: card } }];
+  const known = () => game.queryByRole('listitem', { name: 'Forest, Revealed' });
+  game.updateView({ ...board, turn: 2, revealed: reveal(forest) }, false);
+  game.updateView(board, false);
+  expect(known()).toBeTruthy();
+  game.updateView({ ...board, myHand: {}, revealed: reveal(shock) }, false);
+  const strip = () => game.queryByRole('button', { name: /Revealed: Fixture reveal/ });
+  expect(known()).toBeNull();
+  fireEvent.click(game.getByRole('button', { name: 'Dismiss revealed cards' }));
+  expect(strip()).toBeNull();
+  game.updateView({ ...board, knownHandCards: { forest } }, false, null, false, 1);
+  expect(known()).toBeTruthy();
+  expect(game.queryByLabelText(/cards in hand, revealed: Shock/)).toBeNull();
+  expect(strip()).toBeNull();
+  game.updateView({ ...board, revealed: reveal(shock) }, false, null, false, 1);
+  expect(strip()).toBeTruthy();
+  game.dispose();
+});
+
+test('[READ-AC-007] reconnect relies on current hand markers even when hand counts did not change', () => {
+  const game = match();
+  const forest = { id: 'forest', name: 'Forest', ownerId: 'me', zone: 'HAND' as const };
+  const shock = { id: 'shock', name: 'Shock', ownerId: 'them', zone: 'HAND' as const };
+  const board = { ...BOARD, myHand: { forest }, players: BOARD.players!.map(p => ({ ...p, handCount: 2 })) };
+  game.updateView({ ...board, knownHandCards: { forest, shock } }, false);
+  expect(game.getByLabelText(/cards in hand, revealed: Shock/)).toBeTruthy();
+  expect(game.getByRole('listitem', { name: 'Forest, Revealed' })).toBeTruthy();
+  game.updateView({ ...board, knownHandCards: { forest }, revealed: [{ name: 'earlier reveal', cards: { shock } }] }, false);
+  expect(game.queryByLabelText(/cards in hand, revealed: Shock/)).toBeNull();
+  game.dispose();
+});
+
+test('[READ-AC-007] reconnect cannot revive a look from a discarded branch in the same turn', () => {
+  const game = match();
+  const seen = { ...BOARD, lookedAt: [{ name: 'private look', cards: { card: { id: 'card' } } }] };
+  const strip = () => game.queryByRole('button', { name: /Looked at: private look/ });
+  game.updateView(seen, false);
+  expect(strip()).toBeTruthy();
+  game.updateView(seen, false, null, true);
+  game.updateView(seen, false); // the transport reports available before delivering the new snapshot
+  game.updateView({ ...BOARD, knownHandCards: {} }, false);
+  expect(strip()).toBeNull();
+  game.dispose();
+});
+
+test('[READ-AC-007] a watcher remembers the public reveal as history without tracking a hidden hand', () => {
+  const game = match(true);
+  const shock = { id: 'shock', name: 'Shock', ownerId: 'them', zone: 'HAND' as const };
+  const board = { ...BOARD, myPlayerId: undefined, players: BOARD.players!.map(p => ({ ...p, handCount: 2 })) };
+  game.updateView({ ...board, revealed: [{ name: 'public choice', cards: { shock } }] }, false);
+  expect(game.queryByLabelText(/cards in hand, revealed: Shock/)).toBeNull();
+  game.updateView(board, false);
+  expect(game.queryByLabelText(/cards in hand, revealed: Shock/)).toBeNull();
+  expect(game.getByRole('button', { name: /Revealed: public choice/ })).toBeTruthy();
+  game.updateView(board, false, null, false, 1);
+  expect(game.queryByRole('button', { name: /Revealed: public choice/ })).toBeNull();
+  game.dispose();
+});
+
 test('[PM-AC-01] priority can change without moving the phase and the stack changes the offered action', () => {
   const game = match(false, { Bob: 'CodexRival' });
   game.updateView(BOARD, true);
