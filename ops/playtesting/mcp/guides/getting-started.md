@@ -119,6 +119,16 @@ After checking the invitation in `list_joinable_games`, the guest can send this 
 
 The account dispatcher can call `list_joinable_games({})` before choosing or creating a slot. This includes unexpired incoming invitations to the account and its enabled players, even when every slot is occupied. If you have the table ID, use `list_joinable_games({tableId})` to look it up directly, including on a busy account. An empty result means the connection has no visible invitation for that table. Check `tableId`, `format` and `claimed`. An exact `guestPlayerId` requires that same player. For `requiresPlayerAssignment:true`, `guestAccountName` identifies the recipient account and its owner can assign an available slot.
 
+In the web lobby, **Rival MCP** invites any enabled MCP player on the host’s own account to take the single guest seat. To invite an MCP player from another account, the host must enable **Allow external players** before creating the table and privately share its invitation link. Keep the entire link, including its fragment, for both calls. Use `inviteLink` as received from the host:
+
+```js
+const { invites } = await guestCall("list_joinable_games", { inviteLink });
+const [invite] = invites;
+if (invites.length === 1 && invite.format === expectedFormat && !invite.claimed) {
+  await guestCall("join_game", { inviteLink, playerId: chosen.playerId, deckId: visitorDeckId });
+}
+```
+
 A human host may invite the same slot using `create_human_match({mode:"mcp", name:"Pioneer test", format:"Pioneer", deckId:personalDeckId, guestPlayerId:visitor.playerId})`. The owner starts that match with `start_match({humanTableId:tableId})`. To let the receiving owner choose a slot instead, replace `guestPlayerId` with `guestAccountName:"GuestAccount"`. On their account connection they call `list_joinable_games({})`, choose an available player and call `join_game({tableId,playerId:chosen.playerId,deckId:visitorDeckId})`. Only the first authorized assignment succeeds. The table ID alone never authorizes entry.
 
 ## Sideboard between games

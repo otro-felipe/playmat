@@ -33,7 +33,7 @@ import { joinTable } from './joinTable';
 import { TableAdvancedFields } from './TableAdvancedFields';
 import styles from './TablesScreen.module.css';
 import { PUBLIC_ORIGIN } from '../brand';
-import { createPlaytestingInvite, invitedPlayerLabel, mcpOpponent, MCP_CHAT_MODES, PRIVATE_PLAYTESTING, type McpChatMode, type PlaytestingInvitationView } from '../playtesting';
+import { createPlaytestingInvite, invitedPlayerLabel, MCP_CHAT_MODES, PRIVATE_PLAYTESTING, type McpChatMode, type PlaytestingInvitationView } from '../playtesting';
 import { usePlaytestingInvitation } from '../usePlaytestingInvitation';
 import { registerMessages, useT } from '../i18n';
 import messages from '../i18n/en/social';
@@ -355,7 +355,7 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
   const [chatMode, setChatMode] = useState<McpChatMode>('quiet');
   const [password, setPassword] = useState('');
   const [guest, setGuest] = useState('');
-  const [mcpRecipient, setMcpRecipient] = useState('');
+  const [allowExternalMcp, setAllowExternalMcp] = useState(false);
   const friends = useSocial((state) => state.friends);
   const invitedFriend = friends.includes(guest) ? guest : undefined;
   const [advanced, setAdvanced] = useState<TableAdvanced>(DEFAULT_ADVANCED);
@@ -390,7 +390,7 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
     setChatMode('quiet');
     setOpponent('friend');
     setGuest('');
-    setMcpRecipient('');
+    setAllowExternalMcp(false);
     onOpenChange(false);
   }
 
@@ -419,6 +419,7 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
         winsNeeded: seatCount > 2 ? 1 : wins,
         password: tablePassword,
         playerTypes,
+    if (next !== 'mcp') setAllowExternalMcp(false);
         advanced,
         // players you ignore can't sit at your table or watch it
         bannedUsers: useSocial.getState().ignored,
@@ -431,7 +432,7 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
       }
       if (PRIVATE_PLAYTESTING && opponent !== 'ai') {
         await createPlaytestingInvite({ tableId: table.tableId, roomId, format: deckType, password: tablePassword },
-          opponent === 'mcp' ? mcpOpponent(chatMode, mcpRecipient)
+          opponent === 'mcp' ? { mode: 'mcp', chatMode, ...(allowExternalMcp && { allowExternalMcp: true }) }
             : { mode: 'friend', guestEngineName: invitedFriend });
       }
       if (aiCount > 0) {
@@ -540,8 +541,11 @@ function HostDialog({ open, onOpenChange, deckId, initialOpponent }: {
           : <Field label="Password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} hint="Leave empty for an open table." />}
         {PRIVATE_PLAYTESTING && opponent === 'mcp' && (
           <div>
-            <Field label={t('mcpInvite.recipient')} hint={t('mcpInvite.accountRival')} value={mcpRecipient}
-              maxLength={36} placeholder={userName ?? ''} onChange={event => setMcpRecipient(event.target.value)} />
+            <Switch checked={allowExternalMcp} onCheckedChange={setAllowExternalMcp} disabled={busy}
+              label={t('mcpInvite.allowExternal')} describedBy="mcp-recipient-scope" />
+            <p id="mcp-recipient-scope" className={styles.selectionHint}>
+              {t(allowExternalMcp ? 'mcpInvite.externalScope' : 'mcpInvite.accountScope')}
+            </p>
             <label className={styles.selectField}>
               <span>{t('mcpInvite.chat.label')}</span>
               <select value={chatMode} aria-describedby="mcp-chat-description" onChange={(event) => setChatMode(event.target.value as McpChatMode)}>

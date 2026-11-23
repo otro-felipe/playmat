@@ -1,5 +1,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { createTranslator } from '../i18n/translate';
+import spanish from '../i18n/es';
+import { useI18n } from '../i18n';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, expect, test, vi } from 'vitest';
 import type { TableView } from '../../protocol/generated/views';
@@ -9,7 +13,7 @@ const tableId = '22222222-2222-4222-8222-222222222222';
 const roomId = '33333333-3333-4333-8333-333333333333';
 const deck = { id: 'fixture', name: 'Pioneer fixture', format: 'Constructed - Pioneer', cards: [], sideboard: [] };
 let tables: TableView[];
-let friends: string[];
+let friends: string[] = [];
 const calls = vi.hoisted(() => ({ create: vi.fn(), join: vi.fn(), notify: vi.fn() }));
 
 vi.mock('../playtesting', async (original) => ({ ...await original<typeof import('../playtesting')>(), PRIVATE_PLAYTESTING: true }));
@@ -121,49 +125,55 @@ test.each(['quiet', 'chatty', 'coach'])('[PM-AC-04] the host creates a Rival MCP
   expect(invite).toMatchObject({ mode: 'mcp', tableId, chatMode });
   expect(invite).not.toHaveProperty('guestEngineName');
   expect(invite).not.toHaveProperty('notifyEngineName');
+  expect(invite).not.toHaveProperty('allowExternalMcp');
+  expect(invite).not.toHaveProperty('guestPlayerId');
+  expect(invite).not.toHaveProperty('guestAccountName');
 });
 
 test.each([
-  ['OtherOwner', 'guestAccountName'],
-  ['b7aa9a78-f0e4-41f5-9085-d5133c571f1d', 'guestPlayerId'],
-])('[PM-AC-16] the host addresses a private table to %s', async (recipient, field) => {
-  tables = [];
-  calls.create.mockResolvedValue({ tableId });
-  calls.join.mockResolvedValue(true);
-  const fetcher = vi.fn<(_url: string, _options?: RequestInit) => Promise<Response>>(async () => Response.json({ tables: [] }));
-  vi.stubGlobal('fetch', fetcher);
-  const { page } = mount({ host: deck.id, opponent: 'mcp' });
-  const guide = within(await page.findByRole('dialog', { name: 'Connect to Thoughtseize MCP' }));
-  fireEvent.click(guide.getByRole('button', { name: 'Continue' }));
-  const dialog = within(await page.findByRole('dialog', { name: 'Host a table' }));
-  fireEvent.change(dialog.getByRole('textbox', { name: 'Invited account or MCP player ID' }), { target: { value: recipient } });
-  fireEvent.click(dialog.getByRole('button', { name: /^Host$/ }));
-  await waitFor(() => expect(fetcher.mock.calls.some(([url]) => url === '/api/playtesting/invites')).toBe(true));
-  const [, request] = fetcher.mock.calls.find(([url]) => url === '/api/playtesting/invites')!;
-  expect(JSON.parse(String(request?.body))).toMatchObject({ tableId, mode: 'mcp', [field]: recipient });
-});
-
-test('[PM-AC-16] the host creates an account-private MCP invitation without selecting an agent', async () => {
-  tables = [];
-  calls.create.mockResolvedValue({ tableId });
-  calls.join.mockResolvedValue(true);
-  const fetcher = vi.fn(async (_url: string, request?: RequestInit) => request?.method === 'POST'
-    ? Response.json({}, { status: 201 })
-    : Response.json({ rivals: [] }));
-  vi.stubGlobal('fetch', fetcher);
-  const { page } = mount({ host: deck.id, opponent: 'mcp' });
-  const guide = within(await page.findByRole('dialog', { name: 'Connect to Thoughtseize MCP' }));
-  fireEvent.click(guide.getByRole('button', { name: 'Continue' }));
-  const dialog = within(await page.findByRole('dialog', { name: 'Host a table' }));
-  expect(dialog.queryByLabelText('Notify agent')).toBeNull();
-  expect(dialog.getByText('Leave empty to invite your own account.')).toBeTruthy();
-  fireEvent.click(dialog.getByRole('button', { name: /^Host$/ }));
-  await waitFor(() => expect(fetcher.mock.calls.some(([, request]) => request?.method === 'POST')).toBe(true));
-  const [, request] = fetcher.mock.calls.find(([, request]) => request?.method === 'POST')!;
-  const invite = JSON.parse(String(request?.body));
-  expect(invite).toMatchObject({ tableId, mode: 'mcp' });
-  expect(invite).not.toHaveProperty('notifyEngineName');
-  expect(fetcher.mock.calls.every(([url]) => url !== '/api/playtesting/event-rivals')).toBe(true);
+  ['en', 'Allow external players', 'Only MCP players enabled on your account can join.', 'An MCP player from another account can also join with the invitation link.'],
+  ['es', 'Permitir externos', 'Solo pueden unirse los jugadores MCP habilitados en tu cuenta.', 'Un jugador MCP de otra cuenta también puede unirse con el enlace de invitación.'],
+])('[PM-AC-16] %s explains the guest scope and lets the host opt in by keyboard', async (locale, label, defaultHint, externalHint) => {
+  const originalLanguage = useI18n.getState();
+  if (locale === 'es') useI18n.setState({ locale: 'es', t: createTranslator({ locale: 'es', messages: spanish, fallback: spanish }) });
+  const user = userEvent.setup();
+  try {
+    tables = [];
+    calls.create.mockResolvedValue({ tableId });
+    calls.join.mockResolvedValue(true);
+    const fetcher = vi.fn(async (_url: string, request?: RequestInit) => request?.method === 'POST'
+      ? Response.json({}, { status: 201 })
+      : Response.json({ tables: [] }));
+    vi.stubGlobal('fetch', fetcher);
+    const { page } = mount();
+    await user.click(page.getByRole('button', { name: 'Host a table' }));
+    let dialog = within(await page.findByRole('dialog', { name: 'Host a table' }));
+    expect(dialog.queryByRole('switch', { name: label })).toBeNull();
+    await user.selectOptions(dialog.getByLabelText('Opponent'), 'mcp');
+    const guide = within(await page.findByRole('dialog', { name: /Thoughtseize/ }));
+    await user.click(guide.getByRole('button', { name: /Continue|Continuar/ }));
+    dialog = within(await page.findByRole('dialog', { name: 'Host a table' }));
+    const toggle = dialog.getByRole('switch', { name: label, description: defaultHint, checked: false });
+    expect(dialog.queryByRole('textbox', { name: /Invited account|Cuenta invitada/ })).toBeNull();
+    toggle.focus();
+    await user.keyboard(' ');
+    expect(dialog.getByRole('switch', { name: label, description: externalHint, checked: true })).toBe(toggle);
+    await user.selectOptions(dialog.getByLabelText('Opponent'), 'friend');
+    expect(dialog.queryByRole('switch', { name: label })).toBeNull();
+    await user.selectOptions(dialog.getByLabelText('Opponent'), 'mcp');
+    await user.click(within(await page.findByRole('dialog', { name: /Thoughtseize/ })).getByRole('button', { name: /Continue|Continuar/ }));
+    dialog = within(await page.findByRole('dialog', { name: 'Host a table' }));
+    await user.click(dialog.getByRole('switch', { name: label, checked: false }));
+    await user.click(dialog.getByRole('button', { name: /^Host$/ }));
+    await waitFor(() => expect(fetcher.mock.calls.some(([url]) => url === '/api/playtesting/invites')).toBe(true));
+    const [, request] = fetcher.mock.calls.find(([url]) => url === '/api/playtesting/invites')!;
+    const invite = JSON.parse(String(request?.body));
+    expect(invite).toMatchObject({ tableId, mode: 'mcp', allowExternalMcp: true });
+    expect(invite.guestPlayerId).toBeUndefined();
+    expect(invite.guestAccountName).toBeUndefined();
+  } finally {
+    act(() => useI18n.setState(originalLanguage));
+  }
 });
 
 test('[PM-REVIEW-PRIV-1] hosting a private table requires no replay permission', async () => {
@@ -191,7 +201,7 @@ test('[PM-AC-04] the play entry shows the connection guide and remembers the hos
   expect(guide.getByText(/Choose OAuth, sign in with your Thoughtseize account/)).toBeTruthy();
   expect(guide.getByText(/game\.invitation\.created and game\.decision\.required/)).toBeTruthy();
   expect(guide.getByRole('link', { name: 'Manage MCP connections' }).getAttribute('href')).toBe('/oauth/connections');
-  expect(guide.getByText(/Copy MCP link/)).toBeTruthy();
+  expect(guide.getByText(/turn on Allow external players and share the invitation link/)).toBeTruthy();
   const optOut = guide.getByRole('checkbox', { name: 'Don’t show this again' }) as HTMLInputElement;
   expect(optOut.checked).toBe(false);
   fireEvent.click(optOut);

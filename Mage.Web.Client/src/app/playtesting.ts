@@ -11,20 +11,12 @@ export const MCP_CHAT_MODES = ['quiet', 'chatty', 'coach'] as const;
 export type McpChatMode = typeof MCP_CHAT_MODES[number];
 
 export type PlaytestingOpponent = { mode: 'friend'; guestEngineName?: string }
-  | { mode: 'mcp'; chatMode: McpChatMode; guestAccountName?: string; guestPlayerId?: string };
-
-export function mcpOpponent(chatMode: McpChatMode, input: string): PlaytestingOpponent {
-  const recipient = input.trim();
-  if (!recipient) return { mode: 'mcp', chatMode };
-  if (/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(recipient)) {
-    return { mode: 'mcp', chatMode, guestPlayerId: recipient };
-  }
-  return { mode: 'mcp', chatMode, guestAccountName: recipient };
-}
+  | { mode: 'mcp'; chatMode: McpChatMode; guestAccountName?: string; guestPlayerId?: string; allowExternalMcp?: true };
 
 export interface PlaytestingInvitationView {
   mode: 'friend' | 'mcp';
   unlisted?: true;
+  allowExternalMcp?: boolean;
   guestEngineName: string | null;
   guestDisplayName: string | null;
   guestPlayerId?: string;

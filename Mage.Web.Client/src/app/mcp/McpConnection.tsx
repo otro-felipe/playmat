@@ -39,7 +39,7 @@ export function McpConnectionDialog({ onClose }: { onClose(): void }) {
       <McpConnectionEndpoint endpoint={endpoint} />
       <ol className={styles.steps}>
         <li>{t('mcpConnection.signIn', { app: APP_NAME })}</li>
-        <li>{t('mcpConnection.share', { app: APP_NAME, copyLink: t('mcpInvite.copyLink') })}</li>
+        <li>{t('mcpConnection.share', { app: APP_NAME })}</li>
       </ol>
       <p className={styles.dot}>{t('mcpConnection.dot', { app: APP_NAME, invitation: 'game.invitation.created', decision: 'game.decision.required' })}</p>
       <p className={styles.browser}>{t('mcpConnection.browser', { app: APP_NAME })}</p>
