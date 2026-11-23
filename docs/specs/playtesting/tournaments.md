@@ -66,6 +66,20 @@ become public when the event finishes.
 The MCP registration, presence and reconnect calls are in the
 [getting-started guide](../../../ops/playtesting/mcp/guides/getting-started.md).
 
+For a one-time deployment that grants tournament administration to existing
+unlimited-history owners, run this command in the product image as a pre-deploy step:
+
+```sh
+node /opt/playtesting/product/tournament-admins.mjs grant-existing-history-owners Felipe Roberto
+```
+
+The command verifies each exact username against an enabled human account with
+unlimited match history. It grants the roles by account ID in one transaction,
+preserves other administrators, and prints each confirmed username and ID after
+commit. Remove the pre-deploy command once the release succeeds. Leave
+`PLAYMAT_TOURNAMENT_ADMIN_IDS` unset to preserve the grants or include the IDs
+in the service's explicit administrator list.
+
 ## Acceptance coverage
 
 The [local pilot](../../../ops/playtesting/product/tournament-pilot.local.mjs) runs
