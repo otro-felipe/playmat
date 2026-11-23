@@ -65,4 +65,9 @@ export default {
   'social.progress.lost': 'Lost',
   'social.progress.gain': '+{xp} XP',
   'social.progress.revoked': 'Not counted',
+  'externalMcpInvite.title': 'MCP player invitation',
+  'externalMcpInvite.handoff': 'Send these instructions to the MCP player you want to use. The first player to join takes the seat.',
+  'externalMcpInvite.incomplete': 'Ask the host for the complete MCP invitation link.',
+  'externalMcpInvite.clipboard': 'Copy the entire URL from the address bar and send it to your MCP player.',
+  'externalMcpInvite.instructions': 'Read get_guide({"bundle":true}). Use this complete URL as inviteLink in list_joinable_games: {link}. When authorized to play, select an available player from list_players and call join_game with the same inviteLink, its playerId and a legal deck.',
 };

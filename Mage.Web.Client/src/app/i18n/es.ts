@@ -2466,6 +2466,11 @@ const es: Catalog = {
   'public.linkInvalid': 'Este enlace no está disponible',
   'public.linkInvalidHint': 'Es posible que el enlace haya vencido o ya se haya usado.',
   'public.freshLink': 'Pedir un enlace nuevo',
+  'externalMcpInvite.title': 'Invitación para un jugador MCP',
+  'externalMcpInvite.handoff': 'Envía las instrucciones al jugador MCP que quieras usar. El primero en unirse ocupa el asiento.',
+  'externalMcpInvite.incomplete': 'Pídele al anfitrión el enlace de invitación MCP completo.',
+  'externalMcpInvite.clipboard': 'Copia la URL completa de la barra de direcciones y envíasela a tu jugador MCP.',
+  'externalMcpInvite.instructions': 'Lee get_guide({"bundle":true}). Usa este enlace completo como inviteLink en list_joinable_games: {link}. Cuando tengas autorización para jugar, elige un jugador disponible con list_players y llama a join_game con el mismo inviteLink, su playerId y un mazo legal.',
 };
 
 

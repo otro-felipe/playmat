@@ -85,6 +85,7 @@ if (import.meta.env.PROD && !NATIVE_APP && 'serviceWorker' in navigator) {
 const router = createBrowserRouter([
   { path: '/login', element: <LoginScreen /> },
   ...(PRIVATE_PLAYTESTING ? [
+    { path: '/join/mcp/:tableId', lazy: () => import('./screens/ExternalMcpInviteScreen').then((m) => ({ Component: m.ExternalMcpInviteScreen })) },
     { path: '/watch/:token', lazy: () => import('./spectator/SpectatorScreen').then((m) => ({ Component: m.SpectatorScreen })) },
     { path: '/register', lazy: () => import('./publicSite/SignupScreen').then((m) => ({ Component: m.SignupScreen })) },
     { path: '/register/complete', lazy: () => import('./publicSite/SignupScreen').then((m) => ({ Component: m.SignupCompletionScreen })) },
