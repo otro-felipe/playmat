@@ -1,10 +1,16 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Pool } from 'pg'
 import { tournamentStructure, swissPairings, rankStandings, eliminationPairs } from './tournament-rules.mjs'
 import { createTournamentService } from './tournaments.mjs'
+import { createTournamentTableBridge, restoreTournamentTable } from './tournament-table-bridge.mjs'
+import { createArchive } from './archive.mjs'
+
+const tournamentSchemas = ['schema.sql', 'oauth-schema.sql', 'player-identities.sql', 'tournaments.sql', 'tournament-table-bridge.sql']
 
 const group = (n) =>
   Array.from({ length: n }, (_, i) => ({ id: String(i + 1), ownerId: i % 2 ? 'A' : 'B', seed: i + 1 }))
@@ -67,7 +73,7 @@ test(
       await base.query('DROP SCHEMA ' + schema + ' CASCADE')
       await base.end()
     })
-    for (const file of ['schema.sql', 'tournaments.sql'])
+    for (const file of tournamentSchemas)
       await pool.query(await readFile(new URL(file, import.meta.url), 'utf8'))
     const owners = [randomUUID(), randomUUID()]
     for (const [i, id] of owners.entries())
@@ -162,7 +168,7 @@ async function scheduledFixture(t, count, config = {}) {
     await base.query('DROP SCHEMA ' + schema + ' CASCADE')
     await base.end()
   })
-  for (const file of ['schema.sql', 'tournaments.sql'])
+  for (const file of tournamentSchemas)
     await pool.query(await readFile(new URL(file, import.meta.url), 'utf8'))
   const owner = { accountId: randomUUID(), username: 'testowner', isAdmin: true }
   await pool.query("INSERT INTO accounts(id,username,username_key,password_hash) VALUES($1,$2,$2,'fixture')", [
@@ -215,6 +221,62 @@ async function scheduledFixture(t, count, config = {}) {
 }
 
 const dbTest = (title, run) => test(title, { skip: !process.env.PLAYMAT_TEST_DATABASE_URL }, run)
+
+dbTest('a late tournament check-in cannot retain a terminal reservation after a table is restored and scored', async t => {
+  const f = await scheduledFixture(t, 4)
+  await f.open()
+  const [pair, neighbor] = await f.service.pendingTables()
+  const original = randomUUID(), middle = randomUUID(), final = randomUUID(), elsewhere = randomUUID()
+  await f.service.bindTable(f.id, pair.pairingId, original)
+  await f.service.bindTable(f.id, neighbor.pairingId, elsewhere)
+  const bridge = createTournamentTableBridge(f.pool, f.service)
+  const pilots = [pair.playerA, pair.playerB, neighbor.playerA].map(seat => ({
+    ...f.actors.find(a => a.playerId === seat.playerId), connectionId: randomUUID(),
+  }))
+  for (const pilot of pilots) {
+    await f.pool.query(`INSERT INTO agent_grants(digest,account_id,engine_name,engine_key,scopes,oauth_managed,player_id)
+      VALUES($1,$2,$3,$3,ARRAY['play'],true,$4)`, [randomUUID(), pilot.accountId, pilot.engineName, pilot.playerId])
+    await f.pool.query(`INSERT INTO oauth_connections(id,account_id,engine_key,client_id,audience,scopes_approved,refresh_digest,expires_at)
+      VALUES($1,$2,$3,'fixture','fixture',ARRAY['play'],$4,now()+interval '1 day')`,
+      [pilot.connectionId, pilot.accountId, pilot.engineName, randomUUID()])
+  }
+  const [a, b, other] = pilots
+  const connect = (pilot, assignment, tableId) => bridge.connectSeat(pilot, {
+    tournamentId:f.id, pairingId:assignment.pairingId, tableId,
+  })
+  await connect(a, pair, original)
+  await connect(other, neighbor, elsewhere)
+  await restoreTournamentTable(f.pool, original, middle)
+  await restoreTournamentTable(f.pool, original, final)
+  // The two seats may still be bound to different physical tables at match completion.
+  await connect(b, pair, final)
+  const score = {pairingId:pair.pairingId, tableId:middle, seatA:a.engineName, seatB:b.engineName, winsA:2, winsB:0, draws:0}
+  const matchId = randomUUID()
+  await f.pool.query('UPDATE player_table_reservations SET original_table_id=$1 WHERE player_id=$2', [middle, other.playerId])
+  await f.pool.query("INSERT INTO matches(id,table_id,started_at,status) VALUES($1,$2,1,'active')", [matchId, middle])
+  const stage = await mkdtemp(join(tmpdir(), 'tournament-terminal-'))
+  t.after(() => rm(stage, {recursive:true, force:true}))
+  const archive = createArchive(f.pool, stage, new Map())
+  const markerPath = join(stage, matchId + '.match.json')
+  const marker = {matchId, endedAt:2, winner:a.engineName}
+  // Older markers omit the score. The stored physical-table history still identifies the tournament.
+  await writeFile(markerPath, JSON.stringify(marker))
+  await archive.archiveGames()
+  assert.equal((await f.pool.query('SELECT table_id FROM player_table_reservations WHERE player_id=$1', [other.playerId])).rows[0]?.table_id, elsewhere)
+  await writeFile(markerPath, JSON.stringify({...marker, tournamentScore:score}))
+  await archive.archiveGames()
+  await assert.rejects(connect(b, pair, final), {status:409})
+  const report = {tableId:final, winsA:2, winsB:0, draws:0}
+  await f.service.report(f.id, pair.pairingId, report)
+  const held = async () => (await f.pool.query('SELECT player_id,table_id FROM player_table_reservations')).rows
+  assert.deepEqual(await held(), [{player_id:other.playerId, table_id:elsewhere}])
+  await assert.rejects(connect(b, pair, final), {status:409})
+  // Even a retry of the exact score must leave a player's later unrelated binding alone.
+  await f.pool.query(`INSERT INTO player_table_reservations(player_id,reservation_id,connection_id,table_id,original_table_id)
+    VALUES($1,$2,$3,$4,$5)`, [a.playerId, randomUUID(), a.connectionId, elsewhere, original])
+  await f.service.report(f.id, pair.pairingId, report)
+  assert.equal((await held()).filter(r => r.table_id === elsewhere).length, 2)
+})
 
 dbTest('owner profiles include newly registered agents of the viewed owner and omit retired profiles', async (t) => {
   const f = await scheduledFixture(t, 2)

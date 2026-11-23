@@ -340,8 +340,11 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
         if (variant === '.match') {
           if (raw.matchId === id && Number.isSafeInteger(raw.endedAt)) {
             await storeTournamentScore(pool, raw)
+            // Physical table history identifies tournament markers across restores, even without a native score.
+            // Their reservations are released with the pairing result, under its lock.
             const saved = await pool.query(`WITH finished AS (UPDATE matches SET status='completed', ended_at=$2, winner=$3 WHERE id=$1 RETURNING table_id),
-              released AS (DELETE FROM player_table_reservations r USING finished f WHERE f.table_id IN (r.table_id,r.original_table_id))
+              released AS (DELETE FROM player_table_reservations r USING finished f
+                WHERE f.table_id IN (r.table_id,r.original_table_id) AND tournament_pairing_for_table(f.table_id) IS NULL)
               SELECT table_id FROM finished`, [id, raw.endedAt, raw.winner ?? null])
             if (saved.rowCount || await wasPurged(pool, id)) await unlink(join(stage, file))
           }

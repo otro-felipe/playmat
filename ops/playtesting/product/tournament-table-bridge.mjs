@@ -210,6 +210,10 @@ export function createTournamentTableBridge(
         `SELECT p.id FROM tournament_pairings p JOIN tournament_entries e
         ON e.id IN(p.entry_a,p.entry_b) JOIN playable_oauth_seats s ON s.player_id=e.player_id AND s.account_id=e.owner_id
         WHERE p.id=$1 AND p.tournament_id=$2 AND p.table_id=$3 AND NOT p.completed
+          AND NOT EXISTS (SELECT 1 FROM tournament_engine_results r
+            JOIN tournament_entries a ON a.id=p.entry_a JOIN tournament_entries b ON b.id=p.entry_b
+            WHERE r.pairing_id=p.id AND r.seat_a=lower(a.engine_name) AND r.seat_b=lower(b.engine_name)
+            AND tournament_pairing_for_table(r.table_id)=p.id)
           AND e.player_id=$4 AND e.owner_id=$5 AND s.connection_id=$6 FOR SHARE OF p`,
         [receipt.pairingId, tournamentId, receipt.tableId, actor.playerId, actor.accountId, actor.connectionId],
       )

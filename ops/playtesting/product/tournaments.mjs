@@ -319,7 +319,7 @@ export function createTournamentService(
       const t = await tournamentRow(db, id, 'FOR UPDATE')
       const {
         rows: [m],
-      } = await db.query('SELECT * FROM tournament_pairings WHERE id=$1 AND tournament_id=$2', [pairingId, id])
+      } = await db.query('SELECT * FROM tournament_pairings WHERE id=$1 AND tournament_id=$2 FOR UPDATE', [pairingId, id])
       if (!m || !m.entry_b || !m.table_id || m.table_id !== result.tableId)
         throw new ProductError(409, 'Tournament table does not match')
       const a = integral(result.winsA, 0, Math.ceil(m.best_of / 2), 'game wins'),
@@ -338,6 +338,14 @@ export function createTournamentService(
       }
       if ((m.stage === 'playoffs' && !winner) || (a === b && a === Math.ceil(m.best_of / 2)))
         throw new ProductError(409, 'Invalid match score')
+      // The pairing lock serializes the final score with late check-ins. Release its seats
+      // across physical restores, using the current binding so a later assignment survives.
+      await db.query(
+        `DELETE FROM player_table_reservations r USING tournament_entries e,tournament_pairing_tables physical
+         WHERE physical.pairing_id=$1 AND r.table_id=physical.table_id
+           AND r.player_id=e.player_id AND e.id IN ($2,$3)`,
+        [m.id, m.entry_a, m.entry_b],
+      )
       if (m.completed) {
         if (
           m.wins_a !== a ||
