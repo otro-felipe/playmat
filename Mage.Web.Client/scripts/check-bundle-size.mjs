@@ -136,7 +136,8 @@ const BUDGET_KB = {
   // analyses, replay explanations, and the expanded archetype catalog. Together these
   // measure 879.6 KiB (2026-11-21), including all lazy screens.
   // Public board, two-hand broadcast, copy link and shared commentary: private app 884.95 KiB.
-  app: 886,
+  // Owner controls for spectator consent, full chat and line explanations bring the private app to 889.5 KiB.
+  app: 891,
 };
 
 const dist = new URL('../dist/', import.meta.url).pathname;
