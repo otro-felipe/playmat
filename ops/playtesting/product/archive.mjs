@@ -215,7 +215,7 @@ async function sha256Stream(stream) {
 
 // Keep the per-record guard while allowing any number of recorded turns in an archive.
 // Verify the compressed checksum before the caller publishes the completed index.
-async function* streamTournamentRecords(store, game) {
+async function* streamReplayRecords(store, game) {
   if (!game.object_key) throw new ProductError(409, 'Replay is still being archived')
   const input = await openReplay(store, game.object_key)
   const hash = createHash('sha256')
@@ -252,11 +252,8 @@ async function* streamTournamentRecords(store, game) {
   }
 }
 
-async function projectedEvents(store, game, viewer, includeCursor = false) {
-  return (await rawEvents(store, game)).map((event, cursor) => {
-    const projection = projectReplayEvent(event, viewer)
-    return projection && includeCursor ? { ...projection, cursor } : projection
-  }).filter(Boolean)
+async function projectedEvents(store, game, viewer) {
+  return (await rawEvents(store, game)).map(event => projectReplayEvent(event, viewer)).filter(Boolean)
 }
 
 function gameView(row) {
@@ -537,10 +534,21 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
 
   async function replayPage(actor, id, start, count) {
     const game = await authorizedGame(actor, id)
-    const events = await projectedEvents(store, game, game.viewer, game.status === 'completed' && game.match_status === 'completed')
-    const from = Math.min(events.length, Math.max(0, Number.parseInt(start ?? '0', 10) || 0))
+    const from = Math.max(0, Number.parseInt(start ?? '0', 10) || 0)
     const take = Math.max(1, Math.min(200, Number.parseInt(count ?? '100', 10) || 100))
-    return { info: gameView(game), total: events.length, start: from, events: events.slice(from, from + take) }
+    const includeCursor = game.status === 'completed' && game.match_status === 'completed'
+    const events = []
+    let total = 0, cursor = 0
+    // Page offsets count visible events. Review cursors refer to the original recording.
+    for await (const record of streamReplayRecords(store, game)) {
+      const projection = projectReplayEvent(record, game.viewer)
+      if (projection) {
+        if (total >= from && events.length < take) events.push(includeCursor ? { ...projection, cursor } : projection)
+        total++
+      }
+      cursor++
+    }
+    return { info: gameView(game), total, start: Math.min(total, from), events }
   }
 
   async function evaluation(actor, id, options = {}) {
@@ -598,5 +606,5 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
   }
 
   return { archiveGames, matchList, replayPage, evaluation, exportReplays, authorizeExport, statistics, performance,
-    reviewGame, reviewGames, reviewOwnDeckPair, streamTournamentRecords: game => streamTournamentRecords(store, game), readReviewArchive: game => rawEvents(store, game) }
+    reviewGame, reviewGames, reviewOwnDeckPair, streamTournamentRecords: game => streamReplayRecords(store, game), readReviewArchive: game => rawEvents(store, game) }
 }

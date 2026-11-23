@@ -84,7 +84,20 @@ export function tournamentReplayIndexes(archive) {
   const entries = new Map(),
     counts = new Map(),
     waiters = []
-  let builders = 0
+  let builders = 0,
+    reclaiming
+  async function releaseIdle(keep) {
+    const closing = []
+    for (const [key, entry] of entries) {
+      if (entries.size <= keep) break
+      if (entry.users || !entry.index) continue
+      entries.delete(key)
+      closing.push(entry.index.close())
+    }
+    await Promise.all(closing)
+    return closing.length > 0
+  }
+
   async function build(game, project) {
     if (builders >= 2) {
       if (waiters.length >= 32) throw new ProductError(503, 'Replay storage is busy. Try again shortly.')
@@ -93,7 +106,19 @@ export function tournamentReplayIndexes(archive) {
       builders++
     }
     try {
-      return await buildIndex(archive.streamTournamentRecords(game), game, project)
+      const attempt = () => buildIndex(archive.streamTournamentRecords(game), game, project)
+      try {
+        return await attempt()
+      } catch (error) {
+        if (error.code !== 'ENOSPC') throw error
+        // Unlinked temp files return their blocks on close. Share reclamation
+        // between builders, then reopen the archive from the start exactly once.
+        reclaiming ??= releaseIdle(0).finally(() => {
+          reclaiming = null
+        })
+        if (!(await reclaiming)) throw error
+        return await attempt()
+      }
     } finally {
       if (waiters.length) waiters.shift()()
       else builders--
@@ -125,13 +150,8 @@ export function tournamentReplayIndexes(archive) {
       return indexOnly ? index.count : await index.frame(number)
     } finally {
       entry.users--
-      for (const [oldKey, old] of entries) {
-        // Retain a full eight-player round for simultaneous spectators.
-        if (entries.size <= 4) break
-        if (old.users || !old.index) continue
-        entries.delete(oldKey)
-        await old.index.close()
-      }
+      // Retain a full eight-player round for simultaneous spectators.
+      await releaseIdle(4)
     }
   }
   async function close() {

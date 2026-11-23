@@ -127,3 +127,69 @@ test('a failed streaming checksum leaves no published count or frame and a repai
     games: [{ gameId: game, frameCount: 1 }],
   })
 })
+
+test('a disk-full fifth replay reclaims idle indexes and retries once while an active spectator keeps reading', async (t) => {
+  const { open } = await import('node:fs/promises')
+  const { tournamentReplayIndexes } = await import('./tournament-replay-index.mjs')
+  const games = Array.from({ length: 6 }, () => ({ id: randomUUID(), checksum: 'synthetic' }))
+  const builds = new Map()
+  const cache = tournamentReplayIndexes({
+    async *streamTournamentRecords(game) {
+      const attempt = (builds.get(game) ?? 0) + 1
+      builds.set(game, attempt)
+      yield { view: { players: [{}, {}] }, gameId: game.id }
+      yield { view: { players: [{}, {}] }, gameId: game.id }
+    },
+  })
+  t.after(() => cache.close())
+  const read = (game) => cache.read(game, (record, number) => ({ gameId: record.gameId, number }), false, 0)
+  for (const game of games.slice(0, 4)) await read(game)
+
+  // Force a real index write to fail after its first synthetic frame, and hold
+  // a reader on an older index across reclamation.
+  const fixture = await open('/dev/null', 'r')
+  const proto = Object.getPrototypeOf(fixture)
+  await fixture.close()
+  const started = Promise.withResolvers(),
+    resume = Promise.withResolvers()
+  const nativeWrite = proto.writeFile
+  t.mock.method(proto, 'writeFile', function (bytes, ...args) {
+    const frame = JSON.parse(bytes.toString())
+    if (
+      frame.number === 1 &&
+      ((frame.gameId === games[4].id && builds.get(games[4]) === 1) || frame.gameId === games[5].id)
+    )
+      throw Object.assign(new Error('Fixture disk is full'), { code: 'ENOSPC' })
+    return nativeWrite.call(this, bytes, ...args)
+  })
+  const nativeRead = proto.read
+  let holdNextRead = true
+  t.mock.method(proto, 'read', async function (...args) {
+    if (holdNextRead) {
+      holdNextRead = false
+      started.resolve()
+      await resume.promise
+    }
+    return nativeRead.apply(this, args)
+  })
+  const active = read(games[0])
+  await started.promise
+  try {
+    const [first, second] = await Promise.all([read(games[4]), read(games[4])])
+    assert.deepEqual(first.board, { gameId: games[4].id, number: 0 })
+    assert.deepEqual(second, first)
+    assert.equal(builds.get(games[4]), 2)
+  } finally {
+    resume.resolve()
+    assert.deepEqual((await active).board, { gameId: games[0].id, number: 0 })
+  }
+  await read(games[0])
+  assert.equal(builds.get(games[0]), 1)
+  await read(games[1])
+  assert.equal(builds.get(games[1]), 2)
+  await assert.rejects(read(games[5]), { code: 'ENOSPC' })
+  assert.equal(builds.get(games[5]), 2)
+  // All reclaimable indexes were already closed. A later request fails immediately.
+  await assert.rejects(read(games[5]), { code: 'ENOSPC' })
+  assert.equal(builds.get(games[5]), 3)
+})

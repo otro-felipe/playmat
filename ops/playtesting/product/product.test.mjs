@@ -819,11 +819,15 @@ async function historyMatch(f, names, time, { active = false, gameCount = 1 } = 
 test('completed tournament-sized captures larger than 24 MiB are archived and verified before spool cleanup', {skip:!databaseUrl}, async t => {
   const objects = new Map()
   const f = await fixture(t, objects)
+  const alice = await signIn(f, 'Alice')
+  await signIn(f, 'Bob')
   const match = randomUUID(), game = randomUUID()
-  await addReplay(f, match, game, ['Pilot A','Pilot B'])
-  const line = JSON.stringify({view:{players:[{name:'Pilot A'},{name:'Pilot B'}]}, extra:'x'.repeat(32*1024)}) + '\n'
+  await addReplay(f, match, game, ['Alice','Bob'])
+  await writeFile(join(f.replayDirectory, match + '.match.json'), JSON.stringify({matchId:match, endedAt:Date.now()}))
+  const line = JSON.stringify({view:{players:[{name:'Alice'},{name:'Bob'}]},
+    hands:{Alice:{fixture:'own'},Bob:{fixture:'other'}}, extra:'x'.repeat(32*1024)}) + '\n'
   // Stored gzip blocks reproduce the compressed-object limit with deterministic input.
-  const bytes = gzipSync(line.repeat(780), {level:0})
+  const bytes = gzipSync('{"kind":"line"}\n' + line.repeat(780), {level:0})
   assert.ok(bytes.length > 24*1024*1024)
   await writeFile(join(f.replayDirectory, game + '.ndjson.gz'), bytes)
   await f.product.archiveGames()
@@ -836,6 +840,19 @@ test('completed tournament-sized captures larger than 24 MiB are archived and ve
     assert.equal(row.truncated,false)
     assert.match(row.checksum,/^[0-9a-f]{64}$/)
   })
+  const page = start => f.path(`/api/playtesting/replays/${game}?start=${start}&count=1`, {headers:alice})
+  const response = await page(779)
+  assert.equal(response.status, 200)
+  const last = await response.json()
+  assert.equal(last.info.replayAvailable, true)
+  assert.deepEqual([last.start, last.total, last.events.length, last.events[0].cursor], [779, 780, 1, 780])
+  assert.deepEqual(last.events[0].myHand, {fixture:'own'})
+  assert.equal(JSON.stringify(last.events).includes('"other"'), false)
+  const pastEnd = await (await page(900)).json()
+  assert.deepEqual([pastEnd.start, pastEnd.events], [780, []])
+  // A page containing the first visible row must still reject a bad checksum at EOF.
+  objects.set([...objects.keys()][0], Buffer.concat([bytes, gzipSync('\n')]))
+  assert.equal((await page(0)).status, 503)
 })
 
 test('[PM-AC-21] history retains twenty completed matches per account across its seats and blocks old direct reads', { skip: !databaseUrl }, async t => {
