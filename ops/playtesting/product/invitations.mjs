@@ -132,7 +132,7 @@ export function createInvitations(pool, identity, events) {
         }
         throw new ProductError(409, 'This table already has an invitation')
       }
-      if (automatic) await issuePublicSpectatorLink(db,data.tableId,actor,friend,title,bothHands)
+      if (automatic || invite.broadcast_on_assignment) await issuePublicSpectatorLink(db,data.tableId,actor,friend,title,bothHands)
       if (ownerAccountId) {
         const { rows: [agent] } = await db.query(`SELECT engine_name FROM agent_grants
           WHERE account_id=$1 AND oauth_managed AND player_id IS NULL AND revoked_at IS NULL AND 'play'=ANY(scopes)`, [ownerAccountId])
@@ -166,6 +166,7 @@ export function createInvitations(pool, identity, events) {
     return transaction(pool,async db => {
       await checkInvitationReservation(db,actor,tableId)
       const { rows: [invite] } = await db.query(`UPDATE invitations SET
+        spectator_settings_locked=true,
         spectator_guest_consent_required=spectator_guest_consent_required AND NOT $12,
         guest_model=CASE WHEN claimed_at IS NULL THEN $8 ELSE guest_model END,
         guest_effort=CASE WHEN claimed_at IS NULL THEN $9 ELSE guest_effort END,
@@ -178,6 +179,9 @@ export function createInvitations(pool, identity, events) {
           OR (mode='mcp' AND $5 AND (invitee_key IS NULL OR invitee_key=$2))
         )) RETURNING *, ${guestOwner}`, [tableId, key, actor.engineName, alias, actor.agent, rivalAccount(actor), fallback, ...runtime, !!actor.playerId,actor.accountSelected ? actor.accountId : null,data?.acceptSpectatorVisibility==='both-hands'])
       const projection=invitationView(invite)
+      if (data?.expectedSpectatorVisibility!==undefined && data.expectedSpectatorVisibility!==(invite.spectator_both_hands?'both-hands':'public-board')) {
+        throw new ProductError(409,'Spectator visibility changed. Review this invitation again before joining')
+      }
       if (invite.spectator_guest_consent_required && data?.acceptSpectatorVisibility!=='both-hands') {
         throw new ProductError(403,'Explicitly accept both-hands spectating before joining this invitation')
       }

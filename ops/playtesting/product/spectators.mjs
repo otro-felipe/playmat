@@ -1,7 +1,7 @@
 import { lineText } from './line-explanations.mjs'
 import { privateSpectatorBoard } from './private-spectator-board.mjs'
 import { publicSpectatorBoard } from './public-spectator-board.mjs'
-import { listPublicSpectatorLinks, newSpectatorToken } from './spectator-links.mjs'
+import { configureSpectatorLink, listPublicSpectatorLinks, newSpectatorToken } from './spectator-links.mjs'
 import { isUuid, normalize, ProductError } from './decks.mjs'
 
 const missing = () => new ProductError(404, 'Spectator match not found')
@@ -58,17 +58,18 @@ export function spectatorStorage(pool, archive) {
       return row
     },
     listOwned: accountId => listPublicSpectatorLinks(pool,accountId),
-    async publicTarget(id) {
+    configure:(tableId,owner,mode)=>configureSpectatorLink(pool,tableId,owner,mode),
+    async publicTarget(id,capability=null) {
       const {rows:[row]}=await pool.query(`SELECT l.public_host,l.public_guest,l.live_table_id,l.token AS public_token,
         EXISTS (SELECT 1 FROM matches m WHERE m.table_id IN (l.table_id,l.live_table_id)
           AND m.status IN ('completed','interrupted')) AS terminal,
-        l.hands_token IS NOT NULL AND EXISTS(SELECT 1 FROM invitations i WHERE i.table_id=l.table_id AND NOT i.cancel_pending
+        l.hands_token=$2 AND EXISTS(SELECT 1 FROM invitations i WHERE i.table_id=l.table_id AND NOT i.cancel_pending
           AND (i.claimed_at IS NOT NULL OR i.expires_at>now())) AS private_live,
         EXISTS(SELECT 1 FROM invitations i WHERE i.table_id=l.table_id AND i.claimed_at IS NOT NULL AND NOT i.cancel_pending) AS claimed,
         EXISTS(
         SELECT 1 FROM invitations i WHERE i.table_id=l.table_id AND NOT i.cancel_pending AND i.expires_at>now()
         AND NOT EXISTS (SELECT 1 FROM matches WHERE table_id IN (l.table_id,l.live_table_id))) AS waiting
-        FROM spectator_links l WHERE l.table_id=$1 AND l.public_host IS NOT NULL`,[id])
+        FROM spectator_links l WHERE l.table_id=$1 AND l.public_host IS NOT NULL`,[id,capability])
       return row
     },
     async mayObserve(tableId, accountId) {
@@ -149,13 +150,13 @@ export function createSpectators({storage, readEngine=engine}) {
     if (!isUuid(id) || !await storage.mayObserve(id,actor.accountId)) throw forbidden()
     return id
   }
-  const channel=(id,publicBoard,privateSeats)=>privateSeats?'both-hands/'+id:publicBoard?'public/'+id:id
-  async function snapshot(id,publicBoard=false,privateSeats=false) {
-    const now=Date.now(), cacheKey=channel(id,publicBoard,privateSeats)
+  const channel=(id,publicBoard,capability)=>capability?'both-hands/'+capability:publicBoard?'public/'+id:id
+  async function snapshot(id,publicBoard=false,privateSeats=false,capability=null) {
+    const now=Date.now(), cacheKey=channel(id,publicBoard,privateSeats && capability)
     let entry=cache.get(cacheKey)
     if (privateSeats || !entry || entry.until<now) {
       entry={until:now+650, value:(async()=>{
-        const target=publicBoard ? await storage.publicTarget(id) : null
+        const target=publicBoard ? await storage.publicTarget(id,privateSeats?capability:null) : null
         if (publicBoard && !target || privateSeats && !target?.private_live) throw missing()
         const closed = () => ({role:'spectator',visibility:'closed',status:'finished',publicPath:'/watch/'+target.public_token})
         if (privateSeats && target.terminal) return closed()
@@ -210,8 +211,8 @@ export function createSpectators({storage, readEngine=engine}) {
     const data=await entry.value
     return data.visibility==='closed'?data:{...data,spectators:groups.get(cacheKey)?.size??0}
   }
-  function publish(id,res,publicBoard=false,privateSeats=false) {
-    const cacheKey=channel(id,publicBoard,privateSeats)
+  function publish(id,res,publicBoard=false,privateSeats=false,capability=null) {
+    const cacheKey=channel(id,publicBoard,privateSeats && capability)
     if (connections>=256 || (groups.get(cacheKey)?.size??0)>=100) throw new ProductError(429,'Spectator limit reached')
     let group=groups.get(cacheKey)
     if (!group) groups.set(cacheKey,group=new Set())
@@ -226,7 +227,7 @@ export function createSpectators({storage, readEngine=engine}) {
       if (busy || res.destroyed) return
       busy=true
       try {
-        const data=await snapshot(id,publicBoard,privateSeats)
+        const data=await snapshot(id,publicBoard,privateSeats,capability)
         const revision=[data.gameId,data.status,data.revision,data.spectators].join('/')
         if (revision!==last) {
           last=revision
@@ -242,10 +243,15 @@ export function createSpectators({storage, readEngine=engine}) {
     void update()
   }
   function close(){ for(const group of groups.values()) for(const res of group) res.end(); cache.clear(); identities.clear() }
-  return { share,listOwned,publicTable,publicTableId:async token=>(await publicTable(token)).id,privateTableId,snapshot,publish,close }
+  async function configure(actor,tableId,mode) {
+    browser(actor)
+    if (!isUuid(tableId)) throw missing()
+    return storage.configure(tableId,actor.accountId,mode)
+  }
+  return { share,configure,listOwned,publicTable,publicTableId:async token=>(await publicTable(token)).id,privateTableId,snapshot,publish,close }
 }
 
-export async function spectatorRoute(req,res,path,resolveActor,spectators,send) {
+export async function spectatorRoute(req,res,path,resolveActor,spectators,send,readBody) {
   const shared=sharedRoute.exec(path), table=tableRoute.exec(path)
   const list=path==='/api/playtesting/tables/spectator-links'
   if (!shared && !table && !list) {
@@ -259,15 +265,20 @@ export async function spectatorRoute(req,res,path,resolveActor,spectators,send) 
     if (req.method!=='GET') throw new ProductError(405,'Use GET')
     send(res,200,await spectators.listOwned(await resolveActor(req)))
   } else if (table?.[2]==='spectator-link') {
-    if (table[3] || !['GET','POST'].includes(req.method)) throw new ProductError(405,'Use GET or POST')
+    if (!table[3] && req.method==='PATCH') {
+      const actor=await resolveActor(req)
+      send(res,200,await spectators.configure(actor,table[1],(await readBody(req))?.spectatorVisibility))
+      return true
+    }
+    if (table[3] || !['GET','POST'].includes(req.method)) throw new ProductError(405,'Use GET, POST or PATCH')
     const mode=new URL(req.url,'http://localhost').searchParams.get('visibility')
     if (mode!==null && !['public-board','both-hands'].includes(mode)) throw missing()
     send(res,200,await spectators.share(await resolveActor(req),table[1],req.method==='POST',mode==='both-hands'))
   } else {
     if (req.method!=='GET') throw new ProductError(405,'Use GET')
     const {id,publicBoard,privateSeats}=shared ? await spectators.publicTable(shared[1]) : {id:await spectators.privateTableId(await resolveActor(req),table[1])}
-    const data=await spectators.snapshot(id,publicBoard,privateSeats)
-    if (shared?.[2] || table?.[3]) spectators.publish(id,res,publicBoard,privateSeats)
+    const data=await spectators.snapshot(id,publicBoard,privateSeats,privateSeats?shared[1]:null)
+    if (shared?.[2] || table?.[3]) spectators.publish(id,res,publicBoard,privateSeats,privateSeats?shared[1]:null)
     else send(res,200,data)
   }
   return true

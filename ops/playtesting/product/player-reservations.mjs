@@ -1,3 +1,4 @@
+import { freezeGuestSpectatorSettings } from './spectator-links.mjs'
 import { isUuid, normalize, ProductError, transaction } from './decks.mjs'
 
 const operations = new Set(['reserve','begin','bind','release','lock_cancel','cancel'])
@@ -19,9 +20,9 @@ async function lockWaitingTable(db, actor, held) {
 
 export async function changeReservation(pool, actor, playerId, input) {
   if (!actor?.playerId || playerId !== actor.playerId || !actor.scopes.includes('play')) throw new ProductError(403,'This pilot cannot control that player')
-  const {operation,reservationId,tableId} = input ?? {}
+  const {operation,reservationId,tableId,joinTableId} = input ?? {}
   const requiresTable = operation === 'bind' || operation === 'lock_cancel'
-  if (!isUuid(reservationId) || !operations.has(operation) || (requiresTable && !isUuid(tableId))
+  if (joinTableId!==undefined && (operation!=='reserve' || !isUuid(joinTableId)) || !isUuid(reservationId) || !operations.has(operation) || (requiresTable && !isUuid(tableId))
     || (tableId !== undefined && (!isUuid(tableId) || (!requiresTable && operation !== 'cancel'))))
     throw new ProductError(400,'Invalid table reservation')
   return transaction(pool,async db => {
@@ -36,6 +37,7 @@ export async function changeReservation(pool, actor, playerId, input) {
       throw new ProductError(409,'This player is reserved')
     if (!held && !['reserve','release','cancel'].includes(operation)) throw new ProductError(409,'Reserve this player first')
     if (held?.cancel_pending && operation !== 'lock_cancel' && operation !== 'cancel') throw new ProductError(409,'Cancellation in progress')
+    if (joinTableId || operation==='bind') await freezeGuestSpectatorSettings(db,actor,joinTableId??tableId)
     if (operation === 'reserve' && !held) {
       await db.query('INSERT INTO player_table_reservations(player_id,reservation_id,connection_id) VALUES($1,$2,$3)',[playerId,reservationId,actor.connectionId])
     } else if (operation === 'begin') {

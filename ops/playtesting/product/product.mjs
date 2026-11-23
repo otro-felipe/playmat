@@ -256,7 +256,7 @@ export async function createProduct({
     }
     if (await oauth.route(req, res, url, id.resolve)) return
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !sameOrigin(req, insecureCookie)) throw new ProductError(403, 'Cross-origin request')
-    if (await spectatorRoute(req,res,path,id.resolve,spectators,send)) return
+    if (await spectatorRoute(req,res,path,id.resolve,spectators,send,body)) return
     if (path === '/api/playtesting/signup/config' && req.method === 'GET') {
       return send(res, 200, { turnstileSiteKey: challenge?.siteKey ?? null })
     }

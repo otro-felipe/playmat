@@ -278,8 +278,9 @@ ALTER TABLE invitations
 CREATE INDEX IF NOT EXISTS invitations_for_recipient ON invitations(recipient_account_id,expires_at DESC)
   WHERE recipient_account_id IS NOT NULL;
 
--- Restricted spectator consent is fixed when a trusted two-pilot invitation is created.
+-- A trusted two-pilot invitation records its sharing policy and guest consent.
 ALTER TABLE invitations
   ADD COLUMN IF NOT EXISTS spectator_both_hands boolean NOT NULL DEFAULT false,
   ADD COLUMN IF NOT EXISTS spectator_guest_consent_required boolean NOT NULL DEFAULT false;
 ALTER TABLE spectator_links ADD COLUMN IF NOT EXISTS hands_token text UNIQUE;
+ALTER TABLE invitations ADD COLUMN IF NOT EXISTS spectator_settings_locked boolean NOT NULL DEFAULT false;

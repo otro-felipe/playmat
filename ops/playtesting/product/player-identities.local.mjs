@@ -52,8 +52,20 @@ export async function verifyPlayerIdentities({ base, issuer, Cookie, authorizePi
 
   const tables = await Promise.all([0,2].map(async i => {
     const { tableId } = await as(i,'create_game',{name:'Local pair '+i,guestEngineName:pilots[i+1].engineName,
-      format:'Pioneer',deck:pilots[i].deck,...(i===0?{spectatorVisibility:'both-hands'}:{})})
+      format:'Pioneer',deck:pilots[i].deck,...(i===0 && !spectatorOnly?{spectatorVisibility:'both-hands'}:{})})
+    if(i===0 && spectatorOnly){
+      const url=base+'/api/playtesting/tables/'+tableId+'/spectator-link'
+      assert.equal((await fetch(url+'?visibility=both-hands',{headers:{Cookie}})).status,404)
+      const patch=await fetch(url,{method:'PATCH',headers:options(Cookie),body:JSON.stringify({spectatorVisibility:'both-hands'})})
+      assert.equal(patch.status,200)
+      assert.deepEqual(await patch.json(),{tableId,spectatorVisibility:'both-hands'})
+    }
     await as(i+1,'join_game',{tableId,deck:pilots[i+1].deck})
+    if(i===0 && spectatorOnly){
+      const patch=await fetch(base+'/api/playtesting/tables/'+tableId+'/spectator-link',{method:'PATCH',headers:options(Cookie),
+        body:JSON.stringify({spectatorVisibility:'public-board'})})
+      assert.equal(patch.status,409)
+    }
     return tableId
   }))
   assert.equal(new Set(tables).size,2)

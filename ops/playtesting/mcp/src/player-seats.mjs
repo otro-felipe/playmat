@@ -39,7 +39,7 @@ export function playerLease(actor, product, joinTableId) {
   let reservationId;
   let acquired = false;
   const change = (operation, tableId) => product('player_reservation', {
-    playerId: actor.playerId, reservationId, operation, ...(tableId && { tableId }),
+    playerId: actor.playerId, reservationId, operation, ...(operation==='reserve' && joinTableId && {joinTableId}), ...(tableId && { tableId }),
   });
   return {
     async reserve() {

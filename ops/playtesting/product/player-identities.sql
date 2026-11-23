@@ -74,3 +74,20 @@ CREATE OR REPLACE VIEW playable_oauth_seats AS
   LEFT JOIN player_profiles p ON p.id=target.player_id AND p.account_id=c.account_id
   WHERE c.revoked_at IS NULL AND c.expires_at>now() AND 'play'=ANY(c.scopes_approved)
     AND (target.player_id IS NULL OR p.mcp_enabled);
+
+-- Trusted account-addressed invitations may predate pregame sharing. Keep their public link
+-- stable from discovery through assignment without naming or exposing a prospective guest.
+INSERT INTO spectator_links(table_id,owner_id,token,public_host,live_table_id,table_name,hands_token)
+SELECT i.table_id,h.account_id,
+  translate(encode(uuid_send(gen_random_uuid()) || uuid_send(gen_random_uuid()),'base64'),'+/=','-_'),
+  i.creator_key,i.table_id,i.table_name,CASE WHEN i.spectator_both_hands THEN
+  translate(encode(uuid_send(gen_random_uuid()) || uuid_send(gen_random_uuid()),'base64'),'+/=','-_') END
+FROM invitations i JOIN agent_grants h ON h.engine_key=i.creator_key
+WHERE i.broadcast_on_assignment AND i.claimed_at IS NULL AND NOT i.cancel_pending AND i.expires_at>now()
+  AND NOT EXISTS (SELECT 1 FROM spectator_links l WHERE l.table_id=i.table_id)
+ON CONFLICT(table_id) DO NOTHING;
+UPDATE invitations i SET spectator_settings_locked=true
+WHERE NOT spectator_settings_locked AND (claimed_at IS NOT NULL OR EXISTS
+  (SELECT 1 FROM player_table_reservations r JOIN agent_grants g ON g.player_id=r.player_id
+   WHERE r.table_id=i.table_id AND g.engine_key<>i.creator_key AND
+     (g.engine_key=i.invitee_key OR (i.invitee_key IS NULL AND g.account_id=i.recipient_account_id))));

@@ -1136,7 +1136,7 @@ test('two MCP seats automatically publish one owner-discoverable board from invi
   const listing=await f.request(links,owner)
   assert.equal(listing.status,200)
   const {tables}=await listing.json()
-  assert.deepEqual(tables,[{tableId,tableName:'Broadcast fixture'}])
+  assert.deepEqual(tables,[{tableId,tableName:'Broadcast fixture',canConfigureSpectatorVisibility:true}])
   assert.equal((await write('/api/playtesting/invites',pilot,invite)).status,201)
   const listingPeer=await (await f.request(links,peer)).json()
   assert.deepEqual(listingPeer.tables,[])
@@ -1426,4 +1426,58 @@ test('[PM-SPECTATE-SEATS] opt-in is immutable, authorized per guest and capabili
   assert.equal(archived.status,'finished')
   assert.deepEqual(archived.hands,{})
   assert.ok(!JSON.stringify(archived).includes('Fixture Hand'))
+})
+
+test('[PM-SPECTATE-SETUP] the browser host can change both-hands sharing only before a guest reserves or claims', {skip:!databaseUrl}, async t=>{
+  const f=await fixture(t,[],undefined,async()=>null), owner=await f.login('SetupHost'), peer=await f.login('SetupPeer')
+  const post=(path,headers,data,method='POST')=>f.request(path,{...headers,'Content-Type':'application/json'},data,method)
+  const base='/api/playtesting'
+  const hp=await f.product.provisionAgent('SetupHost','SetupHostPilot',['play'])
+  const guest=await (await post(base+'/players',peer,{displayName:'Setup Guest',mcpEnabled:true})).json()
+  const gp=await authorizePilot(f,peer,'play',guest.playerId)
+  const host={Authorization:'Bearer '+hp}
+  const setup=async recipient=>{
+    const tableId=randomUUID(), req={tableId,roomId:randomUUID(),format:'Pioneer',password:'fixture-setup-only',...recipient}
+    assert.equal((await post(base+'/invites',host,req)).status,201)
+    return tableId
+  }
+  const route=id=>base+'/tables/'+id+'/spectator-link'
+  const change=(id,mode,headers=owner)=>post(route(id),headers,{spectatorVisibility:mode},'PATCH')
+  const table=await setup({guestPlayerId:guest.playerId}), links=base+'/tables/spectator-links'
+  const discover=async id=>(await (await f.request(links,owner)).json()).tables.find(row=>row.tableId===id)
+  const publicPath=(await (await f.request(route(table),owner)).json()).path
+  assert.equal((await discover(table)).canConfigureSpectatorVisibility,true)
+  assert.equal((await change(table,'both-hands',peer)).status,403)
+  assert.equal((await change(table,'both-hands',host)).status,403)
+  assert.equal((await change(table,'both-hands',{...owner,Origin:'https://unrelated.example'})).status,403)
+  assert.equal((await change(table,'unknown')).status,400)
+  const on=await change(table,'both-hands')
+  assert.equal(on.status,200)
+  assert.deepEqual(await on.json(),{tableId:table,spectatorVisibility:'both-hands'})
+  const extra=route(table)+'?visibility=both-hands'
+  const privatePath=(await (await f.request(extra,owner)).json()).path
+  const oldStream=await fetch(f.endpoint+privatePath.replace('/watch/',base+'/spectate/')+'/events',{signal:AbortSignal.timeout(5000)})
+  assert.equal(oldStream.status,200)
+  assert.equal((await change(table,'public-board')).status,200)
+  assert.equal((await f.request(privatePath.replace('/watch/',base+'/spectate/'))).status,404)
+  assert.equal((await f.request(extra,owner)).status,404)
+  assert.ok(publicPath===(await (await f.request(route(table),owner)).json()).path)
+  assert.equal((await change(table,'both-hands')).status,200)
+  const ended=await oldStream.text()
+  assert.ok(!ended.includes('"playing"') && !ended.includes('"closed"'))
+  assert.equal((await f.request(privatePath.replace('/watch/',base+'/spectate/'))).status,404)
+  const before=await (await f.request(base+'/invites/'+table,gp)).json()
+  assert.equal(before.requiresSpectatorAcceptance,true)
+  const lease=randomUUID(),reserve=(op,fields)=>post('/internal/player-reservations/'+guest.playerId,gp,{operation:op,reservationId:lease,...fields})
+  assert.equal((await reserve('reserve',{joinTableId:table})).status,200)
+  assert.equal((await discover(table)).canConfigureSpectatorVisibility,undefined)
+  assert.equal((await change(table,'public-board')).status,409)
+  assert.equal((await reserve('bind',{tableId:table})).status,200)
+  assert.equal((await post(base+'/invites/'+table+'/claim',gp,{})).status,403)
+  assert.equal((await post(base+'/invites/'+table+'/claim',gp,{acceptSpectatorVisibility:'both-hands',expectedSpectatorVisibility:'public-board'})).status,409)
+  assert.equal((await post(base+'/invites/'+table+'/claim',gp,{acceptSpectatorVisibility:'both-hands',expectedSpectatorVisibility:'both-hands'})).status,200)
+  assert.equal((await change(table,'public-board')).status,409)
+  const unassigned=await setup({guestAccountName:'SetupPeer'})
+  assert.equal((await discover(unassigned)).canConfigureSpectatorVisibility,true)
+  assert.equal((await change(unassigned,'both-hands')).status,200)
 })

@@ -103,7 +103,7 @@ await guestCall("join_game", { playerId: visitor.playerId, tableId, deckId: visi
 await hostCall("start_match", { playerId: host.playerId, tableId });
 ```
 
-MCP tables default to `spectatorVisibility:"public-board"`. For a live broadcast where someone with a second share link can see both hands and cards shown to each seat, choose `"both-hands"` at creation. Only the host can copy this extra link from the web lobby. It expires when the match ends. When the guest belongs to another account, inspect the advertised mode and join only after agreeing to share both seats' cards.
+MCP tables default to `spectatorVisibility:"public-board"`. For a live broadcast where someone with a second share link can see both hands and cards shown to each seat, choose `"both-hands"` at creation. The web host can also enable or disable this mode from the waiting table before the guest starts joining. Only the host can copy the extra link from the web lobby. It expires when the match ends. When the guest belongs to another account, inspect the advertised mode and join only after agreeing to share both seats' cards.
 
 Send this `create_game` payload with IDs from your account and the invited guest:
 

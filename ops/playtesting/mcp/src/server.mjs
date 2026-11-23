@@ -506,7 +506,7 @@ function registerTools(mcp, { contextFor, allowedOrigins }) {
       if (invitation.requiresSpectatorAcceptance && acceptSpectatorVisibility!=='both-hands') throw new ToolError('spectator_consent_required','This invitation shares both hands with its spectator. Explicitly accept this visibility to join.');
       const selectedDeck = await resolvePlayDeck(deck, deckId);
       return withTableReservation(tableId, (engine, lease) => engine.joinGame({ tableId, deck: selectedDeck }, invitation,
-        () => fromProduct('get_game_invite', { tableId, displayName, ...(acceptSpectatorVisibility && {acceptSpectatorVisibility}), model, reasoningEffort }), lease));
+        () => fromProduct('get_game_invite', { tableId, displayName, ...(invitation.mode==='friend' && {expectedSpectatorVisibility:invitation.spectatorVisibility??'public-board'}), ...(acceptSpectatorVisibility && {acceptSpectatorVisibility}), model, reasoningEffort }), lease));
     });
   tool('start_match', 'Start a ready table as its host. For the MCP Player provide tableId. For the Human Player provide humanTableId, including to finish setup of an MCP-created table with human gameplay disabled.', {
     tableId: Uuid.optional(), humanTableId: Uuid.optional(),
