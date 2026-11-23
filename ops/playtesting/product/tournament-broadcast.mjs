@@ -1,7 +1,8 @@
 import { isUuid, normalize, ProductError } from './decks.mjs'
 import { publicSpectatorBoard } from './public-spectator-board.mjs'
 import { privateSpectatorBoard } from './private-spectator-board.mjs'
-import { lineText } from './line-explanations.mjs'
+import { publicLineExplanations } from './line-explanations.mjs'
+import { tournamentReplayIndexes } from './tournament-replay-index.mjs'
 import { readSpectatorEngine } from './spectators.mjs'
 
 const missing = () => new ProductError(404, 'This tournament broadcast is unavailable')
@@ -59,44 +60,15 @@ export function createTournamentBroadcast(pool, archive, engine = readSpectatorE
 
   // Recheck the retained match before using cached frames. A retired object cannot
   // become accessible through the cache after its last retaining account expires.
-  const cache = new Map()
-  const loading = new Map()
-  async function frames(game) {
-    const key = game.id + '/' + game.checksum
-    if (cache.has(key)) return cache.get(key)
-    if (loading.has(key)) return loading.get(key)
-    if (loading.size >= 2) throw new ProductError(503, 'Replay storage is busy. Try again shortly.')
-    const pending = archive
-      .readReviewArchive(game)
-      .then((records) => {
-        const playable = []
-        const lines = []
-        const seen = new Set()
-        for (const record of records) {
-          const note = record.kind === 'line' && lineText(record)
-          if (note && isUuid(record.actorPlayerId) && typeof record.commandId === 'string' &&
-              record.commandId.length > 0 && record.commandId.length <= 120) {
-            const lineId = game.id + ':' + record.actorPlayerId + ':' + record.commandId
-            if (!seen.has(lineId)) {
-              seen.add(lineId)
-              lines.push({ lineId, playerId: record.actorPlayerId, ...note, turn: record.turn,
-                at: record.at ?? Number(game.started_at) + record.t })
-            }
-          }
-          if (record.view?.players?.length === 2) {
-            playable.push({ record, lineCount: lines.length })
-          }
-        }
-        // A terminal play may be recorded after the final board update.
-        if (playable.length) playable.at(-1).lineCount = lines.length
-        const indexed = { playable, lines }
-        if (cache.size >= 2) cache.delete(cache.keys().next().value)
-        cache.set(key, indexed)
-        return indexed
-      })
-      .finally(() => loading.delete(key))
-    loading.set(key, pending)
-    return pending
+  const indexes = tournamentReplayIndexes(archive)
+  function projectFrame(match, game, record, revision) {
+    const players = roster(record.view.players, match)
+    const hands = Object.fromEntries(players.map(p => [p.playerId,
+      record.hands?.[p.name] ?? record.hands?.[p.playerId] ?? record.review?.seatViews?.[p.playerId]?.myHand ?? {},
+    ]))
+    return privateSpectatorBoard({
+      tableId:match.table_id, gameId:game.id, status:'playing', players, view:record.view, hands, revision,
+    })
   }
 
   async function replay(id, pairId, actor, query) {
@@ -114,33 +86,18 @@ export function createTournamentBroadcast(pool, archive, engine = readSpectatorE
     const gameId = query.get('gameId')
     if (!gameId) {
       const result = []
-      for (const game of games) result.push({ gameId: game.id, frameCount: (await frames(game)).playable.length })
+      for (const game of games) {
+        const count = await indexes.read(game, (record, rev) => projectFrame(match, game, record, rev), true)
+        result.push({gameId:game.id, frameCount:count})
+      }
       return { games: result }
     }
     const game = games.find((g) => g.id === gameId)
     const value = query.get('frame') ?? '0'
     if (!game || !/^\d{1,9}$/.test(value)) throw missing()
-    const { playable, lines } = await frames(game)
-    const frame = playable[Number(value)]
-    if (!frame) throw missing()
-    const f = frame.record
-    const players = roster(f.view.players, match)
-    const hands = Object.fromEntries(
-      players.map((p) => [
-        p.playerId,
-        f.hands?.[p.name] ?? f.hands?.[p.playerId] ?? f.review?.seatViews?.[p.playerId]?.myHand ?? {},
-      ]),
-    )
-    return privateSpectatorBoard({
-      tableId: match.table_id,
-      gameId,
-      status: 'playing',
-      players,
-      view: f.view,
-      hands,
-      lines: lines.slice(Math.max(0, frame.lineCount - 100), frame.lineCount),
-      revision: Number(value),
-    })
+    const {board, lines} = await indexes.read(game, (record, rev) => projectFrame(match, game, record, rev), false, Number(value))
+    const seats = new Map(board.players.map(p => [p.playerId, p]))
+    return {...board, lines:publicLineExplanations(lines, seats, game.id)}
   }
-  return { live, replay }
+  return { live, replay, close: indexes.close }
 }

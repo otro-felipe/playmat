@@ -169,8 +169,9 @@ export async function createProduct({
   const archive = createArchive(pool, replayDirectory, store, { purgeExpiredHistory })
   const tournaments = createTournamentService(pool, {readDeck:readTournamentDeck, validateDeck:validateTournamentDeck})
   const tournamentBridge = createTournamentTableBridge(pool, tournaments)
+  const broadcast = createTournamentBroadcast(pool,archive,readSpectatorEngine)
   const tournamentRoutes = createTournamentRoutes({
-    pool, tournaments, bridge:tournamentBridge, broadcast:createTournamentBroadcast(pool,archive,readSpectatorEngine),
+    pool, tournaments, bridge:tournamentBridge, broadcast,
     resolveActor:async req=>tournamentActor(pool,await id.resolve(req)), body, send, requireScope,
   })
   const spectators = createSpectators({storage:spectatorStorage(pool, archive),readEngine:readSpectatorEngine})
@@ -637,6 +638,7 @@ export async function createProduct({
     },
     async close() {
       await tournamentRoutes.stop()
+      await broadcast.close()
       spectators.close()
       await events.stop()
       return pool.end()

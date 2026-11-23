@@ -7,7 +7,10 @@ import { createHash } from 'node:crypto'
 import { readdir, readFile, rename, stat, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { constants, gunzip, gzip } from 'node:zlib'
+import { Readable } from 'node:stream'
+import { createReadStream } from 'node:fs'
+import { buffer as collectBytes } from 'node:stream/consumers'
+import { constants, createGunzip, gunzip, gzip } from 'node:zlib'
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import { strToU8, zipSync } from 'fflate'
 import { isUuid, normalize, normalizeFormat, ProductError, transaction } from './decks.mjs'
@@ -34,20 +37,30 @@ export function s3Store({ bucket, endpoint, region, forcePathStyle = false }) {
   if (!bucket || !region) throw new Error('Replay archive bucket and region are required')
   const s3 = new S3Client({ region, endpoint, forcePathStyle })
   return {
-    async put(key, bytes, sha256) {
+    async put(key, bytes, sha256, size = bytes.length) {
       try {
         await s3.send(new PutObjectCommand({
           Bucket: bucket, Key: key, Body: bytes, ContentType: 'application/x-ndjson',
-          ContentEncoding: 'gzip', Metadata: { sha256 }, IfNoneMatch: '*',
-        }), { abortSignal: AbortSignal.timeout(20_000) })
+          ContentEncoding: 'gzip', ContentLength: size,
+          ...(!Buffer.isBuffer(bytes) && { ChecksumSHA256: Buffer.from(sha256, 'hex').toString('base64') }),
+          Metadata: { sha256 }, IfNoneMatch: '*',
+        }), { abortSignal: AbortSignal.timeout(size > compressedLimit ? 300_000 : 20_000) })
       } catch (error) {
         if (error.$metadata?.httpStatusCode !== 412) throw error
       }
     },
     async get(key) {
       const result = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }), { abortSignal: AbortSignal.timeout(20_000) })
-      if (!result.Body || !(result.ContentLength <= compressedLimit)) throw new Error('Replay object is unavailable')
+      if (!result.Body || !(result.ContentLength <= compressedLimit)) {
+        result.Body?.destroy()
+        throw new ProductError(503, 'Replay object is unavailable for bulk reading')
+      }
       return Buffer.from(await result.Body.transformToByteArray())
+    },
+    async open(key) {
+      const result = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }), { abortSignal: AbortSignal.timeout(300_000) })
+      if (!result.Body) throw new ProductError(503, 'Replay object is unavailable')
+      return result.Body
     },
     async delete(key) {
       await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }), { abortSignal: AbortSignal.timeout(5000) })
@@ -57,7 +70,8 @@ export function s3Store({ bucket, endpoint, region, forcePathStyle = false }) {
 
 function fromLocal(store) {
   return store instanceof Map ? {
-    put: async (key, body) => store.set(key, body), get: async key => store.get(key), delete: async key => store.delete(key),
+    put: async (key, body) => store.set(key, Buffer.isBuffer(body) ? body : await collectBytes(body)),
+    get: async key => store.get(key), delete: async key => store.delete(key),
   } : store
 }
 
@@ -184,6 +198,58 @@ async function rawEvents(store, game) {
   if (!body || body.length > compressedLimit || digest(body) !== game.checksum) throw new ProductError(503, 'Replay cannot be verified')
   const plain = await unzip(body, { maxOutputLength: decompressedLimit })
   return plain.toString('utf8').split('\n').filter(Boolean).map(line => JSON.parse(line))
+}
+
+async function openReplay(store, key) {
+  if (store.open) return store.open(key)
+  const bytes = await store.get(key)
+  if (!bytes) throw new ProductError(503, 'Replay object is unavailable')
+  return Readable.from([bytes])
+}
+
+async function sha256Stream(stream) {
+  const hash = createHash('sha256')
+  for await (const chunk of stream) hash.update(chunk)
+  return hash.digest('hex')
+}
+
+// Keep the per-record guard while allowing any number of recorded turns in an archive.
+// Verify the compressed checksum before the caller publishes the completed index.
+async function* streamTournamentRecords(store, game) {
+  if (!game.object_key) throw new ProductError(409, 'Replay is still being archived')
+  const input = await openReplay(store, game.object_key)
+  const hash = createHash('sha256')
+  async function* verifiedChunks() {
+    for await (const chunk of input) {
+      hash.update(chunk)
+      yield chunk
+    }
+    if (hash.digest('hex') !== game.checksum) throw new ProductError(503, 'Replay cannot be verified')
+  }
+  const inflated = Readable.from(verifiedChunks()).compose(createGunzip({ chunkSize: 128 * 1024 }))
+  let parts = [], size = 0
+  try {
+    for await (const chunk of inflated) {
+      let start = 0
+      while (start < chunk.length) {
+        const newline = chunk.indexOf(10, start)
+        const end = newline < 0 ? chunk.length : newline
+        const piece = chunk.subarray(start, end)
+        size += piece.length
+        if (size > decompressedLimit) throw new ProductError(503, 'Replay record is too large')
+        if (piece.length) parts.push(piece)
+        if (newline < 0) break
+        if (size) yield JSON.parse(Buffer.concat(parts, size).toString('utf8'))
+        parts = []
+        size = 0
+        start = newline + 1
+      }
+    }
+    if (size) yield JSON.parse(Buffer.concat(parts, size).toString('utf8'))
+  } finally {
+    inflated.destroy()
+    input.destroy()
+  }
 }
 
 async function projectedEvents(store, game, viewer, includeCursor = false) {
@@ -314,11 +380,14 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
           await removeStaging(join(stage, file), eventPath)
           continue
         }
-        if ((await stat(eventPath)).size > compressedLimit) {
-          await pool.query('UPDATE games SET archive_state=\'partial\', truncated=TRUE WHERE id=$1', [id])
+        const size = (await stat(eventPath)).size
+        if (interrupted && size > compressedLimit) {
+          await pool.query("UPDATE games SET archive_state='partial', truncated=TRUE WHERE id=$1", [id])
           continue
         }
-        let bytes = await readFile(eventPath)
+        // Completed archives can be much larger than an interactive bulk download.
+        // Hash, upload and verify large spools sequentially without loading them into memory.
+        let bytes = size <= compressedLimit ? await readFile(eventPath) : null
         if (interrupted) {
           bytes = await recoverInterrupted(bytes)
           if (!bytes) {
@@ -326,11 +395,16 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
             continue
           }
         }
-        const hash = digest(bytes)
+        const hash = bytes ? digest(bytes) : await sha256Stream(createReadStream(eventPath))
         const key = ['replays', 'v1', id, hash + '.ndjson.gz'].join('/')
-        await store.put(key, bytes, hash)
-        const uploaded = await store.get(key)
-        if (!uploaded || digest(uploaded) !== hash) throw new Error('Archive verification failed')
+        const upload = bytes ?? createReadStream(eventPath)
+        try {
+          await store.put(key, upload, hash, bytes?.length ?? size)
+        } finally {
+          if (!bytes) upload.destroy()
+        }
+        const uploadedHash = await sha256Stream(await openReplay(store, key))
+        if (uploadedHash !== hash) throw new Error('Archive verification failed')
         await pool.query('UPDATE games SET archive_state=$2, checksum=$3, object_key=$4 WHERE id=$1 AND checksum IS NULL', [
           id, info.truncated || status !== 'completed' ? 'partial' : 'ready', hash, key,
         ])
@@ -524,5 +598,5 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
   }
 
   return { archiveGames, matchList, replayPage, evaluation, exportReplays, authorizeExport, statistics, performance,
-    reviewGame, reviewGames, reviewOwnDeckPair, readReviewArchive: game => rawEvents(store, game) }
+    reviewGame, reviewGames, reviewOwnDeckPair, streamTournamentRecords: game => streamTournamentRecords(store, game), readReviewArchive: game => rawEvents(store, game) }
 }

@@ -4,7 +4,10 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { gzipSync } from 'node:zlib'
+import { createGzip, gzipSync } from 'node:zlib'
+import { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
+import { createWriteStream } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 
 const databaseUrl = process.env.PLAYMAT_TEST_DATABASE_URL
@@ -812,6 +815,28 @@ async function historyMatch(f, names, time, { active = false, gameCount = 1 } = 
   if (!active) await writeFile(join(f.replayDirectory, id + '.match.json'), JSON.stringify({ matchId: id, endedAt: time }))
   return { id, games }
 }
+
+test('completed tournament-sized captures larger than 24 MiB are archived and verified before spool cleanup', {skip:!databaseUrl}, async t => {
+  const objects = new Map()
+  const f = await fixture(t, objects)
+  const match = randomUUID(), game = randomUUID()
+  await addReplay(f, match, game, ['Pilot A','Pilot B'])
+  const line = JSON.stringify({view:{players:[{name:'Pilot A'},{name:'Pilot B'}]}, extra:'x'.repeat(32*1024)}) + '\n'
+  // Stored gzip blocks reproduce the compressed-object limit with deterministic input.
+  const bytes = gzipSync(line.repeat(780), {level:0})
+  assert.ok(bytes.length > 24*1024*1024)
+  await writeFile(join(f.replayDirectory, game + '.ndjson.gz'), bytes)
+  await f.product.archiveGames()
+  assert.equal(objects.size,1)
+  assert.deepEqual([...objects.values()][0],bytes)
+  await assert.rejects(readFile(join(f.replayDirectory,game+'.ndjson.gz')), {code:'ENOENT'})
+  await withTestDatabase(f, async db => {
+    const {rows:[row]} = await db.query('SELECT archive_state,checksum,truncated FROM games WHERE id=$1',[game])
+    assert.equal(row.archive_state,'ready')
+    assert.equal(row.truncated,false)
+    assert.match(row.checksum,/^[0-9a-f]{64}$/)
+  })
+})
 
 test('[PM-AC-21] history retains twenty completed matches per account across its seats and blocks old direct reads', { skip: !databaseUrl }, async t => {
   const objects = new Map()
@@ -2459,7 +2484,15 @@ test('tournament board, administrative hands and completed replay share a pairin
   const privateBoard=await (await f.path(base+'/watch?hands=1',{headers:humans[0]})).json()
   assert.equal(privateBoard.hands[seats[0].playerId][cardId].name,'Forest')
   assert.equal((await f.path(base+'/replay')).status,404)
-  await addReplay(f,tableId,gameId,seats.map(p=>p.name),[{t:100,view:frame.view,hands:{ReplayOwner:hand}}])
+  await addReplay(f,tableId,gameId,seats.map(p=>p.name))
+  // The anonymous HTTP route must also work for archives above the private bulk-reader limit.
+  const note = {kind:'line',actorPlayerId:seats[0].playerId,commandId:'terminal',at:110,audience:'public',explanation:'Final decision.'}
+  async function* capture() {
+    const earlier = JSON.stringify({t:99, review:{ignored:'x'.repeat(256 * 1024)}}) + '\n'
+    for (let i=0; i<390; i++) yield earlier
+    yield JSON.stringify({t:100,view:frame.view,hands:{ReplayOwner:hand}}) + '\n' + JSON.stringify(note)
+  }
+  await pipeline(Readable.from(capture()), createGzip({level:1}), createWriteStream(join(f.replayDirectory,gameId+'.ndjson.gz')))
   await writeFile(join(f.replayDirectory,tableId+'.match.json'),JSON.stringify({matchId:tableId,endedAt:Date.now()}))
   await f.product.archiveGames()
   const betweenGames=await (await f.path(uri,{headers:humans[0]})).json()
@@ -2469,6 +2502,7 @@ test('tournament board, administrative hands and completed replay share a pairin
   assert.deepEqual(replay.games,[{gameId,frameCount:1}])
   const projected=await(await f.path(base+'/replay?gameId='+gameId+'&frame=0')).json()
   assert.equal(projected.hands[seats[0].playerId][cardId].name,'Forest')
+  assert.deepEqual(projected.lines.map(line=>line.explanation),[note.explanation])
   // A second recovery leaves the archived game on an intermediate physical table.
   await withTestDatabase(f,db=>db.query('UPDATE tournament_pairings SET table_id=$1 WHERE id=$2',[randomUUID(),pairing]))
   assert.deepEqual((await (await f.path(base+'/replay')).json()).games,replay.games)

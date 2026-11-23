@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { createTournamentBroadcast } from './tournament-broadcast.mjs'
 
-test('replay shows only published decisions up to the selected frame, attributed to the player', async () => {
+test('replay shows only published decisions up to the selected frame, attributed to the player', async t => {
   const [event, pair, table, game, a, b] = Array.from({ length: 6 }, () => randomUUID())
   const view = { players: [{ name: 'a', playerId: a }, { name: 'b', playerId: b }] }
   const marker = { kind: 'line', actorPlayerId: a, commandId: 'first', at: 11, turn: 2,
@@ -16,7 +16,8 @@ test('replay shows only published decisions up to the selected frame, attributed
   const pool = { async query(sql) {
     return { rows: sql.includes('JOIN tournament_entries') ? [row] : [{ id: game, checksum: 'v1' }] }
   } }
-  const broadcast = createTournamentBroadcast(pool, { async readReviewArchive() { return records } })
+  const broadcast = createTournamentBroadcast(pool, { streamTournamentRecords() { return records } })
+  t.after(() => broadcast.close())
   async function notes(frame) {
     const result = await broadcast.replay(event, pair, null, new URLSearchParams({ gameId: game, frame }))
     return result.lines.map(note => [note.playerId, note.explanation])
