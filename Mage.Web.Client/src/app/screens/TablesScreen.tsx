@@ -46,17 +46,6 @@ const FREEFORM = 'Constructed - Freeform';
 const PRIVATE_FORMATS = ['Constructed - Standard', 'Constructed - Pioneer', 'Constructed - Modern'];
 type HostOpponent = 'friend' | 'mcp' | 'ai';
 
-const STATE_LABEL: Record<string, string> = {
-  WAITING: 'Waiting for players',
-  READY_TO_START: 'Ready to start',
-  STARTING: 'Starting',
-  DRAFTING: 'Drafting',
-  CONSTRUCTING: 'Building decks',
-  DUELING: 'Playing',
-  SIDEBOARDING: 'Sideboarding',
-  FINISHED: 'Finished',
-};
-
 /** Every table on the server: join one with your selected deck, watch a game, or host your own. */
 export function TablesScreen() {
   const location = useLocation();
@@ -122,7 +111,7 @@ export function TablesScreen() {
 
   return (
     <div className={styles.page}>
-      {PRIVATE_PLAYTESTING && <p><Link to="/recover">Return to your saved private matches</Link></p>}
+      {PRIVATE_PLAYTESTING && <p><Link to="/recover">{t('tableLobby.recover')}</Link></p>}
       {!!broadcasts.data?.length && <section className={styles.group}>
         <h2 className={styles.groupLabel}>{t('watch.myMcpTables')}</h2>
         {broadcasts.data.map(table => <article key={table.tableId} className={`${styles.row} ${styles.broadcastRow}`}>
@@ -132,45 +121,45 @@ export function TablesScreen() {
       </section>}
       <div className={styles.columns}>
         <Zone
-          label="Open tables"
-          aside={<Button size="sm" variant="print" icon={<Plus size={16} />} onClick={() => setHostOpen(true)}>Host a table</Button>}
+          label={t('tableLobby.openTables')}
+          aside={<Button size="sm" variant="print" icon={<Plus size={16} />} onClick={() => setHostOpen(true)}>{t('hostTable.title')}</Button>}
           className={styles.list}
         >
           {mine.length > 0 && (
             <div className={styles.group}>
-              <h3 className={styles.groupLabel}>Your tables</h3>
+              <h3 className={styles.groupLabel}>{t('tableLobby.yourTables')}</h3>
               {mine.map((table) => (
                 <MyTable key={table.tableId} table={table} />
               ))}
             </div>
           )}
           <div className={styles.group}>
-            {open.length === 0 && !isLoading && (
-              <p className={styles.empty}>No one is waiting right now. Host a table and invite a friend, or play the AI from Home.</p>
+            {open.length === 0 && !mine.length && !isLoading && (
+              <p className={styles.empty}>{t('tableLobby.empty')}</p>
             )}
             {open.map((table) => (
               <TableRow key={table.tableId} table={table}>
                 <Button size="sm" busy={busyTable === table.tableId} disabled={!selectedDeck} onClick={() => void join(table)}>
-                  Join
+                  {t('tableLobby.join')}
                 </Button>
               </TableRow>
             ))}
           </div>
         </Zone>
 
-        <Zone label="Games in progress" className={styles.list}>
-          {running.length === 0 && <p className={styles.empty}>No games are being played.</p>}
+        <Zone label={t('tableLobby.games')} className={styles.list}>
+          {running.length === 0 && <p className={styles.empty}>{t('tableLobby.noGames')}</p>}
           {running.map((table) => (
             <TableRow key={table.tableId} table={table}>
               {table.spectatorsAllowed && (
-                <Button size="sm" variant="quiet" icon={<Eye size={16} />} onClick={() => void watch(table)}>Watch</Button>
+                <Button size="sm" variant="quiet" icon={<Eye size={16} />} onClick={() => void watch(table)}>{t('tableLobby.watch')}</Button>
               )}
             </TableRow>
           ))}
         </Zone>
       </div>
       <p className={styles.deckNote}>
-        Joining with <strong>{selectedDeck?.name ?? 'no deck'}</strong>. Change it on the Play screen.
+        {t('tableLobby.joiningWith')} <strong>{selectedDeck?.name ?? t('tableLobby.noDeck')}</strong>. {t('tableLobby.changeDeck')}
       </p>
       <Dialog
         open={!!locked}
@@ -222,31 +211,33 @@ function TableRow({ table, mcpInvite, children }: {
   mcpInvite?: PlaytestingInvitationView;
   children?: React.ReactNode;
 }) {
+  const t = useT();
   const enabledHuman = useEnabledHumanSeat(table.tableId);
   const mcpSeated = !!mcpInvite?.guestEngineName && table.seats?.some((seat) => seat.playerName === mcpInvite.guestEngineName);
-  const seatStatus = mcpInvite && table.tableState === 'WAITING' ? 'Waiting for Rival MCP'
-    : mcpSeated && table.tableState === 'READY_TO_START' ? 'Rival MCP ready'
-      : STATE_LABEL[table.tableState ?? ''] ?? table.tableStateText;
+  const seatStatus = mcpInvite && table.tableState === 'WAITING' ? t('mcpInvite.waitingOpponent')
+    : mcpSeated && table.tableState === 'READY_TO_START' ? t('mcpInvite.readyOpponent')
+      : table.tableState && ['WAITING','READY_TO_START','STARTING','DRAFTING','CONSTRUCTING','DUELING','SIDEBOARDING','FINISHED'].includes(table.tableState)
+        ? t(`tableLobby.state.${table.tableState}`) : table.tableStateText;
   return (
     <MatchHumanSeat.Provider value={enabledHuman}><article className={styles.row}>
       <div className={styles.rowMain}>
         <h3 className={styles.tableName}>
-          {table.passworded && <Lock size={14} aria-label="Password required" />}
+          {table.passworded && <Lock size={14} aria-label={t('tableLobby.passwordRequired')} />}
           {table.tableName}
         </h3>
         <p className={styles.tableMeta}>
-          {table.gameType} · {(table.deckType ?? '').replace(/^Constructed - /, '')} · {(mcpInvite ? (table.controllerName ?? '').split(', ').slice(0, 1) : (table.controllerName ?? '').split(', ')).map((name, index) => (
+          {table.gameType === 'Two Player Duel' ? t('tableLobby.duel') : table.gameType} · {(table.deckType ?? '').replace(/^Constructed - /, '')} · {(mcpInvite ? (table.controllerName ?? '').split(', ').slice(0, 1) : (table.controllerName ?? '').split(', ')).map((name, index) => (
             <span key={index}>{index > 0 && ', '}<PlayerLabel name={name} /></span>
           ))}
         </p>
       </div>
-      <ul className={styles.seats} aria-label="Seats">
+      <ul className={styles.seats} aria-label={t('tableLobby.seats')}>
         {(table.seats ?? []).map((seat, index) => {
           const mcpSeat = mcpInvite && (!seat.playerName || seat.playerName === mcpInvite.guestEngineName);
           const owner = mcpSeat ? invitedPlayerLabel(mcpInvite) : undefined;
-          const label = seat.playerName ? playerLabelText(seat.playerName, owner, mcpSeat || undefined) : (mcpSeat ? 'Rival MCP' : 'Open');
+          const label = seat.playerName ? playerLabelText(seat.playerName, owner, mcpSeat || undefined) : (mcpSeat ? 'Rival MCP' : t('tableLobby.openSeat'));
           return (
-            <li key={index} className={seat.playerName ? styles.seatTaken : styles.seatOpen} title={seat.playerName ? label : 'Open seat'}>
+            <li key={index} className={seat.playerName ? styles.seatTaken : styles.seatOpen} title={seat.playerName ? label : t('tableLobby.openSeat')}>
               {mcpSeat || /^mcp_/i.test(seat.playerName ?? '') || (seat.playerType && seat.playerType !== 'HUMAN') ? <Bot size={14} aria-hidden="true" /> : <UserRound size={14} aria-hidden="true" />}
               <span className={styles.seatName}>{seat.playerName
                 ? <PlayerLabel name={seat.playerName} displayName={owner} isMcp={mcpSeat || undefined} /> : label}</span>
@@ -273,47 +264,70 @@ function MyTable({ table }: { table: TableView }) {
   const inputLock = useHumanInputLock(table.tableId);
   const { data: invitation } = usePlaytestingInvitation(table.tableId, table.tableState);
   const mcpInvite = invitation?.mode === 'mcp' ? invitation : undefined;
-  async function copyInvite(idOnly = false) {
-    if (!table.tableId) return;
-    const link = idOnly ? table.tableId : inviteLink(PRIVATE_PLAYTESTING ? window.location.origin : PUBLIC_ORIGIN, table.tableId);
+  const externalInvite = isOwner && mcpInvite?.allowExternalMcp === true;
+  const [sharing, setSharing] = useState(false);
+
+  async function externalInvitePath(id: string) {
+    const response = await fetch('/api/playtesting/invites/' + encodeURIComponent(id) + '/share-link', {cache:'no-store'});
+    if (!response.ok) throw new Error('Invitation unavailable');
+    const {path} = await response.json();
+    const prefix = '/join/mcp/' + id + '#invite=';
+    if (typeof path !== 'string' || !path.startsWith(prefix) || !/^[A-Za-z0-9_-]{43}$/.test(path.slice(prefix.length))) {
+      throw new Error('Invalid invitation');
+    }
+    return path;
+  }
+
+  async function shareInvite(action: 'copy' | 'id' | 'guide') {
+    const id = table.tableId;
+    if (!id || sharing) return;
+    if (externalInvite && action !== 'id') setSharing(true);
     try {
-      await navigator.clipboard.writeText(link);
-      if (idOnly) {
-        notify(t('mcpInvite.idCopied'), table.tableId);
+      if (action === 'guide') {
+        navigate(externalInvite ? await externalInvitePath(id) : '/join/' + id);
         return;
       }
-      notify('Invite link copied', mcpInvite ? 'Share the private link with the invited agent.'
-        : invitation?.unlisted ? t('tableInvite.shareUnlisted')
+      const address = action === 'id' ? id : externalInvite
+        ? new URL(await externalInvitePath(id), window.location.origin).href
+        : inviteLink(PRIVATE_PLAYTESTING ? window.location.origin : PUBLIC_ORIGIN, id);
+      await navigator.clipboard.writeText(address);
+      if (action === 'id') notify(t('mcpInvite.idCopied'), id);
+      else notify(t('mcpInvite.linkCopied'), externalInvite ? t('mcpInvite.externalRecipient')
+        : mcpInvite ? t('mcpInvite.agentRecipient') : invitation?.unlisted ? t('tableInvite.shareUnlisted')
           : !PRIVATE_PLAYTESTING && table.passworded ? 'Send it to a friend, with the table password.' : 'Send it to the invited player.');
     } catch {
-      notify(idOnly ? t('mcpInvite.copyId') : 'Invite link', link);
+      notify(t('mcpInvite.shareFailed'), t('mcpInvite.shareRetry'), 'error');
+    } finally {
+      setSharing(false);
     }
   }
   return (
     <>
       <TableRow table={table} mcpInvite={mcpInvite}>
         {PRIVATE_PLAYTESTING && isOwner && table.tableId && <SpectatorLink tableId={table.tableId} />}
-        {table.tableState === 'WAITING' && (
-          <Button size="sm" variant="quiet" icon={<Link2 size={16} />} onClick={() => void copyInvite()}>{mcpInvite ? t('mcpInvite.copyLink') : 'Invite'}</Button>
+        {table.tableState === 'WAITING' && (!mcpInvite?.allowExternalMcp || isOwner) && (
+          <Button size="sm" variant="quiet" disabled={sharing} icon={<Link2 size={16} />} onClick={() => void shareInvite('copy')}>
+            {externalInvite ? t('mcpInvite.copyExternal') : mcpInvite ? t('mcpInvite.copyLink') : 'Invite'}
+          </Button>
         )}
         {isOwner && mcpInvite && table.tableId && (table.tableState === 'WAITING' || ready) && (
           <>
-            <Button size="sm" variant="quiet" onClick={() => void copyInvite(true)}>{t('mcpInvite.copyId')}</Button>
-            <IconButton label={t('mcpInvite.guide')} icon={<BookOpen size={16} />} onClick={() => navigate(`/join/${table.tableId}`)} />
+            <Button size="sm" variant="quiet" disabled={sharing} onClick={() => void shareInvite('id')}>{t('mcpInvite.copyId')}</Button>
+            <IconButton label={t('mcpInvite.guide')} icon={<BookOpen size={16} />} disabled={sharing} onClick={() => void shareInvite('guide')} />
           </>
         )}
-        <IconButton label={chatOpen ? 'Hide table chat' : 'Table chat'} icon={<MessageSquare size={16} />} pressed={chatOpen} onClick={() => setChatOpen(!chatOpen)} />
+        <IconButton label={chatOpen ? t('tableLobby.hideChat') : t('spectate.tableChat')} icon={<MessageSquare size={16} />} pressed={chatOpen} onClick={() => setChatOpen(!chatOpen)} />
         {inputLock && <span role="status">{t(`match.input.${inputLock}`)}</span>}
         {isOwner && (table.tableState === 'WAITING' || ready) && (
-          <>
-            {!inputLock && <Button size="sm" variant="quiet" onClick={() => roomId && table.tableId && void api.tableRemove(roomId, table.tableId).finally(refreshTables)}>Close</Button>}
+          <div className={styles.matchActions}>
+            {!inputLock && <Button size="sm" variant="quiet" onClick={() => roomId && table.tableId && void api.tableRemove(roomId, table.tableId).finally(refreshTables)}>{t('mcpInvite.closeTable')}</Button>}
             <Button size="sm" variant={ready ? 'decision' : 'print'} disabled={!ready} onClick={() => roomId && table.tableId && void api.matchStart(roomId, table.tableId)}>
-              Start
+              {t('mcpInvite.startTable')}
             </Button>
-          </>
+          </div>
         )}
         {!inputLock && !isOwner && table.tableState === 'WAITING' && (
-          <Button size="sm" variant="quiet" onClick={() => roomId && table.tableId && void api.roomLeaveTableOrTournament(roomId, table.tableId).finally(refreshTables)}>Leave</Button>
+          <Button size="sm" variant="quiet" onClick={() => roomId && table.tableId && void api.roomLeaveTableOrTournament(roomId, table.tableId).finally(refreshTables)}>{t('tableLobby.leave')}</Button>
         )}
       </TableRow>
       {chatOpen && table.tableId && <TableChat tableId={table.tableId} readOnly={!!inputLock} />}

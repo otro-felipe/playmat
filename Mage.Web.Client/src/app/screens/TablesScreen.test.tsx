@@ -224,6 +224,40 @@ test('[PM-AC-04] the play entry shows the connection guide and remembers the hos
   expect(await reset.findByRole('dialog', { name: 'Connect to Thoughtseize MCP' })).toBeTruthy();
 });
 
+test('[PM-TABLE-ROW] a waiting owner sees their table instead of an empty lobby message', async () => {
+  tables = [];
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({tables:[]})));
+  const {page,update} = mount();
+  expect(page.getByText(/No one is waiting right now/)).toBeTruthy();
+  tables = [{tableId,tableName:'Mesa del valle',controllerName:'Host',tableState:'WAITING',seats:[{playerName:'Host'},{}]}];
+  update();
+  expect(page.getByRole('heading',{name:'Mesa del valle'})).toBeTruthy();
+  expect(page.queryByText(/No one is waiting right now/)).toBeNull();
+});
+
+test('[PM-TABLE-ROW] external invitation is retrieved on demand without exposing it in copy feedback', async () => {
+  tables = [{ tableId, tableName:'External fixture', controllerName:'Host', tableState:'WAITING', seats:[{playerName:'Host'},{}] }];
+  const path = '/join/mcp/' + tableId + '#invite=' + 'x'.repeat(43);
+  let reads = 0;
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url.endsWith('/share-link')) { reads++; return Response.json({path}); }
+    return Response.json({ tableId, mode:'mcp', allowExternalMcp:true });
+  }));
+  const copy = vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValueOnce(new Error('clipboard disabled')).mockResolvedValue(undefined);
+  const {page} = mount();
+  const button = await page.findByRole('button', {name:'Copy external MCP invitation'});
+  expect(reads).toBe(0);
+  fireEvent.click(button);
+  await waitFor(() => expect(copy).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(calls.notify).toHaveBeenCalled());
+  expect(JSON.stringify(calls.notify.mock.calls).includes(path)).toBe(false);
+  expect(document.body.textContent?.includes(path)).toBe(false);
+  fireEvent.click(button);
+  await waitFor(() => expect(copy).toHaveBeenCalledTimes(2));
+  expect(copy.mock.calls.every(([value]) => value === window.location.origin + path)).toBe(true);
+  expect(reads).toBe(2);
+});
+
 test.each([[undefined, 'Felipe'], [tableId, 'Angels']] as const)('[PM-AC-04] the seated MCP label for %s is %s and Start follows the engine state', async (guestPlayerId, expected) => {
   tables = [{ tableId, tableName: 'Pioneer fixture', controllerName: 'Host', tableState: 'WAITING', seats: [{ playerName: 'Host', playerType: 'HUMAN' }, {}] }];
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({ tableId, mode: 'mcp', guestEngineName: 'FixtureAgent', guestDisplayName: 'Angels', guestOwnerName: 'Felipe', guestPlayerId })));

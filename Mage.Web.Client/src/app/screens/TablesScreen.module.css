@@ -42,16 +42,19 @@
 /* a table: a strip printed on the mat */
 .row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) fit-content(42%);
+  grid-template-areas: "details state" "seats seats" "actions actions";
   align-items: center;
-  gap: var(--space-4);
-  padding: 10px 14px;
+  gap: 8px var(--space-4);
+  padding: 12px 14px;
   border-radius: 10px;
   background: rgb(var(--ink-rgb) / 0.035);
   box-shadow: inset 0 0 0 1px var(--ink-ghost);
 }
 
 .rowMain {
+  grid-area: details;
   min-width: 0;
 }
 
@@ -61,21 +64,23 @@
   gap: 6px;
   font-size: var(--text-lg);
   text-transform: uppercase;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+}
+
+.tableName > svg {
+  flex: 0 0 auto;
 }
 
 .tableMeta {
   font-size: var(--text-sm);
   color: var(--ink-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 
 .seats {
+  grid-area: seats;
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   margin: 0;
   padding: 0;
@@ -118,9 +123,12 @@
 }
 
 .state {
+  grid-area: state;
+  justify-self: end;
+  text-align: end;
   font-size: var(--text-sm);
   color: var(--ink-soft);
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .mcpReady {
@@ -130,10 +138,28 @@
 }
 
 .rowActions {
+  grid-area: actions;
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
-  justify-content: flex-end;
-  min-width: 80px;
+  min-width: 0;
+}
+
+.matchActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-inline-start: auto;
+}
+
+.rowActions > * {
+  max-width: 100%;
+}
+
+.rowActions:not(:empty) {
+  border-top: 1px solid var(--ink-ghost);
+  padding-top: 8px;
 }
 
 .deckNote {
@@ -189,7 +215,7 @@
 
 @media (max-width: 1200px) {
   .columns {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -209,5 +235,5 @@
   box-shadow: inset 0 0 0 1px var(--ink-ghost);
 }
 
-.broadcastRow { grid-template-columns: minmax(0, 1fr); justify-items: start; gap: 6px; }
+.broadcastRow { grid-template-areas: none; grid-template-columns: minmax(0, 1fr); justify-items: start; gap: 6px; }
 .broadcastRow > * { max-width: 100%; }
