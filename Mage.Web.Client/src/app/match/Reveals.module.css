@@ -15,6 +15,23 @@
   animation: print-in var(--dur-place) var(--ease-place) both;
 }
 
+.named {
+  width: 400px;
+}
+
+.copy {
+  display: grid;
+  min-width: 0;
+}
+
+.source {
+  overflow: hidden;
+  color: var(--ink-dim);
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .theirs {
   top: 480px;
 }

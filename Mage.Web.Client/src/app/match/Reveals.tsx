@@ -73,16 +73,18 @@ function Strip({ side, groups, seen, autoDismiss, onOpen, onDismiss }: {
   }, [autoDismiss, held]);
   const fresh = groups.some((group) => !seen.has(group.key));
   const label = revealLabel(newest);
+  const soleCard = newest.kind === 'revealed' && newest.cards.length === 1 ? newest.cards[0] : undefined;
+  const cardName = soleCard?.displayName || soleCard?.name;
   const thumbs = newest.cards.slice(0, 3);
   return (
     <div
-      className={[styles.strip, side === 'mine' ? styles.mine : styles.theirs, fresh ? styles.fresh : ''].join(' ')}
+      className={[styles.strip, cardName ? styles.named : '', side === 'mine' ? styles.mine : styles.theirs, fresh ? styles.fresh : ''].join(' ')}
       onPointerEnter={() => setHeld(true)}
       onPointerLeave={() => setHeld(false)}
       onFocus={() => setHeld(true)}
       onBlur={() => setHeld(false)}
     >
-      <button type="button" className={styles.open} onClick={() => onOpen([newest])} aria-label={`${label}, ${newest.cards.length} ${newest.cards.length === 1 ? 'card' : 'cards'}${fresh ? ', new' : ''}`}>
+      <button type="button" className={styles.open} onClick={() => onOpen([newest])} aria-label={`${cardName ? cardName + ', ' : ''}${label}, ${newest.cards.length} ${newest.cards.length === 1 ? 'card' : 'cards'}${fresh ? ', new' : ''}`}>
         <span className={styles.thumbs} aria-hidden="true">
           {thumbs.map((card, index) => (
             <span key={card.id ?? index} className={styles.thumb} style={{ ['--i' as string]: index }}>
@@ -90,7 +92,10 @@ function Strip({ side, groups, seen, autoDismiss, onOpen, onDismiss }: {
             </span>
           ))}
         </span>
-        <span className={styles.label}>{label}</span>
+        <span className={styles.copy}>
+          {cardName && <strong className={styles.label}>{cardName}</strong>}
+          <span className={cardName ? styles.source : styles.label}>{label}</span>
+        </span>
         {fresh && <span className={styles.new} aria-hidden="true">New</span>}
       </button>
       {groups.length > 1 && (
