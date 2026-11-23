@@ -30,6 +30,13 @@ export async function verifyPlayerIdentities({ base, issuer, Cookie, authorizePi
   }
   const as = (index, name, args = {}, expected) => call(name,{ ...args,playerId:pilots[index].playerId },expected)
 
+  if (process.env.PLAYMAT_SEQUENCE_SCENARIOS === 'rival-invitations') {
+    const { verifyRivalInvitations } = await import('./rival-invitations.local.mjs')
+    const peer = await connect('other-owner', await authorizePilot(undefined, peerCookie))
+    await verifyRivalInvitations({ base, issuer, Cookie, browser, call, pilots, peer, foreign })
+    return
+  }
+
   // Abandon a waiting table before taking another reservation for the same profile.
   const first = pilots[0]
   const abandoned = await as(0,'create_game',{name:'Unclaimed fixture',format:'Pioneer',

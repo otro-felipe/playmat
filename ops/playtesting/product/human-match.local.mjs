@@ -297,7 +297,7 @@ async function verifyHumanSideboard() {
 
 try {
   if (process.env.PLAYMAT_SEQUENCE_SCENARIOS === 'human-sideboarding') await verifyHumanSideboard()
-  else if (['player-identities','spectator-visibility'].includes(process.env.PLAYMAT_SEQUENCE_SCENARIOS)) {
+  else if (['player-identities','spectator-visibility','rival-invitations'].includes(process.env.PLAYMAT_SEQUENCE_SCENARIOS)) {
     const { verifyPlayerIdentities } = await import('./player-identities.local.mjs')
     async function foreignCookie() {
       const other = humanName+'Other'
