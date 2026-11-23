@@ -137,7 +137,8 @@ const BUDGET_KB = {
   // measure 879.6 KiB (2026-11-21), including all lazy screens.
   // Public board, two-hand broadcast, copy link and shared commentary: private app 884.95 KiB.
   // Owner controls for spectator consent, full chat and line explanations bring the private app to 889.5 KiB.
-  app: 891,
+  // The external MCP invitation page and localized table controls add to the lazy-loaded screens.
+  app: 896,
 };
 
 const dist = new URL('../dist/', import.meta.url).pathname;
