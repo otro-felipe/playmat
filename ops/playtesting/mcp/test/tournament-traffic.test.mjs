@@ -241,14 +241,12 @@ test(
     const streams = [],
       ops = []
     try {
+      // Undici cancels an unconsumed body when its Response is garbage-collected.
+      // Keep each spectator response until the test explicitly disconnects it.
       for (let i = 0; i < 24; i++) {
-        const abort = new AbortController()
-        streams.push(abort)
-        assert.equal(
-          (await request(url, { token: 'reader' + Math.floor(i / 8), method: 'GET', signal: abort.signal }))
-            .status,
-          200,
-        )
+        const response = await request(url, { token: 'reader' + Math.floor(i / 8), method: 'GET' })
+        streams.push(response)
+        assert.equal(response.status, 200)
       }
       await limited(await request(url, { token: 'another-reader', method: 'GET' }), 'stream-concurrency')
       assert.equal((await request(url, { token: 'organizer' })).status, 200)
@@ -271,13 +269,12 @@ test(
         ])
       }
       await limited(await request(url, { token: 'organizer' }), 'global-concurrency')
-      streams.pop().abort()
+      await streams.pop().body.cancel()
       await streamClosed.promise
       assert.equal((await request(url, { token: 'organizer' })).status, 200)
     } finally {
       finish.resolve()
-      for (const stream of streams) stream.abort()
-      await Promise.allSettled(ops)
+      await Promise.allSettled([...streams.map(stream => stream.body.cancel()), ...ops])
     }
     assert.ok((await Promise.all(ops)).every((res) => res.status === 200))
   },
