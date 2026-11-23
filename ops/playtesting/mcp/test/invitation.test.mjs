@@ -64,6 +64,14 @@ test('[PM-AC-08] join_game uses a private Playmat link, validates before claim, 
   assert.deepEqual(JSON.parse(byId.content[0].text), { state: 'seated' });
   assert.equal((await join({ tableId, deckId })).isError, true);
   assert.equal(claimed.length, 2);
+  Object.assign(access, {spectatorVisibility:'both-hands',requiresSpectatorAcceptance:true});
+  const closed = await client.callTool({name:'join_game',arguments:{tableId,deckId,displayName:'Angels'}});
+  assert.equal(closed.isError,true);
+  assert.equal(JSON.parse(closed.content[0].text).code,'spectator_consent_required');
+  assert.equal(claimed.length,2);
+  const accepted = await client.callTool({name:'join_game',arguments:{tableId,deckId,displayName:'Angels',acceptSpectatorVisibility:'both-hands'}});
+  assert.equal(accepted.isError,false);
+  assert.equal(claimed.at(-1).acceptSpectatorVisibility,'both-hands');
 });
 
 test('[PM-AC-08] the MCP seat receives its chosen display name and chat mode for the invited match', { timeout: 5_000 }, async (t) => {

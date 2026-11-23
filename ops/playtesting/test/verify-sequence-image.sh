@@ -51,7 +51,7 @@ case "$selection" in
  pioneer) families=("${pioneer_costs[@]}" "${pioneer_combat[@]}") ;;
  turn-lines) families=("${modal[@]}" typed causal) ;;
  modal) families=("${modal[@]}") ;;
- player-identities|human-sideboarding|human-matches|review|discard-capture|review-prepared|mulligan|line-waits|card-to-step|casting|labeled-questions|order|activation|visible-response|combat|saga-entry|impulse-exile|exile|ward|whole-turn|date-night|improvised-yes|low-level-control|typed|causal) families=("$selection") ;;
+ spectator-visibility|player-identities|human-sideboarding|human-matches|review|discard-capture|review-prepared|mulligan|line-waits|card-to-step|casting|labeled-questions|order|activation|visible-response|combat|saga-entry|impulse-exile|exile|ward|whole-turn|date-night|improvised-yes|low-level-control|typed|causal) families=("$selection") ;;
  *) echo 'Unknown isolated real-engine scenario' >&2; exit 2 ;;
 esac
 if (( ${#families[@]} > 1 )); then
@@ -80,7 +80,7 @@ done
 public_url=http://127.0.0.1:8080
 runner=sequence.local.mjs
 fixture_clients='[]'
-if [[ $selection == human-matches || $selection == human-sideboarding || $selection == player-identities ]]; then
+if [[ $selection == human-matches || $selection == human-sideboarding || $selection == player-identities || $selection == spectator-visibility ]]; then
  public_url=https://127.0.0.1:8080
  runner=human-match.local.mjs
  fixture_clients='[{"clientId":"https://fixture.invalid/client","redirectUri":"https://fixture.invalid/callback","name":"Local match test"}]'

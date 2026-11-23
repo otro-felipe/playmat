@@ -408,12 +408,13 @@ public final class ReplayRecorder {
             GameView spectator = info.reviewVersion == null
                     ? new GameView(game.getState(), game, null, watcherId) : GameView.forReplay(game, null, watcherId);
             JsonObject visible = info.reviewVersion != null || broadcast != null ? ReplayEvidence.spectatorFrame(spectator) : null;
+            JsonObject review = info.reviewVersion == null ? null : ReplayEvidence.protectedFrame(game, visible);
             if (info.reviewVersion == null) {
                 JsonCodec.GSON.toJson(spectator, frame);
             } else {
                 JsonCodec.GSON.toJson(visible, frame);
                 frame.append(",\"review\":");
-                JsonCodec.GSON.toJson(ReplayEvidence.protectedFrame(game, visible), frame);
+                JsonCodec.GSON.toJson(review, frame);
             }
             frame.append(",\"hands\":{");
             boolean first = true;
@@ -431,7 +432,7 @@ public final class ReplayRecorder {
                     first = false;
                 }
             }
-            if (broadcast != null) broadcast.frame(visible, hands, names);
+            if (broadcast != null) broadcast.frame(visible, hands, names, ReplayEvidence.spectatorSeatKnowledge(review, visible));
             frame.append('}');
             String snapshot = frame.toString();
             lastKey = key;

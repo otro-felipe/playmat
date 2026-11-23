@@ -99,6 +99,28 @@ final class ReplayEvidence {
         return review;
     }
 
+    /** Only card groups the current seat was shown, with no decision, library list or chat. */
+    static JsonObject spectatorSeatKnowledge(JsonObject review, JsonObject publicView) {
+        JsonObject result = new JsonObject();
+        if (review == null) return result;
+        for (Map.Entry<String, JsonElement> item : review.getAsJsonObject("seatViews").entrySet()) {
+            JsonObject seat = item.getValue().getAsJsonObject(), known = new JsonObject();
+            for (String key : new String[]{"lookedAt", "revealed"}) {
+                JsonElement group = seat.has(key) ? seat.get(key) : publicView.get(key);
+                if (group != null && group.isJsonArray()) known.add(key, group);
+            }
+            JsonArray players = seat.has("players") ? seat.getAsJsonArray("players") : publicView.getAsJsonArray("players");
+            for (JsonElement element : players) {
+                JsonObject player = element.getAsJsonObject();
+                if (player.has("playerId") && item.getKey().equals(player.get("playerId").getAsString()) && player.has("topCard")) {
+                    known.add("topCard", player.get("topCard"));
+                }
+            }
+            result.add(item.getKey(), known);
+        }
+        return result;
+    }
+
     static JsonObject spectatorFrame(GameView view) {
         JsonObject spectator = JsonCodec.GSON.toJsonTree(view).getAsJsonObject();
         spectator.add("players", replayPlayers(spectator.getAsJsonArray("players")));

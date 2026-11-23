@@ -55,6 +55,7 @@ public final class Health {
         Map<String, String> humanTables(String owner);
 
         default com.google.gson.JsonObject spectator(java.util.UUID table) { return null; }
+        default com.google.gson.JsonObject spectator(java.util.UUID table, boolean includeKnowledge) { return spectator(table); }
 
         /** Announces maintenance in {@code minutes}; returns when it starts (epoch millis). */
         long startMaintenance(long minutes, String message);
@@ -121,8 +122,8 @@ public final class Health {
             }
 
             @Override
-            public com.google.gson.JsonObject spectator(java.util.UUID table) {
-                return mage.server.replay.SpectatorTable.lookup(table, managers.tableManager().getTable(table));
+            public com.google.gson.JsonObject spectator(java.util.UUID table, boolean includeKnowledge) {
+                return mage.server.replay.SpectatorTable.lookup(table, managers.tableManager().getTable(table), includeKnowledge);
             }
 
             @Override
@@ -172,7 +173,7 @@ public final class Health {
                 java.util.UUID table;
                 try { table = java.util.UUID.fromString(query(exchange.getRequestURI().getRawQuery()).get("table")); }
                 catch (RuntimeException invalid) { respond(exchange, 400, error("Invalid table")); return; }
-                com.google.gson.JsonObject result = operations.spectator(table);
+                com.google.gson.JsonObject result = operations.spectator(table, "true".equals(query(exchange.getRequestURI().getRawQuery()).get("seatKnowledge")));
                 respond(exchange, result == null ? 404 : 200, result == null ? error("Table not found") : result.toString());
             } finally { exchange.close(); }
         });

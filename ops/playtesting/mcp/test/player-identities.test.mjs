@@ -107,6 +107,8 @@ test('four profile-bound pilot connections share a library and keep two simultan
     await client.connect(new StreamableHTTPClientTransport(new URL('http://127.0.0.1:' + server.address().port + '/mcp'), {
       requestInit: { headers: { authorization: 'Bearer ' + token } },
     }));
+    const listed = (await client.listTools()).tools;
+    assert.deepEqual(listed.find(t => t.name === 'create_game').inputSchema.properties.spectatorVisibility.enum, ['public-board','both-hands']);
     clients.push(client);
     return async (name, args = {}) => {
       const r = await client.callTool({ name, arguments: args });
@@ -119,7 +121,7 @@ test('four profile-bound pilot connections share a library and keep two simultan
     const host = identities[i], guest = identities[i+1];
     assert.deepEqual((await calls[i]('list_players')).players.map(p => p.playerId), [host.playerId]);
     const create = { playerId: host.playerId, name: 'Fixture', format: 'Pioneer',
-      deckId: 'shared', guestEngineName: guest.engineName };
+      deckId: 'shared', guestEngineName: guest.engineName, ...(i===2 ? {spectatorVisibility:'both-hands'} : {}) };
     let created;
     if (i === 0) {
       const rivalGrant = { ...host, connectionId: randomUUID() };
@@ -136,6 +138,7 @@ test('four profile-bound pilot connections share a library and keep two simultan
       created = await calls[i]('create_game', create);
     }
     assert.ok(created.tableId, JSON.stringify(created));
+    assert.equal(tables.get(created.tableId).spectatorVisibility, i===2 ? 'both-hands' : undefined);
     tableIds.push(created.tableId);
     const joined = await calls[i+1]('join_game', { playerId: guest.playerId, tableId: created.tableId, deckId: 'shared' });
     assert.equal(joined.tableId, created.tableId);
@@ -172,7 +175,8 @@ test('four profile-bound pilot connections share a library and keep two simultan
   const fifth = { ...identities[0], token:'fixture-fifth', playerId:randomUUID(), connectionId:randomUUID(), engineName:'Fixture5' };
   grants.set(fifth.token,fifth);
   const newPilot = await connect(fifth.token);
-  assert.ok((await newPilot('create_game',{ name:'Next',format:'Pioneer',deckId:'shared',guestEngineName:identities[1].engineName })).tableId);
+  const next=await newPilot('create_game',{name:'Next',format:'Pioneer',deckId:'shared',guestEngineName:identities[1].engineName,spectatorVisibility:'public-board'});
+  assert.equal(tables.get(next.tableId).spectatorVisibility,'public-board');
   assert.equal((await recover()).event,'match_over','The connection still recovers its terminal receipt after eviction');
   assert.ok(!('ownHand' in (await recover()).state));
   assert.equal((await calls[1]('get_game_state')).ownHand[0], identities[1].engineName);

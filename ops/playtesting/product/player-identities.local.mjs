@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 
 export async function verifyPlayerIdentities({ base, issuer, Cookie, authorizePilot, connect, until, browser, foreignCookie, revokeCanonical }) {
+  const spectatorOnly=process.env.PLAYMAT_SEQUENCE_SCENARIOS==='spectator-visibility'
   const options = cookie => ({ Cookie:cookie, Origin:issuer, 'content-type':'application/json' })
   async function createProfile(displayName, flag, mcpEnabled, cookie = Cookie) {
     const response = await fetch(base+'/api/playtesting/players', { method:'POST', headers:options(cookie),
@@ -32,7 +33,7 @@ export async function verifyPlayerIdentities({ base, issuer, Cookie, authorizePi
   // Abandon a waiting table before taking another reservation for the same profile.
   const first = pilots[0]
   const abandoned = await as(0,'create_game',{name:'Unclaimed fixture',format:'Pioneer',
-    guestEngineName:pilots[1].engineName,deck:first.deck})
+    guestEngineName:pilots[1].engineName,deck:first.deck,spectatorVisibility:'public-board'})
   const reservation = await as(0,'get_player_reservation')
   assert.equal(reservation.tableId,abandoned.tableId)
   const cancel = {reservationId:reservation.reservationId,tableId:abandoned.tableId}
@@ -51,7 +52,7 @@ export async function verifyPlayerIdentities({ base, issuer, Cookie, authorizePi
 
   const tables = await Promise.all([0,2].map(async i => {
     const { tableId } = await as(i,'create_game',{name:'Local pair '+i,guestEngineName:pilots[i+1].engineName,
-      format:'Pioneer',deck:pilots[i].deck})
+      format:'Pioneer',deck:pilots[i].deck,...(i===0?{spectatorVisibility:'both-hands'}:{})})
     await as(i+1,'join_game',{tableId,deck:pilots[i+1].deck})
     return tableId
   }))
@@ -141,6 +142,73 @@ export async function verifyPlayerIdentities({ base, issuer, Cookie, authorizePi
     assert.equal(recovered.appliedDecisions,1)
   }
   await call('get_game_state',{},'player_required')
+
+  const privateLink=tableId=>base+'/api/playtesting/tables/'+tableId+'/spectator-link?visibility=both-hands'
+  assert.equal((await fetch(privateLink(tables[1]),{headers:{Cookie}})).status,404)
+  assert.equal((await fetch(privateLink(tables[0]),{headers:{Cookie:peerCookie}})).status,403)
+  const shared=await fetch(privateLink(tables[0]),{headers:{Cookie}})
+  assert.equal(shared.status,200)
+  const {path:priv}=await shared.json()
+  const address=base+priv.replace('/watch/','/api/playtesting/spectate/')
+  assert.ok(address!==broadcasts[0])
+  function checkBoth(snapshot){
+    assert.equal(snapshot.gameId,states[0].gameId)
+    assert.equal(snapshot.visibility,'both-hands')
+    const roster=snapshot.players
+    assert.equal(roster.length,2)
+    for(const [i,seat] of states.slice(0,2).entries()) {
+      const id=seat.players.find(p=>p.yourSeat).id
+      assert.ok(roster.some(p=>p.playerId===id))
+      assert.ok(Object.values(snapshot.hands[id]).length>0)
+      assert.ok(Object.values(snapshot.hands[id]).every(c=>c.name===basics[i]))
+      assert.ok(snapshot.seatKnowledge[id])
+    }
+    assert.ok(!JSON.stringify(snapshot).includes('"name":"'+basics[2]+'"'))
+    assert.ok(!JSON.stringify(snapshot).includes('"name":"'+basics[3]+'"'))
+    assert.deepEqual(snapshot.chat,[])
+  }
+  checkBoth(await (await fetch(address)).json())
+  // Two independent subscriptions read the same immutable entitlement after reconnecting.
+  for(let connection=0;connection<2;connection++){
+    const res=await fetch(address+'/events',{signal:AbortSignal.timeout(5000)})
+    assert.equal(res.status,200)
+    const reader=res.body.getReader();let buffer=''
+    try {
+      while(!/data: [^\n]+\n\n/.test(buffer))buffer+=new TextDecoder().decode((await reader.read()).value)
+      checkBoth(JSON.parse(/data: ([^\n]+)/.exec(buffer)[1]))
+    } finally {await reader.cancel()}
+  }
+  for(const [i,receipt] of receipts){
+    const view=(await as(i,'wait_for_decision',{gameId:states[i].gameId,commandId,timeoutMs:100})).state
+    assert.ok(!view.hands && !view.seatKnowledge)
+    assert.ok(!JSON.stringify(view).includes('"name":"'+basics[i ^ 1]+'"'))
+  }
+  if(spectatorOnly){
+    const gameId=states[0].gameId
+    const message='Prueba &amp; áβ\n'.padEnd(500,'x')
+    await as(0,'send_chat',{gameId,message})
+    await until(async()=>{
+      const logs=await Promise.all([0,1].map(i=>as(i,'list_chat',{gameId})))
+      return logs.every(log=>log.messages.some(row=>row.message===message))
+    },'both match peers to receive the complete 500-character chat')
+    await until(async()=>{
+      const snapshot=await (await fetch(address)).json()
+      return snapshot.chat.some(row=>row.message===message && row.playerName===pilots[0].engineName)
+    },'the opted-in broadcast to receive intact table talk')
+    assert.deepEqual((await (await fetch(broadcasts[0])).json()).chat,[])
+    await Promise.all([0,2].map(i=>as(i,'concede',{gameId:states[i].gameId,entireMatch:true})))
+    await until(async()=>{
+      const response=await fetch(address)
+      if (response.status!==200)return false
+      const closed=await response.json()
+      if(closed.visibility!=='closed')return false
+      assert.deepEqual(Object.keys(closed).sort(),['publicPath','role','status','visibility'])
+      assert.ok(base+closed.publicPath.replace('/watch/','/api/playtesting/spectate/')===broadcasts[0])
+      return true
+    },'private access to end at match termination with the same public board available')
+    console.log('Passed isolated owner-only discovery, separate public/restricted links, both synthetic hands, two SSE connections, table/seat isolation and private capability expiry.')
+    return
+  }
 
   // A separate, profile-bound grant is a negative authorization control only.
   const fixed = await connect('single-profile-control',await authorizePilot(pilots[1].playerId))

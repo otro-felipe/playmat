@@ -22,6 +22,7 @@ public final class SpectatorTable {
     private JsonObject view, hands = new JsonObject(), names = new JsonObject();
     private long revision;
     private boolean ended;
+    private JsonObject seatKnowledge = new JsonObject();
 
     SpectatorTable(UUID tableId, UUID gameId, String owner) {
         this.tableId = tableId;
@@ -38,6 +39,11 @@ public final class SpectatorTable {
     }
 
     synchronized void frame(JsonObject publicView, JsonObject cardsInHand, JsonObject playerNames) {
+        frame(publicView, cardsInHand, playerNames, new JsonObject());
+    }
+
+    synchronized void frame(JsonObject publicView, JsonObject cardsInHand, JsonObject playerNames, JsonObject knowledge) {
+        seatKnowledge = knowledge;
         view = publicView;
         hands = cardsInHand;
         names = playerNames;
@@ -62,6 +68,7 @@ public final class SpectatorTable {
         JsonObject item = new JsonObject();
         item.addProperty("messageId", gameId + ":" + (source.getChatSequence() == null ? "event-" + (revision + 1) : source.getChatSequence()));
         item.addProperty("playerName", source.getUsername());
+        item.addProperty("type", "TALK");
         item.addProperty("message", org.unbescape.html.HtmlEscape.unescapeHtml(source.getMessage()));
         item.addProperty("at", source.getTime() == null ? System.currentTimeMillis() : source.getTime().getTime());
         append(chat, item);
@@ -76,20 +83,24 @@ public final class SpectatorTable {
 
     static synchronized void end(SpectatorTable state) {
         if (state == null || !active.remove(state.tableId, state)) return;
-        synchronized (state) { state.ended = true; state.revision++; }
+        synchronized (state) { state.ended = true; state.seatKnowledge = new JsonObject(); state.revision++; }
         finished.put(state.tableId, state);
         if (finished.size() > FINISHED_TABLES) finished.remove(finished.keySet().iterator().next());
     }
 
     /** Internal product response. The owner is read from the table created by XMage, never from the client. */
     public static synchronized JsonObject lookup(UUID id, Table table) {
+        return lookup(id, table, false);
+    }
+
+    public static synchronized JsonObject lookup(UUID id, Table table, boolean includeSeatKnowledge) {
         SpectatorTable state = active.get(id);
         if (state == null) state = finished.get(id);
         if (state == null && table == null) return null;
         if (state == null) state = new SpectatorTable(id, null, table.getControllerName());
         JsonObject response = new JsonObject();
         response.addProperty("owner", state.owner);
-        JsonObject snapshot = state.snapshot();
+        JsonObject snapshot = state.snapshot(includeSeatKnowledge);
         if (state.ended && table != null && table.getState() != mage.constants.TableState.FINISHED
                 && table.getMatch() != null && table.getMatch().getEndTime() == null) {
             snapshot.addProperty("status", "between_games");
@@ -99,6 +110,10 @@ public final class SpectatorTable {
     }
 
     synchronized JsonObject snapshot() {
+        return snapshot(false);
+    }
+
+    synchronized JsonObject snapshot(boolean includeSeatKnowledge) {
         JsonObject result = new JsonObject();
         result.addProperty("role", "spectator");
         result.addProperty("tableId", tableId.toString());
@@ -115,6 +130,7 @@ public final class SpectatorTable {
         result.add("players", players);
         result.add("view", view == null ? JsonNull.INSTANCE : view);
         result.add("hands", hands);
+        if (includeSeatKnowledge && !ended) result.add("seatKnowledge", seatKnowledge);
         result.add("lines", lines.deepCopy());
         result.add("chat", chat.deepCopy());
         return result;

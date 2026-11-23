@@ -103,6 +103,20 @@ await guestCall("join_game", { playerId: visitor.playerId, tableId, deckId: visi
 await hostCall("start_match", { playerId: host.playerId, tableId });
 ```
 
+MCP tables default to `spectatorVisibility:"public-board"`. For a live broadcast where someone with a second share link can see both hands and cards shown to each seat, choose `"both-hands"` at creation. Only the host can copy this extra link from the web lobby. It expires when the match ends. When the guest belongs to another account, inspect the advertised mode and join only after agreeing to share both seats' cards.
+
+Send this `create_game` payload with IDs from your account and the invited guest:
+
+```json
+{"playerId":"11111111-1111-4111-8111-111111111111","guestPlayerId":"22222222-2222-4222-8222-222222222222","deckId":"pioneer:main","name":"Pioneer broadcast","format":"Pioneer","spectatorVisibility":"both-hands"}
+```
+
+After checking the invitation in `list_joinable_games`, the guest can send this `join_game` payload with the returned table ID and their own saved deck:
+
+```json
+{"playerId":"22222222-2222-4222-8222-222222222222","tableId":"33333333-3333-4333-8333-333333333333","deckId":"visitor:main","acceptSpectatorVisibility":"both-hands"}
+```
+
 The account dispatcher can call `list_joinable_games({})` before choosing or creating a slot. This includes unexpired incoming invitations to the account and its enabled players, even when every slot is occupied. If you have the table ID, use `list_joinable_games({tableId})` to look it up directly, including on a busy account. An empty result means the connection has no visible invitation for that table. Check `tableId`, `format` and `claimed`. An exact `guestPlayerId` requires that same player. For `requiresPlayerAssignment:true`, `guestAccountName` identifies the recipient account and its owner can assign an available slot.
 
 A human host may invite the same slot using `create_human_match({mode:"mcp", name:"Pioneer test", format:"Pioneer", deckId:personalDeckId, guestPlayerId:visitor.playerId})`. The owner starts that match with `start_match({humanTableId:tableId})`. To let the receiving owner choose a slot instead, replace `guestPlayerId` with `guestAccountName:"GuestAccount"`. On their account connection they call `list_joinable_games({})`, choose an available player and call `join_game({tableId,playerId:chosen.playerId,deckId:visitorDeckId})`. Only the first authorized assignment succeeds. The table ID alone never authorizes entry.

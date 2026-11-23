@@ -1,6 +1,7 @@
 package mage.server.replay;
 
 import com.google.gson.JsonObject;
+import com.google.gson.JsonArray;
 import mage.view.ChatMessage;
 import org.junit.jupiter.api.Test;
 import java.util.Date;
@@ -8,6 +9,33 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class SpectatorTableTest {
+    @Test void privateKnowledgeRequiresExplicitAccessAndUsesOnlyTheSeatPerspective() {
+        UUID a = UUID.randomUUID(), b = UUID.randomUUID();
+        JsonObject visible = new JsonObject(), seat = new JsonObject(), seats = new JsonObject(), review = new JsonObject();
+        JsonArray players = new JsonArray();
+        for (UUID id : new UUID[]{a, b}) {
+            JsonObject player = new JsonObject(), top = new JsonObject();
+            player.addProperty("playerId", id.toString());
+            top.addProperty("name", id.equals(a) ? "Observed card" : "Other seat only");
+            player.add("topCard", top);
+            players.add(player);
+        }
+        visible.add("players", new JsonArray());
+        visible.add("revealed", new JsonArray());
+        seat.add("players", players);
+        seat.add("lookedAt", new JsonArray());
+        seat.addProperty("library", "Hidden order");
+        seats.add(a.toString(), seat);
+        review.add("seatViews", seats);
+        JsonObject knowledge = ReplayEvidence.spectatorSeatKnowledge(review, visible);
+        SpectatorTable broadcast = new SpectatorTable(UUID.randomUUID(), UUID.randomUUID(), "Synthetic host");
+        broadcast.frame(visible, new JsonObject(), new JsonObject(), knowledge);
+        assertThat(broadcast.snapshot().has("seatKnowledge")).isFalse();
+        JsonObject shown = broadcast.snapshot(true).getAsJsonObject("seatKnowledge").getAsJsonObject(a.toString());
+        assertThat(shown.keySet()).containsExactlyInAnyOrder("topCard", "lookedAt", "revealed");
+        assertThat(shown.getAsJsonObject("topCard").get("name").getAsString()).isEqualTo("Observed card");
+    }
+
     @Test void aBroadcastContainsHandsBySeatAndOnlyTableTalkAndCommittedLines() {
         UUID table=UUID.randomUUID(), game=UUID.randomUUID(), alice=UUID.randomUUID(), bob=UUID.randomUUID();
         SpectatorTable broadcast=new SpectatorTable(table, game, "Alice");

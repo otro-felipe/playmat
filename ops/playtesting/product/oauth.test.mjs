@@ -1338,3 +1338,92 @@ test('owners create persistent slots by explicit consent and assign foreign invi
   assert.equal(foreign.status,400)
   assert.equal((await create(a,randomUUID(),{guestPlayerId:guest.playerId,guestAccountName:'GuestAccount'})).status,400)
 })
+
+test('[PM-SPECTATE-SEATS] opt-in is immutable, authorized per guest and capability, and ends before archives', {skip:!databaseUrl}, async t=>{
+  const frames=new Map(), f=await fixture(t,[],undefined,async id=>frames.get(id)??null)
+  const owner=await f.login('PrivateHost'), peer=await f.login('PrivatePeer')
+  const post=(path,headers,body)=>f.request(path,{...headers,'Content-Type':'application/json'},body)
+  const make=async (headers,displayName)=>(await post('/api/playtesting/players',headers,{displayName,mcpEnabled:true})).json()
+  const host=await make(owner,'Hosting'), guest=await make(peer,'Visiting')
+  const hostGrant=await authorizePilot(f,owner,'play',host.playerId), guestGrant=await authorizePilot(f,peer,'play',guest.playerId)
+  const tableId=randomUUID(), lease=async (seat,grant)=>{
+    const reservationId=randomUUID(), route='/internal/player-reservations/'+seat.playerId
+    assert.equal((await post(route,grant,{operation:'reserve',reservationId})).status,200)
+    assert.equal((await post(route,grant,{operation:'bind',tableId,reservationId})).status,200)
+  }
+  await lease(host,hostGrant); await lease(guest,guestGrant)
+  const input={tableId,roomId:randomUUID(),format:'Pioneer',password:'fictional-passphrase',guestPlayerId:guest.playerId,spectatorVisibility:'both-hands'}
+  const invites='/api/playtesting/invites', privateLink='/api/playtesting/tables/'+tableId+'/spectator-link?visibility=both-hands'
+  const created=await post(invites,hostGrant,input)
+  assert.equal(created.status,201)
+  assert.equal((await created.json()).spectatorVisibility,'both-hands')
+  assert.equal((await post(invites,hostGrant,{...input,spectatorVisibility:'public-board'})).status,409)
+  const invitation=await (await f.request(invites+'/'+tableId,guestGrant)).json()
+  assert.equal(invitation.requiresSpectatorAcceptance,true)
+  assert.equal((await post(invites+'/'+tableId+'/claim',guestGrant,{})).status,403)
+  assert.equal((await f.request(privateLink,peer)).status,403)
+  assert.equal((await f.request(privateLink,hostGrant)).status,403)
+  assert.equal((await f.request(privateLink,owner)).status,200)
+  const paths=await Promise.all([privateLink,privateLink.split('?')[0]].map(async route=>{
+    const {path}=await (await f.request(route,owner)).json()
+    return path.replace('/watch/','/api/playtesting/spectate/')
+  }))
+  assert.ok(paths[0]!==paths[1], 'Capabilities have separate entitlements')
+  assert.equal((await post(invites+'/'+tableId+'/claim',guestGrant,{acceptSpectatorVisibility:'both-hands'})).status,200)
+  const gameId=randomUUID(), a=randomUUID(), b=randomUUID(), x=randomUUID(), y=randomUUID(), peek=randomUUID()
+  const players=[{playerId:a,name:host.engineName},{playerId:b,name:guest.engineName}]
+  const message='Prueba &amp; β\n'.padEnd(500,'x')
+  const talk={type:'TALK',messageId:gameId+':1',playerName:host.engineName,at:1,message}
+  const frame={role:'spectator',gameId,tableId,revision:4,status:'playing',players,view:{turn:1,players},hands:{
+    [a]:{[x]:{id:x,name:'Fixture Hand A',original:{name:'FORBIDDEN'}}},[b]:{[y]:{id:y,name:'Fixture Hand B'}},
+    [randomUUID()]:{[x]:{name:'FORBIDDEN'}}},seatKnowledge:{[a]:{lookedAt:[{cards:{[peek]:{id:peek,name:'Fixture Seen'}}}],
+    library:['FORBIDDEN'],decision:{prompt:'FORBIDDEN'}}},chat:[talk,{...talk,type:'WHISPER_FROM',message:'FORBIDDEN'},{...talk,playerName:'Elsewhere',message:'FORBIDDEN'},
+    {...talk,messageId:randomUUID()+':1',message:'FORBIDDEN'}],lines:[{reasoning:'FORBIDDEN'}]}
+  frames.set(tableId,{owner:host.engineName,snapshot:frame})
+  const read=async path=>(await f.request(path)).json()
+  await sleep(720)
+  const verifyPrivate=data=>{
+    assert.equal(data.visibility,'both-hands')
+    assert.equal(data.hands[a][x].name,'Fixture Hand A')
+    assert.equal(data.hands[b][y].name,'Fixture Hand B')
+    assert.equal(data.seatKnowledge[a].lookedAt[0].cards[peek].name,'Fixture Seen')
+    assert.deepEqual(data.chat.map(row=>row.message),[message])
+    assert.ok(!JSON.stringify(data).includes('FORBIDDEN'))
+  }
+  verifyPrivate(await read(paths[0]))
+  const pub=await read(paths[1]+'?visibility=both-hands')
+  assert.equal(pub.visibility,'public-board');assert.deepEqual(pub.hands,{});assert.ok(!pub.seatKnowledge)
+  assert.equal((await f.request(paths[0],guestGrant)).status,403)
+  assert.equal((await f.request('/api/playtesting/tables/'+randomUUID()+'/spectator-link?visibility=both-hands',owner)).status,404)
+  const stream=await fetch(f.endpoint+paths[0]+'/events',{signal:AbortSignal.timeout(7000)})
+  const reader=stream.body.getReader();let line=''
+  while(!line.includes('data: ')) line+=new TextDecoder().decode((await reader.read()).value)
+  verifyPrivate(JSON.parse(/data: ([^\n]+)/.exec(line)[1]));await reader.cancel()
+  frames.set(tableId,{owner:host.engineName,snapshot:{...frame,tableId:randomUUID()}})
+  await sleep(720);assert.equal((await f.request(paths[0])).status,404)
+  frames.set(tableId,{owner:host.engineName,snapshot:{...frame,status:'finished'}})
+  const closed={role:'spectator',visibility:'closed',status:'finished',publicPath:paths[1].replace('/api/playtesting/spectate/','/watch/')}
+  const assertClosed=data=>{
+    assert.deepEqual(Object.keys(data).sort(),Object.keys(closed).sort())
+    for(const key of Object.keys(closed))assert.ok(data[key]===closed[key],key+' matches this table')
+  }
+  assertClosed(await read(paths[0]))
+  const finalStream=await fetch(f.endpoint+paths[0]+'/events',{signal:AbortSignal.timeout(5000)})
+  assertClosed(JSON.parse(/data: ([^\n]+)/.exec(await finalStream.text())[1]))
+  const matchId=randomUUID(), now=Date.now()
+  await writeFile(join(f.replayDirectory,gameId+'.json'),JSON.stringify({gameId,gameNumber:1,matchId,tableId,
+    winsNeeded:1,deckType:'Constructed - Pioneer',startedAt:now-100,endedAt:now,result:'Game finished',winner:host.engineName,
+    players:players.map(p=>({...p,human:true}))}))
+  await writeFile(join(f.replayDirectory,gameId+'.ndjson.gz'),gzipSync(JSON.stringify({t:1,view:frame.view,hands:frame.hands})))
+  await writeFile(join(f.replayDirectory,matchId+'.match.json'),JSON.stringify({matchId,endedAt:now,winner:host.engineName}))
+  await f.product.archiveGames()
+  frames.clear()
+  assertClosed(await read(paths[0]))
+  assert.equal((await f.request(paths[0]+'/replay')).status,404)
+  await sleep(720)
+  const archived=await read(paths[1])
+  assert.equal(archived.visibility,'public-board')
+  assert.equal(archived.status,'finished')
+  assert.deepEqual(archived.hands,{})
+  assert.ok(!JSON.stringify(archived).includes('Fixture Hand'))
+})

@@ -16,6 +16,7 @@ function invitationView(row) {
   if (!row) throw new ProductError(404, 'Invitation not found')
   return {
     tableId: row.table_id, roomId: row.room_id, format: row.format, mode: row.mode, claimed:!!row.claimed_at,
+    ...(row.spectator_both_hands ? {spectatorVisibility:'both-hands',requiresSpectatorAcceptance:row.spectator_guest_consent_required} : {}),
     ...(row.unlisted ? { unlisted: true } : {}),
     ...(row.mode === 'mcp' ? { chatMode: row.chat_mode } : {}),
     ...(row.guest_owner_name ? { guestOwnerName: row.guest_owner_name } : {}),
@@ -91,7 +92,7 @@ export function createInvitations(pool, identity, events) {
     } else if (selectors.length) {
       if (data.guestPlayerId !== undefined) {
         if (isUuid(data.guestPlayerId)) {
-          const {rows:[slot]}=await pool.query(`SELECT g.engine_name AS "engineName",true AS agent,g.scopes
+          const {rows:[slot]}=await pool.query(`SELECT g.engine_name AS "engineName",g.account_id AS "accountId",true AS agent,g.scopes
             FROM player_profiles p JOIN accounts a ON a.id=p.account_id AND a.enabled
             JOIN agent_grants g ON g.player_id=p.id AND g.revoked_at IS NULL WHERE p.id=$1 AND p.mcp_enabled`,[data.guestPlayerId])
           friend=slot
@@ -100,16 +101,23 @@ export function createInvitations(pool, identity, events) {
       if (!friend || normalize(friend.engineName)===normalize(actor.engineName) || !friend.scopes.includes('play'))
         throw new ProductError(400,'Provide a provisioned guest seat')
     }
+    const visibility=data.spectatorVisibility??'public-board'
+    if (!['public-board','both-hands'].includes(visibility)) throw new ProductError(400,'Unknown spectator visibility')
+    const bothHands=visibility==='both-hands'
+    if (bothHands && !(trustedPilot && actor.agent && mode==='friend' && (friend?.agent || recipient))) {
+      throw new ProductError(403,'Both hands requires a trusted MCP host and an invited MCP guest')
+    }
+    const guestConsent=bothHands && actor.accountId!==(recipient??friend?.accountId)
     const ownerAccountId = mode === 'mcp' && !selectors.length ? actor.accountId : null
     const title=typeof data.tableName==='string' ? [...data.tableName.trim()].slice(0,80).join('') || null : null
     return transaction(pool, async db => {
       await checkInvitationReservation(db,actor,data.tableId)
       const invitee = friend?.engineName ?? null
       const { rows: [invite] } = await db.query(`INSERT INTO invitations(
-        table_id,room_id,format,creator_key,invitee_key,invitee_name,table_password,expires_at,mode,chat_mode,owner_account_id,unlisted,creator_model,creator_effort,recipient_account_id,broadcast_on_assignment,table_name
-      ) VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '48 hours',$8,$9,$10,$11,$12,$13,$14,$15,$16) ON CONFLICT (table_id) DO NOTHING RETURNING *, ${guestOwner}`,
+        table_id,room_id,format,creator_key,invitee_key,invitee_name,table_password,expires_at,mode,chat_mode,owner_account_id,unlisted,creator_model,creator_effort,recipient_account_id,broadcast_on_assignment,table_name,spectator_both_hands,spectator_guest_consent_required
+      ) VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '48 hours',$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) ON CONFLICT (table_id) DO NOTHING RETURNING *, ${guestOwner}`,
       [data.tableId, data.roomId, format, normalize(actor.engineName), invitee ? normalize(invitee) : null,
-        invitee, data.password, mode, chatMode, ownerAccountId, unlisted, ...runtime,recipient,!!(trustedPilot && actor.agent && recipient),title])
+        invitee, data.password, mode, chatMode, ownerAccountId, unlisted, ...runtime,recipient,!!(trustedPilot && actor.agent && recipient),title,bothHands,guestConsent])
       // Only a trusted adapter creates public broadcasts for MCP seats. External product
       // requests cannot nominate an arbitrary engine table for public sharing.
       const automatic = trustedPilot && actor.agent && friend?.agent
@@ -118,13 +126,13 @@ export function createInvitations(pool, identity, events) {
           const {rows:[same]} = await db.query(`SELECT *, ${guestOwner} FROM invitations WHERE table_id=$1 AND room_id=$2
             AND creator_key=$3 AND format=$5 AND table_password=$6 AND mode=$7 AND NOT cancel_pending AND expires_at>now()
             AND recipient_account_id IS NOT DISTINCT FROM $8::uuid AND ($8::uuid IS NOT NULL OR invitee_key=$4)
-            AND (NOT $9 OR EXISTS (SELECT 1 FROM spectator_links l WHERE l.table_id=$1 AND l.public_host=$3 AND l.public_guest=$4))`,
-            [data.tableId,data.roomId,normalize(actor.engineName),friend ? normalize(friend.engineName) : null,format,data.password,mode,recipient,Boolean(automatic)])
+            AND spectator_both_hands=$10 AND (NOT $9 OR EXISTS (SELECT 1 FROM spectator_links l WHERE l.table_id=$1 AND l.public_host=$3 AND l.public_guest=$4))`,
+            [data.tableId,data.roomId,normalize(actor.engineName),friend ? normalize(friend.engineName) : null,format,data.password,mode,recipient,Boolean(automatic),bothHands])
           if (same) return invitationView(same)
         }
         throw new ProductError(409, 'This table already has an invitation')
       }
-      if (automatic) await issuePublicSpectatorLink(db,data.tableId,actor,friend,title)
+      if (automatic) await issuePublicSpectatorLink(db,data.tableId,actor,friend,title,bothHands)
       if (ownerAccountId) {
         const { rows: [agent] } = await db.query(`SELECT engine_name FROM agent_grants
           WHERE account_id=$1 AND oauth_managed AND player_id IS NULL AND revoked_at IS NULL AND 'play'=ANY(scopes)`, [ownerAccountId])
@@ -158,6 +166,7 @@ export function createInvitations(pool, identity, events) {
     return transaction(pool,async db => {
       await checkInvitationReservation(db,actor,tableId)
       const { rows: [invite] } = await db.query(`UPDATE invitations SET
+        spectator_guest_consent_required=spectator_guest_consent_required AND NOT $12,
         guest_model=CASE WHEN claimed_at IS NULL THEN $8 ELSE guest_model END,
         guest_effort=CASE WHEN claimed_at IS NULL THEN $9 ELSE guest_effort END,
         claimed_at=COALESCE(claimed_at,now()), invitee_key=COALESCE(invitee_key,$2), invitee_name=COALESCE(invitee_name,$3),
@@ -167,14 +176,17 @@ export function createInvitations(pool, identity, events) {
             OR (recipient_account_id IS NULL OR invitee_key=$2) AND (owner_account_id IS NULL OR owner_account_id=$6) AND (NOT $10 OR invitee_key=$2) AND (
           (mode='friend' AND (invitee_key=$2 OR (unlisted AND invitee_key IS NULL AND NOT $5)))
           OR (mode='mcp' AND $5 AND (invitee_key IS NULL OR invitee_key=$2))
-        )) RETURNING *, ${guestOwner}`, [tableId, key, actor.engineName, alias, actor.agent, rivalAccount(actor), fallback, ...runtime, !!actor.playerId,actor.accountSelected ? actor.accountId : null])
+        )) RETURNING *, ${guestOwner}`, [tableId, key, actor.engineName, alias, actor.agent, rivalAccount(actor), fallback, ...runtime, !!actor.playerId,actor.accountSelected ? actor.accountId : null,data?.acceptSpectatorVisibility==='both-hands'])
       const projection=invitationView(invite)
+      if (invite.spectator_guest_consent_required && data?.acceptSpectatorVisibility!=='both-hands') {
+        throw new ProductError(403,'Explicitly accept both-hands spectating before joining this invitation')
+      }
       if (invite.broadcast_on_assignment) {
         const {rows:[host]}=await db.query(`SELECT g.account_id AS "accountId",g.engine_name AS "engineName"
           FROM agent_grants g JOIN accounts a ON a.id=g.account_id AND a.enabled
           WHERE g.engine_key=$1 AND g.revoked_at IS NULL AND 'play'=ANY(g.scopes)`,[invite.creator_key])
         if (!host) throw new ProductError(409,'The host seat is no longer eligible')
-        await issuePublicSpectatorLink(db,tableId,host,actor,invite.table_name)
+        await issuePublicSpectatorLink(db,tableId,host,actor,invite.table_name,invite.spectator_both_hands)
       }
       return { ...projection, password: invite.table_password }
     })

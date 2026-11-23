@@ -1,4 +1,5 @@
 import { lineText } from './line-explanations.mjs'
+import { privateSpectatorBoard } from './private-spectator-board.mjs'
 import { publicSpectatorBoard } from './public-spectator-board.mjs'
 import { listPublicSpectatorLinks, newSpectatorToken } from './spectator-links.mjs'
 import { isUuid, normalize, ProductError } from './decks.mjs'
@@ -9,9 +10,10 @@ const sharedRoute = /^\/api\/playtesting\/spectate\/([A-Za-z0-9_-]{43})(\/events
 const tableRoute = /^\/api\/playtesting\/tables\/([^/]+)\/(spectator-link|spectator)(\/events)?$/
 const key = /^[A-Za-z0-9_-]{43}$/
 
-async function engine(tableId) {
+async function engine(tableId,privateSeats=false) {
   const url = new URL('http://127.0.0.1:17173/internal/spectator')
   url.searchParams.set('table', tableId)
+  if (privateSeats) url.searchParams.set('seatKnowledge','true')
   let response
   try { response = await fetch(url, { redirect:'error', signal:AbortSignal.timeout(3500) }) }
   catch { throw new ProductError(503, 'Spectator connection unavailable') }
@@ -32,6 +34,13 @@ function board(view) {
 
 export function spectatorStorage(pool, archive) {
   return {
+    async privateToken(tableId,owner) {
+      const {rows:[row]}=await pool.query(`SELECT owner_id=$2 AS owned,CASE WHEN owner_id=$2 THEN hands_token END AS token
+        FROM spectator_links WHERE table_id=$1 OR live_table_id=$1`,[tableId,owner])
+      if (row && !row.owned) throw forbidden()
+      if (!row?.token) throw missing()
+      return row.token
+    },
     async existing(tableId, owner) {
       const {rows:[row]}=await pool.query('SELECT CASE WHEN owner_id=$2 THEN token END AS token FROM spectator_links WHERE table_id=$1 OR live_table_id=$1',[tableId,owner])
       if (row && !row.token) throw forbidden()
@@ -44,12 +53,19 @@ export function spectatorStorage(pool, archive) {
       return row.token
     },
     async table(token) {
-      const {rows:[row]}=await pool.query('SELECT table_id AS id,(public_host IS NOT NULL) AS "publicBoard" FROM spectator_links WHERE token=$1',[token])
+      const {rows:[row]}=await pool.query(`SELECT table_id AS id,(public_host IS NOT NULL) AS "publicBoard",(hands_token=$1) IS TRUE AS "privateSeats"
+        FROM spectator_links WHERE token=$1 OR hands_token=$1`,[token])
       return row
     },
     listOwned: accountId => listPublicSpectatorLinks(pool,accountId),
     async publicTarget(id) {
-      const {rows:[row]}=await pool.query(`SELECT l.public_host,l.public_guest,l.live_table_id,EXISTS(
+      const {rows:[row]}=await pool.query(`SELECT l.public_host,l.public_guest,l.live_table_id,l.token AS public_token,
+        EXISTS (SELECT 1 FROM matches m WHERE m.table_id IN (l.table_id,l.live_table_id)
+          AND m.status IN ('completed','interrupted')) AS terminal,
+        l.hands_token IS NOT NULL AND EXISTS(SELECT 1 FROM invitations i WHERE i.table_id=l.table_id AND NOT i.cancel_pending
+          AND (i.claimed_at IS NOT NULL OR i.expires_at>now())) AS private_live,
+        EXISTS(SELECT 1 FROM invitations i WHERE i.table_id=l.table_id AND i.claimed_at IS NOT NULL AND NOT i.cancel_pending) AS claimed,
+        EXISTS(
         SELECT 1 FROM invitations i WHERE i.table_id=l.table_id AND NOT i.cancel_pending AND i.expires_at>now()
         AND NOT EXISTS (SELECT 1 FROM matches WHERE table_id IN (l.table_id,l.live_table_id))) AS waiting
         FROM spectator_links l WHERE l.table_id=$1 AND l.public_host IS NOT NULL`,[id])
@@ -107,9 +123,10 @@ export function createSpectators({storage, readEngine=engine}) {
   const groups=new Map(), cache=new Map(), identities=new Map()
   let connections=0
   const browser = actor=>{ if (!actor?.accountId || actor.agent) throw forbidden() }
-  async function share(actor,tableId,issue=true) {
+  async function share(actor,tableId,issue=true,privateSeats=false) {
     browser(actor)
     if (!isUuid(tableId)) throw missing()
+    if (privateSeats) return {path:'/watch/'+await storage.privateToken(tableId,actor.accountId)}
     const existing=await storage.existing?.(tableId,actor.accountId)
     if (existing) return {path:'/watch/'+existing}
     if (!issue) throw forbidden()
@@ -132,18 +149,21 @@ export function createSpectators({storage, readEngine=engine}) {
     if (!isUuid(id) || !await storage.mayObserve(id,actor.accountId)) throw forbidden()
     return id
   }
-  const channel=(id,publicBoard)=>publicBoard?'public/'+id:id
-  async function snapshot(id,publicBoard=false) {
-    const now=Date.now(), cacheKey=channel(id,publicBoard)
+  const channel=(id,publicBoard,privateSeats)=>privateSeats?'both-hands/'+id:publicBoard?'public/'+id:id
+  async function snapshot(id,publicBoard=false,privateSeats=false) {
+    const now=Date.now(), cacheKey=channel(id,publicBoard,privateSeats)
     let entry=cache.get(cacheKey)
-    if (!entry || entry.until<now) {
+    if (privateSeats || !entry || entry.until<now) {
       entry={until:now+650, value:(async()=>{
         const target=publicBoard ? await storage.publicTarget(id) : null
-        if (publicBoard && !target) throw missing()
+        if (publicBoard && !target || privateSeats && !target?.private_live) throw missing()
+        const closed = () => ({role:'spectator',visibility:'closed',status:'finished',publicPath:'/watch/'+target.public_token})
+        if (privateSeats && target.terminal) return closed()
         let live, unavailable
-        try { live=await readEngine(target?.live_table_id??id) }
+        try { live=await readEngine(target?.live_table_id??id,privateSeats && target.claimed) }
         catch (error) { if (error.status!==503) throw error; unavailable=error }
-        let data=live?.snapshot ?? await storage.finished?.(id,target)
+        if (privateSeats && live && live.snapshot?.tableId !== (target.live_table_id??id)) throw missing()
+        let data=live?.snapshot ?? (privateSeats?null:await storage.finished?.(id,target))
         if (!data && target?.waiting && !unavailable) data={role:'spectator',tableId:id,gameId:null,status:'waiting',revision:0,players:[],view:null}
         if (!data) throw unavailable??missing()
         if (target) {
@@ -152,10 +172,19 @@ export function createSpectators({storage, readEngine=engine}) {
           if ((live && normalize(live.owner)!==target.public_host) || [...names].some(name=>!expected.includes(name))
               || (data.view && !expected.every(name=>names.has(name)))) throw missing()
         }
+        if (privateSeats && live && data.status==='finished') return closed()
         // Archived games are immutable. Retain their projected final frame, not the full replay.
         if (!live && data.status==='finished' && data.view) entry.until=Date.now()+300000
         const view=board(data.view)
-        const project = frame => publicBoard ? publicSpectatorBoard({...frame,tableId:id}) : frame
+        const project = frame => {
+          if (privateSeats) {
+            if (frame.status==='playing' && !target.claimed) throw missing()
+            return privateSpectatorBoard({...frame,tableId:id})
+          }
+          if (publicBoard) return publicSpectatorBoard({...frame,tableId:id})
+          const {seatKnowledge,...legacy}=frame
+          return legacy
+        }
         if (!storage.presentation) return project({...data,view})
         const identityKey=data.gameId && data.players?.length ? id+'/'+data.gameId : null
         let roles=identities.get(identityKey)
@@ -178,10 +207,11 @@ export function createSpectators({storage, readEngine=engine}) {
       cache.set(cacheKey,entry)
       if (cache.size>32) cache.delete(cache.keys().next().value)
     }
-    return {...await entry.value,spectators:groups.get(cacheKey)?.size??0}
+    const data=await entry.value
+    return data.visibility==='closed'?data:{...data,spectators:groups.get(cacheKey)?.size??0}
   }
-  function publish(id,res,publicBoard=false) {
-    const cacheKey=channel(id,publicBoard)
+  function publish(id,res,publicBoard=false,privateSeats=false) {
+    const cacheKey=channel(id,publicBoard,privateSeats)
     if (connections>=256 || (groups.get(cacheKey)?.size??0)>=100) throw new ProductError(429,'Spectator limit reached')
     let group=groups.get(cacheKey)
     if (!group) groups.set(cacheKey,group=new Set())
@@ -196,11 +226,12 @@ export function createSpectators({storage, readEngine=engine}) {
       if (busy || res.destroyed) return
       busy=true
       try {
-        const data=await snapshot(id,publicBoard)
+        const data=await snapshot(id,publicBoard,privateSeats)
         const revision=[data.gameId,data.status,data.revision,data.spectators].join('/')
         if (revision!==last) {
           last=revision
           if (!res.write('event: snapshot\ndata: '+JSON.stringify(data)+'\n\n') && res.writableLength>2*1024*1024) res.destroy()
+          if (data.visibility==='closed') res.end()
         }
       } catch { res.end() }
       finally { busy=false }
@@ -229,12 +260,14 @@ export async function spectatorRoute(req,res,path,resolveActor,spectators,send) 
     send(res,200,await spectators.listOwned(await resolveActor(req)))
   } else if (table?.[2]==='spectator-link') {
     if (table[3] || !['GET','POST'].includes(req.method)) throw new ProductError(405,'Use GET or POST')
-    send(res,200,await spectators.share(await resolveActor(req),table[1],req.method==='POST'))
+    const mode=new URL(req.url,'http://localhost').searchParams.get('visibility')
+    if (mode!==null && !['public-board','both-hands'].includes(mode)) throw missing()
+    send(res,200,await spectators.share(await resolveActor(req),table[1],req.method==='POST',mode==='both-hands'))
   } else {
     if (req.method!=='GET') throw new ProductError(405,'Use GET')
-    const {id,publicBoard}=shared ? await spectators.publicTable(shared[1]) : {id:await spectators.privateTableId(await resolveActor(req),table[1])}
-    const data=await spectators.snapshot(id,publicBoard)
-    if (shared?.[2] || table?.[3]) spectators.publish(id,res,publicBoard)
+    const {id,publicBoard,privateSeats}=shared ? await spectators.publicTable(shared[1]) : {id:await spectators.privateTableId(await resolveActor(req),table[1])}
+    const data=await spectators.snapshot(id,publicBoard,privateSeats)
+    if (shared?.[2] || table?.[3]) spectators.publish(id,res,publicBoard,privateSeats)
     else send(res,200,data)
   }
   return true
