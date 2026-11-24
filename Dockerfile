@@ -7,10 +7,10 @@ WORKDIR /source
 ENV MAVEN_OPTS="-Xmx1500m -XX:+UseSerialGC"
 COPY . .
 COPY --from=cards /opt/xmage/lib/mage-sets-1.4.62.jar /tmp/mage-sets.jar
-RUN mvn -B -q -N install \
-    && mvn -B -q install:install-file -Dfile=/tmp/mage-sets.jar -DpomFile=Mage.Sets/pom.xml \
-    && mvn -B -q -pl 'Mage.Server,!Mage.Sets' -am install -DskipTests \
-    && mvn -B -q -f Mage.Server/pom.xml package assembly:single -DskipTests \
+RUN mvn -B -N install \
+    && mvn -B install:install-file -Dfile=/tmp/mage-sets.jar -DpomFile=Mage.Sets/pom.xml \
+    && mvn -B -pl 'Mage.Server,!Mage.Sets' -am install -DskipTests \
+    && mvn -B -f Mage.Server/pom.xml package assembly:single -DskipTests \
     && mkdir /engine && cd /engine && jar xf /source/Mage.Server/target/mage-server.zip \
     && cp config/config.xml config/config.template.xml \
     && rm -rf db saved \
