@@ -204,6 +204,34 @@ async function fixture(t, store = new Map(), options = {}) {
   return { product, replayDirectory, schema, endpoint, path: (route, init) => fetch(endpoint + route, init) }
 }
 
+test('public statistics are readable without a session and accept only read operations and supported groupings', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const path = '/api/playtesting/statistics'
+  const response = await f.path(path)
+  assert.equal(response.status, 200)
+  const report = await response.json()
+  assert.equal(report.matches, 0)
+  assert.deepEqual(report.rows, [])
+  assert.deepEqual(report.formats, [])
+  assert.equal(report.selected, null)
+  assert.equal((await f.path(path + '?group=deck&format=Pioneer')).status, 200)
+  assert.equal((await f.path(path + '?group=player')).status, 400)
+  assert.equal((await f.path(path, { method: 'POST' })).status, 405)
+  assert.equal((await f.path('/api/playtesting/tournaments/' + randomUUID() + '/statistics')).status, 404)
+  assert.equal((await f.path('/api/playtesting/tournaments/not-a-tournament/statistics')).status, 404)
+  const match = await archivedReviewMatch(f, {
+    players: [{ engineName: 'FixturePilot', human: true }, { engineName: 'FixtureBot', human: false }],
+  })
+  const recorded = await (await f.path(path)).json()
+  assert.equal(recorded.matches, 1)
+  assert.equal(recorded.rows.reduce((sum, row) => sum + row.n, 0), 2)
+  assert.ok(!JSON.stringify(recorded).includes('FixturePilot'))
+  await withTestDatabase(f, db =>
+    db.query('INSERT INTO match_statistics_exclusions(match_id,reason,author) VALUES ($1,$2,$3)',
+      [match.id, 'Fixture exhibition', 'fixture-operator']))
+  assert.equal((await (await f.path(path)).json()).matches, 0)
+})
+
 test('limits public socket upgrades by visitor and leaves authenticated pages available', { skip: !databaseUrl }, async t => {
   const f = await fixture(t, new Map(), { publicUrl: 'https://playmat.example' })
   const owner = await signIn(f, 'SocketBudget')

@@ -107,7 +107,7 @@ function deckSignature(deck) {
   return digest(JSON.stringify([...entries].sort(([left], [right]) => left.localeCompare(right))))
 }
 
-async function recordMetadata(pool, info, status, recovering = false) {
+async function recordMetadata(pool, info, status, recovering, recordOpeningGameDeck) {
   const interrupted = recovering || status === 'interrupted' || status === 'abandoned'
   return transaction(pool, async db => {
     // Lock an existing match before checking the tombstone, so maintenance cannot
@@ -154,6 +154,7 @@ async function recordMetadata(pool, info, status, recovering = false) {
                        reasoning_effort=COALESCE(game_players.reasoning_effort,EXCLUDED.reasoning_effort)`,
         [info.gameId, seat, player.name, player.human, player.deck, player.mulligans, deckSignature(player.deck), player.playerId, ...runtime, label],
       )
+      if (info.gameNumber === 1) await recordOpeningGameDeck?.(db, info.gameId, seat)
       // A recovered spool may archive game two before the opening registration.
       if (info.gameNumber === 1 && label) await db.query(`UPDATE game_players p SET archetype=$3
         FROM games g WHERE g.id=p.game_id AND g.match_id=$1 AND g.game_number>1
@@ -303,7 +304,7 @@ function parseCursor(cursor) {
   }
 }
 
-export function createArchive(pool, stage, backend, { purgeExpiredHistory = false } = {}) {
+export function createArchive(pool, stage, backend, { purgeExpiredHistory = false, recordOpeningGameDeck } = {}) {
   const store = fromLocal(backend)
   if (purgeExpiredHistory && typeof store?.delete !== 'function') throw Error('Match history purge requires a replay store with deletion support')
   let activeScan
@@ -360,9 +361,9 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
         if (variant === '.active') {
           if (markInterrupted) {
             await rename(join(stage, file), join(stage, id + '.interrupted.json'))
-            await recordMetadata(pool, info, 'interrupted')
+            await recordMetadata(pool, info, 'interrupted', false, recordOpeningGameDeck)
           } else {
-            if (await recordMetadata(pool, info, 'active')) pendingMatches.add(info.matchId)
+            if (await recordMetadata(pool, info, 'active', false, recordOpeningGameDeck)) pendingMatches.add(info.matchId)
             else await removeStaging(join(stage, file), join(stage, id + '.ndjson.gz.part'))
           }
           continue
@@ -370,7 +371,7 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
         const interrupted = variant === '.interrupted'
         const status = interrupted ? 'interrupted' : (info.result || info.winner ? 'completed' : 'abandoned')
         const eventPath = join(stage, id + '.ndjson.gz' + (interrupted ? '.part' : ''))
-        if (!await recordMetadata(pool, info, status, markInterrupted)) {
+        if (!await recordMetadata(pool, info, status, markInterrupted, recordOpeningGameDeck)) {
           await removeStaging(join(stage, file), eventPath)
           continue
         }

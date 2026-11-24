@@ -43,6 +43,7 @@ ALTER TABLE tournament_pairings ADD COLUMN IF NOT EXISTS launch_requested_at big
 ALTER TABLE tournament_pairings ADD COLUMN IF NOT EXISTS attendance_elapsed_ms bigint NOT NULL DEFAULT 0;
 ALTER TABLE tournament_pairings ADD COLUMN IF NOT EXISTS attendance_observed_at bigint;
 CREATE INDEX IF NOT EXISTS tournament_pending_tables ON tournament_pairings(tournament_id) WHERE NOT completed;
+CREATE INDEX IF NOT EXISTS tournament_pairings_match_id ON tournament_pairings(match_id) WHERE match_id IS NOT NULL;
 
 -- History and matchup statistics must apply tournament publication timing
 -- even after an individual match has finished.

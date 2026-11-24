@@ -91,6 +91,8 @@ const router = createBrowserRouter([
   { path: '/login', element: <LoginScreen /> },
   ...(PRIVATE_PLAYTESTING ? [
     // These cookie-authenticated views never claim an engine seat or redirect the organizer's tab into a game.
+    { path: '/statistics', lazy: () => import('./statistics/PublicStatistics').then(m => ({ Component: m.PublicStatistics })) },
+    { path: '/tournaments/:id/statistics', lazy: () => import('./statistics/PublicStatistics').then(m => ({ Component: m.PublicStatistics })) },
     { path: '/tournaments', lazy: () => import('./tournaments/TournamentScreen').then(m => ({ Component: m.TournamentsScreen })) },
     { path: '/tournaments/owners/:alias', lazy: () => import('./tournaments/TournamentScreen').then(m => ({ Component: m.TournamentOwnerScreen })) },
     { path: '/tournaments/:id', lazy: () => import('./tournaments/TournamentScreen').then(m => ({ Component: m.TournamentScreen })) },

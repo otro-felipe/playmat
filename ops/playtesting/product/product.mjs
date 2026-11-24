@@ -14,9 +14,11 @@ import { listPlayers, createPlayer, createPlayerSlot, updatePlayer, retirePlayer
 import { changeReservation, restorePlayerReservations } from './player-reservations.mjs'
 import { ownedPlayer, readTournamentDeck, setTournamentAdmins, tournamentActor, validateTournamentDeck as engineDeckCheck } from './tournament-access.mjs'
 import { createTournamentRoutes } from './tournament-routes.mjs'
+import { publicDeckStatistics } from './public-deck-statistics.mjs'
 import { createTournamentService } from './tournaments.mjs'
 import { createTournamentTableBridge, restoreTournamentTable } from './tournament-table-bridge.mjs'
 import { createTournamentBroadcast } from './tournament-broadcast.mjs'
+import { recordOpeningGameDeck, recordTournamentDeck, startOpeningDeckBackfill } from './public-deck-materialization.mjs'
 import { createArchive } from './archive.mjs'
 import { resetMatchHistory, setUnlimitedMatchHistory } from './history-retention.mjs'
 import { createTheoryStore, evaluateTheoryTactics } from './theory-store.mjs'
@@ -150,6 +152,7 @@ export async function createProduct({
     await migrateDeckLists(pool)
     await refineMigratedDeckLists(pool)
     await pool.query(await readFile(resolve(directory, 'performance-schema.sql'), 'utf8'))
+    await pool.query(await readFile(resolve(directory, 'public-deck-identity.sql'), 'utf8'))
     await transaction(pool, async db => {
       await db.query("SELECT pg_advisory_xact_lock(hashtext(current_schema()),hashtext('tournament-archetypes'))")
       const before = await archetypeCoverage(db)
@@ -166,8 +169,9 @@ export async function createProduct({
   const permissions = createReviewPermissions(pool)
   const id = createIdentity(pool, insecureCookie, oauth.resolve)
   const registration = createSignup(pool, id, publicUrl, signup, challenge)
-  const archive = createArchive(pool, replayDirectory, store, { purgeExpiredHistory })
-  const tournaments = createTournamentService(pool, {readDeck:readTournamentDeck, validateDeck:validateTournamentDeck})
+  const stopOpeningDeckBackfill = startOpeningDeckBackfill(pool)
+  const archive = createArchive(pool, replayDirectory, store, { purgeExpiredHistory, recordOpeningGameDeck })
+  const tournaments = createTournamentService(pool, {readDeck:readTournamentDeck, validateDeck:validateTournamentDeck,recordTournamentDeck})
   const tournamentBridge = createTournamentTableBridge(pool, tournaments)
   const broadcast = createTournamentBroadcast(pool,archive,readSpectatorEngine)
   const tournamentRoutes = createTournamentRoutes({
@@ -271,6 +275,21 @@ export async function createProduct({
     }
     if (await oauth.route(req, res, url, id.resolve)) return
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !sameOrigin(req, insecureCookie)) throw new ProductError(403, 'Cross-origin request')
+    const statisticsPath = /^\/api\/playtesting\/(?:tournaments\/([^/]+)\/)?statistics$/.exec(path)
+    if (statisticsPath) {
+      if (req.method !== 'GET') throw new ProductError(405, 'Use GET')
+      const tournamentId = statisticsPath[1] ?? null
+      if (tournamentId && !isUuid(tournamentId)) throw new ProductError(404, 'Tournament not found')
+      const group = url.searchParams.get('group') ?? 'archetype'
+      const format = url.searchParams.get('format')
+      const selected = url.searchParams.get('selected')
+      if (!['archetype', 'deck'].includes(group) || (format && format.length > 120) || (selected && selected.length > 512))
+        throw new ProductError(400, 'Invalid statistics filter')
+      const release = heavyWork(clientKey(req))
+      if (!release) throttleRequest(res, 2)
+      releases.push(release)
+      return send(res, 200, await publicDeckStatistics(pool, { tournamentId, group, format, selected }))
+    }
     if (await tournamentRoutes.route(req,res,url)) return
     if (await spectatorRoute(req,res,path,id.resolve,spectators,send,body)) return
     if (path === '/api/playtesting/signup/config' && req.method === 'GET') {
@@ -633,10 +652,12 @@ export async function createProduct({
     stopTournaments: tournamentRoutes.stop,
     setTournamentAdmins: ids=>setTournamentAdmins(pool,ids),
     async dropTestSchema() {
+      await stopOpeningDeckBackfill()
       if (!schema.startsWith('test_')) throw Error('Refusing to remove data outside an isolated test schema')
       await pool.query('DROP SCHEMA ' + schema + ' CASCADE')
     },
     async close() {
+      await stopOpeningDeckBackfill()
       await tournamentRoutes.stop()
       await broadcast.close()
       spectators.close()

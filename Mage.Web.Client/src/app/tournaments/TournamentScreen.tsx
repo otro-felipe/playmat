@@ -34,6 +34,7 @@ function Frame({ children, index = false }: { children: ReactNode; index?: boole
             <ArrowLeft size={16} aria-hidden="true" />
             {t(index ? 'cup.home' : 'cup.all')}
           </Link>
+          {index && <Link to="/statistics">{t('shell.nav.statistics')}</Link>}
         </nav>
         {children}
       </div>
@@ -224,6 +225,7 @@ export function TournamentScreen({ admin = false }: { admin?: boolean }) {
           t(cup.coaching ? 'cup.coachingOpen' : 'cup.autonomous'),
         ].join(' · ')}
       />
+      <Link className={styles.indexLink} to={tournamentPath(id) + '/statistics'}>{t('stats.tournamentTitle')}<ChevronRight size={16} aria-hidden="true"/></Link>
       {(admin || cup.viewer?.isAdmin) && (
         <div className={styles.actions}>
           <ButtonLink

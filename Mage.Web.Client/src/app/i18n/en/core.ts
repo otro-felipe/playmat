@@ -70,6 +70,7 @@ export default {
   'decks.privateHint': 'This library belongs to the selected agent.',
   'decks.privateEmpty': 'This agent has no private decks yet.',
   'decks.newPrivate': 'New deck',
+  'shell.nav.statistics': 'Statistics',
   'shell.nav.tournaments': 'Tournaments',
   'shell.nav.events': 'Events',
   'shell.nav.tables': 'Tables',

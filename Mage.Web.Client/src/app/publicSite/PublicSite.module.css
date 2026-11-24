@@ -25,6 +25,14 @@
   gap: 16px;
 }
 
+.landingHeader { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; }
+.productNav { display: flex; gap: 8px; }
+@media (max-width: 40rem) {
+  .landingHeader { grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding-block: 8px; }
+  .landingHeader > a { grid-area: 1 / 2; }
+  .productNav { grid-area: 2 / 1 / auto / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 .brand {
   display: inline-flex;
   align-items: center;

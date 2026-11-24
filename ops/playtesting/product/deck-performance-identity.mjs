@@ -37,7 +37,7 @@ export function publicDeckDirectory(shelf) {
 
 let publicLists
 function loadPublicLists() {
-  const examples = new Map()
+  const examples = new Map(), publicNames = new Map()
   for (const shelf of ['meta-decks', 'starter-decks']) {
     const root = publicDeckDirectory(shelf)
     if (!root) continue
@@ -45,7 +45,6 @@ function loadPublicLists() {
     for (const item of index.decks ?? index) {
       const format = familyOf(item.format)
       const label = starters[item.name]?.[1] ?? classifyArchetype(format, item.name)
-      if (label === 'Other' || !archetypesFor(format).includes(label)) continue
       const deck = { cards: [], sideboard: [] }
       const lines = readFileSync(new URL(item.file, root), 'utf8').trim().split(/\r?\n/).filter(line => line && !line.startsWith('NAME:'))
       for (const line of lines) {
@@ -54,6 +53,9 @@ function loadPublicLists() {
         deck[entry[1] ? 'sideboard' : 'cards'].push({ name: entry[3], quantity: Number(entry[2]) })
       }
       if (!deck.cards.length) continue
+      const fullKey = format + '/' + deckListSignature(deck)
+      publicNames.set(fullKey, !publicNames.has(fullKey) || publicNames.get(fullKey) === item.name ? item.name : null)
+      if (label === 'Other' || !archetypesFor(format).includes(label)) continue
       // Sideboard edits do not change an otherwise identical, complete maindeck.
       const signatures = [deckListSignature(deck), deckListSignature({ cards: deck.cards })]
       for (const signature of signatures) {
@@ -64,13 +66,13 @@ function loadPublicLists() {
       }
     }
   }
-  return examples
+  return { examples, publicNames }
 }
 
 export function publicListArchetype(format, signature) {
   publicLists ??= loadPublicLists()
   const family = familyOf(format)
-  return publicLists.get((family === 'Freeform' ? '*' : family) + '/' + signature) ?? null
+  return publicLists.examples.get((family === 'Freeform' ? '*' : family) + '/' + signature) ?? null
 }
 
 /** A full main deck plus independent evidence. Titles by themselves cannot refine an old default. */
@@ -92,4 +94,10 @@ export function verifiedListArchetype(format, name, cards, sideboard = []) {
   if (published) return published
   const fromCards = family === 'Freeform' ? tournamentArchetype(format, cards) ?? 'Other' : classifyArchetype(format, '', cards)
   return fromCards === 'Other' ? null : fromCards
+}
+
+// A public deck name requires the full published list in its own format.
+export function publicCompositionName(format, signature) {
+  publicLists ??= loadPublicLists()
+  return publicLists.publicNames.get(familyOf(format) + '/' + signature) ?? null
 }

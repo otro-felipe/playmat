@@ -100,7 +100,8 @@ export function productLimitGroup(path, method, proxied = false, scope = null) {
   if (!proxied && method==='POST' && /^tournaments\/[a-f0-9-]{36}\/wait$/i.test(endpoint)) return undefined
   if (family === 'signup') return method === 'POST' ? 'signup' : 'read'
   if (family === 'exports') return 'export'
-  if (['review', 'replays', 'evaluations', 'matches', 'stats'].includes(family)) return 'archive'
+  if (['review', 'replays', 'evaluations', 'matches', 'stats', 'statistics'].includes(family)
+    || /^tournaments\/[^/]+\/statistics$/.test(endpoint)) return 'archive'
   if (family === 'theory') return 'theory'
   if (family === 'invites') return 'game'
   if (family === 'decks' && method !== 'GET') return 'decks'

@@ -68,6 +68,7 @@ export function createTournamentService(
     onlineMs = 90_000,
     readDeck = (db, actor, id) => getDeck(db, actor.accountId, id, null, actor.agent ? 'agent' : null),
     validateDeck,
+    recordTournamentDeck,
   } = {},
 ) {
   async function get(id, actor = null) {
@@ -160,6 +161,7 @@ export function createTournamentService(
             [entry.id, zone, JSON.stringify(cards)],
           )
       }
+      await recordTournamentDeck?.(db,entry.id)
       return { tournamentId: id, entryId: entry.id, state: 'registered', status: 'registered' }
     })
   }

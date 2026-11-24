@@ -26,9 +26,12 @@ export function PublicLanding() {
   const t = useT();
   return (
     <div className={styles.site}>
-      <header className={styles.header}>
+      <header className={`${styles.header} ${styles.landingHeader}`}>
         <span className={styles.brand}><Mark size={38} />{APP_NAME}</span>
-        <Link className={styles.secondary} to="/tournaments">{t('shell.nav.tournaments')}</Link>
+        <nav className={styles.productNav}>
+          <Link className={styles.secondary} to="/tournaments">{t('shell.nav.tournaments')}</Link>
+          <Link className={styles.secondary} to="/statistics">{t('shell.nav.statistics')}</Link>
+        </nav>
         <a className={styles.secondary} href="/login">{t('public.signIn')}</a>
       </header>
       <main className={styles.content}>

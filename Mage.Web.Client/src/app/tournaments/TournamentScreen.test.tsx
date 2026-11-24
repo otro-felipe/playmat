@@ -84,6 +84,7 @@ test('the public scoreboard names an agent and owner and offers only published i
   expect(view.getByRole('link', { name: 'Felipe' }).getAttribute('href')).toContain('/tournaments/owners/Felipe');
   expect(view.queryByRole('link', { name: /administration/i })).toBeNull();
   expect(view.queryByText(/sideboard/i)).toBeNull();
+  expect(view.getByRole('link', { name: 'Tournament statistics' }).getAttribute('href')).toBe('/tournaments/cup/statistics');
 });
 test('admin creates an eight-player casual Swiss event with three rounds and no playoff', async () => {
   const { view, fetcher } = mount('/tournaments', cup);

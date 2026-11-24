@@ -169,3 +169,9 @@ extra turns.
 ### Live table broadcast
 
 A pairing broadcast shows the number of connected viewers across public and authorized expanded streams. Refreshing the board without opening a stream does not add a viewer. The header shows the pairing order and games won, including between games, and counts down the pairing deadline while it is timed and unfinished. Untimed tables and finished pairings omit the clock. Expanded views and public views use the same public score and clock.
+
+## Public deck and archetype statistics
+
+The tournament statistics page and the global statistics page count completed, statistically eligible series. A bye contributes standings points and zero played series. A recorded draw contributes one draw to each seat. Each row reports wins, draws, losses and appearances. Two seats with the same deck or archetype contribute two appearances to that row. Opening a row shows those appearances grouped by opposing deck or archetype.
+
+Both pages respect tournament deck publication and retain the decks registered for that event. Ordinary matches use the opening deck for game one. Missing classifications have their own group so those appearances remain in the denominator. A published tournament can show its registered deck names. Global statistics identify compositions using public catalogue names when available and otherwise display an anonymous identifier.

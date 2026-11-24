@@ -12,6 +12,10 @@ CREATE TABLE IF NOT EXISTS match_deck_registrations (
   PRIMARY KEY (table_id, engine_key)
 );
 
+-- Older registrations have no recorded provenance. Current submissions retain
+-- whether the exact list carried one explicit label at registration time.
+ALTER TABLE match_deck_registrations ADD COLUMN IF NOT EXISTS archetype_confirmed boolean;
+
 -- The source replay is immutable once its checksum is committed. These rows
 -- contain only evidence available to the seat, and follow archive retention.
 CREATE TABLE IF NOT EXISTS game_performance_evidence (
