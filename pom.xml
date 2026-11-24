@@ -252,6 +252,11 @@
     </modules>
 
     <repositories>
+        <!-- Resolve standard dependencies before querying the legacy repository. -->
+        <repository>
+            <id>central</id>
+            <url>https://repo.maven.apache.org/maven2</url>
+        </repository>
         <repository>
             <id>jboss-public-repository</id>
             <name>JBoss Repository</name>
