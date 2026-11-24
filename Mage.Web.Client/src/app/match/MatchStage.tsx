@@ -1147,7 +1147,17 @@ function HiddenHand({ playerId, count, revealed, sleeve, left }: { playerId: str
           </div>
         );
       })}
-      {count > 0 && <span className={styles.handCount}>{count}</span>}
+      {count > 0 && (
+        // A face-up card hangs over the stack's centre, so the count moves beside the fan instead of under it.
+        <span
+          className={styles.handCount}
+          data-beside={faceUp.length > 0 || undefined}
+          data-testid="hidden-hand-count"
+          style={faceUp.length > 0 ? { ['--edge' as string]: `${((shown - 1) / 2) * 36 + 50}px` } : undefined}
+        >
+          {count}
+        </span>
+      )}
     </div>
   );
 }

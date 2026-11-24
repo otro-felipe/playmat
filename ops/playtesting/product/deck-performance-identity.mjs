@@ -5,7 +5,7 @@ import starters from './starter-archetypes.json' with { type: 'json' }
 // The Docker product service carries the same catalog the offline web builder uses.
 const packaged = new URL('./archetypes/library.mjs', import.meta.url)
 const source = new URL('../../../Mage.Web.Client/src/core/decks/archetypes/library.mjs', import.meta.url)
-export const { archetypesFor, classifyArchetype, tournamentArchetype, isCreaturePracticeMain } = await import(existsSync(packaged) ? packaged : source)
+export const { archetypesFor, classifyArchetype, tournamentArchetype, isCreaturePracticeMain, canonicalArchetype, archetypeSourceUrl } = await import(existsSync(packaged) ? packaged : source)
 
 export function deckListSignature(deck) {
   if (!Array.isArray(deck?.cards) || (deck.sideboard != null && !Array.isArray(deck.sideboard))) return null

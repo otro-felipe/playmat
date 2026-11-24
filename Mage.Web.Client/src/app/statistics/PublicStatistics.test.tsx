@@ -1,9 +1,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import { afterEach, expect, it, vi } from 'vitest';
 import userEvent from '@testing-library/user-event';
-import { PublicStatistics } from './PublicStatistics';
+import { PublicStatistics, StatisticsPanel } from './PublicStatistics';
 
 afterEach(() => {
   cleanup();
@@ -22,6 +22,17 @@ const izzet = {
 };
 const mirror = { ...izzet, n: 4, wins: 2, draws: 0, losses: 2 };
 const deck = { ...izzet, id: 'public-deadbeef', name: null, colors: null };
+// The tournament page hosts the same panel in its statistics tab.
+function TournamentStatisticsTab() {
+  const { id = '' } = useParams();
+  const { search } = useLocation();
+  return (
+    <>
+      <output aria-label="location">{search}</output>
+      <StatisticsPanel tournamentId={id} path={'/tournaments/' + id} scope={{ tab: 'stats' }} headingLevel={2} />
+    </>
+  );
+}
 function show(url: string, response: (request: URL) => unknown) {
   const fetch = vi.fn(async (input: string) => Response.json(response(new URL(input, 'http://fixture'))));
   vi.stubGlobal('fetch', fetch);
@@ -32,6 +43,7 @@ function show(url: string, response: (request: URL) => unknown) {
         <Routes>
           <Route path="/statistics" element={<PublicStatistics />} />
           <Route path="/tournaments/:id/statistics" element={<PublicStatistics />} />
+          <Route path="/tournaments/:id" element={<TournamentStatisticsTab />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -70,7 +82,11 @@ it('opens scoped anonymous deck details without confusing missing and colorless 
   }));
   expect(await page.findByRole('heading', { name: /Anonymous deck.*adbeef/i })).toBeTruthy();
   expect(fetch.mock.calls[0][0]).toContain('/api/playtesting/tournaments/cup/statistics');
-  expect(page.getByRole('link', { name: 'League' }).getAttribute('href')).toBe('/tournaments/cup');
+  // An old statistics link opens the tournament's statistics tab with the same filters.
+  expect(page.getByRole('status', { name: 'location' }).textContent).toBe(
+    '?group=deck&selected=public-deadbeef&tab=stats',
+  );
+  expect(page.getByRole('link', { name: /Back to Decks/i }).getAttribute('href')).toBe('/tournaments/cup?tab=stats&group=deck');
   expect(page.getByRole('img', { name: 'Initial deck palette (Unknown colors)' })).toBeTruthy();
   expect(page.getByRole('img', { name: 'Initial deck palette (Colorless)' })).toBeTruthy();
 });
@@ -135,23 +151,43 @@ it('focuses the detail heading after Enter, labels the mirror, and returns to th
   await waitFor(() => expect(document.activeElement).toBe(restored));
 });
 
-it('preserves grouping and format across scopes and clears the tournament selection', async () => {
-  const { page, fetch } = show(
-    '/tournaments/cup/statistics?group=deck&format=Pioneer&selected=public-deadbeef',
-    (request) => ({
-      formats: ['Pioneer'],
-      matches: 2,
-      rows: [deck],
-      tournamentName: 'League',
-      selected: request.searchParams.has('selected') ? { ...deck, matchups: [] } : null,
-    }),
-  );
-  await page.findByRole('heading', { name: /Anonymous deck/i });
-  const globalLink = page.getByRole('link', { name: 'Global statistics' });
-  expect(globalLink.getAttribute('href')).toBe('/statistics?group=deck&format=Pioneer');
-  fireEvent.click(globalLink);
-  await page.findByRole('heading', { name: 'Global statistics' });
-  expect(fetch.mock.calls.at(-1)?.[0]).toBe('/api/playtesting/statistics?group=deck&format=Pioneer');
+it('sorts by win rate, games, mulligans and game length, and shows the opening hands of a selection', async () => {
+  const user = userEvent.setup();
+  const rows = [
+    { ...izzet, id: 'a', name: 'UR Aggro', n: 10, wins: 4, games: 25, mulliganKnown: 20, mulliganGames: 2, timedGames: 25, durationMs: 25 * 600_000 },
+    { ...izzet, id: 'b', name: 'Red Deck Wins', n: 6, wins: 5, games: 14, mulliganKnown: 14, mulliganGames: 7, timedGames: 14, durationMs: 14 * 900_000 },
+    { ...izzet, id: 'c', name: 'Lotus Field', n: 2, wins: 1, games: 5, mulliganKnown: 0, timedGames: 0, durationMs: 0 },
+  ];
+  const { page } = show('/statistics', (request) => ({
+    formats: ['Pioneer'],
+    matches: 9,
+    rows,
+    selected:
+      request.searchParams.get('selected') === 'b'
+        ? { ...rows[1], mulligans: 9, keptGames: 7, keptWins: 5, mulliganWins: 3, source: 'https://www.mtgtop8.com/archetype?a=862&f=PI', matchups: [rows[0]] }
+        : null,
+  }));
+  const order = () => page.getAllByRole('rowheader').map((cell) => within(cell).getByRole('link').textContent);
+  await page.findByRole('link', { name: 'UR Aggro' });
+  expect(order()).toEqual(['UR Aggro', 'Red Deck Wins', 'Lotus Field']);
+  const header = (name: RegExp) => page.getByRole('link', { name });
+  await user.click(header(/Sort by Win %/));
+  expect(order()).toEqual(['Red Deck Wins', 'Lotus Field', 'UR Aggro']);
+  expect(page.getByRole('columnheader', { name: /Win %/ }).getAttribute('aria-sort')).toBe('descending');
+  await user.click(header(/Sort by Win %/));
+  expect(order()).toEqual(['UR Aggro', 'Lotus Field', 'Red Deck Wins']);
+  await user.click(header(/Sort by Games with at least one mulligan/));
+  expect(order()).toEqual(['Red Deck Wins', 'UR Aggro', 'Lotus Field']);
+  await user.click(header(/Sort by Average game length/));
+  expect(order()).toEqual(['Red Deck Wins', 'UR Aggro', 'Lotus Field']);
+  const red = page.getByRole('link', { name: 'Red Deck Wins' }).closest('tr')!;
+  expect(within(red).getByText('50%')).toBeTruthy();
+  expect(within(red).getByText('15 min')).toBeTruthy();
+  await user.click(page.getByRole('link', { name: 'Red Deck Wins' }));
+  const hands = await page.findByRole('region', { name: 'Opening hands' });
+  expect(within(hands).getByText('Win % keeping seven').nextElementSibling?.textContent).toBe('71.4% 7 games');
+  expect(within(hands).getByText('Win % after a mulligan').nextElementSibling?.textContent).toBe('42.9% 7 games');
+  expect(page.getByRole('link', { name: /Archetype on MTGTop8/ }).getAttribute('href')).toContain('a=862');
 });
 
 it.each([

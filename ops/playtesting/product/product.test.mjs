@@ -56,23 +56,24 @@ test('deck performance versions survive printings, name changes, sideboard edits
   const route = '/api/playtesting/decks/stable'
   const options = await f.path('/api/playtesting/deck-archetypes?format=Pioneer', { headers: owner })
   assert.equal(options.status, 200)
-  assert.ok((await options.json()).archetypes.includes('Golgari Midrange'))
+  assert.ok((await options.json()).archetypes.includes('The Rock (Golgari Control)'))
   const deck = { name: 'Golgari MIDRANGE', format: 'Pioneer', cards: [{ name: 'Forest', quantity: 3 }, { name: 'Duress', quantity: 1 }], sideboard: [{ name: 'Swamp', quantity: 1 }] }
   const save = (revision, data) => f.path(route, json('PUT', owner, { expectedRevision: revision, data }))
   const first = await (await save(0, deck)).json()
-  assert.equal(first.archetype, 'Golgari Midrange', 'old importers receive a catalog label')
+  assert.equal(first.archetype, 'The Rock (Golgari Control)', 'old importers receive a catalog label')
   assert.equal(first.listVersion, 1)
   const changedArt = { ...deck, name: 'My list', cards: [{ name: 'Duress', quantity: 1 }, { name: 'Forest', quantity: 1 }, { name: 'Forest', quantity: 2, set: 'M21' }] }
   assert.equal((await (await save(1, changedArt)).json()).listVersion, 1)
   const changedSide = { ...changedArt, sideboard: [{ name: 'Swamp', quantity: 2 }] }
   assert.equal((await (await save(2, changedSide)).json()).listVersion, 2)
+  // A retired label from an older client is stored as its MTGTop8 name.
   const restored = await (await save(3, { ...deck, archetype: 'Mono-Green Devotion' })).json()
-  assert.deepEqual([restored.revision, restored.listVersion, restored.archetype, restored.listSignature], [4, 1, 'Mono-Green Devotion', first.listSignature])
+  assert.deepEqual([restored.revision, restored.listVersion, restored.archetype, restored.listSignature], [4, 1, 'Devotion to Green', first.listSignature])
   assert.equal((await save(4, { ...deck, archetype: 'Unlisted name' })).status, 400)
   const old = await (await f.path(route + '?revision=3', { headers: owner })).json()
-  assert.deepEqual([old.listVersion, old.archetype], [2, 'Golgari Midrange'])
+  assert.deepEqual([old.listVersion, old.archetype], [2, 'The Rock (Golgari Control)'])
   const listed = await (await f.path('/api/playtesting/decks', { headers: owner })).json()
-  assert.deepEqual([listed.decks[0].archetype, listed.decks[0].listVersion], ['Mono-Green Devotion', 1])
+  assert.deepEqual([listed.decks[0].archetype, listed.decks[0].listVersion], ['Devotion to Green', 1])
 
   // Simulate the schema from before list identities and run the deployment migration twice.
   await withTestDatabase(f, db => db.query('ALTER TABLE deck_revisions DROP COLUMN list_signature, DROP COLUMN list_version, DROP COLUMN archetype'))
@@ -86,7 +87,7 @@ test('deck performance versions survive printings, name changes, sideboard edits
   assert.deepEqual(coverage, { currentDecks: 1, classifiedDecks: 1, otherDecks: 0, classifiedRevisions: 4, otherBreakdown: { empty: 0, basicOnly: 0, incomplete: 0, complete: 0 } })
   for (const [revision, listVersion] of [[1, 1], [2, 1], [3, 2], [4, 1]]) {
     const historical = await (await f.path(route + '?revision=' + revision, { headers: owner })).json()
-    assert.deepEqual([historical.listVersion, historical.archetype], [listVersion, 'Golgari Midrange'])
+    assert.deepEqual([historical.listVersion, historical.archetype], [listVersion, 'The Rock (Golgari Control)'])
   }
 })
 
@@ -138,7 +139,7 @@ test('the refinement only changes evidenced migrated defaults and reports disjoi
     assert.equal(after.archetype, 'Basic Lands Practice')
     assert.deepEqual([after.id, after.listVersion, after.listSignature, after.revision], [before.id, before.listVersion, before.listSignature, before.revision])
     assert.equal((await read('starter')).archetype, 'Selesnya Counters')
-    assert.equal((await read('renamed-example')).archetype, 'Izzet Prowess')
+    assert.equal((await read('renamed-example')).archetype, 'UR Aggro')
     assert.equal((await read('empty')).archetype, 'Empty deck')
     for (const id of ['selected','draft','unknown','side']) assert.equal((await read(id)).archetype, 'Other')
   }
@@ -146,6 +147,35 @@ test('the refinement only changes evidenced migrated defaults and reports disjoi
   const coverage = await withTestDatabase(f, libraryArchetypeCoverage)
   assert.deepEqual(coverage.otherBreakdown, { empty: 0, basicOnly: 1, incomplete: 1, complete: 2 })
   assert.equal(coverage.otherDecks, 4)
+})
+
+test('stored Pioneer labels from earlier catalogs become MTGTop8 names at startup, once, keeping unknown labels', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const owner = await signIn(f, 'CanonicalOwner')
+  const put = (id, format) => f.path('/api/playtesting/decks/' + id, json('PUT', owner, {
+    expectedRevision: 0, data: { name: id, format, archetype: 'Other', cards: [{ name: 'Mountain', quantity: 60 }], sideboard: [] },
+  }))
+  for (const [id, format] of [['prowess', 'Pioneer'], ['aggro', 'Pioneer'], ['rock', 'Pioneer'], ['modern', 'Modern']]) assert.equal((await put(id, format)).status, 200)
+  await withTestDatabase(f, async db => {
+    for (const [id, label] of [['prowess', 'Mono-Red Prowess'], ['aggro', 'Mono-Red Aggro'], ['rock', 'Golgari Midrange'], ['modern', 'Mono-Red Prowess']])
+      await db.query('UPDATE deck_revisions SET archetype=$2 WHERE deck_id=$1', [id, label])
+    await db.query(`INSERT INTO match_deck_registrations(table_id,engine_key,account_id,deck_id,list_version,list_signature,archetype,deck_name)
+      SELECT gen_random_uuid(),'canonical-seat',account_id,'prowess',1,'signature','Izzet Prowess','Private title' FROM deck_revisions WHERE deck_id='prowess'`)
+  })
+  const { createProduct } = await import('./product.mjs')
+  await (await createProduct({ databaseUrl, schema: f.schema, replayDirectory: f.replayDirectory, store: new Map() })).close()
+  const read = async id => (await (await f.path('/api/playtesting/decks/' + id, { headers: owner })).json()).archetype
+  assert.equal(await read('prowess'), 'Red Deck Wins')
+  assert.equal(await read('aggro'), 'Red Deck Wins')
+  assert.equal(await read('rock'), 'The Rock (Golgari Control)')
+  assert.equal(await read('modern'), 'Mono-Red Prowess', 'other formats keep their own catalog')
+  const { canonicalizeStoredArchetypes } = await import('./archetype-canonical-migration.mjs')
+  await withTestDatabase(f, async db => {
+    const { rows: [registration] } = await db.query("SELECT archetype FROM match_deck_registrations WHERE engine_key='canonical-seat'")
+    assert.equal(registration.archetype, 'UR Aggro')
+    const again = await canonicalizeStoredArchetypes(db)
+    assert.ok(Object.values(again).every(count => count === 0), JSON.stringify(again))
+  })
 })
 
 test('refinement preserves Other after a freeze erases the safe v1 provenance boundary', { skip: !databaseUrl }, async t => {
@@ -1991,7 +2021,7 @@ test('a selected library copy registers once per seat from game one and cannot n
   await f.product.archiveGames()
   await withTestDatabase(f, async db => {
     const { rows } = await db.query('SELECT deck_id, engine_key, list_version, archetype FROM match_deck_registrations WHERE table_id=$1', [matchId])
-    assert.deepEqual(rows, [{ deck_id: selectedCopy, engine_key: 'alice', list_version: 1, archetype: 'Golgari Midrange' }])
+    assert.deepEqual(rows, [{ deck_id: selectedCopy, engine_key: 'alice', list_version: 1, archetype: 'The Rock (Golgari Control)' }])
   })
 })
 test(
@@ -2142,7 +2172,7 @@ test(
     const landing = await performance(alice, 'scope=all')
     assert.deepEqual(
       landing.groups.map((g) => [g.format, g.archetype, g.matches, g.games]),
-      [['Pioneer', 'Golgari Midrange', rec(1, 0), rec(2, 1)]],
+      [['Pioneer', 'The Rock (Golgari Control)', rec(1, 0), rec(2, 1)]],
     )
     assert.deepEqual(landing.groups[0].deckIds, ['golgari'])
     // An identical saved copy makes the legacy source ambiguous. A declared
@@ -2288,9 +2318,9 @@ test('historical and newly archived human and MCP seats receive only evidenced a
   assert.ok((await visible()).every(seat => !seat.archetype))
   await writeFile(join(f.replayDirectory, match.id + '.match.json'), JSON.stringify({ matchId: match.id, endedAt: Date.now() }))
   await f.product.archiveGames()
-  assert.equal((await visible()).find(seat => seat.name === rival).archetype, 'Dimir Ninjas')
+  assert.equal((await visible()).find(seat => seat.name === rival).archetype, 'Dimir Aggro')
   const allGames = (await (await f.path('/api/playtesting/matches', { headers: owner })).json()).matches[0].games
-  assert.equal(allGames[1].players.find(seat => seat.name === rival).archetype, 'Dimir Ninjas')
+  assert.equal(allGames[1].players.find(seat => seat.name === rival).archetype, 'Dimir Aggro')
   assert.ok(!(await visible()).find(seat => seat.name === human).archetype)
   const { backfillSeatArchetypes, archetypeCoverage } = await import('./archived-archetypes.mjs')
   await withTestDatabase(f, async db => {
@@ -2300,7 +2330,7 @@ test('historical and newly archived human and MCP seats receive only evidenced a
     const report = await archetypeCoverage(db)
     assert.deepEqual(report.seats, { total: 4, classified: 2, pending: 2 })
   })
-  assert.equal((await visible()).find(seat => seat.name === rival).archetype, 'Dimir Ninjas')
+  assert.equal((await visible()).find(seat => seat.name === rival).archetype, 'Dimir Aggro')
 })
 
 test('a shared match restores its final public broadcast after the engine is gone and exposes no other game or private evidence', { skip: !databaseUrl }, async t => {
@@ -2589,4 +2619,38 @@ test('forward auth marks administrator accounts, including their agent connectio
   const adminStatuses = []
   for (let i = 0; i < 65; i += 5) adminStatuses.push(...(await Promise.all(Array.from({ length: Math.min(5, 65 - i) }, () => archive(admin)))).map(r => r.status))
   assert.ok(adminStatuses.every(status => status !== 429), 'administrator exceeds per-account rate and concurrency')
+})
+
+test('platform administrators list every account with its MCP players and grants, and curate unclassified decks', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const admin = await signIn(f, 'PlatformStaff')
+  const member = await signIn(f, 'PlatformMember')
+  const token = await f.product.provisionAgent('PlatformMember', 'MemberPilot', ['play', 'library'])
+  const created = await f.path('/api/playtesting/players', json('POST', member, { displayName: 'Savia' }))
+  assert.equal(created.status, 201)
+  const deck = { name: 'Brew', format: 'Pioneer', archetype: 'Other', cards: [{ name: 'Mountain', quantity: 60 }], sideboard: [] }
+  assert.equal((await f.path('/api/playtesting/decks/brew', json('PUT', member, { expectedRevision: 0, data: deck }))).status, 200)
+  for (const headers of [member, { Authorization: 'Bearer ' + token }, {}])
+    assert.ok([401, 403].includes((await f.path('/api/playtesting/admin/accounts', { headers })).status))
+  const adminId = (await (await f.path('/api/playtesting/me', { headers: admin })).json()).accountId
+  await f.product.setTournamentAdmins([adminId])
+  const overview = await (await f.path('/api/playtesting/admin/accounts', { headers: admin })).json()
+  const row = overview.accounts.find(account => account.username === 'PlatformMember')
+  assert.deepEqual(row.players.map(player => player.displayName), ['Savia'])
+  assert.match(row.players[0].engineName, /^mcp_p[0-9a-f]{18}$/)
+  assert.ok(row.grants.some(grant => grant.engineName === 'MemberPilot' && grant.scopes.includes('library')))
+  assert.equal(row.unclassifiedDecks, 1)
+  assert.doesNotMatch(JSON.stringify(overview), /digest|password|token/i)
+  assert.equal(overview.accounts.find(account => account.username === 'PlatformStaff').tournamentAdmin, true)
+  const pending = await (await f.path('/api/playtesting/admin/decks/unclassified', { headers: admin })).json()
+  const brew = pending.decks.find(item => item.deckId === 'brew')
+  assert.equal(brew.username, 'PlatformMember')
+  assert.ok(pending.archetypes.Pioneer.includes('Red Deck Wins'))
+  const path = `/api/playtesting/admin/decks/${brew.accountId}/brew/archetype`
+  assert.equal((await f.path(path, json('PUT', admin, { archetype: 'Not a label' }))).status, 400)
+  assert.equal((await f.path(path, json('PUT', member, { archetype: 'Red Deck Wins' }))).status, 403)
+  // A retired label is accepted and stored under its MTGTop8 name.
+  const saved = await (await f.path(path, json('PUT', admin, { archetype: 'Mono-Red Prowess' }))).json()
+  assert.equal(saved.archetype, 'Red Deck Wins')
+  assert.equal((await (await f.path('/api/playtesting/decks/brew', { headers: member })).json()).archetype, 'Red Deck Wins')
 })

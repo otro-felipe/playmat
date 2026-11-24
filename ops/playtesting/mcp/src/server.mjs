@@ -655,7 +655,7 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
   const DeckLibrary = z.enum(['agent','private']).optional().describe('Shared account agent library, or the selected agent’s own private library.');
   tool('list_decks', 'List the reusable MCP opponent decks in your private account library. These appear in the web library under MCP opponent decks.', { library: DeckLibrary }, 'decks', args => fromProduct('list_decks', args), true);
   tool('get_deck', 'Read one deck in your library. Pass its format and data directly to validate_deck.', { deckId: LibraryDeckId }, 'decks', getLibraryDeck, true);
-  tool('list_deck_archetypes', 'List all predefined library archetypes for the format. Use one label in create_deck and update_deck.', { format: Format },
+  tool('list_deck_archetypes', 'List all predefined library archetypes for the format (Pioneer: MTGTop8 archetype names). Use one label in create_deck and update_deck.', { format: Format },
     'decks', args => fromProduct('list_deck_archetypes', args), true);
   tool('create_deck', 'Save a reusable MCP opponent deck in your private library. It remains available in later sessions and appears under MCP opponent decks on the web.', { library: DeckLibrary, name: z.string().min(1).max(120), format: Format, archetype: z.string().min(1).max(150), deck: Deck },
     'decks', (args) => fromProduct('create_deck', args));

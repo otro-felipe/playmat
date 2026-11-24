@@ -203,6 +203,20 @@ test('[READ-AC-007] restores only the hand knowledge from before the target turn
   game.dispose();
 });
 
+test('keeps the opponent hand count beside the fan, above any card revealed from that hand', () => {
+  const game = match();
+  const shock = { id: 'shock', name: 'Shock', ownerId: 'them', zone: 'HAND' as const };
+  const board = { ...BOARD, players: BOARD.players!.map(p => ({ ...p, handCount: 3 })) };
+  game.updateView(board, false);
+  expect(game.getByTestId('hidden-hand-count').hasAttribute('data-beside')).toBe(false);
+  game.updateView({ ...board, knownHandCards: { shock } }, false);
+  const count = game.getByTestId('hidden-hand-count');
+  expect(count.textContent).toBe('3');
+  expect(count.hasAttribute('data-beside')).toBe(true);
+  expect(count.style.getPropertyValue('--edge')).toBe('86px');
+  game.dispose();
+});
+
 test('[READ-AC-007] reconnect relies on current hand markers even when hand counts did not change', () => {
   const game = match();
   const forest = { id: 'forest', name: 'Forest', ownerId: 'me', zone: 'HAND' as const };

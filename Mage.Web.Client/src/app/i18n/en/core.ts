@@ -86,6 +86,7 @@ export default {
   'shell.account': 'Account: {name}',
   'shell.profile': 'Profile',
   'shell.admin': 'Admin',
+  'shell.platformAdmin': 'Platform administration',
   'shell.feedback': 'Send feedback',
   'shell.about': 'About and credits',
   'legal.privacyLink': 'Privacy policy',

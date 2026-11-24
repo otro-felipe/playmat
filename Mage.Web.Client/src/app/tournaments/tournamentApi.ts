@@ -52,6 +52,8 @@ type Card = { amount: number; cardName: string };
 export interface RegisteredDeck {
   entryId: string;
   name: string;
+  /** the list's public archetype (Pioneer: MTGTop8 name), when classified */
+  archetype?: string | null;
   cards: Card[];
   sideboard: Card[];
 }

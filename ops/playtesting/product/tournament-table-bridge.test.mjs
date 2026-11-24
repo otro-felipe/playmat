@@ -134,13 +134,13 @@ test(
     const db = await pool.connect()
     try {
       await db.query('CREATE TEMP TABLE decks(id uuid PRIMARY KEY)')
-      await db.query('CREATE TEMP TABLE tournament_entries(id uuid PRIMARY KEY,deck_name text)')
+      await db.query('CREATE TEMP TABLE tournament_entries(id uuid PRIMARY KEY,deck_name text,opening_archetype text)')
       await db.query(
         'CREATE TEMP TABLE tournament_entry_cards(entry_id uuid,zone text,position integer,card_name text,amount integer,set_code text,card_number text)',
       )
       const [a, b] = [randomUUID(), randomUUID()]
       await db.query('INSERT INTO decks VALUES($1),($2)', [a, b])
-      await db.query("INSERT INTO tournament_entries VALUES($1,'Registered A'),($2,'Registered B')", [a, b])
+      await db.query("INSERT INTO tournament_entries VALUES($1,'Registered A','Devotion to Green'),($2,'Registered B','Other')", [a, b])
       await db.query(
         "INSERT INTO tournament_entry_cards VALUES($1,'cards',1,'Forest',60,'M15','268'),($1,'sideboard',1,'Forest',2,NULL,NULL),($2,'cards',1,'Island',60,NULL,NULL)",
         [a, b],
@@ -148,6 +148,8 @@ test(
       await db.query('DELETE FROM decks')
       const [second, first] = await registeredDecklists(db, [b, a])
       assert.deepEqual(first.cards, [{ cardName: 'Forest', amount: 60, setCode: 'M15', cardNumber: '268' }])
+      // A published list names its archetype; the unknown bucket stays unnamed.
+      assert.deepEqual([first.archetype, second.archetype], ['Devotion to Green', null])
       assert.equal(first.sideboard[0].amount, 2)
       assert.equal(second.entryId, b)
       assert.equal(second.cards[0].cardName, 'Island')

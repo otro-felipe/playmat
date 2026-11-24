@@ -283,6 +283,14 @@
   font-size: 22px;
   font-weight: 700;
   text-align: center;
+  z-index: 2;
+}
+
+/* with a revealed card face up over the middle, the count sits beside the fan, still readable */
+.handCount[data-beside] {
+  left: var(--edge);
+  top: 40px;
+  translate: 0 0;
 }
 
 .watchers {

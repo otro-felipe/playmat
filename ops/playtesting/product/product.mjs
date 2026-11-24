@@ -1,4 +1,6 @@
 import { archetypeCoverage, backfillSeatArchetypes } from './archived-archetypes.mjs'
+import { canonicalizeStoredArchetypes } from './archetype-canonical-migration.mjs'
+import { platformOverview, setDeckArchetype, unclassifiedDecks } from './platform-admin.mjs'
 import { authStyles } from './auth-styles.mjs'
 import { accountLimits, clientKey, createConcurrencyLimit, createLimits, productLimitGroup, productLimits } from './limits.mjs'
 import { createServer } from 'node:http'
@@ -156,6 +158,7 @@ export async function createProduct({
     await transaction(pool, async db => {
       await db.query("SELECT pg_advisory_xact_lock(hashtext(current_schema()),hashtext('tournament-archetypes'))")
       const before = await archetypeCoverage(db)
+      console.info('archetype_canonical', JSON.stringify(await canonicalizeStoredArchetypes(db)))
       await refineTournamentArchetypes(db)
       await backfillSeatArchetypes(db)
       console.info('archetype_backfill', JSON.stringify({ before, after: await archetypeCoverage(db) }))
@@ -475,6 +478,16 @@ export async function createProduct({
       if (req.method === 'DELETE') return send(res,200,await retirePlayer(pool,actor,playerId))
     }
     if (endpoint === 'me' && req.method === 'GET') return send(res, 200, {...identityView(actor),isTournamentAdmin:(await tournamentActor(pool,actor)).isAdmin})
+    if (endpoint.startsWith('admin/')) {
+      // Platform staff only: a signed-in browser session of a tournament administrator.
+      if (!(await tournamentActor(pool, actor)).isAdmin) throw new ProductError(403, 'Administrators only')
+      if (endpoint === 'admin/accounts' && req.method === 'GET') return send(res, 200, await platformOverview(pool))
+      if (endpoint === 'admin/decks/unclassified' && req.method === 'GET') return send(res, 200, await unclassifiedDecks(pool))
+      const archetype = /^admin\/decks\/([^/]+)\/([^/]+)\/archetype$/.exec(endpoint)
+      if (archetype && req.method === 'PUT')
+        return send(res, 200, await setDeckArchetype(pool, archetype[1], decodeURIComponent(archetype[2]), await body(req, 'json', 1024)))
+      throw new ProductError(404, 'Not found')
+    }
     if (endpoint.startsWith('human-seat/') && req.method === 'GET') {
       requireScope(actor, 'play')
       return send(res, 200, await readHumanSeat(pool, actor, endpoint.slice('human-seat/'.length)))

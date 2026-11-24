@@ -140,6 +140,16 @@ export function AppShell() {
   const t = useT();
   // staff get Admin in the account menu; the role is checked again on every admin action
   const staff = useQuery({ queryKey: ['staffMe', userName], queryFn: () => api.staffMe(), enabled: connection === 'open', staleTime: 5 * 60_000 });
+  // private playtesting: tournament administrators also run the platform panel (accounts, subagents, curation)
+  const platformAdmin = useQuery({
+    queryKey: ['playtestingMe', userName],
+    queryFn: async () => {
+      const response = await fetch('/api/playtesting/me', { cache: 'no-store', credentials: 'same-origin' });
+      return response.ok ? ((await response.json()) as { isTournamentAdmin?: boolean }) : null;
+    },
+    enabled: PRIVATE_PLAYTESTING,
+    staleTime: 5 * 60_000,
+  });
   const support = useServerInfo().data?.support === true;
 
   return (
@@ -188,6 +198,11 @@ export function AppShell() {
                   <DropdownMenu.Item className={styles.menuItem} onSelect={() => setSettingsOpen(true)}>
                     <Settings size={16} aria-hidden="true" /> {t('shell.settings')}
                   </DropdownMenu.Item>
+                  {platformAdmin.data?.isTournamentAdmin && (
+                    <DropdownMenu.Item className={styles.menuItem} onSelect={() => navigate('/staff')}>
+                      <ShieldCheck size={16} aria-hidden="true" /> {t('shell.platformAdmin')}
+                    </DropdownMenu.Item>
+                  )}
                   {staff.data?.role && (
                     <DropdownMenu.Item className={styles.menuItem} onSelect={() => navigate('/admin')}>
                       <ShieldCheck size={16} aria-hidden="true" /> {t('shell.admin')}

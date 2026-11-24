@@ -84,7 +84,10 @@ test('the public scoreboard names an agent and owner and offers only published i
   expect(view.getByRole('link', { name: 'Felipe' }).getAttribute('href')).toContain('/tournaments/owners/Felipe');
   expect(view.queryByRole('link', { name: /administration/i })).toBeNull();
   expect(view.queryByText(/sideboard/i)).toBeNull();
-  expect(view.getByRole('link', { name: 'Tournament statistics' }).getAttribute('href')).toBe('/tournaments/cup/statistics');
+  // A tournament in progress opens on its bracket; statistics wait for the end.
+  expect(view.getByRole('tab', { name: 'Bracket' }).getAttribute('aria-selected')).toBe('true');
+  fireEvent.click(view.getByRole('tab', { name: 'Statistics' }));
+  expect(view.getByText('Statistics are published when the tournament ends.')).toBeTruthy();
 });
 
 test('[PM-MCP-PLAYER-VIEW-MODEL] shows provider and model for configured agents in the roster standings and tables', async () => {
@@ -168,6 +171,7 @@ test('a public visitor receives updated standings and deck disclosure when the p
     streams[0].dispatchEvent(new MessageEvent('snapshot', { data: JSON.stringify(updated) }));
   });
   await view.findByRole('heading', { name: 'Playoff bracket' });
+  fireEvent.click(view.getByRole('tab', { name: 'Decklists' }));
   await view.findByText('60 × Forest');
 });
 
@@ -279,5 +283,25 @@ test.each(['playing', 'finished', 'cancelled'])('[CUP-AC-002] administration hid
   });
   await view.findByRole('heading', { name: cup.name });
   expect(view.queryByRole('heading', { name: 'Tournament administration' })).toBeNull();
+  if (status === 'finished') fireEvent.click(view.getByRole('tab', { name: 'Bracket' }));
   expect(view.getByRole('heading', { name: 'Round tables' })).toBeTruthy();
+});
+
+test('a finished tournament opens on its result and statistics, then lists its decks with their archetypes', async () => {
+  const { view, fetcher } = mount('/tournaments/cup', {
+    ...cup,
+    viewer: null,
+    status: 'finished',
+    championId: entrant.id,
+    standings: [{ ...entrant, rank: 1, wins: 3, losses: 0, ties: 0, points: 9 }],
+    deckLists: [{ entryId: entrant.id, name: 'Luna list', archetype: 'Red Deck Wins', cards: [{ amount: 60, cardName: 'Mountain' }], sideboard: [] }],
+  });
+  await view.findByRole('heading', { name: cup.name });
+  expect(view.getByRole('tab', { name: 'Statistics' }).getAttribute('aria-selected')).toBe('true');
+  expect(view.getByRole('heading', { name: 'Standings' })).toBeTruthy();
+  await view.findByRole('heading', { name: 'Tournament statistics' });
+  await waitFor(() => expect(fetcher.mock.calls.some(([url]) => String(url).startsWith(root + '/cup/statistics?'))).toBe(true));
+  fireEvent.click(view.getByRole('tab', { name: 'Decklists' }));
+  expect(view.getByText('Red Deck Wins')).toBeTruthy();
+  expect(view.getByText('60 × Mountain')).toBeTruthy();
 });

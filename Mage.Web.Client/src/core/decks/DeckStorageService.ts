@@ -113,7 +113,7 @@ export class LocalDeckStorage implements IDeckStorage {
     async saveDeck(deck: DeckCardLists, options: SaveDeckOptions = {}): Promise<string> {
         // Saving is the first storage operation that needs the format catalog.
         const scope = this.accountStores;
-        const { archetypesFor, classifyArchetype } = await import("./archetypes/library.mjs");
+        const { archetypesFor, canonicalArchetype, classifyArchetype } = await import("./archetypes/library.mjs");
         if (scope !== this.accountStores) throw new Error("The deck library changed while saving.");
         const meta = this.getMeta();
 
@@ -132,8 +132,8 @@ export class LocalDeckStorage implements IDeckStorage {
         const now = Date.now();
         const deckData = {
             ...deck,
-            archetype: deck.archetype && archetypesFor(deck.format).includes(deck.archetype)
-                ? deck.archetype : classifyArchetype(deck.format, deck.name, deck.cards),
+            archetype: deck.archetype && archetypesFor(deck.format).includes(canonicalArchetype(deck.format, deck.archetype))
+                ? canonicalArchetype(deck.format, deck.archetype) : classifyArchetype(deck.format, deck.name, deck.cards),
             id,
             updatedAt: now,
             createdAt: deck.createdAt || now,

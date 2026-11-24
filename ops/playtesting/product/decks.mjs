@@ -1,4 +1,4 @@
-import { archetypesFor, classifyArchetype, deckListSignature, publicListArchetype, verifiedListArchetype } from './deck-performance-identity.mjs'
+import { archetypesFor, canonicalArchetype, classifyArchetype, deckListSignature, publicListArchetype, verifiedListArchetype } from './deck-performance-identity.mjs'
 
 export class ProductError extends Error {
   constructor(status, message) {
@@ -111,7 +111,8 @@ export async function putDeck(pool, account, deckId, { data, name, format, arche
     || data.cards.length + data.sideboard.length > 300 || ![...data.cards, ...data.sideboard].every(validateEntry)) {
     throw new ProductError(400, 'Provide a valid deck name, format and card list')
   }
-  const requestedLabel = suppliedLabel ?? data.archetype
+  // Older clients may still send a retired label or a nickname: store its catalog name.
+  const requestedLabel = canonicalArchetype(headFormat, suppliedLabel ?? data.archetype)
   const allowed = archetypesFor(headFormat)
   if (requestedLabel !== undefined && !allowed.includes(requestedLabel)) throw new ProductError(400, 'Choose a catalog archetype for this format')
   const { revision: ignoredRevision, archetype: ignoredLabel, listVersion: ignoredVersion, listSignature: ignoredSignature, cards: rawCards, sideboard: rawSideboard, id, name: ignoredName, format: ignoredFormat, library: ignoredLibrary, playerId: ignoredOwner, updatedAt: ignoredTime, ...metadata } = data

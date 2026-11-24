@@ -44,10 +44,11 @@ describe('the deck shelf (#200)', () => {
     await act(() => useDecks.getState().refresh());
     wrap(<DeckOrganizer deck={useDecks.getState().saved[0]} />);
     const picker = screen.getByRole('combobox', { name: 'Archetype' }) as HTMLSelectElement;
-    expect(picker.value).toBe('Golgari Midrange');
+    expect(picker.value).toBe('The Rock (Golgari Control)');
+    expect(screen.queryByRole('option', { name: 'Golgari Midrange' })).toBeNull();
     expect(screen.queryByRole('option', { name: 'Amulet Titan' })).toBeNull();
-    await user.selectOptions(picker, 'Izzet Phoenix');
-    await waitFor(async () => expect((await deckStorage.loadDeck(id))?.archetype).toBe('Izzet Phoenix'));
+    await user.selectOptions(picker, 'Arclight Phoenix');
+    await waitFor(async () => expect((await deckStorage.loadDeck(id))?.archetype).toBe('Arclight Phoenix'));
   });
 
   test("a deck's panel adds and removes tags and marks it as a draft", async () => {

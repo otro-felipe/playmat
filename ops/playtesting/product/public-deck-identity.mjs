@@ -3,6 +3,7 @@ import { inflateRawSync } from 'node:zlib'
 import { createRequire } from 'node:module'
 import {
   archetypesFor,
+  canonicalArchetype,
   deckListSignature,
   publicCompositionName,
   publicListArchetype,
@@ -138,7 +139,16 @@ export function mainColors(cards, lookup = catalogMask) {
   return letters.filter((_, i) => mask & (1 << i))
 }
 
+// MTGTop8 names that do not start with a guild, shard or mono color.
+const namedPalettes = {
+  'ur aggro': 'UR', 'uw control': 'WU', 'weenie white': 'W', 'devotion to green': 'G', 'green ramp': 'G',
+  'the rock (golgari control)': 'BG', 'arclight phoenix': 'UR', 'red deck wins': 'R', '5c legends aggro': 'WUBRG',
+  'niv-mizzet reborn': 'WUBRG', 'lotus field': 'G', 'greasefang parhelion': 'WB',
+}
+
 export function archetypeColors(archetype) {
+  const named = namedPalettes[String(archetype || '').toLowerCase()]
+  if (named) return letters.filter((color) => named.includes(color))
   const prefix = String(archetype || '')
     .toLowerCase()
     .match(/^(?:mono[- ](white|blue|black|red|green)|([a-z]+))\b/)
@@ -170,7 +180,9 @@ export function resolveHistoricalDeck(
       : null
   const cards = signature && snapshot?.cards?.length ? snapshot.cards : []
   const allowed = new Set(archetypesFor(family))
-  const claimed = (labels) => [...new Set(labels.filter((label) => label && label !== 'Other' && allowed.has(label)))]
+  const claimed = (labels) => [
+    ...new Set(labels.map((label) => canonicalArchetype(family, label)).filter((label) => label && label !== 'Other' && allowed.has(label))),
+  ]
   const explicit = claimed(registeredArchetypes)
   const opening = claimed(openingArchetypes)
   const size = cards.reduce((total, c) => total + (c?.amount ?? c?.quantity ?? c?.count ?? 1), 0)

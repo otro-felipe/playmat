@@ -13,13 +13,44 @@ function catalogFormat(format) {
   return Object.keys(catalog.formats).find(name => key(name) === key(label)) ?? ''
 }
 
+// A format with a canonical source (Pioneer: MTGTop8) uses only those names. Its own
+// "Other - Aggro/Control/Combo" buckets replace the generic strategy labels.
+const practice = ['Empty deck', 'Basic Lands Practice', 'Creature Practice']
+const canonicalFormats = new Set(Object.keys(catalog.canonical ?? {}))
+
 export function archetypesFor(format) {
   const family = catalogFormat(format)
   if (!cache.has(family)) {
-    const labels = new Set([...(family === 'Freeform' ? Object.values(catalog.formats).flat() : catalog.formats[family] ?? []), ...generic])
+    const extra = canonicalFormats.has(family) ? practice : generic
+    const labels = new Set([...(family === 'Freeform' ? Object.values(catalog.formats).flat() : catalog.formats[family] ?? []), ...extra])
     cache.set(family, [...labels].sort((a, b) => a.localeCompare(b, 'en')).concat('Other'))
   }
   return cache.get(family)
+}
+
+/**
+ * The catalog label for a stored or supplied one. Labels from earlier catalogs and
+ * common nicknames map to the canonical name; unknown labels stay as they are.
+ * Freeform has no canonical list, so it borrows the Pioneer aliases for retired labels.
+ */
+export function canonicalArchetype(format, label) {
+  if (typeof label !== 'string' || !label) return label
+  const labels = archetypesFor(format)
+  if (labels.includes(label)) return label
+  const family = catalogFormat(format)
+  for (const source of family === 'Freeform' ? Object.keys(catalog.canonical ?? {}) : [family]) {
+    const aliases = catalog.formatAliases?.[source] ?? {}
+    const target = aliases[label] ?? Object.entries(aliases).find(([name]) => key(name) === key(label))?.[1]
+    if (target && labels.includes(target)) return target
+  }
+  return label
+}
+
+/** MTGTop8's archetype page for a canonical label, when the format has one. */
+export function archetypeSourceUrl(format, label) {
+  const family = catalogFormat(format)
+  const id = catalog.canonical?.[family]?.mtgtop8Ids?.[label]
+  return id ? `https://www.mtgtop8.com/archetype?a=${id}&f=PI` : null
 }
 
 // Main-deck packages from the Pioneer MTGO Challenges documented in catalog.sources.
@@ -93,8 +124,9 @@ export function tournamentArchetype(format, cards) {
   // packages without a subset relationship remain ambiguous.
   const specific = matches.filter(([label, ...subset]) => !matches.some(([other, ...superset]) =>
     label !== other && superset.length > subset.length && subset.every(card => superset.includes(card))))
-  const labels = new Set(specific.map(([label]) => label))
-  return labels.size === 1 ? specific[0][0] : null
+  // Package names are descriptive; report the catalog name, so two packages of one archetype agree.
+  const labels = new Set(specific.map(([label]) => (tournamentPackages.some(([name]) => name === label) ? canonicalArchetype('Pioneer', label) : label)))
+  return labels.size === 1 ? [...labels][0] : null
 }
 
 // Older clients and imported decks may supply only a display name. Prefer complete
@@ -132,6 +164,8 @@ export function classifyArchetype(format, name, cards = []) {
     ['Azorius Control', 'Supreme Verdict', 'Teferi, Hero of Dominaria'],
     ['Boros Energy', 'Guide of Souls', 'Phlage, Titan of Fire\'s Fury'],
   ]
-  const matches = signatures.filter(([label, ...cards]) => labels.includes(label) && cards.every(card => names.has(key(card))))
-  return matches.length === 1 ? matches[0][0] : 'Other'
+  const matches = signatures
+    .map(([label, ...cards]) => [canonicalArchetype(format, label), ...cards])
+    .filter(([label, ...cards]) => labels.includes(label) && cards.every(card => names.has(key(card))))
+  return new Set(matches.map(([label]) => label)).size === 1 ? matches[0][0] : 'Other'
 }

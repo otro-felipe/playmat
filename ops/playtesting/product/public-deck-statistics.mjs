@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { archetypesFor } from './deck-performance-identity.mjs'
+import { archetypesFor, archetypeSourceUrl, canonicalArchetype } from './deck-performance-identity.mjs'
 import { isUuid, ProductError } from './decks.mjs'
 import { historyFormatFilter } from './performance.mjs'
 import { archetypeColors, statisticsFormat } from './public-deck-identity.mjs'
@@ -39,7 +39,8 @@ const results = `
     LEFT JOIN tournament_pairings p ON p.id=physical.pairing_id
       OR (p.match_id=d.id AND physical.pairing_id IS NULL)
   ), tournament_results AS (
-    SELECT a.pairing_id,a.included,t.format,ea.opening_composition_id AS ca,eb.opening_composition_id AS cb,
+    SELECT a.id,lower(ea.engine_name) AS ka,lower(eb.engine_name) AS kb,
+      a.pairing_id,a.included,t.format,ea.opening_composition_id AS ca,eb.opening_composition_id AS cb,
       ea.opening_archetype AS aa,eb.opening_archetype AS ab,
       array_to_string(ea.opening_colors,'') AS palette_a,array_to_string(eb.opening_colors,'') AS palette_b,
       CASE a.winner_entry WHEN a.entry_a THEN 1 WHEN a.entry_b THEN -1 ELSE 0 END AS outcome,
@@ -52,15 +53,38 @@ const results = `
       AND a.names @> ARRAY[lower(ea.engine_name),lower(eb.engine_name)]
       AND (a.winner_entry IS NULL OR a.winner_entry IN (ea.id,eb.id))
   ), eligible AS (
-    SELECT format,ca,cb,aa,ab,palette_a,palette_b,outcome FROM tournament_results WHERE included AND candidates=1
+    SELECT id,ka,kb,format,ca,cb,aa,ab,palette_a,palette_b,outcome FROM tournament_results WHERE included AND candidates=1
     UNION ALL
-    SELECT format,compositions[1],compositions[2],archetypes[1],archetypes[2],palettes[1],palettes[2],
+    SELECT id,names[1],names[2],format,compositions[1],compositions[2],archetypes[1],archetypes[2],palettes[1],palettes[2],
       CASE winner WHEN names[1] THEN 1 WHEN names[2] THEN -1 ELSE 0 END
     FROM attributed WHERE included AND $1 IS NULL AND pairing_id IS NULL AND physical_id IS NULL
       AND (winner IS NULL OR winner=ANY(names))
+  ), side_stats AS (
+    -- Every completed game of an eligible match, from one seat: opening hands and length.
+    SELECT g.match_id AS id,p.engine_key AS k,count(*)::int AS games,
+      count(p.mulligans)::int AS mull_known,coalesce(sum(p.mulligans),0)::int AS mulligans,
+      count(*) FILTER (WHERE p.mulligans=0)::int AS kept_games,
+      count(*) FILTER (WHERE p.mulligans=0 AND lower(btrim(g.winner))=p.engine_key)::int AS kept_wins,
+      count(*) FILTER (WHERE p.mulligans>0)::int AS mull_games,
+      count(*) FILTER (WHERE p.mulligans>0 AND lower(btrim(g.winner))=p.engine_key)::int AS mull_wins,
+      count(*) FILTER (WHERE g.ended_at>=g.started_at)::int AS timed,
+      coalesce(sum(g.ended_at-g.started_at) FILTER (WHERE g.ended_at>=g.started_at),0)::bigint AS duration
+    FROM games g JOIN game_players p ON p.game_id=g.id
+    WHERE g.status='completed' AND g.match_id IN (SELECT id FROM eligible)
+    GROUP BY g.match_id,p.engine_key
   ), counts AS (
-    SELECT format,ca,cb,aa,ab,palette_a,palette_b,outcome,count(*)::int AS n
-    FROM eligible GROUP BY format,ca,cb,aa,ab,palette_a,palette_b,outcome
+    SELECT e.format,ca,cb,aa,ab,palette_a,palette_b,outcome,count(*)::int AS n,
+      coalesce(sum(sa.games),0)::int AS games_a,coalesce(sum(sb.games),0)::int AS games_b,
+      coalesce(sum(sa.mull_known),0)::int AS mull_known_a,coalesce(sum(sb.mull_known),0)::int AS mull_known_b,
+      coalesce(sum(sa.mulligans),0)::int AS mulligans_a,coalesce(sum(sb.mulligans),0)::int AS mulligans_b,
+      coalesce(sum(sa.kept_games),0)::int AS kept_games_a,coalesce(sum(sb.kept_games),0)::int AS kept_games_b,
+      coalesce(sum(sa.kept_wins),0)::int AS kept_wins_a,coalesce(sum(sb.kept_wins),0)::int AS kept_wins_b,
+      coalesce(sum(sa.mull_games),0)::int AS mull_games_a,coalesce(sum(sb.mull_games),0)::int AS mull_games_b,
+      coalesce(sum(sa.mull_wins),0)::int AS mull_wins_a,coalesce(sum(sb.mull_wins),0)::int AS mull_wins_b,
+      coalesce(sum(sa.timed),0)::int AS timed,coalesce(sum(sa.duration),0)::float8 AS duration
+    FROM eligible e LEFT JOIN side_stats sa ON sa.id=e.id AND sa.k=e.ka
+    LEFT JOIN side_stats sb ON sb.id=e.id AND sb.k=e.kb
+    GROUP BY e.format,ca,cb,aa,ab,palette_a,palette_b,outcome
   ), cup_titles AS (
     SELECT e.opening_composition_id, min(NULLIF(btrim(e.deck_name),'') COLLATE "C") AS title
     FROM tournament_entries e JOIN published_tournament_entries pub ON pub.entry_id=e.id
@@ -85,19 +109,37 @@ function category(group, format, composition, publicName, archetype, colors) {
     if (composition) return { id: composition, name: publicName, format, colors }
     return { id: categoryId(group, format, null), name: null, unidentified: true, format, colors: null }
   }
-  const name = archetype !== 'Other' && archetypesFor(format).includes(archetype) ? archetype : null
-  return { id: categoryId(group, format, name), name, format, colors: colors ?? archetypeColors(name) }
+  // Rows archived before a catalog change still group under today's name.
+  const label = canonicalArchetype(format, archetype)
+  const name = label !== 'Other' && archetypesFor(format).includes(label) ? label : null
+  return {
+    id: categoryId(group, format, name), name, format, colors: colors ?? archetypeColors(name),
+    source: name ? archetypeSourceUrl(format, name) : null,
+  }
 }
 
-function add(map, category, outcome, count) {
+const metrics = ['games', 'mulliganKnown', 'mulligans', 'keptGames', 'keptWins', 'mulliganGames', 'mulliganWins', 'timedGames', 'durationMs']
+
+// One side of the aggregated duels: its own games and opening hands, and the shared game length.
+function side(row, s) {
+  return {
+    games: row['games_' + s], mulliganKnown: row['mull_known_' + s], mulligans: row['mulligans_' + s],
+    keptGames: row['kept_games_' + s], keptWins: row['kept_wins_' + s],
+    mulliganGames: row['mull_games_' + s], mulliganWins: row['mull_wins_' + s],
+    timedGames: row.timed ?? 0, durationMs: Number(row.duration ?? 0),
+  }
+}
+
+function add(map, category, outcome, count, stats = {}) {
   let row = map.get(category.id)
   if (!row) {
-    row = { ...category, n: 0, wins: 0, draws: 0, losses: 0 }
+    row = { ...category, n: 0, wins: 0, draws: 0, losses: 0, ...Object.fromEntries(metrics.map((m) => [m, 0])) }
     map.set(row.id, row)
   } else if (row.colors && (!category.colors || row.colors.join() !== category.colors.join())) {
     row.colors = null
   }
   row.n += count
+  for (const m of metrics) row[m] += stats[m] ?? 0
   if (outcome > 0) row.wins += count
   else if (outcome < 0) row.losses += count
   else row.draws += count
@@ -142,10 +184,13 @@ export async function publicDeckStatistics(
     matches += row.n
     const a = category(group, format, row.ca, row.name_a, row.aa, row.palette_a?.split('') ?? null)
     const b = category(group, format, row.cb, row.name_b, row.ab, row.palette_b?.split('') ?? null)
-    add(rows, a, row.outcome, row.n)
-    add(rows, b, -row.outcome, row.n)
-    if (selected === a.id) add(opponents, b, row.outcome, row.n)
-    if (selected === b.id) add(opponents, a, -row.outcome, row.n)
+    const sa = side(row, 'a'),
+      sb = side(row, 'b')
+    add(rows, a, row.outcome, row.n, sa)
+    add(rows, b, -row.outcome, row.n, sb)
+    // A matchup row reports the selected deck's own hands against that opponent.
+    if (selected === a.id) add(opponents, b, row.outcome, row.n, sa)
+    if (selected === b.id) add(opponents, a, -row.outcome, row.n, sb)
   }
 
   return {

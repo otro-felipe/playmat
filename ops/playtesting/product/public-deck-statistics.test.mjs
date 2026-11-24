@@ -106,13 +106,14 @@ test(
     const report = await publicDeckStatistics(db, { format: 'Pioneer' })
     assert.equal(report.matches, 3)
     assert.deepEqual(report.formats, ['Modern', 'Pioneer'])
-    const aggro = report.rows.find((x) => x.name === 'Aggro')
+    // Generic Pioneer labels from earlier editors fall into MTGTop8's miscellaneous buckets.
+    const aggro = report.rows.find((x) => x.name === 'Other - Aggro')
     assert.deepEqual(record(aggro), [5, 1, 2, 2])
     assert.deepEqual(aggro.colors, ['G'])
-    assert.deepEqual(report.rows.find((x) => x.name === 'Control').colors, [])
+    assert.deepEqual(report.rows.find((x) => x.name === 'Other - Control').colors, [])
     const detail = await publicDeckStatistics(db, { selected: aggro.id })
     assert.deepEqual(record(detail.selected.matchups.find((x) => x.id === aggro.id)), [4, 1, 2, 1])
-    assert.deepEqual(record(detail.selected.matchups.find((x) => x.name === 'Control')), [1, 0, 0, 1])
+    assert.deepEqual(record(detail.selected.matchups.find((x) => x.name === 'Other - Control')), [1, 0, 0, 1])
     const decks = await publicDeckStatistics(db, { group: 'deck', format: 'Pioneer', selected: a })
     assert.equal(decks.rows.length, 3)
     assert.deepEqual(record(decks.selected), [3, 1, 1, 1])
@@ -272,12 +273,55 @@ test(
       [null, 'Private unpublished title'],
     ])
     const report = await publicDeckStatistics(db)
-    assert.deepEqual(report.rows.find((row) => row.name === 'Mono-Red Aggro').colors, ['R'])
+    const red = report.rows.find((row) => row.name === 'Red Deck Wins')
+    assert.deepEqual(red.colors, ['R'])
+    assert.equal(red.source, 'https://www.mtgtop8.com/archetype?a=862&f=PI')
     assert.equal(report.rows.find((row) => row.name === null).colors, null)
     assert.doesNotMatch(JSON.stringify(report), /Private unpublished title/)
     const decks = await publicDeckStatistics(db, { group: 'deck' })
     assert.equal(decks.rows.length, 1)
     assert.equal(decks.rows[0].unidentified, true)
     assert.equal(decks.rows[0].colors, null)
+  },
+)
+
+test(
+  'archetype rows report games, opening-hand mulligans with their game results, and average game length',
+  { skip: !url },
+  async (t) => {
+    const { db, match } = await fixture(t)
+    const first = await match([
+      [null, 'Mono-Red Prowess'],
+      [null, 'Izzet Prowess'],
+    ])
+    // Game one: Alice keeps seven and wins in 10 minutes; Bob mulligans once.
+    await db.query("UPDATE games SET winner='Alice',started_at=0,ended_at=600000 WHERE id=$1", [first.game])
+    await db.query("UPDATE game_players SET mulligans=CASE engine_key WHEN 'alice' THEN 0 ELSE 1 END WHERE game_id=$1", [first.game])
+    // Game two: Alice mulligans twice and loses in 20 minutes; Bob keeps.
+    const second = randomUUID()
+    await db.query(
+      "INSERT INTO games(id,match_id,game_number,started_at,ended_at,winner,status,archive_state) VALUES($1,$2,2,0,1200000,'Bob','completed','ready')",
+      [second, first.id],
+    )
+    await db.query(
+      "INSERT INTO game_players(game_id,engine_key,engine_name,human,mulligans) VALUES($1,'alice','Alice',true,2),($1,'bob','Bob',true,0)",
+      [second],
+    )
+    const report = await publicDeckStatistics(db)
+    const red = report.rows.find((row) => row.name === 'Red Deck Wins')
+    const izzet = report.rows.find((row) => row.name === 'UR Aggro')
+    assert.deepEqual(record(red), [1, 1, 0, 0])
+    assert.deepEqual(
+      [red.games, red.mulliganKnown, red.mulligans, red.keptGames, red.keptWins, red.mulliganGames, red.mulliganWins],
+      [2, 2, 2, 1, 1, 1, 0],
+    )
+    assert.deepEqual(
+      [izzet.games, izzet.mulligans, izzet.keptGames, izzet.keptWins, izzet.mulliganGames, izzet.mulliganWins],
+      [2, 1, 1, 1, 1, 0],
+    )
+    assert.deepEqual([red.timedGames, red.durationMs], [2, 1800000])
+    const detail = await publicDeckStatistics(db, { selected: red.id })
+    const versus = detail.selected.matchups.find((row) => row.name === 'UR Aggro')
+    assert.deepEqual([versus.games, versus.mulligans, versus.keptWins], [2, 2, 1], 'matchups report the selected deck’s own hands')
   },
 )

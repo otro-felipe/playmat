@@ -94,3 +94,6 @@ RETURNS boolean LANGUAGE sql STABLE AS $$
         WHERE e.id IN (p.entry_a,p.entry_b) AND lower(e.engine_name)=seat_key)
   )
 $$;
+
+-- Published decklists carry their public archetype; public-deck-identity.sql fills it.
+ALTER TABLE tournament_entries ADD COLUMN IF NOT EXISTS opening_archetype text;

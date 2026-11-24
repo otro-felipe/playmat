@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, ChevronRight, Clock3, ExternalLink, Trophy } from 'lucide-react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { registerMessages, useT } from '../i18n';
 import messages from '../i18n/en/events';
 import { AgentModelLabel } from '../ui/AgentModelLabel';
@@ -21,6 +21,8 @@ import {
 import { Countdown } from './Countdown';
 import { EliminationBracket, Tables } from './TournamentPairings';
 import { Identity, Roster, Standings } from './TournamentStandings';
+import { StatisticsPanel } from '../statistics/PublicStatistics';
+import { tabs, tournamentTab, type Tab } from './tournamentTabs';
 import styles from './TournamentScreen.module.css';
 
 registerMessages(messages);
@@ -196,9 +198,77 @@ function ParticipantPresence({ cup }: { cup: Tournament }) {
   }, [active, id]);
   return null;
 }
+function TournamentTabs({ tab, choose }: { tab: Tab; choose(tab: Tab): void }) {
+  const t = useT();
+  return (
+    <div className={styles.tabs} role="tablist" aria-label={t('cup.tabs')}>
+      {tabs.map((name) => (
+        <button
+          key={name}
+          type="button"
+          role="tab"
+          id={'cup-tab-' + name}
+          aria-controls={'cup-panel-' + name}
+          aria-selected={tab === name}
+          tabIndex={tab === name ? 0 : -1}
+          className={styles.tab}
+          onClick={() => choose(name)}
+          onKeyDown={(event) => {
+            const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+            if (!step) return;
+            const next = tabs[(tabs.indexOf(name) + step + tabs.length) % tabs.length];
+            choose(next);
+            document.getElementById('cup-tab-' + next)?.focus();
+          }}
+        >
+          {t(name === 'bracket' ? 'cup.tab.bracket' : name === 'stats' ? 'cup.tab.stats' : 'cup.tab.decklists')}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function DeckLists({ cup, entries }: { cup: Tournament; entries: Map<string, Tournament['participants'][number]> }) {
+  const t = useT();
+  if (!cup.deckLists?.length) return <p className={styles.pending}>{t('cup.decklistsPending')}</p>;
+  return (
+    <Zone label={t('cup.decks')}>
+      {cup.deckLists.map((deck) => (
+        <details key={deck.entryId} className={styles.deckList}>
+          <summary>
+            <strong>{entries.get(deck.entryId)?.name}</strong> · {deck.name}
+            {deck.archetype && <span className={styles.archetype}>{deck.archetype}</span>}
+          </summary>
+          <ul>
+            {deck.cards.map((c, i) => (
+              <li key={i}>
+                {c.amount} × {c.cardName}
+              </li>
+            ))}
+          </ul>
+          {!!deck.sideboard.length && (
+            <>
+              <h3>{t('cup.sideboard')}</h3>
+              <ul>
+                {deck.sideboard.map((c, i) => (
+                  <li key={i}>
+                    {c.amount} × {c.cardName}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </details>
+      ))}
+    </Zone>
+  );
+}
+
 export function TournamentScreen({ admin = false }: { admin?: boolean }) {
   const { id = '' } = useParams();
   const t = useT();
+  const { pathname } = useLocation();
+  const [search, setSearch] = useSearchParams();
   const [section, setSection] = useState<'tables' | 'standings' | 'roster'>('tables');
   const detail = useTournament(id);
   const cup = detail.data;
@@ -216,6 +286,9 @@ export function TournamentScreen({ admin = false }: { admin?: boolean }) {
     );
   const entries = new Map(cup.participants.map((e) => [e.id, e]));
   const own = cup.participants.filter((e) => cup.viewer?.entryIds?.includes(e.id));
+  const tab = tournamentTab(search.get('tab'), cup.status);
+  // Each tab starts clean; statistics filters belong to the statistics tab only.
+  const choose = (next: Tab) => setSearch(next === tournamentTab(null, cup.status) ? {} : { tab: next });
   return (
     <Frame>
       <Head
@@ -226,7 +299,6 @@ export function TournamentScreen({ admin = false }: { admin?: boolean }) {
           t(cup.coaching ? 'cup.coachingOpen' : 'cup.autonomous'),
         ].join(' · ')}
       />
-      <Link className={styles.indexLink} to={tournamentPath(id) + '/statistics'}>{t('stats.tournamentTitle')}<ChevronRight size={16} aria-hidden="true"/></Link>
       {(admin || cup.viewer?.isAdmin) && (
         <div className={styles.actions}>
           <ButtonLink
@@ -294,78 +366,65 @@ export function TournamentScreen({ admin = false }: { admin?: boolean }) {
           )}
         </>
       )}
-      {cup.stage === 'playoffs' && <EliminationBracket cup={cup} entries={entries} />}
-      {cup.status !== 'registration' && (
-        <div className={styles.mobileTabs} aria-label={t('cup.title')}>
-          {(cup.stage === 'playoffs' && !cup.roundsTotal
-            ? (['standings', 'roster'] as const)
-            : (['tables', 'standings', 'roster'] as const)
-          ).map((tab) => (
-            <Button
-              key={tab}
-              size="sm"
-              aria-pressed={
-                section === tab ||
-                (section === 'tables' && cup.stage === 'playoffs' && !cup.roundsTotal && tab === 'standings')
-              }
-              onClick={() => setSection(tab)}
-            >
-              {t(tab === 'roster' ? 'cup.roster' : tab === 'tables' ? 'cup.tables' : 'cup.standings')}
-            </Button>
-          ))}
-        </div>
-      )}
-      <div className={styles.grid}>
-        <div className={styles.stack}>
+      <TournamentTabs tab={tab} choose={choose} />
+      <div role="tabpanel" id={'cup-panel-' + tab} aria-labelledby={'cup-tab-' + tab} className={styles.tabPanel}>
+        {tab === 'bracket' && (
+          <>
+          {cup.stage === 'playoffs' && <EliminationBracket cup={cup} entries={entries} />}
           {cup.status !== 'registration' && (
-            <div
-              className={
-                section === 'standings' || (section === 'tables' && cup.stage === 'playoffs' && !cup.roundsTotal)
-                  ? ''
-                  : styles.desktopPanel
-              }
-            >
-              <Standings cup={cup} />
+            <div className={styles.mobileTabs} aria-label={t('cup.title')}>
+              {(cup.stage === 'playoffs' && !cup.roundsTotal
+                ? (['standings', 'roster'] as const)
+                : (['tables', 'standings', 'roster'] as const)
+              ).map((part) => (
+                <Button
+                  key={part}
+                  size="sm"
+                  aria-pressed={
+                    section === part ||
+                    (section === 'tables' && cup.stage === 'playoffs' && !cup.roundsTotal && part === 'standings')
+                  }
+                  onClick={() => setSection(part)}
+                >
+                  {t(part === 'roster' ? 'cup.roster' : part === 'tables' ? 'cup.tables' : 'cup.standings')}
+                </Button>
+              ))}
             </div>
           )}
-          <div className={section === 'roster' || cup.status === 'registration' ? '' : styles.desktopPanel}>
-            <Roster cup={cup} />
-          </div>
-        </div>
-        <div className={section === 'tables' || cup.status === 'registration' ? '' : styles.desktopPanel}>
-          <Tables cup={cup} entries={entries} />
-        </div>
-      </div>
-      {!!cup.deckLists?.length && (
-        <Zone label={t('cup.decks')}>
-          {cup.deckLists.map((deck) => (
-            <details key={deck.entryId}>
-              <summary>
-                {entries.get(deck.entryId)?.name} · {deck.name}
-              </summary>
-              <ul>
-                {deck.cards.map((c, i) => (
-                  <li key={i}>
-                    {c.amount} × {c.cardName}
-                  </li>
-                ))}
-              </ul>
-              {!!deck.sideboard.length && (
-                <>
-                  <h3>{t('cup.sideboard')}</h3>
-                  <ul>
-                    {deck.sideboard.map((c, i) => (
-                      <li key={i}>
-                        {c.amount} × {c.cardName}
-                      </li>
-                    ))}
-                  </ul>
-                </>
+          <div className={styles.grid}>
+            <div className={styles.stack}>
+              {cup.status !== 'registration' && (
+                <div
+                  className={
+                    section === 'standings' || (section === 'tables' && cup.stage === 'playoffs' && !cup.roundsTotal)
+                      ? ''
+                      : styles.desktopPanel
+                  }
+                >
+                  <Standings cup={cup} />
+                </div>
               )}
-            </details>
+              <div className={section === 'roster' || cup.status === 'registration' ? '' : styles.desktopPanel}>
+                <Roster cup={cup} />
+              </div>
+            </div>
+            <div className={section === 'tables' || cup.status === 'registration' ? '' : styles.desktopPanel}>
+              <Tables cup={cup} entries={entries} />
+            </div>
+          </div>
+          </>
+        )}
+        {tab === 'stats' &&
+          (cup.status === 'finished' ? (
+            <>
+              <Standings cup={cup} />
+              <StatisticsPanel tournamentId={id} path={pathname} scope={{ tab: 'stats' }} headingLevel={2} />
+            </>
+          ) : (
+            <p className={styles.pending}>{t('cup.statsPending')}</p>
           ))}
-        </Zone>
-      )}
+        {tab === 'decklists' && <DeckLists cup={cup} entries={entries} />}
+      </div>
     </Frame>
   );
 }

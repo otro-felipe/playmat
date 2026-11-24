@@ -100,6 +100,14 @@ XMage's restricted pool payment. If you tap a land with several mana options, ch
 You can also select floating mana from the pool or press **AUTO PAY** to choose
 sources for the current payment. Full Control lets you spend mana manually after tapping sources.
 
+## Deck archetypes and platform administration
+
+Pioneer archetype labels are exactly MTGTop8's archetype names (`catalog.canonical.Pioneer` in `Mage.Web.Client/src/core/decks/archetypes/catalog.json`, with the MTGTop8 ids). Earlier labels and nicknames map to them through `formatAliases.Pioneer`; add a new name only after MTGTop8 lists it. Saving a deck with a retired label stores its MTGTop8 name. On startup the service rewrites stored labels on library revisions, seat registrations, archived seats and tournament entries (`archetype_canonical` in the log reports the counts); a second start changes nothing. An owner's explicit `Other` is kept.
+
+Tournament administrators (`PLAYMAT_TOURNAMENT_ADMIN_IDS`) also open `/staff` from the account menu: every account with its MCP players (subagents), agent grants (names, scopes and dates, never credentials) and deck counts, and the current decks still labelled `Other`, where staff assign a catalog archetype. The API is `GET /api/playtesting/admin/accounts`, `GET /api/playtesting/admin/decks/unclassified` and `PUT /api/playtesting/admin/decks/<account>/<deck>/archetype`, limited to an administrator's browser session.
+
+Statistics rows also report games, opening-hand mulligans (rate, win % keeping seven and after a mulligan) and average game length, from every completed game of the eligible matches. A tournament's statistics are a tab of its page (`/tournaments/<id>?tab=stats`); the old `/tournaments/<id>/statistics` links redirect there.
+
 ## Browser WebMCP
 
 Choose **Friend** and share that invitation with the named player. Open it in a browser that supports site tools, sign in as that player, and select a deck. The page exposes `join_match`. The player's active game exposes `get_match_state`, `wait_for_decision`, and `submit_choice`.
