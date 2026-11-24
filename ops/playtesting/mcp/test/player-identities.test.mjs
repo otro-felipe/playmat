@@ -154,7 +154,7 @@ test('four profile-bound pilot connections share a library and keep two simultan
     assert.equal((await call('list_chat', { playerId, gameId })).reader, playerId);
     assert.equal((await call('get_game_state', { playerId: identities[i^1].playerId })).code, 'player_forbidden');
     assert.equal((await call('get_game_state', { humanTableId: tableIds[Math.floor(i/2)] })).code, 'player_forbidden');
-    assert.equal((await call('get_replay', { gameId })).code, 'forbidden');
+    assert.equal((await call('get_replay', { gameId })).code, 'history_account_only');
     assert.equal((await call('list_human_decks')).code, 'player_forbidden');
   }
   const otherGrant = { ...identities[0], connectionId: randomUUID() };

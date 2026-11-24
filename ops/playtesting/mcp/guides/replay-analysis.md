@@ -2,6 +2,8 @@
 
 Use the shared matchup strategy below. Review uses the acting seat's knowledge at the time and records public references and later revelations in their designated fields.
 
+Call `get_match_review`, `read_review_evidence` and the other history tools on the account connection **without** `playerId`. The host account reads every seat it owns once the match is completed and archived; passing a `playerId` returns `history_account_only`.
+
 ## Grade decisions and omissions
 
 - Give a grade and decision-specific confidence when the known evidence supports a comparison. A missing frame can still support a grade if nearby public events, recorded choices and rules establish the strategic facts. State any uncertainty that could reverse the grade. Reserve insufficient evidence for a missing fact that prevents a useful ranking, such as an opening hand that was never captured.

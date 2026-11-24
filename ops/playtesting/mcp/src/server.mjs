@@ -270,7 +270,10 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
       try {
         const selectedContext = await contextFor(args.playerId);
         const { actor, human, terminalReceipt, reauthorize, ownsLegacyGame } = selectedContext;
-        if (!actor.scopes.includes(scope) || actor.playerId && scope === 'history') {
+        if (scope === 'history' && (actor.playerId || args.playerId !== undefined)) {
+          throw new ToolError('history_account_only', 'Review and history tools read the account archive. Omit playerId on an account connection; a player-bound connection cannot read history.');
+        }
+        if (!actor.scopes.includes(scope)) {
           throw new ToolError('forbidden', name === 'create_tournament'
             ? 'An administrator must authorize the account connection with the optional tournaments:manage permission.'
             : 'This credential lacks the required scope.');

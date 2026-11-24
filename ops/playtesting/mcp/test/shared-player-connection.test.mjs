@@ -80,7 +80,7 @@ test('one connection addresses both private projections and receipts of one game
     assert.deepEqual((await call('list_players',{playerId})).players.map(p=>p.playerId),[playerId]);
     assert.deepEqual(await call('list_decks',{playerId}),{decks:['shared-library']});
     assert.ok(calls.some(c=>c.path.includes('/decks?') && c.id===playerId));
-    assert.equal((await call('get_replay',{playerId,gameId})).code,'forbidden');
+    assert.equal((await call('get_replay',{playerId,gameId})).code,'history_account_only');
     assert.equal((await call('get_game_state',{playerId,humanTableId:tableId})).code,'player_forbidden');
   }
   const commandId='same-command';
