@@ -787,6 +787,20 @@ export class GameSeat {
       expectedStackIds.includes(card.id) && initialEvidence?.resolutions?.[card.id] && needsStackReevaluation(card, ownPlayerId))
       .map((card) => [card.id, card]));
     const singleInformationObject = () => resolvingInformation.size === 1 ? resolvingInformation.values().next().value : undefined;
+    // A rival trigger from a source already public when the line began is a
+    // deterministic consequence of that board, not a rival decision. An automatic
+    // pass adopts it unless it targets a permanent or spell or reveals information.
+    // A rival spell or activation, a prompt for this seat and a legal response
+    // under if_no_play still return control.
+    const initialPublicSources = new Set((initial.players ?? []).flatMap((player) => [
+      ...(player.battlefield ?? []).filter((card) => !card.faceDown), ...(player.command ?? []),
+    ]).map((card) => card.id).filter(Boolean));
+    const routineRivalTrigger = (item, state) => autoAdvance
+      && ['pass_to_boundary', 'pass_until'].includes(steps[sequence.completedSteps]?.kind)
+      && item.abilityType === 'TRIGGERED_NONMANA' && !!item.controllerId && item.controllerId !== ownPlayerId
+      && initialPublicSources.has(item.sourceId)
+      && (item.targets ?? []).every((id) => state.players?.some((player) => player.id === id))
+      && !needsStackReevaluation(item, ownPlayerId);
     const checkStack = (state, openingTransition) => {
       if (responsePolicy === 'ignore') return;
       if (state.decision?.informationBoundary && state.decision.id !== initial.decision?.id) {
@@ -1032,6 +1046,7 @@ export class GameSeat {
             ? sameTriggerText(item.abilityText, trigger.abilityText) : item.abilityText === trigger.abilityText)
           && item.controllerId === trigger.playerId
           && (!trigger.targetingCardId || state.stack.some((spell) => spell.cardId === trigger.targetingCardId && spell.controllerId === ownPlayerId && spell.targets?.includes(trigger.sourceId))));
+        if (expected.length === 0 && !orderedIds.has(item.id) && routineRivalTrigger(item, state)) continue;
         if (expected.length > 1 || expected.length === 0 && !orderedIds.has(item.id)) {
           throw new ToolError('state_changed', 'An unexpected or ambiguous stack object needs a fresh plan.');
         }
@@ -1128,6 +1143,9 @@ export class GameSeat {
     const observedDrawTriggerSources = new Set(initial.step === 'UPKEEP' ? drawTriggerSources(initial) : []);
     const requireBeforeDrawTrigger = (state) => {
       if (!autoAdvance || state.step !== 'UPKEEP') return;
+      // The stop preserves the last window to act before the draw. With nothing
+      // but passing and plain mana available, this upkeep offers no such action.
+      if (state.decision?.kind === 'priority' && !optionalPlays(state.decision).some((choice) => !impulse?.declines(choice))) return;
       const sameUpkeep = initial.step === 'UPKEEP' && state.turn === initial.turn && state.activePlayerId === initial.activePlayerId;
       if (!drawTriggerSources(state).some((id) => !sameUpkeep || !observedDrawTriggerSources.has(id))) return;
       recordDestination(state);

@@ -116,6 +116,11 @@ export function visibleAgentGame(state: GameSessionState | undefined) {
       battlefield: cardsOnBoard(player.battlefield, !!state?.playerId && player.playerId === state.playerId),
       graveyard: cardsOnBoard(player.graveyard),
       exile: cardsOnBoard(player.exile),
+      // Emblems, dungeons and commanders are public sources of triggered abilities.
+      ...(player.commandList?.length ? { command: player.commandList.flatMap((object) => {
+        const { id, name, rules } = object as { id?: string; name?: string; rules?: string[] };
+        return id ? [{ id, name: name ?? 'Command object', rules: (rules ?? []).map(stripMarkup) }] : [];
+      }) } : {}),
       manaPool: player.playerId === state?.playerId ? player.manaPool : undefined,
     })),
     combat: (view?.combat ?? []).map((group) => ({

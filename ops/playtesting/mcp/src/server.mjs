@@ -284,7 +284,9 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
           if (actor.playerId && (gameTool || name === 'start_match')) {
             requirePlayerControl(actor);
             if (!actor.activeTableId || !actor.reservationId || actor.reservationCancelPending || (name === 'start_match' && input.tableId !== actor.activeTableId)) {
-              throw new ToolError('player_table_required', 'This connection has no reservation for that table.');
+              throw new ToolError('player_table_required', scope === 'chat'
+                ? 'This connection has no reservation for that table. Game chat is open only during an active game of a reserved table; XMage closes it when that game ends, including after the match.'
+                : 'This connection has no reservation for that table.');
             }
             await selectedContext.getSeat().engine.open();
           }

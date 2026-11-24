@@ -11,6 +11,7 @@ import { TableConversation } from './table-conversation.mjs';
 const answerDelivery = new AsyncLocalStorage();
 
 const ROLLBACK_VOTE = 'ADD_PERMISSION_TO_ROLLBACK_TURN';
+export const CHAT_CLOSED = 'This game ended and XMage closed its chat. Send your message while a game is active: in the next game of the match after it starts, or before conceding. There is no chat after the match ends.';
 // Use the normal XMage defaults for the managed MCP identity, with distinct
 // upkeep on either turn, own draw and beginning of combat, and both end steps.
 const MCP_USER_DATA = {
@@ -725,11 +726,28 @@ export class PlaymatEngineSeat {
     return read(state) ?? { event: 'timeout', ...this.#chat.read(afterCursor, true) };
   }
 
+  #requireOpenChat() {
+    // XMage destroys a game's chat when that game ends; the next game opens a new one.
+    if (['game_over', 'sideboarding', 'match_over'].includes(this.snapshot().status)) {
+      throw new ToolError('chat_closed', CHAT_CLOSED);
+    }
+  }
+
   async sendChat({ gameId, message }) {
     this.#requireGame(gameId);
+    this.#requireOpenChat();
     const chatId = await this.#joinChat(gameId);
     if (!chatId) throw new ToolError('chat_unavailable', 'There is no participant chat for the current game.');
-    rejectOnFalse(await this.api.chatSendMessage(chatId, null, message), 'chat_refused', 'XMage refused this chat message.');
+    let sent;
+    try {
+      sent = await this.api.chatSendMessage(chatId, null, message);
+    } catch (error) {
+      if (error instanceof ToolError) throw error;
+      // The game can end between the status check and the engine call.
+      this.#requireOpenChat();
+      throw new ToolError('chat_refused', 'XMage refused this chat message. Read the game state before sending again.');
+    }
+    rejectOnFalse(sent, 'chat_refused', 'XMage refused this chat message.');
     return { sent: true };
   }
 

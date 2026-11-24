@@ -280,7 +280,8 @@ for (const [fixtureName, text, controllerId, drawerId] of [
   ['Sheoldred on the pilot draw', 'Whenever you draw a card, you gain 2 life.', 'me', 'me'],
   ['Howling Mine on either draw', "At the beginning of each player's draw step, that player draws an additional card.", 'opponent', 'opponent'],
 ]) test(`[PM-LINE-FLOW-6] stops at upkeep before ${fixtureName} and allows an explicit new line`, async (t) => {
-  const nextUpkeep = { ...upkeep, activePlayerId: drawerId, activePlayer: drawerId === 'me' ? 'Pilot' : 'Opponent' };
+  // The upkeep offers a legal play, so it is the last useful window before the draw.
+  const nextUpkeep = { ...upkeep, activePlayerId: drawerId, activePlayer: drawerId === 'me' ? 'Pilot' : 'Opponent', decision: priority('upkeep', freePlay) };
   const source = { id: 'source', cardId: 'source', controllerId, rules: [text] };
   const players = ['me', 'opponent'].map((id) => ({ id, yourSeat: id === 'me', battlefield: id === controllerId ? [source] : [] }));
   const table = game(t, { end: nextUpkeep, upkeep: drawerId === 'me' ? draw : { ...nextUpkeep, step: 'DRAW', decision: priority('draw') },
@@ -303,7 +304,7 @@ test('[PM-LINE-FLOW-6] a queued cast cannot pass the upcoming upkeep after a dra
   const sheoldred = { id: 'sheoldred', cardId: 'sheoldred', controllerId: 'me', name: 'Sheoldred, the Apocalypse',
     types: ['CREATURE'], rules: ['Whenever an opponent draws a card, they lose 2 life.'] };
   const spell = { ...sheoldred, id: 'sheoldred-stack' };
-  const opponentUpkeep = { ...upkeep, activePlayerId: 'opponent', activePlayer: 'Opponent' };
+  const opponentUpkeep = { ...upkeep, activePlayerId: 'opponent', activePlayer: 'Opponent', decision: priority('upkeep', freePlay) };
   const table = game(t, {
     cast: { stack: [spell], ownHand: [], decision: priority('resolve') },
     resolve: { stack: [], players: [{ id: 'me', yourSeat: true, battlefield: [sheoldred] }, { id: 'opponent' }],
@@ -329,7 +330,7 @@ test('[PM-LINE-FLOW-6] a new flash draw trigger stops a line that already starte
   const table = game(t, {
     upkeep: { stack: [spell], ownHand: [], decision: priority('resolve-flash') },
     'resolve-flash': { stack: [], players: [{ id: 'me', yourSeat: true, battlefield: [source] }, { id: 'opponent' }],
-      decision: priority('after-flash'), sequenceEvidence: { ...evidence, resolutions: { [spell.id]: 1 }, resolutionRevision: 1 } },
+      decision: priority('after-flash', freePlay), sequenceEvidence: { ...evidence, resolutions: { [spell.id]: 1 }, resolutionRevision: 1 } },
     'after-flash': { ...draw, sequenceEvidence: { ...draw.sequenceEvidence, resolutions: { [spell.id]: 1 }, resolutionRevision: 1 } },
   }, { ...upkeep, ownHand: [source], decision: priority('upkeep', { id: 'cast-flash', objectId: source.id, card: source }) });
   const stopped = await table.submit([
@@ -339,6 +340,20 @@ test('[PM-LINE-FLOW-6] a new flash draw trigger stops a line that already starte
   assert.equal(stopped.reason, 'before_draw_trigger');
   assert.equal(stopped.lastDestination.step, 'UPKEEP');
   assert.deepEqual(table.applied.map(([id]) => id), ['upkeep', 'resolve-flash']);
+});
+
+for (const [name, choices] of [
+  ['only a pass', []],
+  ['a pass and plain mana', [{ id: 'mountain', type: 'manaAbility', plainMana: true }]],
+]) test(`[PM-LINE-FLOW-6] an upkeep with ${name} offers no window before Sheoldred's draw trigger`, async (t) => {
+  const sheoldred = { id: 'sheoldred', cardId: 'sheoldred', controllerId: 'opponent', rules: ['Whenever you draw a card, you gain 2 life.'] };
+  const opponentUpkeep = { ...upkeep, activePlayerId: 'opponent', activePlayer: 'Opponent', decision: priority('upkeep', ...choices) };
+  const table = game(t, { end: opponentUpkeep, upkeep: { ...opponentUpkeep, step: 'END_TURN', decision: priority('their-end') } }, {
+    activePlayerId: 'me', activePlayer: 'Pilot', players: [{ id: 'me', yourSeat: true, battlefield: [] }, { id: 'opponent', battlefield: [sheoldred] }],
+  });
+  const receipt = await table.submit([{ kind: 'pass_until', destination: 'my_upkeep', policy: 'decline_optional' }]);
+  assert.notEqual(receipt.reason, 'before_draw_trigger');
+  assert.deepEqual(table.applied.map(([id]) => id).slice(0, 2), ['end', 'upkeep']);
 });
 
 for (const [name, source] of [
@@ -844,3 +859,61 @@ for (const [step, kind, actor, intent] of [
       ['confirm'],
     );
   });
+
+// Sheoldred's lifegain and an emblem's drain trigger on the rival's own draw (judge review, 24 Nov 2026).
+function rivalDrawTriggers(t, { gain = {}, drain = {}, initialPlayers, drawChoices = [] } = {}) {
+  const sheoldred = { id: 'sheoldred', cardId: 'sheoldred', controllerId: 'opponent', name: 'Sheoldred, the Apocalypse',
+    types: ['CREATURE'], rules: ['Whenever you draw a card, you gain 2 life.'] };
+  const emblem = { id: 'emblem', name: 'Emblem Fel', rules: ['Whenever you gain life, target opponent loses that much life.'] };
+  const gainTrigger = { id: 'gain-trigger', name: 'Ability', controllerId: 'opponent', abilityType: 'TRIGGERED_NONMANA',
+    sourceId: sheoldred.id, abilityText: 'Whenever you draw a card, you gain 2 life.', rules: ['Whenever you draw a card, you gain 2 life.'], ...gain };
+  const drainTrigger = { id: 'drain-trigger', name: 'Ability', controllerId: 'opponent', abilityType: 'TRIGGERED_NONMANA',
+    sourceId: emblem.id, abilityText: emblem.rules[0], rules: emblem.rules, targets: ['me'], ...drain };
+  const players = (life, opponentLife) => [{ id: 'me', yourSeat: true, life, battlefield: [] },
+    { id: 'opponent', life: opponentLife, battlefield: [sheoldred], command: [emblem] }];
+  const theirDraw = { turn: 8, activePlayer: 'Opponent', activePlayerId: 'opponent', step: 'DRAW' };
+  const table = game(t, {
+    draw: { stack: [gainTrigger], decision: priority('gain', ...drawChoices) },
+    gain: { stack: [drainTrigger], players: players(20, 22), decision: priority('drain', ...drawChoices),
+      sequenceEvidence: { ...evidence, resolutions: { [gainTrigger.id]: 1 }, resolutionRevision: 1 } },
+    drain: { stack: [], players: players(18, 22), step: 'END_TURN', decision: priority('their-end'),
+      sequenceEvidence: { ...evidence, resolutions: { [gainTrigger.id]: 1, [drainTrigger.id]: 2 }, resolutionRevision: 2 } },
+  }, { ...theirDraw, decision: priority('draw', ...drawChoices), players: initialPlayers ?? players(20, 20) });
+  return { table, players };
+}
+
+for (const policy of ['decline_optional', 'if_no_play']) {
+  test(`[PM-LINE-FLOW-4] a ${policy} pass resolves rival triggers from public battlefield and emblem sources`, async (t) => {
+    const { table } = rivalDrawTriggers(t);
+    const receipt = await table.submit([{ kind: 'pass_until', destination: 'end_step', policy }]);
+    assert.equal(receipt.status, 'completed', receipt.error?.message);
+    assert.equal(receipt.lastDestination.step, 'END_TURN');
+    assert.deepEqual(table.applied.map(([id]) => id), ['draw', 'gain', 'drain']);
+  });
+}
+
+for (const [name, options, reason] of [
+  ['targets a permanent', { drain: { targets: ['my-creature'] } }, 'state_changed'],
+  ['reveals information', { gain: { abilityText: 'Whenever you draw a card, reveal it.', rules: ['Whenever you draw a card, reveal it.'] } }, 'state_changed'],
+  ['comes from a source that was not public when the line began', {
+    initialPlayers: [{ id: 'me', yourSeat: true, life: 20, battlefield: [] }, { id: 'opponent', life: 20, battlefield: [] }] }, 'state_changed'],
+  ['meets a legal response under if_no_play', { drawChoices: [freePlay] }, 'response_available'],
+]) test(`[PM-LINE-FLOW-4] a pass still stops when a rival trigger ${name}`, async (t) => {
+  const { table } = rivalDrawTriggers(t, options);
+  const receipt = await table.submit([{ kind: 'pass_until', destination: 'end_step' }]);
+  assert.equal(receipt.reason, reason);
+});
+
+test('[PM-LINE-FLOW-4] a rival trigger during a planned cast still interrupts the cast', async (t) => {
+  const bolt = { id: 'bolt', cardId: 'bolt', name: 'Lightning Bolt', types: ['INSTANT'], rules: ['Lightning Bolt deals 3 damage to any target.'] };
+  const sheoldredTrigger = { id: 'cast-trigger', name: 'Ability', controllerId: 'opponent', abilityType: 'TRIGGERED_NONMANA',
+    sourceId: 'sheoldred', abilityText: 'Whenever you draw a card, you gain 2 life.', rules: ['Whenever you draw a card, you gain 2 life.'] };
+  const cast = game(t, { main: { stack: [sheoldredTrigger, { ...bolt, id: 'bolt-stack', controllerId: 'me' }], ownHand: [], decision: priority('after-cast') } }, {
+    activePlayerId: 'me', activePlayer: 'Pilot', step: 'PRECOMBAT_MAIN', ownHand: [bolt],
+    players: [{ id: 'me', yourSeat: true, battlefield: [] }, { id: 'opponent', battlefield: [{ id: 'sheoldred', controllerId: 'opponent', rules: [] }] }],
+    decision: priority('main', { id: 'cast-bolt', type: 'object', objectId: bolt.id, card: bolt }),
+  });
+  const receipt = await cast.submit([{ kind: 'play', select: { objectId: bolt.id, zone: 'hand' }, when: 'priority' },
+    { kind: 'pass_until', destination: 'end_step' }]);
+  assert.equal(receipt.reason, 'state_changed');
+});
