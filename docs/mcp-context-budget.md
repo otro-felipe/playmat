@@ -57,6 +57,6 @@ The startup bundle now holds one `core` guide: the decision loop, compact-view f
 
 ## Related contract changes from the same review
 
-- Automatic passes let rival triggers from sources public at line start resolve (Sheoldred, emblems), and the upkeep draw-trigger stop fires only when the seat can act. In the match these two causes produced 35 of 79 interruptions.
+- Automatic passes let rival triggers from sources public at line start resolve (Sheoldred, emblems), and the upkeep draw-trigger stop fires only when the seat can act. Of the match's 79 interruptions, 10 were Sheoldred or emblem triggers that now resolve inside the pass. Only 1 of the 5 upkeep stops disappears: the other four upkeeps offered a Mutavault or Den of the Bugbear activation, which remains a window to act. The Badgermole Cub and Graveyard Trespasser triggers still stop, because their source was new or their effect targets or exiles.
 - Player views list public command-zone objects (`players[].command`).
 - `send_chat` after a game ends returns `chat_closed`; XMage deletes a game's chat when the game ends.
