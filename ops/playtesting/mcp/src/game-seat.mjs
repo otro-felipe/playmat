@@ -526,9 +526,9 @@ export class GameSeat {
             steps.push({ kind: 'answer', guard: { kind: 'declareAttackers' }, select: { objectId: attackAssignment.attackerId }, attackAssignment });
           }
         } else if (action.attackers === 'all' || action.attackers === undefined) steps.push({ kind: 'answer', guard: { kind: 'declareAttackers' }, intent: 'attack_all' });
-        else for (const id of action.attackers) steps.push({ kind: 'answer', guard: { kind: 'declareAttackers' }, select: { objectId: id, zone: 'battlefield' } });
+        else for (const id of action.attackers) steps.push({ kind: 'answer', guard: { kind: 'declareAttackers' }, select: { objectId: id, zone: 'battlefield' }, defaultDefender: true });
         steps.push({ kind: 'answer', guard: { kind: 'declareAttackers' }, intent: 'confirm_attack',
-          confirmAttacks: action.assignments, expectTriggers: action.expectTriggers });
+          confirmAttacks: action.assignments, expectTriggers: action.expectTriggers, tokenDefenderId: action.tokenDefenderId });
       } else if (action.kind === 'block') {
         for (const assignment of action.assignments) {
           steps.push({ kind: 'answer', guard: { kind: 'declareBlockers' }, select: { objectId: assignment.blockerId }, blockAssignment: assignment });
@@ -1233,6 +1233,27 @@ export class GameSeat {
       }
       finally { submission.finishedAtEpochMs = Date.now(); }
     };
+    const defenderPrompt = (state) => state.decision?.kind === 'target' && !state.decision.targetSourceId
+      && /^Select a player, planeswalker, or battle to attack(?: \([^()]+\))?$/i.test(state.decision.instruction ?? '');
+    // A token that a planned own attack trigger creates tapped and attacking joins
+    // its source's defender unless the attack named tokenDefenderId.
+    const tokenDefenders = new Map();
+    const answerTokenDefender = async (state) => {
+      if (!defenderPrompt(state) || state.decision.id === previousDecisionId) return false;
+      const trigger = state.stack[0];
+      const plan = trigger?.controllerId === ownPlayerId && trigger.abilityType === 'TRIGGERED_NONMANA'
+        && /\btapped and attacking\b/i.test(trigger.abilityText ?? '') && plannedStackIds.has(trigger.id) && tokenDefenders.get(trigger.sourceId);
+      if (!plan) return false;
+      const defenderId = plan.tokenDefenderId
+        ?? state.combat?.find((group) => group.attackers?.some((card) => card.id === trigger.sourceId))?.defenderId;
+      const choice = defenderId && plannedChoice(state, state.decision, { select: { objectId: defenderId } });
+      if (!choice) return false;
+      await submit({ gameId: sequence.gameId, cursor: state.cursor, decisionId: state.decision.id, choiceId: choice.id,
+        idempotencyKey: `${sequence.id}:token-defender:${state.decision.id}` });
+      sequence.appliedDecisions++;
+      previousDecisionId = state.decision.id;
+      return true;
+    };
     const nextPredeterminedAnswer = (state) => {
       const next = steps[sequence.completedSteps + 1];
       return matchesAnswer(state, next) && next.guard?.instruction !== undefined && plannedChoice(state, state.decision, next);
@@ -1501,6 +1522,9 @@ export class GameSeat {
                 entryCastSource: casting?.id, entrySpellId: adopted?.id });
             }
             pendingTriggers.push(...additions);
+            if (step.intent === 'confirm_attack') for (const trigger of step.expectTriggers) {
+              if (/\btapped and attacking\b/i.test(trigger.abilityText)) tokenDefenders.set(trigger.sourceId, { tokenDefenderId: step.tokenDefenderId });
+            }
           }
           if (decision.kind === 'panel' && (castingPicker || step.expectCast)) {
             const card = visibleCastSource(state, decision.sourceObjectId);
@@ -1645,11 +1669,23 @@ export class GameSeat {
               previousDecisionId = targetPicker.id;
             }
           }
+          if (step.defaultDefender) {
+            // A plain attacker list means the opposing player when XMage also offers planeswalkers or battles.
+            const observed = await waitForNext();
+            if (observed && defenderPrompt(observed)) {
+              const rivals = observed.players?.filter((player) => !player.yourSeat) ?? [];
+              const target = rivals.length === 1 && plannedChoice(observed, observed.decision, { select: { objectId: rivals[0].id } });
+              if (!target) throw new ToolError('response_available', 'Choose each attacker\'s defender with attack assignments.');
+              await submit({ gameId: sequence.gameId, cursor: observed.cursor, decisionId: observed.decision.id,
+                choiceId: target.id, idempotencyKey: `${sequence.id}:combat:${sequence.completedSteps}` });
+              sequence.appliedDecisions++;
+              previousDecisionId = observed.decision.id;
+            }
+          }
           if (step.attackAssignment || step.blockAssignment) {
             let observed = await waitForNext();
             const attack = step.attackAssignment;
-            const targetPrompt = attack ? observed?.step === 'DECLARE_ATTACKERS' && !observed.decision.targetSourceId
-              && /^Select a player, planeswalker, or battle to attack(?: \([^()]+\))?$/i.test(observed.decision.instruction ?? '')
+            const targetPrompt = attack ? observed?.step === 'DECLARE_ATTACKERS' && defenderPrompt(observed)
               : /select attacker to block/i.test(observed?.decision.instruction ?? '');
             if (observed?.decision.kind === 'target' && targetPrompt) {
               const targetId = attack?.defenderId ?? step.blockAssignment.attackerId;
@@ -1767,6 +1803,7 @@ export class GameSeat {
               continue;
             }
             if (sequence.observedNewInformation) throw new ToolError('new_information', 'New information is available. Inspect the current decision before continuing.');
+            if (await answerTokenDefender(state)) continue;
             requireBeforeInformation(state, step);
             requireBeforeDrawTrigger(state);
             const choice = state.decision.choices.find((item) => item.type === 'pass');
@@ -1800,6 +1837,7 @@ export class GameSeat {
             if ((step.step || step.phase) && destinationReached(state)) break;
             if (visibleDecision(state) && state.decision.id !== previousDecisionId && state.decision.kind !== 'priority') {
               if (nextPredeterminedAnswer(state)) break;
+              if (await answerTokenDefender(state)) continue;
               throw new ToolError('response_available', 'An unplanned mandatory choice needs a fresh decision.');
             }
             if (destinationReached(state)) break;

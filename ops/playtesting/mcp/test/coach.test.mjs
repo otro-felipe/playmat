@@ -198,3 +198,13 @@ test('send_chat accounts for the raw message and preserves all accepted text', a
   assert.equal(tooLong.isError, true);
   assert.equal(messages.length, 1);
 });
+
+test('send_chat reports a closed chat after the game ends instead of an unverifiable failure', async t => {
+  const { call, emit, messages } = await fixture(t, 'chatty');
+  assert.equal((await call('send_chat', { gameId, message: 'Buena suerte' })).sent, true);
+  await emit('GAME_OVER', { message: 'Human won the game' }, state => state.status === 'game_over');
+  const closed = await call('send_chat', { gameId, message: 'GG' }, true);
+  assert.equal(closed.code, 'chat_closed');
+  assert.match(closed.message, /next game/);
+  assert.deepEqual(messages, ['Buena suerte']);
+});

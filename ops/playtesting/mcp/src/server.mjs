@@ -135,7 +135,8 @@ const TurnChoose = TurnChooseShape.refine(({ choiceId, select }) => !!choiceId !
     : 'Use the observed decisionId, or guard a future mandatory choice with exact instruction or typed source and option.' });
 const TurnAttackShape = z.object({ kind: z.literal('attack'), attackers: z.union([z.literal('all'), z.array(StringId).max(16)]).optional(),
   assignments: z.array(z.object({ attackerId: StringId, defenderId: StringId }).strict()).max(16)
-    .optional().describe('Exact visible attacker–defender pairs. A defender can be a player, planeswalker or battle. Supply assignments or attackers.'),
+    .optional().describe('Exact visible attacker–defender pairs. A defender can be a player, planeswalker or battle. Supply assignments or attackers. A plain attackers list attacks the opposing player.'),
+  tokenDefenderId: StringId.optional().describe('Defender for tokens that an expected attack trigger creates tapped and attacking. Defaults to the defender of the trigger source.'),
   expectTriggers: z.array(OwnTrigger).max(4).optional() }).strict();
 const TurnAttack = TurnAttackShape.refine(({ attackers, assignments }) => attackers === undefined || assignments === undefined,
   'Supply either attackers or exact assignments.')

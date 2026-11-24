@@ -909,6 +909,77 @@ for (const variant of ['exact', 'wrong-assignment', 'unexpected-prompt', 'mixed-
   });
 }
 
+for (const variant of ['player-default', 'walker-only']) {
+  test(`[PM-LINE-COMBAT-2] a plain attacker list attacks the opposing player beside a planeswalker: ${variant}`, async (t) => {
+    const attacker = { id: 'attacker', controllerId: 'pilot' };
+    const walker = { id: 'walker', controllerId: 'rival', types: ['PLANESWALKER'] };
+    const declare = (id) => ({ id, kind: 'declareAttackers', choices: [
+      { id: 'toggle-attacker', card: attacker, objectId: attacker.id }, { id: 'confirm', intent: 'confirm_attack' },
+    ] });
+    const f = await fixture(t, { first: declare('declare'),
+      initial: { step: 'DECLARE_ATTACKERS', combat: [], players: [
+        { id: 'pilot', yourSeat: true, battlefield: [attacker] }, { id: 'rival', life: 20, battlefield: [walker] },
+      ] },
+      onResponse({ choiceId }, update) {
+        if (choiceId === 'toggle-attacker') {
+          update({ decision: { id: 'pick-destination', kind: 'target', instruction: 'Select a player, planeswalker, or battle to attack',
+            choices: [...(variant === 'player-default' ? [{ id: 'player', objectId: 'rival' }] : []), { id: 'to-walker', objectId: walker.id, card: walker }] } });
+        } else if (choiceId === 'player') {
+          update({ decision: declare('confirm-selection'), combat: [{ defenderId: 'rival', attackers: [attacker], blockers: [], isBlocked: false }] });
+        } else {
+          assert.equal(choiceId, 'confirm');
+          update({ decision: { id: 'declared', kind: 'priority', choices: [{ id: 'pass', type: 'pass' }] } });
+        }
+      },
+    });
+    const { result } = await f.call('play_line', { ...f.request, actions: [{ kind: 'attack', attackers: [attacker.id] }] });
+    if (variant === 'player-default') {
+      assert.equal(result.status, 'completed', JSON.stringify(result));
+      assert.deepEqual(f.applied.map(({ choiceId }) => choiceId), ['toggle-attacker', 'player', 'confirm']);
+    } else {
+      assert.equal(result.reason, 'response_available', JSON.stringify(result));
+      assert.deepEqual(f.applied.map(({ choiceId }) => choiceId), ['toggle-attacker']);
+    }
+  });
+}
+
+for (const variant of ['source-defender', 'explicit-walker']) {
+  test(`[PM-LINE-COMBAT-2] a token created tapped and attacking joins the planned defender: ${variant}`, async (t) => {
+    const text = "Whenever this creature attacks, create a 1/1 red Goblin creature token that's tapped and attacking.";
+    const den = { id: 'den', controllerId: 'pilot', name: 'Den of the Bugbear', types: ['LAND', 'CREATURE'], rules: [text] };
+    const walker = { id: 'walker', controllerId: 'rival', types: ['PLANESWALKER'] };
+    const trigger = { id: 'den-trigger', name: 'Ability', controllerId: 'pilot', abilityType: 'TRIGGERED_NONMANA', sourceId: den.id, abilityText: text, rules: [text] };
+    const combat = [{ defenderId: 'rival', attackers: [den], blockers: [], isBlocked: false }];
+    const declare = (id) => ({ id, kind: 'declareAttackers', choices: [
+      { id: 'toggle-den', card: den, objectId: den.id }, { id: 'confirm', intent: 'confirm_attack' },
+    ] });
+    const defenderPrompt = (id) => ({ id, kind: 'target', instruction: 'Select a player, planeswalker, or battle to attack',
+      choices: [{ id: `${id}-player`, objectId: 'rival' }, { id: `${id}-walker`, objectId: walker.id, card: walker }] });
+    const f = await fixture(t, { first: declare('declare'),
+      initial: { step: 'DECLARE_ATTACKERS', combat: [], players: [
+        { id: 'pilot', yourSeat: true, battlefield: [den] }, { id: 'rival', life: 20, battlefield: [walker] },
+      ] },
+      onResponse({ choiceId }, update, state) {
+        if (choiceId === 'toggle-den') update({ decision: defenderPrompt('attack-target') });
+        else if (choiceId === 'attack-target-player') update({ decision: declare('confirm-selection'), combat });
+        else if (choiceId === 'confirm') update({ stack: [trigger], decision: { id: 'resolve', kind: 'priority', choices: [{ id: 'pass', type: 'pass' }] } });
+        else if (choiceId === 'pass') update({ decision: defenderPrompt('token'),
+          sequenceEvidence: { ...state.sequenceEvidence, resolutions: { [trigger.id]: 1 }, resolutionRevision: 1 } });
+        else {
+          assert.equal(choiceId, variant === 'source-defender' ? 'token-player' : 'token-walker');
+          update({ stack: [], decision: { id: 'after', kind: 'priority', choices: [{ id: 'pass', type: 'pass' }] } });
+        }
+      },
+    });
+    const attack = { kind: 'attack', assignments: [{ attackerId: den.id, defenderId: 'rival' }],
+      expectTriggers: [{ sourceId: den.id, abilityText: text }], ...(variant === 'explicit-walker' ? { tokenDefenderId: walker.id } : {}) };
+    const { result } = await f.call('play_line', { ...f.request, actions: [attack] });
+    assert.equal(result.status, 'completed', JSON.stringify(result));
+    assert.deepEqual(f.applied.map(({ choiceId }) => choiceId), ['toggle-den', 'attack-target-player', 'confirm', 'pass',
+      variant === 'source-defender' ? 'token-player' : 'token-walker']);
+  });
+}
+
 test('[PM-LINE-SEM-3] native MCP accepts the exact own-hand Ward discard guard', async (t) => {
   const card = { id: 'kumano', cardId: 'kumano', name: 'Kumano Faces Kakkazan' };
   const ward = { id: 'discard-cost', kind: 'target', targetZone: 'HAND', targetSourceId: 'trespasser',
