@@ -108,6 +108,30 @@ The replay shows the official series score alongside each game's recording. It i
 
 Published pilot comments remain attributed to their author. Confirmed targets, attachments, declared attackers and damage use public engine evidence. A legacy stack arrow or a pilot's projected combat total cannot establish a resolved effect. Seeking within a game keeps the board on screen while the selected frame loads. Selecting a different game clears the previous board.
 
+## Table navigation
+
+### CUP-AC-001 — Tables distinguish live viewing from replay
+
+The current round shows each table number, entrants and current status or final
+score together. Published live and replay destinations are separate, keyboard-
+accessible links with button styling. On narrow and wide screens, both actions
+remain distinguishable and have enough space to select independently. The
+live action is available only while the table is unfinished. Replay remains
+available whenever published, including for completed tables.
+
+### CUP-AC-002 — Administration shows available controls
+
+An authorized organizer who opens administration during a round can recover a
+table when an unfinished pairing is still eligible for the pre-game recovery
+flow. During a round with no such table, and after a tournament finishes or is
+cancelled, the page shows the event and results without an empty administration
+section.
+
+| Scenario | Automated evidence |
+| --- | --- |
+| CUP-AC-001 | `Mage.Web.Client/e2e/private-tournament-tables.spec.ts` · `[CUP-AC-001] table actions stay clear and lead to the authorized destinations` |
+| CUP-AC-002 | `Mage.Web.Client/src/app/tournaments/TournamentScreen.test.tsx` · `[CUP-AC-002] administration hides the panel when no controls can be used`; `[CUP-AC-002] the organizer retries only the selected physical table after confirming its first game never started` |
+
 ## Acceptance coverage
 
 The [local pilot](../../../ops/playtesting/product/tournament-pilot.local.mjs) runs

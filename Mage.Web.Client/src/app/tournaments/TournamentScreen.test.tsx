@@ -229,7 +229,7 @@ test('registration scopes a library read to the owner shown on screen if another
   });
 });
 
-test('the organizer retries only the selected physical table after confirming its first game never started', async () => {
+test('[CUP-AC-002] the organizer retries only the selected physical table after confirming its first game never started', async () => {
   const pair = { id: 'pair1', tableId: 'old1', roundNumber: 1, stage: 'swiss', number: 1, a: 'e1', b: 'e2', winsA: 0, winsB: 0, draws: 0, completed: false };
   const { view, fetcher } = mount('/tournaments/cup/admin', {
     ...cup, status: 'playing', participants: [entrant, { ...entrant, id: 'e2', name: 'Sol' }],
@@ -246,4 +246,19 @@ test('the organizer retries only the selected physical table after confirming it
   fireEvent.click(retry);
   await waitFor(() => expect(fetcher.mock.calls.some(([url, init]) => url === root + '/cup/admin' && init?.method === 'POST' &&
     JSON.stringify(JSON.parse(String(init.body))) === JSON.stringify({action:'retryFailedStart', pairingId:'pair1', tableId:'old1', confirmedPreGameFailure:true}))).toBe(true));
+});
+
+test.each(['playing', 'finished', 'cancelled'])('[CUP-AC-002] administration hides the panel when no controls can be used (%s)', async (status) => {
+  const { view } = mount('/tournaments/cup/admin', {
+    ...cup,
+    status,
+    participants: [entrant, { ...entrant, id: 'e2', name: 'Sol' }],
+    pairings: [{
+      id: 'pair1', tableId: 'table1', matchId: 'match1', roundNumber: 1, stage: 'swiss',
+      number: 1, a: 'e1', b: 'e2', winsA: 0, winsB: 0, draws: 0, completed: status === 'finished',
+    }],
+  });
+  await view.findByRole('heading', { name: cup.name });
+  expect(view.queryByRole('heading', { name: 'Tournament administration' })).toBeNull();
+  expect(view.getByRole('heading', { name: 'Round tables' })).toBeTruthy();
 });

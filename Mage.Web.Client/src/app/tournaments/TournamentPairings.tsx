@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
+import { ExternalLink, Eye, RotateCcw } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useT } from '../i18n';
 import { Button, ButtonLink } from '../ui/Button';
@@ -7,64 +8,83 @@ import { Countdown } from './Countdown';
 import { Identity } from './TournamentStandings';
 import { tournamentPath, type Entry, type Pairing, type Tournament } from './tournamentApi';
 import styles from './TournamentScreen.module.css';
+import tableStyles from './TournamentPairings.module.css';
 
 function PairingRow({ pair, entries, cup }: { pair: Pairing; entries: Map<string, Entry>; cup: Tournament }) {
   const t = useT();
+  const labelId = useId();
   const tiebreakWinner = pair.completed && pair.winsA === pair.winsB && pair.winner ? entries.get(pair.winner) : null;
-  const a = entries.get(pair.a),
-    b = pair.b && entries.get(pair.b);
+  const a = entries.get(pair.a);
+  const b = pair.b && entries.get(pair.b);
+  const live = pair.completed ? undefined : pair.watchUrl;
+  const play = !pair.completed && pair.playUrl;
+  const status = pair.completed ? pair.winsA + ' – ' + pair.winsB : t(pair.tableId ? 'cup.active' : 'cup.pending');
   return (
-    <li className={styles.line}>
-      <div>
-        <small>{t('cup.table', { n: pair.number })}</small>
-        {a && <Identity entry={a} />}
-        {b ? <Identity entry={b} /> : <span>{t('cup.bye')}</span>}
-      </div>
-      <div>
+    <li className={tableStyles.card} aria-labelledby={labelId}>
+      <div className={tableStyles.heading}>
+        <h4 id={labelId} className={tableStyles.tableName}>{t('cup.table', { n: pair.number })}</h4>
         {pair.b && (
-          <div className={styles.score}>
-            {pair.completed ? pair.winsA + ' – ' + pair.winsB : t(pair.tableId ? 'cup.active' : 'cup.pending')}
-          </div>
-        )}
-        {!pair.completed && pair.tableId && pair.deadlineAt && pair.deadlineAt !== cup.deadlineAt && (
-          <p>{t('cup.tableClock')} · <Countdown at={pair.deadlineAt} expired={t('cup.extraTurns')} /></p>
-        )}
-        {tiebreakWinner && <p>{t('cup.matchWinner', { name: tiebreakWinner.name })}</p>}
-        {!!pair.absentWarningIds?.length && (
-          <p className={styles.error}>
-            {t('cup.absence', {
-              names: pair.absentWarningIds
-                .map((id) => entries.get(id)?.name)
-                .filter(Boolean)
-                .join(', '),
-            })}
-            {pair.attendanceDeadlineAt && (
-              <>
-                {' '}
-                · <Countdown at={pair.attendanceDeadlineAt} expired={t('cup.absent')} />
-              </>
-            )}
-          </p>
-        )}
-        {pair.watchUrl && !pair.completed && (
-          <Link to={pair.watchUrl} className={styles.link}>
-            {t('cup.live')}
-          </Link>
-        )}
-        {pair.replayUrl && (
-          <Link to={pair.replayUrl} className={styles.link}>
-            {t('cup.replay')}
-          </Link>
-        )}
-        {pair.playUrl && !pair.completed && (
-          <ButtonLink target="_blank" rel="noopener" href={tournamentPath(cup.id) + '/play'}>
-            {t('cup.openSeat')}
-          </ButtonLink>
+          <span className={pair.tableId && !pair.completed ? tableStyles.liveStatus : tableStyles.status}>{status}</span>
         )}
       </div>
+      <div className={tableStyles.entrants}>
+        {a && <Identity entry={a} />}
+        {b ? <Identity entry={b} /> : <span className={styles.muted}>{t('cup.bye')}</span>}
+      </div>
+      {!pair.completed && pair.tableId && pair.deadlineAt && pair.deadlineAt !== cup.deadlineAt && (
+        <p className={tableStyles.note}>
+          {t('cup.tableClock')} · <Countdown at={pair.deadlineAt} expired={t('cup.extraTurns')} />
+        </p>
+      )}
+      {tiebreakWinner && <p className={tableStyles.note}>{t('cup.matchWinner', { name: tiebreakWinner.name })}</p>}
+      {!!pair.absentWarningIds?.length && (
+        <p className={styles.error}>
+          {t('cup.absence', {
+            names: pair.absentWarningIds
+              .map((id) => entries.get(id)?.name)
+              .filter(Boolean)
+              .join(', '),
+          })}
+          {pair.attendanceDeadlineAt && (
+            <>
+              {' '}
+              · <Countdown at={pair.attendanceDeadlineAt} expired={t('cup.absent')} />
+            </>
+          )}
+        </p>
+      )}
+      {(play || live || pair.replayUrl) && (
+        <div className={tableStyles.actions}>
+          {live && (
+            <Link to={live} className={tableStyles.action}>
+              <Eye size={16} aria-hidden="true" />
+              {t('cup.live')}
+            </Link>
+          )}
+          {pair.replayUrl && (
+            <Link to={pair.replayUrl} className={tableStyles.action}>
+              <RotateCcw size={16} aria-hidden="true" />
+              {t('cup.replay')}
+            </Link>
+          )}
+          {play && (
+            <ButtonLink
+              className={tableStyles.actionSize}
+              size="sm"
+              target="_blank"
+              rel="noopener"
+              href={tournamentPath(cup.id) + '/play'}
+              icon={<ExternalLink size={16} />}
+            >
+              {t('cup.openSeat')}
+            </ButtonLink>
+          )}
+        </div>
+      )}
     </li>
   );
 }
+
 export function EliminationBracket({ cup, entries }: { cup: Tournament; entries: Map<string, Entry> }) {
   const t = useT();
   const rounds = [...new Set(cup.pairings.filter((p) => p.stage === 'playoffs').map((p) => p.roundNumber))].sort(
@@ -115,7 +135,7 @@ export function Tables({ cup, entries }: { cup: Tournament; entries: Map<string,
         const pairs = cup.pairings.filter((p) => p.roundNumber === n);
         const label = t('cup.number', { n }) + (pairs[0]?.stage === 'playoffs' ? ' · ' + t('cup.stagePlayoffs') : '');
         const list = (
-          <ul className={styles.list}>
+          <ul className={tableStyles.list}>
             {pairs.map((p) => (
               <PairingRow cup={cup} key={p.id} pair={p} entries={entries} />
             ))}
@@ -123,7 +143,7 @@ export function Tables({ cup, entries }: { cup: Tournament; entries: Map<string,
         );
         return !index ? (
           <section key={n}>
-            <h3>{label}</h3>
+            <h3 className={tableStyles.roundTitle}>{label}</h3>
             {list}
           </section>
         ) : (

@@ -224,19 +224,19 @@ export function TournamentScreen({ admin = false }: { admin?: boolean }) {
           t(cup.coaching ? 'cup.coachingOpen' : 'cup.autonomous'),
         ].join(' · ')}
       />
-      <div className={styles.actions}>
-        {admin ? (
-          <ButtonLink href={tournamentPath(id)} target="_blank" rel="noopener">
-            {t('cup.public')} <ExternalLink size={14} />
+      {(admin || cup.viewer?.isAdmin) && (
+        <div className={styles.actions}>
+          <ButtonLink
+            className={styles.toolbarLink}
+            href={tournamentPath(id) + (admin ? '' : '/admin')}
+            target="_blank"
+            rel="noopener"
+            icon={<ExternalLink size={14} />}
+          >
+            {t(admin ? 'cup.public' : 'cup.admin')}
           </ButtonLink>
-        ) : (
-          cup.viewer?.isAdmin && (
-            <ButtonLink href={tournamentPath(id) + '/admin'} target="_blank" rel="noopener">
-              {t('cup.admin')} <ExternalLink size={14} />
-            </ButtonLink>
-          )
-        )}
-      </div>
+        </div>
+      )}
       <TournamentState cup={cup} />
       {own.some((e) => e.kind === 'human' && ['registered', 'active', 'qualified'].includes(e.state)) &&
         !['finished', 'cancelled'].includes(cup.status) && (
@@ -247,9 +247,7 @@ export function TournamentScreen({ admin = false }: { admin?: boolean }) {
           </div>
         )}
       {admin ? (
-        <Zone label={t('cup.admin')}>
-          <AdminControls cup={cup} refresh={() => void detail.refetch()} />
-        </Zone>
+        <AdminControls cup={cup} refresh={() => void detail.refetch()} />
       ) : (
         <>
           <ParticipantPresence cup={cup} />

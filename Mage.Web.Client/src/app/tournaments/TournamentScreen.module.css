@@ -10,6 +10,7 @@
   padding: clamp(16px, 4vw, 56px);
   padding-bottom: max(60px, env(safe-area-inset-bottom));
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 24px;
 }
 .nav,
@@ -21,6 +22,15 @@
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+}
+.toolbarLink {
+  max-width: 100%;
+  min-height: 44px;
+  height: auto;
+  padding-block: var(--space-2);
+  text-align: center;
+  text-decoration: none;
+  white-space: normal;
 }
 .nav {
   justify-content: space-between;
@@ -110,12 +120,6 @@
   margin: 0;
   padding: 0;
   list-style: none;
-}
-.score {
-  font-family: var(--font-print);
-  font-weight: 600;
-  font-size: 1.35rem;
-  white-space: nowrap;
 }
 .positive {
   color: var(--sage);
@@ -309,12 +313,6 @@ details > summary {
   flex-direction: column;
   gap: 12px;
 }
-.branch > li {
-  border: 1px solid var(--mat-400);
-  border-radius: var(--radius-control);
-  padding: 8px 12px;
-  background: var(--mat-900);
-}
 .stageButtons button[aria-pressed='true'],
 .mobileTabs button[aria-pressed='true'] {
   border-color: var(--decision);
@@ -345,7 +343,7 @@ details > summary {
     padding: 0;
     margin: 8px 0 0;
   }
-  .grid:has(.desktopPanel) > div:has(> .desktopPanel:only-child) {
+  .grid > div:not(:has(> :not(.desktopPanel))) {
     display: none;
   }
 }

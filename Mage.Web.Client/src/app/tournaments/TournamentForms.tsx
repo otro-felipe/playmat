@@ -3,10 +3,12 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { useT } from '../i18n';
 import { Button, ButtonLink } from '../ui/Button';
+import { Zone } from '../ui/Zone';
 import {
   request,
   tournamentApi,
   tournamentPath,
+  type Pairing,
   type Tournament,
   type StructureRange,
   type AdminAction,
@@ -295,11 +297,10 @@ export function Registration({ cup, refresh }: { cup: Tournament; refresh(): voi
   );
 }
 
-function RetryFailedStart({ cup, refresh }: { cup: Tournament; refresh(): void }) {
+function RetryFailedStart({ cup, candidates, refresh }: { cup: Tournament; candidates: Pairing[]; refresh(): void }) {
   const t = useT();
   const [tableId, setTableId] = useState('');
   const [confirmed, setConfirmed] = useState(false);
-  const candidates = cup.pairings.filter(p => p.roundNumber === cup.roundNumber && p.b && p.tableId && !p.completed && !p.matchId);
   const selected = candidates.find(p => p.tableId === tableId);
   const retry = useMutation({
     mutationFn: (pairingId: string) => request(tournamentApi + '/' + encodeURIComponent(cup.id) + '/admin', {
@@ -351,95 +352,105 @@ export function AdminControls({ cup, refresh }: { cup: Tournament; refresh(): vo
     }) => request(tournamentApi + '/' + encodeURIComponent(cup.id) + '/admin', body),
     onSuccess: refresh,
   });
+  const candidates = cup.status === 'playing' ? cup.pairings.filter(
+    (p) => p.roundNumber === cup.roundNumber && p.b && p.tableId && !p.completed && !p.matchId,
+  ) : [];
+  if (cup.status === 'finished' || cup.status === 'cancelled' || (cup.status === 'playing' && !candidates.length)) {
+    return null;
+  }
   return (
-    <div className={styles.stack}>
-      {cup.status === 'playing' && <RetryFailedStart key={cup.id + '/' + cup.roundNumber} cup={cup} refresh={refresh} />}
-      {cup.status === 'registration' && (
-        <div>
-          <Button variant="decision" busy={admin.isPending} onClick={() => admin.mutate({ action: 'start' })}>
-            {t('cup.start')}
-          </Button>
-        </div>
-      )}
-      {cup.status === 'registration' && (
-        <details>
-          <summary>{t('cup.editStructure')}</summary>
-          <form
-            className={styles.form}
-            onSubmit={(event) => {
-              event.preventDefault();
-              admin.mutate({
-                action: 'structure',
-                template: structure === 'worlds' ? 'worlds' : 'attendance',
-                cut: structure === 'none' ? 'none' : 'auto',
-                ...(structure === 'none' && { swissRounds: Number(new FormData(event.currentTarget).get('rounds')) }),
-              });
-            }}
-          >
-            {cup.template === 'worlds' && cup.participants.filter((e) => e.online).length <= 8 && (
-              <p>{t('cup.smallWorlds')}</p>
-            )}
-            <Select label={t('cup.template')} value={structure} onChange={setStructure}>
-              <option value="none">{t('cup.none')}</option>
-              <option value="auto">{t('cup.auto')}</option>
-              {cup.format === 'Standard' && <option value="worlds">{t('cup.worlds')}</option>}
-            </Select>
-            {structure === 'none' && (
-              <Numeric name="rounds" label={t('cup.rounds')} min={1} max={14} value={cup.roundsTotal || 3} />
-            )}
-            <div>
+    <Zone label={t('cup.admin')}>
+      <div className={styles.stack}>
+        {candidates.length > 0 && (
+          <RetryFailedStart key={cup.id + '/' + cup.roundNumber} cup={cup} candidates={candidates} refresh={refresh} />
+        )}
+        {cup.status === 'registration' && (
+          <div>
+            <Button variant="decision" busy={admin.isPending} onClick={() => admin.mutate({ action: 'start' })}>
+              {t('cup.start')}
+            </Button>
+          </div>
+        )}
+        {cup.status === 'registration' && (
+          <details>
+            <summary>{t('cup.editStructure')}</summary>
+            <form
+              className={styles.form}
+              onSubmit={(event) => {
+                event.preventDefault();
+                admin.mutate({
+                  action: 'structure',
+                  template: structure === 'worlds' ? 'worlds' : 'attendance',
+                  cut: structure === 'none' ? 'none' : 'auto',
+                  ...(structure === 'none' && { swissRounds: Number(new FormData(event.currentTarget).get('rounds')) }),
+                });
+              }}
+            >
+              {cup.template === 'worlds' && cup.participants.filter((e) => e.online).length <= 8 && (
+                <p>{t('cup.smallWorlds')}</p>
+              )}
+              <Select label={t('cup.template')} value={structure} onChange={setStructure}>
+                <option value="none">{t('cup.none')}</option>
+                <option value="auto">{t('cup.auto')}</option>
+                {cup.format === 'Standard' && <option value="worlds">{t('cup.worlds')}</option>}
+              </Select>
+              {structure === 'none' && (
+                <Numeric name="rounds" label={t('cup.rounds')} min={1} max={14} value={cup.roundsTotal || 3} />
+              )}
+              <div>
+                <Button type="submit" busy={admin.isPending}>
+                  {t('cup.saveStructure')}
+                </Button>
+              </div>
+            </form>
+          </details>
+        )}
+        {cup.status === 'paused' && (
+          <div>
+            <Button variant="decision" busy={admin.isPending} onClick={() => admin.mutate({ action: 'resume' })}>
+              {t('cup.resume')}
+            </Button>
+          </div>
+        )}
+        {cup.status === 'break' && (
+          <>
+            <form
+              className={styles.row}
+              onSubmit={(event) => {
+                event.preventDefault();
+                admin.mutate({ action: 'extend', minutes: Number(new FormData(event.currentTarget).get('minutes')) });
+              }}
+            >
+              <Numeric name="minutes" min={1} max={1440} value={5} label={t('cup.minutes')} />
               <Button type="submit" busy={admin.isPending}>
-                {t('cup.saveStructure')}
+                {t('cup.extend')}
               </Button>
-            </div>
-          </form>
-        </details>
-      )}
-      {cup.status === 'paused' && (
-        <div>
-          <Button variant="decision" busy={admin.isPending} onClick={() => admin.mutate({ action: 'resume' })}>
-            {t('cup.resume')}
-          </Button>
-        </div>
-      )}
-      {cup.status === 'break' && (
-        <>
+            </form>
+          </>
+        )}
+        {(cup.status === 'break' || cup.status === 'paused') && (
           <form
             className={styles.row}
             onSubmit={(event) => {
               event.preventDefault();
-              admin.mutate({ action: 'extend', minutes: Number(new FormData(event.currentTarget).get('minutes')) });
+              admin.mutate({ action: 'pause', ...(when && { nextSessionAt: new Date(when).getTime() }) });
             }}
           >
-            <Numeric name="minutes" min={1} max={1440} value={5} label={t('cup.minutes')} />
-            <Button type="submit" busy={admin.isPending}>
-              {t('cup.extend')}
+            <label className={styles.field}>
+              {t('cup.nextSession')}
+              <input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} />
+            </label>
+            <Button type="submit" disabled={cup.status === 'paused' && !when} busy={admin.isPending}>
+              {t(cup.status === 'paused' ? 'cup.schedule' : 'cup.pause')}
             </Button>
           </form>
-        </>
-      )}
-      {(cup.status === 'break' || cup.status === 'paused') && (
-        <form
-          className={styles.row}
-          onSubmit={(event) => {
-            event.preventDefault();
-            admin.mutate({ action: 'pause', ...(when && { nextSessionAt: new Date(when).getTime() }) });
-          }}
-        >
-          <label className={styles.field}>
-            {t('cup.nextSession')}
-            <input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} />
-          </label>
-          <Button type="submit" disabled={cup.status === 'paused' && !when} busy={admin.isPending}>
-            {t(cup.status === 'paused' ? 'cup.schedule' : 'cup.pause')}
-          </Button>
-        </form>
-      )}
-      {admin.error && (
-        <p role="alert" className={styles.error}>
-          {admin.error.message}
-        </p>
-      )}
-    </div>
+        )}
+        {admin.error && (
+          <p role="alert" className={styles.error}>
+            {admin.error.message}
+          </p>
+        )}
+      </div>
+    </Zone>
   );
 }
