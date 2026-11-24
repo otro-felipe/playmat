@@ -10,9 +10,8 @@ import mage.players.Player;
 import mage.view.ChatMessage;
 import org.junit.jupiter.api.Test;
 import java.lang.reflect.Proxy;
+import java.util.Collections;
 import java.util.Date;
-import java.util.List;
-import java.util.Set;
 import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -24,8 +23,8 @@ class SpectatorTableTest {
         Player alice = seat("Alice"), bob = seat("Bob");
         match.addPlayer(alice, null);
         match.addPlayer(bob, null);
-        Table table = new Table(UUID.randomUUID(), "Duel", "Test", "Alice", null, List.of(), ignored -> {},
-                match, Set.of(), false);
+        Table table = new Table(UUID.randomUUID(), "Duel", "Test", "Alice", null, Collections.emptyList(), ignored -> {},
+                match, Collections.emptySet(), false);
         SpectatorTable state = SpectatorTable.start(table, UUID.randomUUID());
         JsonObject empty = new JsonObject();
         state.frame(empty, empty, empty);
