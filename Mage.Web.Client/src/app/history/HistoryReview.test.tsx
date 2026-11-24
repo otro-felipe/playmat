@@ -42,6 +42,30 @@ test('[PM-REVIEW-UI-3] the history shows persisted analysis and separates seat a
   expect(within(game).getByText('Inaccuracy')).toBeTruthy();
 });
 
+test('[PM-MCP-PLAYER-VIEW-MODEL] shows archived provider and model for an MCP opponent', async () => {
+  useSession.setState({ userName: 'Alice', phase: 'signedIn' });
+  const rival = { name: 'mcp_archived', displayName: 'Luna', isMcp: true, provider: 'gemini', model: 'gemini-pro', reasoningEffort: 'high' };
+  const fetcher = vi.fn(async (url: string) => {
+    if (url.includes('/performance')) return Response.json({ groups: [], decks: [] });
+    if (url.includes('/player-identities')) return Response.json({ players: [{ name: rival.name, displayName: 'Current Luna', isMcp: true, provider: 'claude', model: 'claude-opus-5-5' }] });
+    return Response.json({ matches: [{
+      id: 'match', name: 'Practice', format: 'Pioneer', status: 'completed', startedAt: 1,
+      games: [{ gameId: 'game', gameNumber: 1, archiveState: 'ready', replayAvailable: true, players: [{ name: 'Alice' }, rival] }],
+    }], cursor: null });
+  });
+  vi.stubGlobal('fetch', fetcher);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  render(<QueryClientProvider client={client}><MemoryRouter><HistoryScreen /></MemoryRouter></QueryClientProvider>);
+  const toggle = await screen.findByRole('button', { name: /Luna/ });
+  expect(within(toggle).getByRole('img', { name: 'Gemini' })).toBeTruthy();
+  expect(within(toggle).getByText('gemini-pro')).toBeTruthy();
+  fireEvent.click(toggle);
+  const game = screen.getByRole('region', { name: 'Game 1' });
+  expect(within(game).getByRole('img', { name: 'Gemini' })).toBeTruthy();
+  expect(within(game).getByText('high')).toBeTruthy();
+  expect(screen.queryByRole('img', { name: 'Claude' })).toBeNull();
+});
+
 test('a participant can exclude a match, see the reason and still open its replay', async () => {
   useSession.setState({ userName: 'Alice', phase: 'signedIn' });
   const match = {

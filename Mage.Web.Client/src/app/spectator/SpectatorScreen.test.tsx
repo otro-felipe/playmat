@@ -1,5 +1,5 @@
 import { QueryClientProvider } from '@tanstack/react-query';
-import { act, render } from '@testing-library/react';
+import { act, render, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, expect, test, vi } from 'vitest';
 import { queryClient } from '../queries';
@@ -74,5 +74,27 @@ test('a standalone spectator feed with no audience count never displays a transl
   await board.findByText('Match finished', { selector: 'header span' });
   expect(board.getByRole('banner').textContent).not.toContain('{count}');
   expect(board.queryByRole('group', { name: 'Match score' })).toBeNull();
+  board.unmount();
+});
+
+test('[PM-MCP-PLAYER-VIEW-MODEL] a tournament broadcast shows the published model in the score and player plate', async () => {
+  const players = [{ playerId: 'a', name: 'mcp_fixture', displayName: 'Agent A', provider: 'claude', model: 'claude-haiku-5-5', life: 20 },
+    { playerId: 'b', name: 'Bob', life: 20 }];
+  const frame = {
+    role: 'spectator', gameId: 'fixture', visibility: 'public-board', status: 'playing',
+    view: { turn: 8, activePlayerId: 'a', activePlayerName: 'mcp_fixture', step: 'PRECOMBAT_MAIN', players },
+    players, hands: {}, lines: [], chat: [],
+    matchScore: [{ ...players[0], name: 'Agent A', wins: 0 }, { name: 'Bob', wins: 0 }],
+  };
+  const fetcher = vi.fn(async (url: string) => Response.json(url === '/fixture' ? frame : {}));
+  vi.stubGlobal('fetch', fetcher);
+  const board = render(<MemoryRouter><QueryClientProvider client={queryClient}><SpectatorBroadcast endpoint="/fixture" /></QueryClientProvider></MemoryRouter>);
+  const score = await board.findByRole('group', { name: 'Match score' });
+  expect(within(score).getByRole('img', { name: 'Claude' })).toBeTruthy();
+  expect(within(score).getByText('claude-haiku-5-5')).toBeTruthy();
+  const plate = await board.findByRole('group', { name: /Agent A.*20 life/ });
+  expect(within(plate).getByRole('img', { name: 'Claude' })).toBeTruthy();
+  expect(within(plate).getByText('claude-haiku-5-5')).toBeTruthy();
+  expect(fetcher.mock.calls.some(([url]) => url.includes('/player-identities'))).toBe(false);
   board.unmount();
 });

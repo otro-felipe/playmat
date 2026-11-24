@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'node:crypto'
 import { promisify } from 'node:util'
 import { selectOAuthPlayer } from './players.mjs'
+import { declaredRuntime } from './player-runtime.mjs'
 import { normalize, ProductError, transaction } from './decks.mjs'
 
 const derive = promisify(scrypt)
@@ -306,12 +307,14 @@ export function createIdentity(pool, insecureCookie, resolveOAuth = async () => 
       throw new ProductError(400, 'Supply up to 50 valid player names')
     }
     const { rows } = await pool.query(`SELECT username AS name, username AS "displayName", false AS "isMcp",
-        NULL::uuid AS "playerId", NULL::text AS flag FROM accounts WHERE username_key=ANY($1::text[])
+        NULL::uuid AS "playerId", NULL::text AS flag,
+        NULL::text AS provider,NULL::text AS model,NULL::text AS "reasoningEffort" FROM accounts WHERE username_key=ANY($1::text[])
       UNION ALL
-      SELECT g.engine_name, COALESCE(p.display_name,a.username), true, p.id, p.flag
+      SELECT g.engine_name, COALESCE(p.display_name,a.username), true, p.id, p.flag,p.provider,p.model,p.reasoning_effort
       FROM agent_grants g JOIN accounts a ON a.id=g.account_id LEFT JOIN player_profiles p ON p.id=g.player_id
       WHERE g.engine_key=ANY($1::text[])`, [names.map(normalize)])
-    return { players: rows.map(({playerId,flag,...identity}) => playerId ? {...identity,playerId,flag} : identity) }
+    return { players: rows.map(({playerId,flag,provider,model,reasoningEffort,...identity}) =>
+      playerId ? {...identity,playerId,flag,...declaredRuntime({provider,model,reasoningEffort})} : identity) }
   }
 
   async function recoveryPrincipal(actor) {

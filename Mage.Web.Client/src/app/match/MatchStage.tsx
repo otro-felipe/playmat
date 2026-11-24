@@ -2,6 +2,7 @@ import { SpectatorFrame } from '../spectator/SpectatorFrame';
 import type { SpectatorFeedEvent } from './spectatorFeed';
 import { PlayerNames, usePlayerNames, useRosterNames } from '../ui/usePlayerIdentity';
 import { PlayerLabel } from '../ui/PlayerLabel';
+import type { AgentModel } from '../ui/agentModel';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { Menu } from 'lucide-react';
 import { PRIVATE_PLAYTESTING } from '../playtesting';
@@ -190,6 +191,8 @@ export interface MatchStageProps {
   leaveLabel?: string;
   /** presentation names chosen by seats, keyed by their engine account name */
   seatDisplayNames?: SeatDisplayNames;
+  /** Declared model data from the frame, keyed by engine player ID. */
+  seatModels?: Readonly<Record<string, AgentModel>>;
 }
 
 export function MatchStage(props: MatchStageProps) {
@@ -205,7 +208,7 @@ export function MatchStage(props: MatchStageProps) {
     : stage}</PlayerNames.Provider>;
 }
 
-function MatchBoard({ session, state, replayLog, replayHands, publicSpectator, reviewLayout, onLeave, leaveLabel, seatDisplayNames }: MatchStageProps) {
+function MatchBoard({ session, state, replayLog, replayHands, publicSpectator, reviewLayout, onLeave, leaveLabel, seatDisplayNames, seatModels }: MatchStageProps) {
   const formatName = usePlayerNames();
   const { view, interaction, playerId, awaitingServer, prediction } = state;
   const mode = state.browserInputLock ? 'observeHuman' : state.mode;
@@ -704,6 +707,7 @@ function MatchBoard({ session, state, replayLog, replayHands, publicSpectator, r
                 count={board.opponents.length}
                 sleeve={theirSleeves.get(opponent.player.playerId!) ?? sleeves.theirs}
                 displayName={seatAlias(opponent.player.name ?? '', seatDisplayNames)}
+                modelInfo={seatModels?.[opponent.player.playerId ?? '']}
                 look={lookOf(opponent.player)}
                 handCount={opponent.player.handCount ?? 0}
                 liveHand={!!publicSpectator}
@@ -732,6 +736,7 @@ function MatchBoard({ session, state, replayLog, replayHands, publicSpectator, r
                   <PlayerPlate bubbleSide="lower"
                     player={board.me.player}
                     displayName={seatAlias(board.me.player.name ?? '', seatDisplayNames)}
+                    modelInfo={seatModels?.[board.me.player.playerId ?? '']}
                     isMe={board.me.isMe}
                     sleeve={sleeves.mine}
                     look={lookOf(board.me.player)}
@@ -1027,10 +1032,11 @@ function landTaps(groups: PermanentGroup[]) {
 }
 
 /** An opponent's half: their rows mirrored above the seam, their seat, piles and hidden hand. */
-function OpponentSide({ board, index, count, sleeve, handCount, replayHand, liveHand, revealed, deciding, layout, commanders, commanderDamage, outOfRange, look, displayName, ...row }: RowProps & {
+function OpponentSide({ board, index, count, sleeve, handCount, replayHand, liveHand, revealed, deciding, layout, commanders, commanderDamage, outOfRange, look, displayName, modelInfo, ...row }: RowProps & {
   layout: MatchLayout;
   look: PlayerLook | undefined;
   displayName?: string;
+  modelInfo?: AgentModel;
   board: PlayerBoard;
   index: number;
   count: number;
@@ -1054,6 +1060,7 @@ function OpponentSide({ board, index, count, sleeve, handCount, replayHand, live
         <PlayerPlate bubbleSide="upper"
           player={player}
           displayName={displayName}
+          modelInfo={modelInfo}
           isMe={false}
           sleeve={sleeve}
           targetable={row.clickable.has(player.playerId!)}

@@ -1,5 +1,6 @@
 import { registeredDecklists } from './tournament-decklists.mjs'
 import { ProductError } from './decks.mjs'
+import { declaredRuntime } from './player-runtime.mjs'
 import { rankStandings, swissPairings, eliminationPairs } from './tournament-rules.mjs'
 
 export const minute = 60_000
@@ -20,7 +21,8 @@ export async function entrants(db, id) {
   const { rows } = await db.query(
     `SELECT id,owner_id AS "ownerId",player_id AS "playerId",
     name,owner_name AS owner,engine_name AS "engineName",seed,state,qualified_seed AS "qualifiedSeed",
-    last_seen AS "lastSeen",deck_id AS "deckId",deck_revision AS revision,deck_name AS "deckName"
+    last_seen AS "lastSeen",deck_id AS "deckId",deck_revision AS revision,deck_name AS "deckName",
+    provider,model,reasoning_effort AS "reasoningEffort"
     FROM tournament_entries WHERE tournament_id=$1 ORDER BY seed,id`,
     [id],
   )
@@ -93,6 +95,7 @@ export async function view(db, t, actor, now, onlineMs) {
     name: p.name,
     owner: p.owner,
     kind: p.playerId ? 'agent' : 'human',
+    ...declaredRuntime(p),
     state: p.state,
     rank: i + 1,
     points: p.points,

@@ -12,7 +12,8 @@ test('replay shows only published decisions up to the selected frame, attributed
     marker, marker, { view }, { ...marker, actorPlayerId: b, commandId: 'second', at: 14, explanation: 'Bloqueo.' }, { view },
     { ...marker, commandId: 'terminal', at: 15, explanation: 'El daño en mesa es letal.' }]
   const row = { id: pair, table_id: table, completed: true, name_a: 'a', name_b: 'b',
-    display_a: 'Brasa', display_b: 'Cirro', owner_a: 'Felipe', owner_b: 'Felipe', player_a: a, player_b: b }
+    display_a: 'Brasa', display_b: 'Cirro', owner_a: 'Felipe', owner_b: 'Felipe', player_a: a, player_b: b,
+    provider_b:'gemini', model_b:'gemini-fixture' }
   const pool = { async query(sql) {
     return { rows: sql.includes('JOIN tournament_entries') ? [row] : [{ id: game, checksum: 'v1', object_key:'fixture' }] }
   } }
@@ -25,6 +26,9 @@ test('replay shows only published decisions up to the selected frame, attributed
   assert.deepEqual(await notes(0), [])
   assert.deepEqual(await notes(1), [[a, marker.explanation]])
   assert.deepEqual(await notes(2), [[a, marker.explanation], [b, 'Bloqueo.'], [a, 'El daño en mesa es letal.']])
+  const replay = await broadcast.replay(event, pair, null, new URLSearchParams({ gameId: game, frame:0 }))
+  assert.equal(replay.players.find(p => p.playerId === b).provider, 'gemini')
+  assert.equal(replay.players.find(p => p.playerId === b).model, 'gemini-fixture')
 })
 
 test('official AFK, game result and last playable board remain independent; a missing terminal event stays unknown', async t => {
@@ -86,17 +90,19 @@ test('official AFK, game result and last playable board remain independent; a mi
   await assert.rejects(broadcast.replay(event,pair,null,new URLSearchParams({gameId:game})),{status:404})
 })
 
-test('the pairing clock and score use the native seats during play and the recorded result after completion', async t => {
+test('[CUP-AC-003] a live broadcast uses the registered metadata and its score uses the native seats', async t => {
   const [event, pair, table, game, a, b] = Array.from({ length: 6 }, () => randomUUID())
   const deadline = 1795500000000
   const row = { id: pair, table_id: table, deadline_at: String(deadline), completed: false, wins_a: 0, wins_b: 0,
-    name_a: 'seat-a', name_b: 'seat-b', display_a: 'Brasa', display_b: 'Cirro' }
-  const players = [{ name: 'seat-b', playerId: b }, { name: 'seat-a', playerId: a }]
+    name_a: 'seat-a', name_b: 'seat-b', display_a: 'Brasa', display_b: 'Cirro',
+    provider_a:'claude', model_a:'claude-opus-5-5', effort_a:'high' }
+  const players = [{ name: 'seat-b', playerId: b, model:'untrusted' }, { name: 'seat-a', playerId: a }]
   let snapshot = null
   const broadcast = createTournamentBroadcast({ async query() { return { rows: [row] } } }, {},
     async () => snapshot && ({ snapshot }))
   t.after(() => broadcast.close())
-  const score = (a, b) => [{ name: 'Brasa', wins: a }, { name: 'Cirro', wins: b }]
+  const runtime = {provider:'claude', model:'claude-opus-5-5', reasoningEffort:'high'}
+  const score = (a, b) => [{ name: 'Brasa', wins: a, ...runtime }, { name: 'Cirro', wins: b }]
 
   const waiting = await broadcast.live(event, pair, null, false)
   assert.deepEqual(waiting.matchScore, score(0, 0))
@@ -111,6 +117,9 @@ test('the pairing clock and score use the native seats during play and the recor
   assert.equal(between.deadlineAt, deadline)
   assert.equal(between.matchWins, undefined)
   assert.equal(between.status, 'between_games')
+  const { provider, model, reasoningEffort } = between.players.find(p => p.playerId === a)
+  assert.deepEqual({ provider, model, reasoningEffort }, runtime)
+  assert.equal(between.players.find(p => p.playerId === b).model, undefined)
 
   delete snapshot.matchWins
   snapshot.status = 'playing'

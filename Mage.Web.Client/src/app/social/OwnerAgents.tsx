@@ -1,6 +1,7 @@
 import { registerMessages, useT } from '../i18n';
 import messages from '../i18n/en/events';
 import { useTournamentOwner, type Profile } from '../tournaments/tournamentApi';
+import { AgentModelLabel } from '../ui/AgentModelLabel';
 import { Button } from '../ui/Button';
 import styles from './ProfileDialog.module.css';
 
@@ -10,7 +11,7 @@ export function RegisteredAgents({ agents }: { agents: Profile['agents'] }) {
   const t = useT();
   return agents.length ? (
     <ul className={styles.agentList}>
-      {agents.map((agent) => <li key={agent.id}>{agent.name}</li>)}
+      {agents.map((agent) => <li key={agent.id}>{agent.name} <AgentModelLabel {...agent} /></li>)}
     </ul>
   ) : <p>{t('cup.noAgents')}</p>;
 }

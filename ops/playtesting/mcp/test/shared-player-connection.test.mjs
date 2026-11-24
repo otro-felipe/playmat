@@ -13,6 +13,8 @@ test('one connection addresses both private projections and receipts of one game
   const base = { accountId, connectionId, engineName: 'Canonical', scopes: ['play', 'library', 'chat', 'history'] };
   const players = ['First', 'Second'].map(engineName => ({ ...base, playerId:randomUUID(), engineName,
     scopes:['play','library','chat'], ownsReservation:true, activeTableId:tableId, reservationId:randomUUID() }));
+  const runtime = {provider:'openai', model:'gpt-fixture', reasoningEffort:'medium'};
+  Object.assign(players[0], runtime);
   const calls = [], engines = [];
   let selectable = true;
   let legacyTableId = randomUUID();
@@ -59,7 +61,11 @@ test('one connection addresses both private projections and receipts of one game
   assert.equal((await eventList({playerId:randomUUID()})).error.code,-32001);
   for (const playerId of ids) assert.equal((await eventList({playerId})).result.reader,playerId);
 
-  assert.deepEqual((await call('list_players')).players.map(p=>p.playerId),ids);
+  const listed = (await call('list_players')).players;
+  assert.deepEqual(listed.map(p=>p.playerId),ids);
+  const {provider, model, reasoningEffort} = listed[0];
+  assert.deepEqual({provider, model, reasoningEffort}, runtime);
+  assert.equal(listed[1].model, undefined);
   assert.deepEqual(await call('list_decks'), {decks:['shared-library']});
   assert.equal((await call('get_game_state',{gameId})).code,'player_required');
   assert.equal((await call('get_game_state',{playerId:randomUUID(),gameId})).code,'player_forbidden');

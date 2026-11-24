@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, expect, test, vi } from 'vitest';
 import { TournamentScreen, TournamentsScreen } from './TournamentScreen';
@@ -86,6 +86,24 @@ test('the public scoreboard names an agent and owner and offers only published i
   expect(view.queryByText(/sideboard/i)).toBeNull();
   expect(view.getByRole('link', { name: 'Tournament statistics' }).getAttribute('href')).toBe('/tournaments/cup/statistics');
 });
+
+test('[PM-MCP-PLAYER-VIEW-MODEL] shows provider and model for configured agents in the roster standings and tables', async () => {
+  const configured = { ...entrant, provider: 'claude', model: 'claude-opus-5-5', reasoningEffort: 'high' };
+  const human = { ...entrant, id: 'e2', name: 'Vale', owner: 'Vale', kind: 'human' };
+  const legacy = { ...entrant, id: 'e3', name: 'Legacy' };
+  const { view } = mount('/tournaments/cup', {
+    ...cup,
+    viewer: null,
+    participants: [configured, human, legacy],
+    standings: [{ ...configured, rank: 1, wins: 1, losses: 0, ties: 0, points: 3, omw: 0, gw: 1, ogw: 0 }],
+    pairings: [{ id: 'a', roundNumber: 1, stage: 'swiss', number: 1, a: 'e1', b: 'e2' }],
+  });
+  expect((await view.findAllByRole('img', { name: 'Claude' })).length).toBeGreaterThanOrEqual(3);
+  expect(view.getAllByText('claude-opus-5-5').length).toBeGreaterThanOrEqual(3);
+  const item = view.getByText('Legacy').closest('li')!;
+  expect(within(item).queryByRole('img')).toBeNull();
+});
+
 test('admin creates an eight-player casual Swiss event with three rounds and no playoff', async () => {
   const { view, fetcher } = mount('/tournaments', cup);
   fireEvent.click(await view.findByRole('button', { name: /create tournament/i }));

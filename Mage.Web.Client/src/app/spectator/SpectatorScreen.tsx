@@ -10,10 +10,11 @@ import { MatchStage } from '../match/MatchStage';
 import { spectatorFeed, type SpectatorLine, type SpectatorChatMessage } from '../match/spectatorFeed';
 import { Button, ButtonLink } from '../ui/Button';
 import { MatchHumanSeat } from '../ui/humanSeat';
+import type { AgentModel } from '../ui/agentModel';
 import type { SeatDisplayNames } from '../match/seatDisplayNames';
 import { PublicBroadcast } from '../ui/usePlayerIdentity';
 import { SeatKnowledge, type KnownCards } from './SeatKnowledge';
-import { SpectatorFrame } from './SpectatorFrame';
+import { SpectatorFrame, type ScoreSeat } from './SpectatorFrame';
 import { SpectatorLink } from './SpectatorLink';
 import styles from './SpectatorBoard.module.css';
 
@@ -29,12 +30,12 @@ export interface SpectatorSnapshot {
   view: GameView | null;
   hands: Record<string, Record<string, CardView>>;
   humanMcpName?: string;
-  players: { playerId: string; name: string; displayName?: string }[];
+  players: (AgentModel & { playerId: string; name: string; displayName?: string })[];
   lines: SpectatorLine[];
   facts?: TournamentBoardFact[];
   chat: SpectatorChatMessage[];
   spectators?: number;
-  matchScore?: { name: string; wins: number }[];
+  matchScore?: ScoreSeat[];
   deadlineAt?: number;
 }
 
@@ -51,7 +52,9 @@ export function ProjectedBoard({ frame, gameId, seatDisplayNames }: { frame: Spe
   const broadcast = useMemo(() => ({ events: spectatorFeed(gameId, frame.lines, frame.chat, frame.visibility), publicBoardOnly: frame.visibility === 'public-board' }), [gameId, frame.lines, frame.chat, frame.visibility]);
   const aliases = useMemo(() => ({ ...seatDisplayNames, ...Object.fromEntries(frame.players.flatMap(player =>
     player.displayName ? [[player.name, player.displayName]] : [])) }), [frame.players, seatDisplayNames]);
-  return <MatchStage state={state} session={session} replayHands={frame.visibility === 'public-board' ? {} : frame.hands} publicSpectator={broadcast} seatDisplayNames={aliases} />;
+  const seatModels = useMemo(() => Object.fromEntries(frame.players.flatMap(player =>
+    player.provider || player.model ? [[player.playerId, player]] : [])), [frame.players]);
+  return <MatchStage state={state} session={session} replayHands={frame.visibility === 'public-board' ? {} : frame.hands} publicSpectator={broadcast} seatDisplayNames={aliases} seatModels={seatModels} />;
 }
 
 type BroadcastState = { frame: SpectatorSnapshot; problem?: never; closedPath?: never }

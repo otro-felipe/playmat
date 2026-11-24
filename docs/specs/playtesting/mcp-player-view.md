@@ -64,3 +64,14 @@ GET and SSE enforce the same game, roster and entitlement on every connection. T
 The browser host can PATCH an eligible waiting MCP table's `spectator-link` with `{"spectatorVisibility":"both-hands"}` or `{"spectatorVisibility":"public-board"}`. Owned table listings advertise `canConfigureSpectatorVisibility:true` while they allow this action. Disabling the expanded link immediately revokes it, including open streams. Re-enabling it creates a different private link and keeps the public link stable. The first guest reservation or claim locks the mode permanently, including after an abandoned join. Started matches cannot change. A join from a stale inspection must recheck the invitation before entering.
 
 **PM-PLAYER-SETTINGS-01.** In private playtesting, the signed-in owner opens Settings → MCP players to see their players and seat availability. They can add a player, edit its name, optional country and MCP access, and confirm or cancel its removal. All profiles use the account's shared agent deck library. A reserved or occupied player cannot be removed. Load failures allow retry, and a failed change preserves the draft.
+
+**PM-MCP-PLAYER-VIEW-MODEL.** An owner can set, edit or clear the optional provider, model and reasoning effort in MCP player settings. The player list, live player identity and tournament participant views show the provider's accessible mark and the model when recorded. Tournament and history views use their recorded values. Profiles without model metadata retain their ordinary labels. The model marker does not change the permissions for looking up player identities.
+
+| Scenario | Client acceptance case |
+| --- | --- |
+| PM-MCP-PLAYER-VIEW-MODEL | `McpPlayerSettings.test.tsx` · `an owner sets and clears optional model markers` |
+| PM-MCP-PLAYER-VIEW-MODEL | `PlayerLabel.test.tsx` · `a player identity shows recorded provider and model while preserving broadcast aliases` |
+| PM-MCP-PLAYER-VIEW-MODEL | `TournamentScreen.test.tsx` · `shows provider and model for configured agents in the roster standings and tables` |
+| PM-MCP-PLAYER-VIEW-MODEL | `HistoryReview.test.tsx` · `shows archived provider and model for an MCP opponent` |
+| PM-MCP-PLAYER-VIEW-MODEL | `SpectatorScreen.test.tsx` · `a tournament broadcast shows the published model in the score and player plate` |
+| PM-MCP-PLAYER-VIEW-MODEL | `e2e/private-tournament-tables.spec.ts` · `table actions stay clear and lead to the authorized destinations` at 1440 px and 390 px |

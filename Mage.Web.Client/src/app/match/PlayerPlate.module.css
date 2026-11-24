@@ -122,6 +122,10 @@
   text-overflow: ellipsis;
 }
 
+.model {
+  max-width: 240px;
+}
+
 .flair {
   margin-left: 6px;
   color: var(--brass);

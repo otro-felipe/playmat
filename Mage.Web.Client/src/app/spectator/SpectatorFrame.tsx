@@ -2,13 +2,17 @@ import { Clock, Eye } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useT } from '../i18n';
 import { Countdown } from '../tournaments/Countdown';
+import { AgentModelLabel } from '../ui/AgentModelLabel';
+import type { AgentModel } from '../ui/agentModel';
 import styles from './SpectatorBoard.module.css';
+
+export type ScoreSeat = AgentModel & { name: string; wins: number };
 
 export function SpectatorFrame({ status, actions, children, matchScore, deadlineAt }: {
   status?: ReactNode;
   actions?: ReactNode;
   children: ReactNode;
-  matchScore?: { name: string; wins: number }[];
+  matchScore?: ScoreSeat[];
   deadlineAt?: number;
 }) {
   const [left, right] = matchScore?.length === 2 ? matchScore : [];
@@ -20,9 +24,9 @@ export function SpectatorFrame({ status, actions, children, matchScore, deadline
       </div>
       {(left && right || deadlineAt) && <div className={styles.matchInfo}>
         {left && right && <div role="group" className={styles.score} aria-label={t('watch.matchScore')}>
-          <span>{left.name}</span>
+          <span className={styles.scoreSeat}><span>{left.name}</span><AgentModelLabel {...left} /></span>
           <strong>{left.wins}–{right.wins}</strong>
-          <span>{right.name}</span>
+          <span className={styles.scoreSeat}><span>{right.name}</span><AgentModelLabel {...right} /></span>
         </div>}
         {deadlineAt && <div className={styles.clock}>
           <Clock size={14} aria-hidden="true" />

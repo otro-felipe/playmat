@@ -29,7 +29,8 @@
   color: var(--ink-soft);
   font-size: var(--text-sm);
 }
-.score > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scoreSeat { display: grid; min-width: 0; }
+.scoreSeat > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .score strong, .clock time {
   flex: none;
   color: var(--ink-strong);

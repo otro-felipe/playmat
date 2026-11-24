@@ -3,6 +3,7 @@ import { canonicalAccountScope } from './players.mjs'
 import { issuePublicSpectatorLink } from './spectator-links.mjs'
 import { checkInvitationReservation } from './player-reservations.mjs'
 import { isUuid, normalize, normalizeFormat, ProductError, transaction } from './decks.mjs'
+import { declaredRuntime, readPlayerRuntime, runtimeFields } from './player-runtime.mjs'
 
 const CHAT_MODES = new Set(['quiet', 'chatty', 'coach'])
 const INVITATION_EVENT = 'game.invitation.created'
@@ -55,13 +56,9 @@ function displayName(value) {
 
 // Runtime details are declared by the participating client, never inferred from an OAuth client name.
 function agentRuntime(actor, input) {
-  const { model, reasoningEffort } = input ?? {}
-  if ((model !== undefined || reasoningEffort !== undefined) && !actor.agent
-      || model !== undefined && (typeof model !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9.:/_+-]{0,95}$/.test(model))
-      || reasoningEffort !== undefined && (typeof reasoningEffort !== 'string' || !/^[a-z][a-z0-9_-]{0,23}$/.test(reasoningEffort))) {
-    throw new ProductError(400, 'Invalid agent model or reasoning effort')
-  }
-  return [model ?? null, reasoningEffort ?? null]
+  const runtime = declaredRuntime(runtimeFields(input))
+  if (!actor.agent && Object.keys(runtime).length) throw new ProductError(400,'Only MCP players can declare a runtime')
+  return runtime
 }
 
 const guestOwner = `(SELECT a.username FROM agent_grants g JOIN accounts a ON a.id=g.account_id
@@ -135,12 +132,14 @@ export function createInvitations(pool, identity, events) {
     const title=typeof data.tableName==='string' ? [...data.tableName.trim()].slice(0,80).join('') || null : null
     return transaction(pool, async db => {
       await checkInvitationReservation(db,actor,data.tableId)
+      const { provider, model, reasoningEffort } = { ...await readPlayerRuntime(db,actor), ...runtime }
       const invitee = friend?.engineName ?? null
       const { rows: [invite] } = await db.query(`INSERT INTO invitations(
-        table_id,room_id,format,creator_key,invitee_key,invitee_name,table_password,expires_at,mode,chat_mode,owner_account_id,unlisted,creator_model,creator_effort,recipient_account_id,broadcast_on_assignment,table_name,spectator_both_hands,spectator_guest_consent_required
-      ) VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '48 hours',$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) ON CONFLICT (table_id) DO NOTHING RETURNING *, ${guestOwner}`,
+        table_id,room_id,format,creator_key,invitee_key,invitee_name,table_password,expires_at,mode,chat_mode,owner_account_id,unlisted,creator_model,creator_effort,recipient_account_id,broadcast_on_assignment,table_name,spectator_both_hands,spectator_guest_consent_required,creator_provider
+      ) VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '48 hours',$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) ON CONFLICT (table_id) DO NOTHING RETURNING *, ${guestOwner}`,
       [data.tableId, data.roomId, format, normalize(actor.engineName), invitee ? normalize(invitee) : null,
-        invitee, data.password, mode, chatMode, ownerAccountId, unlisted, ...runtime,recipient,!!(trustedPilot && actor.agent && recipient),title,bothHands,guestConsent])
+        invitee, data.password, mode, chatMode, ownerAccountId, unlisted, model,reasoningEffort,recipient,
+        !!(trustedPilot && actor.agent && recipient),title,bothHands,guestConsent,provider])
       // Only a trusted adapter creates public broadcasts for MCP seats. External product
       // requests cannot nominate an arbitrary engine table for public sharing.
       const automatic = trustedPilot && actor.agent && friend?.agent
@@ -203,11 +202,13 @@ export function createInvitations(pool, identity, events) {
     // The claim chooses the authenticated engine identity once. Retries by that identity keep the same alias.
     return transaction(pool,async db => {
       await checkInvitationReservation(db,actor,tableId)
+      const { provider, model, reasoningEffort } = { ...await readPlayerRuntime(db,actor), ...runtime }
       const { rows: [invite] } = await db.query(`UPDATE invitations SET
         spectator_settings_locked=true,
         spectator_guest_consent_required=spectator_guest_consent_required AND NOT $12,
         guest_model=CASE WHEN claimed_at IS NULL THEN $8 ELSE guest_model END,
         guest_effort=CASE WHEN claimed_at IS NULL THEN $9 ELSE guest_effort END,
+        guest_provider=CASE WHEN claimed_at IS NULL THEN $15 ELSE guest_provider END,
         claimed_at=COALESCE(claimed_at,now()), invitee_key=COALESCE(invitee_key,$2), invitee_name=COALESCE(invitee_name,$3),
         guest_display_name=CASE WHEN $10 THEN $4 WHEN mode='mcp' THEN COALESCE(guest_display_name,$4,$7) ELSE guest_display_name END
         WHERE table_id=$1 AND NOT cancel_pending AND creator_key<>$2 AND expires_at>now()
@@ -216,7 +217,9 @@ export function createInvitations(pool, identity, events) {
             OR (recipient_account_id IS NULL OR invitee_key=$2) AND (owner_account_id IS NULL OR owner_account_id=$6) AND (NOT $10 OR invitee_key=$2) AND (
           (mode='friend' AND (invitee_key=$2 OR (unlisted AND invitee_key IS NULL AND NOT $5)))
           OR (mode='mcp' AND $5 AND (invitee_key IS NULL OR invitee_key=$2))
-        )) RETURNING *, ${guestOwner}`, [tableId, key, actor.engineName, alias, actor.agent, rivalAccount(actor), fallback, ...runtime, !!actor.playerId,actor.accountSelected ? actor.accountId : null,data?.acceptSpectatorVisibility==='both-hands',linkForPilot(actor,token),actor.accountId])
+        )) RETURNING *, ${guestOwner}`, [tableId, key, actor.engineName, alias, actor.agent, rivalAccount(actor), fallback,
+        model,reasoningEffort,!!actor.playerId,actor.accountSelected ? actor.accountId : null,
+        data?.acceptSpectatorVisibility==='both-hands',linkForPilot(actor,token),actor.accountId,provider])
       const projection=invitationView(invite,actor)
       if (data?.expectedSpectatorVisibility!==undefined && data.expectedSpectatorVisibility!==(invite.spectator_both_hands?'both-hands':'public-board')) {
         throw new ProductError(409,'Spectator visibility changed. Review this invitation again before joining')

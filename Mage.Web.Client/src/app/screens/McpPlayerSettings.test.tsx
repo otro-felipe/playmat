@@ -87,6 +87,45 @@ test('[PM-PLAYER-SETTINGS-01] retries listing and keeps the edit draft on failur
   expect(form.getByRole<HTMLInputElement>('textbox', { name: 'Player name' }).value).toBe('Canelo');
 });
 
+test('[PM-MCP-PLAYER-VIEW-MODEL] an owner sets and clears optional model markers', async () => {
+  let profile: typeof base & { provider?: string | null; model?: string | null; reasoningEffort?: string | null } = { ...base };
+  const fetcher = vi.fn(async (url: string, init: RequestInit = {}) => {
+    if (url.startsWith('/api/playtesting/player-identities?')) return Response.json({ players: [] });
+    if (url === endpoint) return Response.json({ players: [profile] });
+    if (url === endpoint + '/pilot' && init.method === 'PATCH') {
+      profile = { ...profile, ...JSON.parse(String(init.body)) };
+      return Response.json(profile);
+    }
+    throw Error('Unexpected request');
+  });
+  vi.stubGlobal('fetch', fetcher);
+  await openSettings();
+  await userEvent.click(await screen.findByRole('button', { name: 'Edit Koru' }));
+  let form = within(screen.getByRole('dialog', { name: 'Edit Koru' }));
+  await userEvent.selectOptions(form.getByLabelText('Provider (optional)'), 'claude');
+  fireEvent.change(form.getByLabelText('Model (optional)'), { target: { value: 'Claude Sonnet' } });
+  expect(form.getByText('Enter the model ID without spaces.')).toBeTruthy();
+  expect(form.getByRole<HTMLButtonElement>('button', { name: 'Save changes' }).disabled).toBe(true);
+  fireEvent.change(form.getByLabelText('Model (optional)'), { target: { value: ' claude-sonnet-5-5 ' } });
+  fireEvent.change(form.getByLabelText('Reasoning effort (optional)'), { target: { value: 'high' } });
+  await userEvent.click(form.getByRole('button', { name: 'Save changes' }));
+
+  expect(await screen.findByRole('img', { name: 'Claude' })).toBeTruthy();
+  expect(screen.getByText('claude-sonnet-5-5')).toBeTruthy();
+  expect(profile).toMatchObject({ provider: 'claude', model: 'claude-sonnet-5-5', reasoningEffort: 'high' });
+
+  await userEvent.click(screen.getByRole('button', { name: 'Edit Koru' }));
+  form = within(screen.getByRole('dialog', { name: 'Edit Koru' }));
+  expect(form.getByLabelText<HTMLInputElement>('Reasoning effort (optional)').value).toBe('high');
+  await userEvent.selectOptions(form.getByLabelText('Provider (optional)'), '');
+  fireEvent.change(form.getByLabelText('Model (optional)'), { target: { value: '' } });
+  fireEvent.change(form.getByLabelText('Reasoning effort (optional)'), { target: { value: '' } });
+  await userEvent.click(form.getByRole('button', { name: 'Save changes' }));
+  await screen.findByRole('button', { name: 'Edit Koru' });
+  expect(profile).toMatchObject({ provider: null, model: null, reasoningEffort: null });
+  expect(screen.queryByRole('img', { name: 'Claude' })).toBeNull();
+});
+
 
 test('[PM-PLAYER-SETTINGS-01] renaming a player refreshes mounted private labels and preserves broadcast aliases', async () => {
   let profile = { ...base };

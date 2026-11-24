@@ -1,4 +1,6 @@
-export interface PlayerIdentity {
+import type { AgentModel } from './agentModel';
+
+export interface PlayerIdentity extends AgentModel {
   name: string;
   displayName: string;
   isMcp: boolean;

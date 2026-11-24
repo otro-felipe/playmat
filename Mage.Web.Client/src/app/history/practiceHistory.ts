@@ -1,14 +1,13 @@
 import type { ReviewSummary } from '../replay/reviewData';
+import type { AgentModel } from '../ui/agentModel';
 
-export interface PracticePlayer {
+export interface PracticePlayer extends AgentModel {
   name: string;
   displayName?: string | null;
   isMcp?: boolean;
   humanMcpAllowed?: boolean;
   archetype?: string | null;
   seatId?: string;
-  model?: string | null;
-  reasoningEffort?: string | null;
 }
 
 export interface PracticeGame {

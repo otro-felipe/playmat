@@ -76,7 +76,7 @@ export function createProductClient(baseUrl, publicUrl) {
         break;
       case 'get_game_invite':
         path = `${root}/invites/${encode(args.tableId)}/claim`;
-        config = { method: 'POST', body: { displayName: args.displayName, acceptSpectatorVisibility: args.acceptSpectatorVisibility, expectedSpectatorVisibility: args.expectedSpectatorVisibility, model: args.model, reasoningEffort: args.reasoningEffort } };
+        config = { method: 'POST', body: { displayName: args.displayName, acceptSpectatorVisibility: args.acceptSpectatorVisibility, expectedSpectatorVisibility: args.expectedSpectatorVisibility, provider: args.provider, model: args.model, reasoningEffort: args.reasoningEffort } };
         break;
       case 'create_game_invite':
         path = `${root}/invites`;

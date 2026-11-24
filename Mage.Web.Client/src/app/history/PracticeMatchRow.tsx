@@ -6,6 +6,7 @@ import { formatDate, useT } from '../i18n';
 import { reviewCategories, type ReviewCounts } from '../replay/reviewData';
 import { NameLevel } from '../social/LevelBadge';
 import { Button } from '../ui/Button';
+import { AgentModelLabel } from '../ui/AgentModelLabel';
 import { PlayerLabel } from '../ui/PlayerLabel';
 import { findSeat, matchPerspective, type PracticeGame, type PracticeMatch } from './practiceHistory';
 import { MatchStatisticsExclusion } from './MatchStatisticsExclusion';
@@ -32,7 +33,7 @@ export function PracticeMatchRow({ match, account, selected, onSelect, initially
       <span className={styles.date} title={fullDate}><span className={styles.fullDate}>{fullDate}</span><span className={styles.shortDate}>{shortDate}</span></span>
       <span className={styles.rival}>
         {rivals.length ? rivals.map((rival, index) => <Fragment key={rival.name}>
-          {index > 0 && ', '}<PlayerLabel {...rival} />
+          {index > 0 && ', '}<PlayerLabel {...rival} modelInfo={rival} />
         </Fragment>) : match.name}
         {rivals.some(rival => rival.archetype) && <small>{rivals.filter(rival => rival.archetype).map(rival => displayArchetype(t, rival.archetype)).join(', ')}</small>}
         {match.statisticsExclusion && <small>{t('history.excludedFromStats')}</small>}
@@ -82,7 +83,9 @@ function GameDetail({ game, selected, onSelect }: Pick<RowProps, 'selected' | 'o
       <div><dt>{t('history.mulligans')}</dt><dd>{game.ownMulligans ?? '—'}</dd></div>
       {starter && <div><dt>{t('history.starts')}</dt><dd><PlayerLabel {...starter} /></dd></div>}
       {agentSeats.map((seat) => <Fragment key={seat.name}>
-        <div><dt>{t('history.model')}{agentSeats.length > 1 && <> · <PlayerLabel {...seat} /></>}</dt><dd>{seat.model ?? t('history.unreported')}</dd></div>
+        <div><dt>{t('history.model')}{agentSeats.length > 1 && <> · <PlayerLabel {...seat} /></>}</dt><dd>
+          {seat.provider || seat.model ? <AgentModelLabel {...seat} /> : t('history.unreported')}
+        </dd></div>
         <div><dt>{t('history.reasoning')}</dt><dd>{seat.reasoningEffort ?? t('history.unreported')}</dd></div>
       </Fragment>)}
     </dl>

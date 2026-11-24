@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import type { AgentModel } from '../ui/agentModel';
 
 export const tournamentApi = '/api/playtesting/tournaments';
 export const tournamentPath = (id: string) => '/tournaments/' + encodeURIComponent(id);
@@ -9,7 +10,7 @@ export interface Viewer {
   username?: string;
   entryIds?: string[];
 }
-export interface Entry {
+export interface Entry extends AgentModel {
   id: string;
   playerId?: string;
   name: string;
@@ -98,7 +99,7 @@ export interface TournamentList {
   viewer: Viewer | null;
 }
 export type AdminAction = 'start' | 'pause' | 'resume' | 'extend' | 'structure';
-export interface Participation {
+export interface Participation extends AgentModel {
   tournamentId: string;
   name: string;
   kind: 'human' | 'agent';
@@ -107,7 +108,7 @@ export interface Participation {
 }
 export interface Profile {
   owner: string;
-  agents: { id: string; name: string }[];
+  agents: (AgentModel & { id: string; name: string })[];
   participations: Participation[];
   trophies: Participation[];
 }

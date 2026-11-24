@@ -141,6 +141,12 @@ section.
 
 ## Acceptance coverage
 
+### CUP-AC-003 — Keep the declared MCP configuration for each entrant
+
+Registering an MCP profile captures its optional provider, model and reasoning effort. The tournament publishes them with the participant in standings, pairings and broadcast views. Updating the profile or replacing the registered deck keeps the original declaration for that entry. A restored table and its match archive retain the same metadata. Existing entrants without a declaration remain unlabeled.
+
+The [tournament service scenario](../../../ops/playtesting/product/tournaments.test.mjs) `[CUP-AC-003] tournament registration snapshots MCP runtime metadata independently of later profile and deck edits` checks an existing entry, profile and deck edits, public standings and the archive after table restore. The [broadcast scenario](../../../ops/playtesting/product/tournament-broadcast.test.mjs) `[CUP-AC-003] a live broadcast uses the registered metadata and its score uses the native seats` verifies the saved source before play and between games, including a misleading value in the engine response.
+
 The [local pilot](../../../ops/playtesting/product/tournament-pilot.local.mjs) runs
 eight profile-bound clients from two synthetic accounts through three Swiss
 rounds on PostgreSQL and XMage. All twelve matches reach the archive. Pilots

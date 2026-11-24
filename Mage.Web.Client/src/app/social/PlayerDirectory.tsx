@@ -100,7 +100,7 @@ function DirectoryRow({ player }: { player: DirectoryPlayer }) {
     <li className={[styles.player, player.online ? '' : styles.away].join(' ')}>
       <button type="button" className={styles.identity} onClick={() => useLobby.getState().openProfile(name)} title={`${playerLabelText(name)}'s profile`}>
         <Avatar name={name} size="sm" />
-        <span className={styles.playerName}><PlayerLabel name={name} /><LevelBadge level={player.level} />{isMe ? ' (you)' : ''}</span>
+        <span className={styles.playerName}><PlayerLabel name={name} showModel /><LevelBadge level={player.level} />{isMe ? ' (you)' : ''}</span>
         {friend && <Star className={styles.star} size={14} aria-label="Friend" />}
       </button>
       <span className={styles.status}>

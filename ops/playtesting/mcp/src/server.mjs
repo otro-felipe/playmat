@@ -418,16 +418,17 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
     (args) => getSeat().cancelSequence(args));
 
   const agentRuntime = {
+    provider: z.enum(['openai', 'claude', 'gemini']).optional().describe('Provider of your playing model, if known.'),
     model: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9.:/_+-]{0,95}$/).optional().describe('Your actual playing model ID if known.'),
     reasoningEffort: z.string().regex(/^[a-z][a-z0-9_-]{0,23}$/).optional().describe('Your configured reasoning effort if known, such as high.'),
   };
   tool('create_player_slot', 'Create one enabled persistent player in your own account. Requires explicit account consent to manage slots. Reuse the requestId when retrying.', {
-    requestId:Uuid, displayName:z.string().trim().min(1).max(40), flag:z.string().regex(/^[A-Za-z]{2}$/).optional(),
+    requestId:Uuid, displayName:z.string().trim().min(1).max(40), flag:z.string().regex(/^[A-Za-z]{2}$/).optional(), ...agentRuntime,
   }, 'players:manage', args => fromProduct('create_player_slot',args));
   tool('list_players', 'List your authorized persistent players. Availability distinguishes available, reserved before binding, and occupied at a table.', {availableOnly:z.boolean().optional()}, 'play', async args => {
     const { players } = await fromProduct('list_players', args);
-    return { players: players.map(({ playerId, displayName, flag, engineName, mcpEnabled, activeTableId, availability }) =>
-      ({ playerId, displayName, flag, engineName, mcpEnabled, activeTableId, availability })) };
+    return { players: players.map(({ playerId, displayName, flag, engineName, mcpEnabled, activeTableId, availability, provider, model, reasoningEffort }) =>
+      ({ playerId, displayName, flag, engineName, mcpEnabled, activeTableId, availability, provider, model, reasoningEffort })) };
   }, true);
   tool('list_tournaments', 'Discover constructed tournaments, structures and registration status.', {}, 'play',
     () => fromProduct('list_tournaments', {}), true);
@@ -591,17 +592,17 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
     format: Format, name: z.string().trim().min(1).max(80), ...playDeck,
     ...recipientFields, ...agentRuntime,
     spectatorVisibility: z.enum(['public-board','both-hands']).optional().describe('Public board by default. Both-hands adds a separate owner-shared live spectator link for this MCP table. A guest of another account must explicitly accept.'),
-  }, 'play', async ({ guestPlayerId, guestAccountName, guestEngineName, spectatorVisibility, model, reasoningEffort, deck, deckId, ...args }) => {
+  }, 'play', async ({ guestPlayerId, guestAccountName, guestEngineName, spectatorVisibility, provider, model, reasoningEffort, deck, deckId, ...args }) => {
     if (recipientCount(guestPlayerId,guestAccountName,guestEngineName)!==1) throw new ToolError('invalid_input','Choose exactly one guest player, account, or engine name.');
     const selectedDeck = await resolvePlayDeck(deck, deckId);
     return withTableReservation(undefined, (engine, lease) => engine.createGame({ ...args, deck: selectedDeck },
-      record => fromProduct('create_game_invite', { ...record, tableName: args.name, spectatorVisibility, guestEngineName, guestPlayerId, guestAccountName, model, reasoningEffort }), lease));
+      record => fromProduct('create_game_invite', { ...record, tableName: args.name, spectatorVisibility, guestEngineName, guestPlayerId, guestAccountName, provider, model, reasoningEffort }), lease));
   });
   tool('join_game', 'Join a private table from its Thoughtseize invite link or table ID. Use a legal deck and an optional seat display name.', {
     ...inviteLocator,
     displayName: z.string().trim().min(1).max(24).optional(), ...playDeck, ...agentRuntime,
     acceptSpectatorVisibility:z.literal('both-hands').optional().describe('Accept the advertised private broadcast on a cross-account invitation.'),
-  }, 'play', async ({ tableId, inviteLink, displayName, acceptSpectatorVisibility, model, reasoningEffort, deck, deckId }) => {
+  }, 'play', async ({ tableId, inviteLink, displayName, acceptSpectatorVisibility, provider, model, reasoningEffort, deck, deckId }) => {
       const destination=locateInvitation(tableId,inviteLink);
       tableId=destination.tableId;
       if (!tableId) throw new ToolError('invalid_invite','Provide the invite link or table ID.');
@@ -609,7 +610,7 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
       if (invitation.requiresSpectatorAcceptance && acceptSpectatorVisibility!=='both-hands') throw new ToolError('spectator_consent_required','This invitation shares both hands with its spectator. Explicitly accept this visibility to join.');
       const selectedDeck = await resolvePlayDeck(deck, deckId);
       return withTableReservation(tableId, (engine, lease) => engine.joinGame({ tableId, deck: selectedDeck }, invitation,
-        () => fromProduct('get_game_invite', { ...destination, displayName, ...(invitation.mode==='friend' && {expectedSpectatorVisibility:invitation.spectatorVisibility??'public-board'}), ...(acceptSpectatorVisibility && {acceptSpectatorVisibility}), model, reasoningEffort }), lease));
+        () => fromProduct('get_game_invite', { ...destination, displayName, ...(invitation.mode==='friend' && {expectedSpectatorVisibility:invitation.spectatorVisibility??'public-board'}), ...(acceptSpectatorVisibility && {acceptSpectatorVisibility}), provider, model, reasoningEffort }), lease));
     });
   tool('start_match', 'Start a ready table as its host. For the MCP Player provide tableId. For the Human Player provide humanTableId, including to finish setup of an MCP-created table with human gameplay disabled.', {
     tableId: Uuid.optional(), humanTableId: Uuid.optional(),

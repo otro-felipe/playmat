@@ -1049,19 +1049,23 @@ test('owners manage pilot profiles from their browser connections page', { skip:
   const bob = await f.login('Bob')
   const path = '/oauth/connections?view=players'
   assert.match(await (await f.request('/oauth/connections', alice)).text(), /href="\/oauth\/connections\?view=players"/)
-  const settings = { displayName: 'Piloto local', flag: 'cl', mcpEnabled: 'on', action: 'create' }
+  const settings = { displayName: 'Piloto local', flag: 'cl', mcpEnabled: 'on', action: 'create',
+    provider:'claude', model:'claude-sonnet-5-5', reasoningEffort:'high' }
   assert.equal((await f.request(path, { ...alice, Origin: 'https://foreign.example' }, settings)).status, 403)
   assert.equal((await f.request(path, alice, settings)).status, 303)
   const page = await (await f.request(path, alice)).text()
   assert.match(page, /🇨🇱/)
+  assert.match(page, /<option value="claude" selected>/)
+  assert.match(page, /name="model" maxlength="96" value="claude-sonnet-5-5"/)
   const playerId = page.match(/name="playerId" value="([a-f0-9-]{36})"/)?.[1]
   assert.ok(playerId)
-  const update = { action: 'update', playerId, displayName: 'Luna <2>', flag: '' }
+  const update = { action: 'update', playerId, displayName: 'Luna <2>', flag: '', reasoningEffort:'' }
   assert.equal((await f.request(path, bob, update)).status, 404)
   assert.equal((await f.request(path, alice, update)).status, 303)
   const saved = await (await f.request(path, alice)).text()
   assert.match(saved, /Luna &lt;2&gt;/)
-  assert.doesNotMatch(saved, /🇨🇱| checked/)
+  assert.match(saved, /<option value="claude" selected>/)
+  assert.doesNotMatch(saved, /🇨🇱| checked|name="reasoningEffort" maxlength="24" value="high"/)
 })
 
 test('one canonical OAuth connection selects only enabled account players and keeps their leases and recovery separate', {skip:!databaseUrl}, async t => {
@@ -1396,12 +1400,23 @@ test('owners create persistent slots by explicit consent and assign foreign invi
   const manager=await authorizePilot(f,b,undefined,undefined,true)
   const optedIn=await authorizePilot(f,b,'play players:manage',undefined,true)
   assert.ok((await (await f.request('/internal/verify',optedIn)).json()).scopes.includes('players:manage'))
-  const writes=await Promise.all([write(slots,manager,request),write(slots,manager,request)])
+  const runtime={provider:'claude',model:'claude-haiku-5-5',reasoningEffort:'high'}
+  assert.equal((await write(slots,manager,{...request,provider:'other'})).status,400)
+  const writes=await Promise.all([write(slots,manager,{...request,...runtime}),write(slots,manager,{...request,...runtime})])
   for (const r of writes) assert.ok([200,201].includes(r.status))
   const [guest,retry]=await Promise.all(writes.map(r=>r.json()))
   assert.equal(guest.playerId,retry.playerId)
   assert.equal(guest.availability,'available')
-  assert.equal((await write(slots,manager,{...request,displayName:'different'})).status,409)
+  assert.equal(guest.model,runtime.model)
+  assert.equal(guest.provider,runtime.provider)
+  assert.equal(guest.reasoningEffort,runtime.reasoningEffort)
+  assert.equal((await write(slots,manager,{...request,...runtime,displayName:'different'})).status,409)
+  assert.equal((await write(slots,manager,{...request,...runtime,model:'different'})).status,409)
+  const directory = '/api/playtesting/player-identities?names=' + guest.engineName
+  const [{provider,model,reasoningEffort}]=(await (await f.request(directory,b)).json()).players
+  assert.deepEqual({provider,model,reasoningEffort},runtime)
+  assert.equal((await write(profiles+'/'+guest.playerId,a,{reasoningEffort:null},'PATCH')).status,404)
+  assert.equal((await write(profiles+'/'+guest.playerId,b,{reasoningEffort:null},'PATCH')).status,200)
   const fixed=await authorizePilot(f,b,'play players:manage',guest.playerId,true)
   assert.equal((await write(slots,fixed,{...request,requestId:randomUUID()})).status,403)
   assert.equal((await write(slots,sharedB,{...request,requestId:randomUUID()})).status,403)
@@ -1411,6 +1426,10 @@ test('owners create persistent slots by explicit consent and assign foreign invi
   const recipient=select(sharedB,guest), other=select(sharedB,sibling), inviter=select(sharedA,host)
   const list=async(headers,query='')=>(await (await f.request(profiles+query,headers)).json()).players
   assert.deepEqual((await list(sharedA)).map(p=>p.playerId),[host.playerId])
+  const saved=(await list(sharedB)).find(p=>p.playerId===guest.playerId)
+  assert.equal(saved.provider,runtime.provider)
+  assert.equal(saved.model,runtime.model)
+  assert.equal(saved.reasoningEffort,undefined)
   const change=(headers,p,op,lease,tableId)=>write('/internal/player-reservations/'+p.playerId,headers,{operation:op,reservationId:lease,tableId})
   const bind=async(headers,p,tableId)=>{
     const lease=randomUUID()

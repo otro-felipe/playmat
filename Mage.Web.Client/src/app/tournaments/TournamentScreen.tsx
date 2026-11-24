@@ -4,6 +4,7 @@ import { ArrowLeft, ChevronRight, Clock3, ExternalLink, Trophy } from 'lucide-re
 import { Link, useParams } from 'react-router-dom';
 import { registerMessages, useT } from '../i18n';
 import messages from '../i18n/en/events';
+import { AgentModelLabel } from '../ui/AgentModelLabel';
 import { Button, ButtonLink } from '../ui/Button';
 import { Zone } from '../ui/Zone';
 import { RegisteredAgents } from '../social/OwnerAgents';
@@ -391,6 +392,7 @@ export function TournamentOwnerScreen() {
                 <Link to={tournamentPath(row.tournamentId)}>{row.name}</Link>
                 <span>
                   {t(row.kind === 'agent' ? 'cup.ownerAward' : 'cup.champion')} · {row.entryName}
+                  {row.kind === 'agent' && <> <AgentModelLabel {...row} /></>}
                 </span>
               </li>
             ))}
@@ -413,6 +415,7 @@ export function TournamentOwnerScreen() {
                     <Link to={tournamentPath(e.tournamentId)}>{e.name}</Link>
                     <span>
                       {e.entryName}
+                      {e.kind === 'agent' && <> <AgentModelLabel {...e} /></>}
                       {e.champion && ' · ' + t('cup.champion')}
                     </span>
                   </li>

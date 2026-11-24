@@ -5,6 +5,7 @@ import { publicLineExplanations } from './line-explanations.mjs'
 import { tournamentReplayIndexes } from './tournament-replay-index.mjs'
 import { readSpectatorEngine } from './spectators.mjs'
 import { timestamp } from './tournament-state.mjs'
+import { declaredRuntime } from './player-runtime.mjs'
 
 const missing = () => new ProductError(404, 'This tournament broadcast is unavailable')
 
@@ -17,7 +18,9 @@ export function createTournamentBroadcast(pool, archive, engine = readSpectatorE
       `SELECT p.id,p.table_id,p.match_id,p.completed,p.deadline_at,p.wins_a,p.wins_b,p.draws,p.result_reason,
       CASE WHEN p.winner_entry=a.id THEN 'a' WHEN p.winner_entry=b.id THEN 'b' END AS winner_side,
       a.engine_name AS name_a,a.name AS display_a,a.owner_name AS owner_a,a.player_id AS player_a,
-      b.engine_name AS name_b,b.name AS display_b,b.owner_name AS owner_b,b.player_id AS player_b
+      b.engine_name AS name_b,b.name AS display_b,b.owner_name AS owner_b,b.player_id AS player_b,
+      a.provider AS provider_a,a.model AS model_a,a.reasoning_effort AS effort_a,
+      b.provider AS provider_b,b.model AS model_b,b.reasoning_effort AS effort_b
       FROM tournament_pairings p JOIN tournament_entries a ON a.id=p.entry_a
       JOIN tournament_entries b ON b.id=p.entry_b WHERE p.tournament_id=$1 AND p.id=$2`,
       [id, pairId],
@@ -26,15 +29,28 @@ export function createTournamentBroadcast(pool, archive, engine = readSpectatorE
     return row
   }
 
+  function sideOf(name, match) {
+    const key = normalize(name)
+    if (key === normalize(match.name_a)) return 'a'
+    if (key === normalize(match.name_b)) return 'b'
+    throw missing()
+  }
+
+  function runtime(match, side) {
+    return declaredRuntime({
+      provider:match['provider_' + side],
+      model:match['model_' + side],
+      reasoningEffort:match['effort_' + side],
+    })
+  }
+
+  function publishedRoster(board, match) {
+    return board.players.map(p => ({ ...p, ...runtime(match, sideOf(p.name, match)) }))
+  }
+
   function roster(players, match) {
     return (players ?? []).map((p) => {
-      const side =
-        normalize(p.name) === normalize(match.name_a)
-          ? 'a'
-          : normalize(p.name) === normalize(match.name_b)
-            ? 'b'
-            : null
-      if (!side) throw missing()
+      const side = sideOf(p.name, match)
       const owner = match['owner_' + side],
         name = match['display_' + side]
       return {
@@ -65,9 +81,10 @@ export function createTournamentBroadcast(pool, archive, engine = readSpectatorE
       const native = Object.hasOwn(snapshot?.matchWins ?? {}, name) ? snapshot.matchWins[name] : undefined
       const wins = match.completed ? match['wins_' + side]
         : Number.isSafeInteger(native) && native >= 0 ? native : (viewSeat?.wins ?? 0)
-      return { name: match['display_' + side], wins }
+      return { name: match['display_' + side], wins, ...runtime(match, side) }
     })
-    return { ...board, matchScore, ...(board.status !== 'finished' && deadlineAt > 0 && { deadlineAt }) }
+    return { ...board, players:publishedRoster(board,match), matchScore,
+      ...(board.status !== 'finished' && deadlineAt > 0 && { deadlineAt }) }
   }
 
   // Recheck the retained match before using cached frames. A retired object cannot
@@ -121,7 +138,7 @@ export function createTournamentBroadcast(pool, archive, engine = readSpectatorE
     if (!game?.object_key || !/^\d{1,9}$/.test(value)) throw missing()
     const {board, lines} = await indexes.read(game, (record, rev) => projectFrame(match, game, record, rev), false, Number(value))
     const seats = new Map(board.players.map(p => [p.playerId, p]))
-    return {...board, lines:publicLineExplanations(lines, seats, game.id)}
+    return {...board, players:publishedRoster(board,match), lines:publicLineExplanations(lines, seats, game.id)}
   }
   return { live, replay, close: indexes.close }
 }

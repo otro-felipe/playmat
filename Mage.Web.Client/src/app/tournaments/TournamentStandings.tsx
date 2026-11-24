@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useT } from '../i18n';
+import { AgentModelLabel } from '../ui/AgentModelLabel';
 import { Zone } from '../ui/Zone';
 import type { Entry, Tournament } from './tournamentApi';
 import styles from './TournamentScreen.module.css';
@@ -11,6 +12,7 @@ export function Identity({ entry }: { entry: Entry }) {
       {entry.kind === 'agent' ? (
         <>
           <strong>{entry.name}</strong>
+          <AgentModelLabel {...entry} />
           <span className={styles.owner}>
             {t('cup.agentOf')} <Link to={'/tournaments/owners/' + encodeURIComponent(entry.owner)}>{entry.owner}</Link>
           </span>
@@ -94,7 +96,7 @@ export function Standings({ cup }: { cup: Tournament }) {
             <tbody>
               {cup.standings.map((e) => (
                 <tr key={e.id}>
-                  <td>{e.name}</td>
+                  <td>{e.name}{e.kind === 'agent' && <> <AgentModelLabel {...e} /></>}</td>
                   {[e.omw, e.gw, e.ogw].map((v, i) => (
                     <td key={i}>{(v * 100).toFixed(1)}%</td>
                   ))}

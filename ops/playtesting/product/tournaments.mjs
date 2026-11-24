@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { authorizeTournamentCreator, requireTournamentAdmin } from './tournament-access.mjs'
 import { ProductError, getDeck, isUuid, normalizeFormat, transaction } from './decks.mjs'
 import { tournamentStructure } from './tournament-rules.mjs'
+import { declaredRuntime, readPlayerRuntime } from './player-runtime.mjs'
 import {
   minute,
   roundDurationMs,
@@ -129,11 +130,12 @@ export function createTournamentService(
         throw new ProductError(400, 'Select a legal deck for the tournament format')
       await validateDeck?.(db, actor, deck, t.format)
       const name = actor.displayName ?? actor.engineName ?? actor.username
+      const { provider, model, reasoningEffort } = await readPlayerRuntime(db, actor)
       const {
         rows: [entry],
       } = await db.query(
         `INSERT INTO tournament_entries(tournament_id,owner_id,player_id,name,owner_name,engine_name,deck_id,
-        deck_revision,deck_name,last_seen) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        deck_revision,deck_name,last_seen,provider,model,reasoning_effort) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
         ON CONFLICT(tournament_id,engine_name) DO UPDATE SET deck_id=EXCLUDED.deck_id,deck_revision=EXCLUDED.deck_revision,
         deck_name=EXCLUDED.deck_name WHERE tournament_entries.owner_id=EXCLUDED.owner_id AND tournament_entries.player_id IS NOT DISTINCT FROM EXCLUDED.player_id RETURNING id`,
         [
@@ -147,6 +149,7 @@ export function createTournamentService(
           deck.revision,
           deck.name,
           actor.agent ? null : clock(),
+          provider, model, reasoningEffort,
         ],
       )
       if (!entry) throw new ProductError(409, 'The seat is already occupied')
@@ -214,7 +217,8 @@ export function createTournamentService(
       await db.query('UPDATE tournament_entries SET last_seen=$2 WHERE id=$1', [p.id, now])
       const opponentId = m?.entry_a === p.id ? m?.entry_b : m?.entry_a
       const opponent = opponentId
-        ? (await db.query('SELECT id,name,owner_name AS owner FROM tournament_entries WHERE id=$1', [opponentId]))
+        ? (await db.query(`SELECT id,name,owner_name AS owner,provider,model,reasoning_effort AS "reasoningEffort"
+          FROM tournament_entries WHERE id=$1`, [opponentId]))
             .rows[0]
         : null
       return {
@@ -223,7 +227,7 @@ export function createTournamentService(
         status: state,
         pairingId: m?.id ?? null,
         tableId: state === 'table' ? m.table_id : null,
-        opponent,
+        opponent: opponent && withRuntime(opponent),
         bestOf: m?.best_of ?? null,
         deadlineAt: timestamp(m?.deadline_at),
         championId: t.champion_id,
@@ -540,17 +544,20 @@ export function createTournamentService(
     } = await pool.query('SELECT id,username FROM accounts WHERE username_key=lower($1)', [username])
     if (!owner) throw new ProductError(404, 'Player not found')
     const { rows: agents } = await pool.query(
-      'SELECT id,display_name AS name FROM player_profiles WHERE account_id=$1 AND retired_at IS NULL ORDER BY display_name,id',
+      `SELECT id,display_name AS name,provider,model,reasoning_effort AS "reasoningEffort"
+       FROM player_profiles WHERE account_id=$1 AND retired_at IS NULL ORDER BY display_name,id`,
       [owner.id],
     )
     const { rows: participations } = await pool.query(
       `SELECT t.id AS "tournamentId",t.name,t.status,e.name AS "entryName",e.player_id AS "playerId",
+      e.provider,e.model,e.reasoning_effort AS "reasoningEffort",
       CASE WHEN e.player_id IS NULL THEN 'human' ELSE 'agent' END AS kind,COALESCE(t.champion_id=e.id,false) AS champion
       FROM tournament_entries e JOIN tournaments t ON t.id=e.tournament_id
       WHERE e.owner_id=$1 AND e.state<>'absent' ORDER BY t.created_at DESC,e.name`,
       [owner.id],
     )
-    return { owner: owner.username, agents, participations, trophies: participations.filter((p) => p.champion) }
+    return { owner: owner.username, agents:agents.map(withRuntime), participations:participations.map(withRuntime),
+      trophies: participations.filter((p) => p.champion).map(withRuntime) }
   }
   return {
     list,
@@ -573,4 +580,8 @@ export function createTournamentService(
     tick,
     profile,
   }
+}
+
+function withRuntime({ provider, model, reasoningEffort, ...entry }) {
+  return { ...entry, ...declaredRuntime({ provider, model, reasoningEffort }) }
 }

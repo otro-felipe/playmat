@@ -1,4 +1,6 @@
 import { SpectatorChatBubble } from './SpectatorCommentary';
+import { AgentModelLabel } from '../ui/AgentModelLabel';
+import type { AgentModel } from '../ui/agentModel';
 import { PlayerLabel } from '../ui/PlayerLabel';
 import { playerLabelText } from '../ui/playerIdentity';
 import { usePlayerIdentity } from '../ui/usePlayerIdentity';
@@ -27,6 +29,7 @@ export interface PlayerPlateProps {
   bubbleSide?: 'upper' | 'lower';
   player: PlayerView;
   displayName?: string;
+  modelInfo?: AgentModel;
   isMe: boolean;
   /** the player is a legal target right now */
   targetable: boolean;
@@ -90,9 +93,10 @@ function useRopeSeconds(player: PlayerView): number {
 }
 
 /** A player's seat: who they are, their life, counters, floating mana and clock. */
-export function PlayerPlate({ bubbleSide, player, displayName, isMe, targetable, selected, deciding, sleeve, onClick, toPay, payable, onPay, commanderDamage = [], outOfRange = false, look }: PlayerPlateProps) {
+export function PlayerPlate({ bubbleSide, player, displayName, modelInfo, isMe, targetable, selected, deciding, sleeve, onClick, toPay, payable, onPay, commanderDamage = [], outOfRange = false, look }: PlayerPlateProps) {
   const t = useT();
   const identity = usePlayerIdentity(player.name ?? '');
+  const recordedModel = modelInfo ?? identity;
   const name = playerLabelText(player.name ?? '', identity?.displayName ?? displayName, identity?.isMcp);
   const life = player.life ?? 0;
   // a player out of the game (lost, conceded or left: leaving loses) has no life worth showing, however low it went
@@ -187,6 +191,9 @@ export function PlayerPlate({ bubbleSide, player, displayName, isMe, targetable,
           )}
           {outOfRange && !out && <span className={styles.range} title="Outside your range of influence">Out of range</span>}
         </div>
+        {(recordedModel?.provider || recordedModel?.model) && (
+          <div className={styles.model}><AgentModelLabel {...recordedModel} /></div>
+        )}
         {(look?.title || !!look?.badges?.length) && (
           // the title in its rarity's colour (B299), then the badges the player shows off
           <div className={styles.titleRow}>

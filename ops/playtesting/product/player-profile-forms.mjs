@@ -9,6 +9,9 @@ export async function savePlayerForm(pool, owner, form) {
     flag: form.get('flag') || null,
     mcpEnabled: form.get('mcpEnabled') === 'on',
   }
+  for (const field of ['provider','model','reasoningEffort']) {
+    if (form.has(field)) input[field] = form.get(field) || null
+  }
   switch (form.get('action')) {
     case 'create': return createPlayer(pool, owner, input)
     case 'update': return updatePlayer(pool, owner, form.get('playerId'), input)
@@ -27,6 +30,11 @@ export function renderPlayerForms(players, escape) {
       ${player ? `<input type="hidden" name="playerId" value="${escape(player.playerId)}">` : ''}
       <label>Nombre del jugador<input name="displayName" maxlength="40" required value="${escape(player?.displayName ?? '')}"></label>
       <label>Bandera (código de país)<input name="flag" maxlength="2" pattern="[A-Za-z]{2}" placeholder="CL" value="${escape(flag ?? '')}"></label>
+      <label>Proveedor<select name="provider"><option value="">Sin especificar</option>
+      ${[['openai','OpenAI'],['claude','Claude'],['gemini','Gemini']].map(([id,name]) =>
+        `<option value="${id}"${player?.provider===id ? ' selected' : ''}>${name}</option>`).join('')}</select></label>
+      <label>Modelo<input name="model" maxlength="96" value="${escape(player?.model ?? '')}"></label>
+      <label>Esfuerzo de razonamiento<input name="reasoningEffort" maxlength="24" value="${escape(player?.reasoningEffort ?? '')}"></label>
       <label><span><input type="checkbox" role="switch" name="mcpEnabled"${player?.mcpEnabled ? ' checked' : ''}> Permitir conexiones MCP</span></label>
       <button type="submit">${player ? 'Guardar cambios' : 'Crear jugador'}</button></form></section>`
   }

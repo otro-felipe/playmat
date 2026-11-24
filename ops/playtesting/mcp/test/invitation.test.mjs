@@ -92,10 +92,10 @@ test('[PM-AC-08] join_game uses a private Playmat link, validates before claim, 
   const join = args => client.callTool({ name: 'join_game', arguments: { deck, ...args } });
   assert.equal((await join({ inviteLink: `https://wrong.invalid/join/${tableId}` })).isError, true);
   assert.equal(inspected.length, 0);
-  const result = await join({ inviteLink: `${origin}/join/${tableId}`, displayName: 'Angels', model: 'test-model', reasoningEffort: 'high' });
+  const result = await join({ inviteLink: `${origin}/join/${tableId}`, displayName: 'Angels', provider:'claude', model: 'test-model', reasoningEffort: 'high' });
   assert.deepEqual(JSON.parse(result.content[0].text), { state: 'seated' });
   assert.deepEqual(inspected, [{ tableId }]);
-  assert.deepEqual(claimed, [{ tableId, displayName: 'Angels', model: 'test-model', reasoningEffort: 'high' }]);
+  assert.deepEqual(claimed, [{ tableId, displayName: 'Angels', provider:'claude', model: 'test-model', reasoningEffort: 'high' }]);
   const byId = await client.callTool({ name: 'join_game', arguments: { tableId, deckId, displayName: 'Angels' } });
   assert.deepEqual(JSON.parse(byId.content[0].text), { state: 'seated' });
   assert.equal((await join({ tableId, deckId })).isError, true);

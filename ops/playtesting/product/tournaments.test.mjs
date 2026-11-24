@@ -9,6 +9,8 @@ import { tournamentStructure, swissPairings, rankStandings, eliminationPairs } f
 import { createTournamentService } from './tournaments.mjs'
 import { createTournamentTableBridge, restoreTournamentTable } from './tournament-table-bridge.mjs'
 import { createArchive } from './archive.mjs'
+import { updatePlayer } from './players.mjs'
+import { createProduct } from './product.mjs'
 
 const tournamentSchemas = ['schema.sql', 'oauth-schema.sql', 'player-identities.sql', 'tournaments.sql', 'tournament-table-bridge.sql']
 
@@ -207,6 +209,7 @@ async function scheduledFixture(t, count, config = {}) {
   }
   return {
     pool,
+    schema,
     service,
     owner,
     id,
@@ -221,6 +224,57 @@ async function scheduledFixture(t, count, config = {}) {
 }
 
 const dbTest = (title, run) => test(title, { skip: !process.env.PLAYMAT_TEST_DATABASE_URL }, run)
+
+dbTest('[CUP-AC-003] tournament registration snapshots MCP runtime metadata independently of later profile and deck edits', async t => {
+  const f = await scheduledFixture(t, 2)
+  const [pilot, legacy] = f.actors
+  const owner = { ...f.owner, browserSession: true }
+  for (const seat of f.actors) await f.pool.query(
+    `INSERT INTO agent_grants(digest,account_id,engine_name,engine_key,scopes,player_id)
+      VALUES($1,$2,$3,$3,ARRAY['play'],$4)`,
+    [randomUUID(), seat.accountId, seat.engineName, seat.playerId],
+  )
+  const declared = { provider:'claude', model:'claude-opus-5-5', reasoningEffort:'high' }
+  await updatePlayer(f.pool, owner, pilot.playerId, declared)
+  const next = await f.service.create(f.owner, { name:'Metadata cup', format:'Standard', capacity:2 })
+  await f.service.join(next.id, pilot, { deckId:'initial' })
+  await f.service.join(next.id, legacy, { deckId:'legacy' })
+  await updatePlayer(f.pool, owner, pilot.playerId, { ...declared, model:'claude-sonnet-5-5' })
+  await f.service.join(next.id, pilot, { deckId:'replacement' })
+  const fields = ({provider,model,reasoningEffort}) => ({provider,model,reasoningEffort})
+  const result = await f.restart().get(next.id)
+  assert.deepEqual(fields(result.standings.find(p => p.playerId === pilot.playerId)), declared)
+  assert.deepEqual(fields(result.participants.find(p => p.playerId === pilot.playerId)), declared)
+  assert.equal(result.participants.find(p => p.playerId === legacy.playerId).model, undefined)
+  assert.equal((await f.service.get(f.id)).participants.find(p => p.playerId === pilot.playerId).model, undefined)
+  const profile = await f.service.profile(f.owner.username)
+  assert.equal(profile.agents.find(p => p.id === pilot.playerId).model, 'claude-sonnet-5-5')
+  assert.deepEqual(fields(profile.participations.find(p => p.playerId === pilot.playerId && p.tournamentId === next.id)), declared)
+  for (const seat of f.actors) await f.service.wait(next.id, seat)
+  await f.service.action(next.id, f.owner, { action:'start' })
+  const [pair] = await f.service.pendingTables()
+  const original = randomUUID(), restored = randomUUID(), gameId = randomUUID()
+  await f.service.bindTable(next.id, pair.pairingId, original)
+  await restoreTournamentTable(f.pool, original, restored)
+  const stage = await mkdtemp(join(tmpdir(), 'tournament-runtime-'))
+  t.after(() => rm(stage, {recursive:true, force:true}))
+  await writeFile(join(stage, gameId + '.active.json'), JSON.stringify({
+    gameId, tableId:restored, startedAt:Date.now(), deckType:'Constructed - Standard',
+    players:f.actors.map(seat => ({name:seat.engineName, human:true})),
+  }))
+  const product = await createProduct({
+    databaseUrl:process.env.PLAYMAT_TEST_DATABASE_URL, schema:f.schema, replayDirectory:stage, store:new Map(),
+  })
+  try {
+    await product.archiveGames({maintainHistory:false})
+  } finally {
+    await product.close()
+  }
+  const { rows } = await f.pool.query(`SELECT engine_key,provider,model,reasoning_effort AS "reasoningEffort"
+    FROM game_players WHERE game_id=$1`, [gameId])
+  assert.deepEqual(fields(rows.find(p => p.engine_key === pilot.engineName)), declared)
+  assert.equal(rows.find(p => p.engine_key === legacy.engineName).model, null)
+})
 
 dbTest('a late tournament check-in cannot retain a terminal reservation after a table is restored and scored', async t => {
   const f = await scheduledFixture(t, 4)

@@ -134,25 +134,30 @@ async function recordMetadata(pool, info, status, recovering, recordOpeningGameD
         info.turns, info.events, status, status === 'interrupted' || status === 'abandoned' || info.truncated ? 'partial' : 'pending',
         info.truncated, info.reviewVersion, info.reviewIncomplete],
     )
-    const { rows: [invitation] } = await db.query(`SELECT creator_key, creator_model, creator_effort,
-      invitee_key, guest_model, guest_effort FROM invitations WHERE table_id=$1`, [info.tableId])
+    const { rows: runtimes } = await db.query(`
+      SELECT lower(e.engine_name) AS seat,e.provider,e.model,e.reasoning_effort
+      FROM tournament_pairing_tables physical JOIN tournament_pairings pair ON pair.id=physical.pairing_id
+      JOIN tournament_entries e ON e.id IN (pair.entry_a,pair.entry_b) WHERE physical.table_id=$1
+      UNION ALL SELECT creator_key,creator_provider,creator_model,creator_effort FROM invitations WHERE table_id=$1
+      UNION ALL SELECT invitee_key,guest_provider,guest_model,guest_effort FROM invitations WHERE table_id=$1`, [info.tableId])
     for (const player of info.players) {
       const seat = normalize(player.name)
       if (info.gameNumber === 1 && player.human) await registerSelectedDeck(db, info.tableId, seat, player.deck)
       const label = await seatArchetype(db, info.tableId, seat, info.format ?? info.engineFormat, player.deck, info.matchId)
-      const runtime = seat === invitation?.creator_key ? [invitation.creator_model, invitation.creator_effort]
-        : seat === invitation?.invitee_key ? [invitation.guest_model, invitation.guest_effort] : [null, null]
+      const { provider, model, reasoning_effort } = runtimes.find(runtime => runtime.seat === seat) ?? {}
       await db.query(
-        `INSERT INTO game_players(game_id,engine_key,engine_name,human,deck_snapshot,mulligans,deck_signature,player_id,model,reasoning_effort,archetype)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(game_id,engine_key)
+        `INSERT INTO game_players(game_id,engine_key,engine_name,human,deck_snapshot,mulligans,deck_signature,player_id,model,reasoning_effort,archetype,provider)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(game_id,engine_key)
          DO UPDATE SET mulligans=COALESCE(EXCLUDED.mulligans,game_players.mulligans),
                        deck_snapshot=COALESCE(game_players.deck_snapshot,EXCLUDED.deck_snapshot),
                        deck_signature=COALESCE(game_players.deck_signature,EXCLUDED.deck_signature),
                        player_id=COALESCE(game_players.player_id,EXCLUDED.player_id),
+                       provider=COALESCE(game_players.provider,EXCLUDED.provider),
                        model=COALESCE(game_players.model,EXCLUDED.model),
                        archetype=COALESCE(game_players.archetype,EXCLUDED.archetype),
                        reasoning_effort=COALESCE(game_players.reasoning_effort,EXCLUDED.reasoning_effort)`,
-        [info.gameId, seat, player.name, player.human, player.deck, player.mulligans, deckSignature(player.deck), player.playerId, ...runtime, label],
+        [info.gameId, seat, player.name, player.human, player.deck, player.mulligans, deckSignature(player.deck),
+          player.playerId, model, reasoning_effort, label, provider],
       )
       if (info.gameNumber === 1) await recordOpeningGameDeck?.(db, info.gameId, seat)
       // A recovered spool may archive game two before the opening registration.
@@ -273,6 +278,7 @@ const selectGame = `
   SELECT g.*, m.table_id, m.name, m.format, m.engine_format, m.status AS match_status,
     (SELECT json_agg(jsonb_build_object('name',p.engine_name,'human',p.human,'displayName',COALESCE(profile.display_name,a.username,p.engine_name),
         'isMcp',a.id IS NOT NULL,'model',p.model,'reasoningEffort',p.reasoning_effort)
+        || CASE WHEN p.provider IS NOT NULL THEN jsonb_build_object('provider',p.provider) ELSE '{}'::jsonb END
         || CASE WHEN profile.id IS NOT NULL THEN jsonb_build_object('profileId',profile.id,'flag',profile.flag) ELSE '{}'::jsonb END
         || CASE WHEN p.engine_key=delegated_owner.username_key THEN '{"humanMcpAllowed":true}'::jsonb ELSE '{}'::jsonb END
         || CASE WHEN m.status='completed' AND p.archetype IS NOT NULL

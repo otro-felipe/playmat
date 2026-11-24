@@ -24,6 +24,10 @@ CREATE TABLE IF NOT EXISTS tournament_entries (
   UNIQUE(tournament_id, engine_name)
 );
 CREATE INDEX IF NOT EXISTS tournament_entries_owner ON tournament_entries(owner_id);
+ALTER TABLE tournament_entries
+  ADD COLUMN IF NOT EXISTS provider text CHECK (provider IN ('openai','claude','gemini')),
+  ADD COLUMN IF NOT EXISTS model text,
+  ADD COLUMN IF NOT EXISTS reasoning_effort text;
 CREATE TABLE IF NOT EXISTS tournament_entry_cards (
   entry_id uuid NOT NULL REFERENCES tournament_entries(id), zone text NOT NULL, position integer NOT NULL,
   card_name text NOT NULL, amount integer NOT NULL, set_code text, card_number text,

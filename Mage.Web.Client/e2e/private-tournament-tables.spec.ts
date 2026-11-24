@@ -19,8 +19,10 @@ for (const width of [1440, 390]) {
       stage: 'swiss', roundNumber: 1, roundsTotal: 3, cutSize: 0, cut: 'none',
       viewer: { isAdmin: true },
       participants: [
-        { id: 'a', name: 'Crisol' }, { id: 'b', name: 'Vera Umbría' },
-        { id: 'c', name: 'Ciro Centella' }, { id: 'd', name: 'Áurea' },
+        { id: 'a', name: 'Crisol', provider: 'openai', model: 'gpt-6.2-sol' },
+        { id: 'b', name: 'Vera Umbría', provider: 'claude', model: 'claude-opus-5-5' },
+        { id: 'c', name: 'Ciro Centella', provider: 'gemini', model: 'gemini-pro' },
+        { id: 'd', name: 'Áurea' },
       ].map(entry => ({ ...entry, owner: 'Felipe', kind: 'agent', state: 'active', online: true })),
       standings: [], pairings: [live, finished], deckLists: [],
     };
@@ -39,6 +41,15 @@ for (const width of [1440, 390]) {
     await expect(watch).toHaveAttribute('href', live.watchUrl);
     await expect(replays.first()).toHaveAttribute('href', live.replayUrl);
     await expect(replays.last()).toHaveAttribute('href', finished.replayUrl);
+    // PM-MCP-PLAYER-VIEW-MODEL: all published marks load alongside their model in the table card.
+    const tables = page.getByRole('heading', { name: 'Round tables' }).locator('../..');
+    for (const [provider, model] of [['OpenAI', 'gpt-6.2-sol'], ['Claude', 'claude-opus-5-5'], ['Gemini', 'gemini-pro']]) {
+      const badge = tables.getByRole('img', { name: provider });
+      await expect(badge).toBeVisible();
+      await expect(tables.getByText(model, { exact: true })).toBeVisible();
+      await expect.poll(() => badge.evaluate(image => image instanceof HTMLImageElement ? image.naturalWidth : 0)).toBeGreaterThan(0);
+    }
+    await expect(tables.getByRole('img')).toHaveCount(3);
     const liveBox = await watch.boundingBox();
     const replayBox = await replays.first().boundingBox();
     expect(liveBox).not.toBeNull();

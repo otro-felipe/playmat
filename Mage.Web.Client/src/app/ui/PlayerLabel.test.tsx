@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { PlayerLabel } from './PlayerLabel';
 import { playerLabelText } from './playerIdentity';
+import { PublicBroadcast } from './usePlayerIdentity';
 
 vi.mock('../playtesting', () => ({ PRIVATE_PLAYTESTING: true }));
 beforeEach(() => vi.stubGlobal('fetch', vi.fn(async () => Response.json({ players: [] }))));
@@ -47,4 +48,23 @@ test('a human seat can carry match consent without changing its player identity 
     <div data-testid="ordinary"><PlayerLabel name="Camila" isMcp={false} /></div></>);
   expect(within(page.getByTestId('allowed')).getByText('MCP enabled')).toBeTruthy();
   expect(within(page.getByTestId('ordinary')).queryByText('MCP enabled')).toBeNull();
+});
+
+test('[PM-MCP-PLAYER-VIEW-MODEL] a player identity shows recorded provider and model while preserving broadcast aliases', async () => {
+  const name = 'mcp_modeltest';
+  const lookup = vi.fn(async () => Response.json({ players: [
+    { name, displayName: 'Luna', isMcp: true, provider: 'openai', model: 'gpt-6.2-sol' },
+  ] }));
+  vi.stubGlobal('fetch', lookup);
+  const page = render(<>
+    <div data-testid="private"><PlayerLabel name={name} showModel /></div>
+    <div data-testid="public"><PublicBroadcast.Provider value><PlayerLabel name={name} displayName="Seat B" showModel /></PublicBroadcast.Provider></div>
+  </>);
+  const privateLabel = within(page.getByTestId('private'));
+  const publicLabel = within(page.getByTestId('public'));
+  expect(await privateLabel.findByRole('img', { name: 'OpenAI' })).toBeTruthy();
+  expect(privateLabel.getByText('gpt-6.2-sol')).toBeTruthy();
+  expect(publicLabel.getByText('Seat B')).toBeTruthy();
+  expect(publicLabel.queryByRole('img')).toBeNull();
+  expect(publicLabel.queryByText('gpt-6.2-sol')).toBeNull();
 });

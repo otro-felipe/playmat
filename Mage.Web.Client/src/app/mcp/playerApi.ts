@@ -1,4 +1,6 @@
-export interface PlayerSettings {
+import type { AgentModel } from '../ui/agentModel';
+
+export interface PlayerSettings extends AgentModel {
   displayName: string;
   flag: string | null;
   mcpEnabled: boolean;

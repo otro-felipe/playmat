@@ -33,6 +33,10 @@ CREATE TABLE IF NOT EXISTS player_profiles (
 );
 -- Keep retired seats and their engine names available to match history.
 ALTER TABLE player_profiles ADD COLUMN IF NOT EXISTS retired_at timestamptz;
+ALTER TABLE player_profiles
+  ADD COLUMN IF NOT EXISTS provider text CHECK (provider IN ('openai','claude','gemini')),
+  ADD COLUMN IF NOT EXISTS model text,
+  ADD COLUMN IF NOT EXISTS reasoning_effort text;
 
 CREATE TABLE IF NOT EXISTS agent_grants (
   digest text PRIMARY KEY,

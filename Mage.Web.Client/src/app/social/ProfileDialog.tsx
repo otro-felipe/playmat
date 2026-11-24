@@ -67,7 +67,7 @@ function Profile({ name, onClose }: { name: string; onClose(): void }) {
       <header className={styles.head}>
         <Avatar name={name} avatarId={avatarId} size="lg" ring={look?.frame === THANK_YOU.frame} frame={look?.frame} />
         <div>
-          <p className={styles.name}><PlayerLabel name={name} /><LevelBadge level={look?.level} /><Flair name={name} /> <Flag flagName={flagName} always /></p>
+          <p className={styles.name}><PlayerLabel name={name} showModel /><LevelBadge level={look?.level} /><Flair name={name} /> <Flag flagName={flagName} always /></p>
           {look?.title && <p className={styles.title} style={{ color: titleColor(look.title) }}>{titleName(look.title)}</p>}
           <p className={styles.presence}>{user ? (user.infoGames?.trim() || 'Online') : 'Offline'}</p>
         </div>

@@ -1901,12 +1901,12 @@ test('match participants retain their own declared model across retries, archive
   const invites = '/api/playtesting/invites'
   const payload = { tableId, roomId: randomUUID(), password, format: 'Pioneer', guestEngineName: 'OldRival' }
   const claim = data => f.path(invites + '/' + tableId + '/claim', json('POST', guest, data))
-  const runtime = { model: 'vendor/model-2.1', reasoningEffort: 'high' }
+  const runtime = { provider:'openai', model: 'vendor/model-2.1', reasoningEffort: 'high' }
   assert.equal((await f.path(invites, json('POST', alice, { ...payload, ...runtime }))).status, 400)
   assert.equal((await f.path(invites, json('POST', host, { ...payload, ...runtime }))).status, 201)
   assert.equal((await claim({ reasoningEffort: '<bad>' })).status, 400)
-  assert.equal((await claim({ model: 'model-B' })).status, 200)
-  assert.equal((await claim({ model: 'different', reasoningEffort: 'high' })).status, 200)
+  assert.equal((await claim({provider:'gemini', model: 'model-B' })).status, 200)
+  assert.equal((await claim({provider:'claude', model: 'different', reasoningEffort: 'high' })).status, 200)
   const info = await (await f.path(invites + '/' + tableId, { headers: host })).json()
   assert.equal(info.guestOwnerName, 'Bob')
   await addReplay(f, tableId, gameId, ['AgentAlice', 'OldRival'])
@@ -1916,7 +1916,7 @@ test('match participants retain their own declared model across retries, archive
   assert.equal(replay.info.viewerName, 'agentalice')
   assert.deepEqual(replay.info.players, [
     { name: 'AgentAlice', displayName: 'Alice', human: true, isMcp: true, ...runtime },
-    { name: 'OldRival', displayName: 'Bob', human: true, isMcp: true, model: 'model-B', reasoningEffort: null },
+    { name: 'OldRival', displayName: 'Bob', human: true, isMcp: true, provider:'gemini', model: 'model-B', reasoningEffort: null },
   ])
   const directory = '/api/playtesting/player-identities?names=Alice,OLDRIVAL,Unknown'
   assert.equal((await f.path(directory)).status, 401)

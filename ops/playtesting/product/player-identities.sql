@@ -31,12 +31,15 @@ BEGIN
 END $$;
 
 ALTER TABLE invitations
+  ADD COLUMN IF NOT EXISTS creator_provider text CHECK (creator_provider IN ('openai','claude','gemini')),
+  ADD COLUMN IF NOT EXISTS guest_provider text CHECK (guest_provider IN ('openai','claude','gemini')),
   ADD COLUMN IF NOT EXISTS creator_model text,
   ADD COLUMN IF NOT EXISTS creator_effort text,
   ADD COLUMN IF NOT EXISTS guest_model text,
   ADD COLUMN IF NOT EXISTS guest_effort text;
 
 ALTER TABLE game_players
+  ADD COLUMN IF NOT EXISTS provider text CHECK (provider IN ('openai','claude','gemini')),
   ADD COLUMN IF NOT EXISTS model text,
   ADD COLUMN IF NOT EXISTS reasoning_effort text;
 
