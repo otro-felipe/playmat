@@ -11,16 +11,17 @@ const gameId = '11111111-1111-4111-8111-111111111111';
 const playerId = '22222222-2222-4222-8222-222222222222';
 const roomId = '33333333-3333-4333-8333-333333333333';
 
-async function fixture(t) {
+async function fixture(t, beforeReply = async () => {}) {
   const websocket = new WebSocketServer({ host: '127.0.0.1', port: 0 });
   await once(websocket, 'listening');
   const connected = once(websocket, 'connection');
   const actions = [];
-  websocket.on('connection', socket => socket.on('message', raw => {
+  websocket.on('connection', socket => socket.on('message', async raw => {
     const { method, id, params } = JSON.parse(raw);
     if (method.startsWith('sendPlayer')) actions.push({ method, params });
+    const override = await beforeReply(method);
     const responses = { connectUser: true, serverGetMainRoomId: roomId, gameJoin: true, sendPlayerBoolean: true };
-    socket.send(JSON.stringify({ jsonrpc: '2.0', id, result: responses[method] ?? null }));
+    socket.send(JSON.stringify({ jsonrpc: '2.0', id, result: override ?? responses[method] ?? null }));
   }));
   const engine = new PlaymatEngineSeat({
     engineUrl: `ws://127.0.0.1:${websocket.address().port}`, engineName: 'FixtureRival', trustedHeader: 'x-fixture-user',
@@ -53,15 +54,15 @@ async function fixture(t) {
   await engine.open();
   const [socket] = await connected;
   let messageId = 0;
-  const emit = async (method, data) => {
+  const emit = async (method, data, promptMessageId = ++messageId) => {
     const changed = new Promise(resolve => {
       const unsubscribe = engine.subscribe(() => { unsubscribe(); resolve(); });
     });
-    socket.send(JSON.stringify({ method, messageId: ++messageId, objectId: gameId, data }));
+    socket.send(JSON.stringify({ method, messageId: promptMessageId, objectId: gameId, data }));
     await changed;
   };
   await emit('START_GAME', { gameId, playerId });
-  return { actions, call, emit };
+  return { actions, call, emit, engine };
 }
 
 function view(priorityTime, player = {}) {
@@ -197,3 +198,235 @@ test('[PM-AC-08-TIMING] unavailable or invalid idle duration stays unknown even 
   }
   assert.deepEqual(actions, []);
 });
+
+test(
+  'a native answer in flight keeps its sent cursor and has no acknowledgement or inferred decision opening',
+  { timeout: 5000 },
+  async (t) => {
+    const sent = Promise.withResolvers(),
+      release = Promise.withResolvers();
+    const { actions, call, emit } = await fixture(t, async (method) => {
+      if (method === 'sendPlayerBoolean') {
+        sent.resolve();
+        await release.promise;
+      }
+    });
+    await emit('GAME_ASK', { message: 'First question?', gameView: view(0) });
+    const state = await call('get_game_state', { gameId });
+    const commandId = 'fixture-actual-dispatch';
+    const line = call('play_line', {
+      gameId,
+      commandId,
+      cursor: state.cursor,
+      waitMs: 0,
+      actions: [{ kind: 'choose', decisionId: state.decision.id, choiceId: state.decision.choices[0].id }],
+    });
+    try {
+      await sent.promise;
+      const pending = await call('wait_for_decision', { gameId, commandId, timeoutMs: 100 });
+      assert.equal(pending.appliedDecisions, 0);
+      assert.equal(pending.lastSubmission.cursor, state.cursor);
+      assert.equal(pending.lastSubmission.decisionOpenedAtEpochMs, null);
+      assert.ok(Number.isFinite(pending.lastSubmission.dispatchedAtEpochMs));
+      assert.equal(pending.lastSubmission.acknowledgedAtEpochMs, null);
+      assert.equal(pending.lastSubmission.acknowledged, false);
+    } finally {
+      release.resolve();
+      await line;
+    }
+    await emit('GAME_ASK', { message: 'Next question?', gameView: view(0) });
+    const receipt = await call('wait_for_decision', { gameId, commandId, timeoutMs: 300 });
+    assert.equal(receipt.appliedDecisions, 1);
+    assert.equal(receipt.requestedCursor, state.cursor);
+    assert.equal(receipt.cursor, receipt.state.cursor);
+    assert.ok(receipt.cursor > receipt.requestedCursor);
+    const last = receipt.lastSubmission;
+    assert.equal(last.acknowledged, true);
+    assert.ok(last.acknowledgedAtEpochMs >= last.dispatchedAtEpochMs);
+    assert.equal(actions.length, 1);
+  },
+);
+
+test(
+  'a submitted sideboard window waits for the next game without sending a second deck',
+  { timeout: 5000 },
+  async (t) => {
+    const { call, emit, engine } = await fixture(t);
+    await emit('SIDEBOARD', { currentTableId: roomId, deck: { main: [], sideboard: [] }, time: 0 });
+    const window = await call('get_sideboard_state', { gameId });
+    let sends = 0;
+    engine.api.deckSubmit = async () => {
+      sends++;
+      return true;
+    };
+    await engine.submitSideboard({ gameId, decisionId: window.decisionId, deck: window.deck });
+    await emit('SIDEBOARD', { currentTableId: roomId, deck: { main: [], sideboard: [] }, time: 0 });
+    const repeated = await call('get_sideboard_state', { gameId });
+    assert.equal(repeated.decisionId, window.decisionId);
+    assert.equal(repeated.submitted, true);
+    const during = await call('get_game_state', { gameId });
+    const expired = await call('wait_for_decision', { gameId, afterCursor: during.cursor, timeoutMs: 100 });
+    assert.equal(expired.event, 'timeout');
+    assert.equal(expired.state.sideboard.submitted, true);
+    const nextId = '44444444-4444-4444-8444-444444444444';
+    const listening = Promise.withResolvers();
+    const subscribe = engine.subscribe.bind(engine);
+    engine.subscribe = (callback) => {
+      const stop = subscribe(callback);
+      listening.resolve();
+      return stop;
+    };
+    const waiting = call('wait_for_decision', { gameId, afterCursor: during.cursor, timeoutMs: 1000 });
+    await listening.promise;
+    await emit('START_GAME', { gameId: nextId, playerId });
+    const next = await waiting;
+    assert.equal(next.state.gameId, nextId);
+    assert.equal(sends, 1);
+  },
+);
+
+test(
+  'an uncertain sideboard acknowledgement can be read without submitting the same window twice',
+  { timeout: 5000 },
+  async (t) => {
+    const { call, emit, engine } = await fixture(t);
+    await emit('SIDEBOARD', { currentTableId: roomId, deck: { main: [], sideboard: [] }, time: 0 });
+    const window = await call('get_sideboard_state', { gameId });
+    const started = Promise.withResolvers(),
+      lost = Promise.withResolvers();
+    let sends = 0;
+    engine.api.deckSubmit = async () => {
+      sends++;
+      started.resolve();
+      await lost.promise;
+      throw Error('synthetic transport interruption');
+    };
+    const args = { gameId, decisionId: window.decisionId, deck: window.deck };
+    const first = engine.submitSideboard(args);
+    try {
+      await started.promise;
+      const pending = await call('get_sideboard_state', { gameId });
+      assert.equal(pending.submitted, false);
+      assert.equal(pending.submissionStatus, 'sending');
+    } finally {
+      lost.resolve();
+      await assert.rejects(first);
+    }
+    const uncertain = await call('get_sideboard_state', { gameId });
+    assert.equal(uncertain.submissionStatus, 'uncertain');
+    assert.equal(uncertain.submitted, false);
+    await assert.rejects(engine.submitSideboard(args), { code: 'uncertain_ack' });
+    assert.equal(sends, 1);
+  },
+);
+
+test(
+  'the last submission records no dispatch or acceptance without a usable engine prompt guard',
+  { timeout: 5000 },
+  async (t) => {
+    const { actions, call, emit } = await fixture(t);
+    await emit('GAME_ASK', { message: 'Synthetic choice?', gameView: view(0) }, 2.5);
+    const state = await call('get_game_state', { gameId });
+    const receipt = await call('play_line', {
+      gameId,
+      commandId: 'not-dispatched',
+      cursor: state.cursor,
+      waitMs: 200,
+      actions: [{ kind: 'choose', decisionId: state.decision.id, choiceId: state.decision.choices[0].id }],
+    });
+    assert.equal(receipt.appliedDecisions, 0);
+    assert.equal(receipt.lastSubmission.dispatchedAtEpochMs, null);
+    assert.equal(receipt.lastSubmission.acknowledgedAtEpochMs, null);
+    assert.equal(receipt.lastSubmission.acknowledged, false);
+    assert.equal(actions.length, 0);
+  },
+);
+
+test(
+  'an explicit sideboard refusal keeps this window open for one corrected submission',
+  { timeout: 5000 },
+  async (t) => {
+    const { call, emit, engine } = await fixture(t);
+    await emit('SIDEBOARD', { currentTableId: roomId, deck: { main: [], sideboard: [] }, time: 0 });
+    const window = await call('get_sideboard_state', { gameId });
+    let sends = 0;
+    engine.api.deckSubmit = async () => ++sends > 1;
+    const args = { gameId, decisionId: window.decisionId, deck: window.deck };
+    await assert.rejects(engine.submitSideboard(args), { code: 'sideboard_refused' });
+    assert.equal((await call('get_sideboard_state', { gameId })).submissionStatus, 'open');
+    assert.equal((await engine.submitSideboard(args)).submitted, true);
+    await assert.rejects(engine.submitSideboard(args), { code: 'stale_decision' });
+    assert.equal(sends, 2);
+  },
+);
+
+test(
+  'a native refusal records dispatch and finish with zero acknowledged decisions',
+  { timeout: 5000 },
+  async (t) => {
+    const { actions, call, emit } = await fixture(t, async (method) =>
+      method === 'sendPlayerBoolean' ? false : undefined,
+    );
+    await emit('GAME_ASK', { message: 'Fixture question?', gameView: view(0) });
+    const state = await call('get_game_state', { gameId });
+    const result = await call('play_line', {
+      gameId,
+      commandId: 'native-refusal',
+      cursor: state.cursor,
+      waitMs: 300,
+      actions: [{ kind: 'choose', decisionId: state.decision.id, choiceId: state.decision.choices[0].id }],
+    });
+    assert.equal(result.appliedDecisions, 0);
+    assert.equal(result.lastSubmission.acknowledged, false);
+    assert.ok(Number.isFinite(result.lastSubmission.dispatchedAtEpochMs));
+    assert.ok(result.lastSubmission.finishedAtEpochMs >= result.lastSubmission.dispatchedAtEpochMs);
+    assert.equal(result.lastSubmission.acknowledgedAtEpochMs, null);
+    assert.equal(actions.length, 1);
+  },
+);
+
+test(
+  'first native prompt observation survives a refresh and a duplicate and belongs only to its original decision',
+  { timeout: 5000 },
+  async (t) => {
+    const { call, emit } = await fixture(t);
+    const ask = { message: 'Synthetic question?', gameView: view(0) };
+    const before = Date.now();
+    await emit('GAME_ASK', ask, 100);
+    const first = await call('get_game_state', { gameId });
+    const observed = first.decision.firstObservedAtEpochMs;
+    assert.ok(Number.isFinite(observed) && observed >= before && observed <= Date.now());
+    assert.equal(first.decision.openedAtEpochMs, null);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await emit('GAME_ASK', ask, 100);
+    const repeat = await call('get_game_state', { gameId, view: 'compact' });
+    assert.equal(repeat.decision.firstObservedAtEpochMs, observed);
+    await emit('GAME_UPDATE', view(1), 101);
+    assert.equal((await call('get_game_state', { gameId })).decision.firstObservedAtEpochMs, observed);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const beforeNext = Date.now();
+    await emit('GAME_ASK', ask, 102);
+    const next = await call('get_game_state', { gameId });
+    assert.notEqual(next.decision.id, first.decision.id);
+    assert.ok(next.decision.firstObservedAtEpochMs >= beforeNext);
+    assert.ok(next.decision.firstObservedAtEpochMs > observed);
+    const old = await call('play_line', {
+      gameId,
+      commandId: 'old-observation',
+      cursor: first.cursor,
+      actions: [{ kind: 'choose', decisionId: first.decision.id, choiceId: first.decision.choices[0].id }],
+    });
+    assert.equal(old.appliedDecisions, 0);
+    assert.equal(old.state.decision.firstObservedAtEpochMs, next.decision.firstObservedAtEpochMs);
+    const line = await call('play_line', {
+      gameId,
+      commandId: 'current-observation',
+      cursor: next.cursor,
+      waitMs: 100,
+      actions: [{ kind: 'choose', decisionId: next.decision.id, choiceId: next.decision.choices[0].id }],
+    });
+    assert.equal(line.lastSubmission.decisionFirstObservedAtEpochMs, next.decision.firstObservedAtEpochMs);
+    assert.equal(line.lastSubmission.decisionOpenedAtEpochMs, null);
+    assert.ok(line.lastSubmission.dispatchedAtEpochMs >= line.lastSubmission.decisionFirstObservedAtEpochMs);
+  },
+);

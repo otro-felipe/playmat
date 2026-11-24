@@ -147,6 +147,18 @@ test('[PM-LINE-MCP-1] native stale line transport preserves the preflight reject
   assert.deepEqual(f.applied, []);
 });
 
+test('a pass destination already reached completes with zero native decisions', async t => {
+  const f = await fixture(t, { first: readyToPass('end'), initial: { phase: 'END', step: 'END_TURN' } });
+  const { result } = await f.call('play_line', { ...f.request, actions: [
+    { kind: 'pass_until', destination: 'end_step', policy: 'if_no_play' },
+  ] });
+  assert.equal(result.status, 'completed');
+  assert.equal(result.appliedDecisions, 0);
+  assert.equal(result.requestedCursor, result.state.cursor);
+  assert.equal(result.lastSubmission, undefined);
+  assert.deepEqual(f.applied, []);
+});
+
 test('a recovered receipt exposes the current decision cursor and retains its historical progress', async (t) => {
   const f = await fixture(t, { onResponse: (_, update) => update({ decision: choice('second') }) });
   const { result: initial } = await f.call('play_line', { ...f.request, waitMs: 100 });

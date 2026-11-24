@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { ToolError } from './game-seat.mjs';
+import { ToolError, sideboardNeedsSubmission } from './game-seat.mjs';
 
 const commandsBySeat = new WeakMap();
 const maxCommandsPerSeat = 256;
@@ -17,7 +17,7 @@ function currentGameState(seat, gameId) {
 function requiresDecision(state) {
   return Boolean(state && (
     state.rollbackRequest
-    || state.sideboard && !state.sideboard.submitted
+    || sideboardNeedsSubmission(state.sideboard)
     || state.decision && state.decision.kind !== 'waiting' && state.decision.choices?.length
   ));
 }
@@ -43,6 +43,7 @@ async function lineResult(seat, { gameId, commandId, sequenceId }, timeoutMs, si
   const priorityOptions = optionalPassStop && seat.priorityOptions(optionalPassStop, state);
   return {
     ...status,
+    requestedCursor: receipt.startCursor,
     ...(state && state.cursor !== status.cursor ? { cursor: state.cursor, progressCursor: status.cursor } : {}),
     ...(priorityOptions ? { priorityOptions } : {}),
     commandId,
@@ -112,6 +113,7 @@ export function closedPlayerReceipts(seat) {
     if (line.status === 'running') continue;
     results.push({ gameId: command.gameId, commandId: command.commandId, sequenceId: line.sequenceId,
       status: line.status, reason: line.reason, stage: 'execution', event: line.status === 'ended' ? line.reason : 'line_stopped',
+      requestedCursor: line.startCursor, ...(line.lastSubmission && { lastSubmission: line.lastSubmission }),
       appliedDecisions: line.appliedDecisions, completedSteps: line.completedSteps, cursor: state.cursor,
       ...(line.cursor !== state.cursor ? { progressCursor: line.cursor } : {}),
       planOwnsExecution: false, needsAgent: false,

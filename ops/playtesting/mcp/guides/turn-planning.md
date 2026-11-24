@@ -653,6 +653,22 @@ Check `state.rollbackRequest` first. A pending vote returns `event:"rollback"` e
 
 Read `status`, `reason`, `appliedDecisions` and any error alongside the returned `state`. Replan from that state and carry forward only unreached intentions that still make sense. If `planOwnsExecution:true`, use `wait_for_decision` with the same `gameId` and `commandId`. Omit both `afterCursor` and `afterDecisionId` for a command wait. For an unknown command, read the current state and check which actions applied before submitting a fresh command. After a line stops, an ordinary wait can use the last `state.cursor`. A timeout includes the current state. `waitMs` bounds the first response wait. The game clocks keep running.
 
+### Read a line receipt
+
+`status` describes the command. `appliedDecisions` counts acknowledged engine decisions for that command, including automatic priority passes. `completedSteps` counts plan steps; one step can submit multiple decisions. A successful MCP response can carry a rejected or interrupted command.
+
+| Observed receipt | Example and next call |
+| --- | --- |
+| `completed`, `appliedDecisions:0` | A pass to the end step starts in that end step. The destination is satisfied. Read the current choice from the returned state. |
+| `bad_sequence` | A line contains `pass_priority` before another action. Remove the misplaced pass, keep at most one terminal pass, and use the current cursor with a new command ID. |
+| `invalid_line_arguments` | A target guard specifies only role zero. Read the failing action and field in `issues`; correct the guard using the observed source and target, or the exact instruction. |
+| `reevaluation_required` | A discard prompt is open after the spell was already cast. Recover the previous command if needed, compare its `requestedCursor` with the returned `state.cursor`, then answer only the current discard with a fresh command ID, its `decisionId` and legal `choiceId`. Replan the tail after the resulting change. |
+| Native failure without a classified reason | If an RPC fails while a decision is being sent, recover the same command using `wait_for_decision({gameId,commandId})`. Inspect its acknowledged count and current seat state. An absent acknowledgement leaves application uncertain. |
+
+`requestedCursor` identifies the submitted line revision. `lastSubmission.cursor` identifies the revision used for the most recently attempted decision. The current projection, when present, has its own `state.cursor`; `progressCursor` can preserve an older execution revision. A schema rejection without a state projection cannot establish the current board revision.
+
+For timing, `decision.firstObservedAtEpochMs` is the MCP server's first observation of the correlated native prompt. Polling, a board refresh, or a duplicate callback does not restart it. `lastSubmission.decisionFirstObservedAtEpochMs` retains this observation for the decision actually selected. A null value means there was no correlated observation available. `lastSubmission.dispatchedAtEpochMs` is when the MCP called the native response RPC. `acknowledgedAtEpochMs` is when the MCP observed its successful reply. `finishedAtEpochMs` also exists for a failed attempt. A null dispatch indicates no observed native dispatch. The engine currently supplies no authoritative decision-opening time in this receipt, so `decision.openedAtEpochMs` and `lastSubmission.decisionOpenedAtEpochMs` are null. Network delivery to the pilot is observable at its client receive boundary. Record send-to-receive and receive-to-next-send separately. Attribute a pause only when corroborated by an observed wait, RPC, or decision event.
+
 ### While the opponent holds priority
 
 If the opponent only passes, and your next decision is what to do after drawing, submit this to `play_line` from your current cursor. It passes only your own legal priority windows. Use `my_upkeep` instead when you intend to act before your draw. A single deliberate pass uses `pass_priority`; that action returns control after one pass. The destination determines which actions you authorize.

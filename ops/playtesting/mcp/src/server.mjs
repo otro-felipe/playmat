@@ -213,9 +213,9 @@ function decisionReceipt(seat, receipt, view) {
 
 function rejectedLine({ gameId, cursor, commandId, view }, rejection) {
   return formatGameReceipt({
-    status: 'rejected', gameId, cursor, commandId,
+    status: 'rejected', gameId, cursor, requestedCursor: cursor, commandId,
     actionIndex: null, appliedDecisions: 0, planOwnsExecution: false, ...rejection,
-    ...(rejection.state && rejection.state.cursor !== cursor ? { cursor: rejection.state.cursor, requestedCursor: cursor } : {}),
+    ...(rejection.state && rejection.state.cursor !== cursor ? { cursor: rejection.state.cursor } : {}),
   }, view);
 }
 

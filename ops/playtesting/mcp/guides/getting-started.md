@@ -139,7 +139,7 @@ With a connected MCP SDK `client`, copy these functions and call `await keepSide
 
 ```js
 function checkedSideboard(current, proposed, moves = []) {
-  if (!current.decisionId || current.submitted) throw Error("Read the open sideboard decision");
+  if (!current.decisionId || current.submitted || (current.submissionStatus && current.submissionStatus !== "open")) throw Error("Read the open sideboard decision");
   const difference = new Map();
   function add(zone, card, amount) {
     const key = JSON.stringify([zone, card.cardName, card.setCode ?? "", card.cardNumber ?? ""]);
@@ -171,6 +171,18 @@ async function keepSideboard(client, seat) {
 ```
 
 For partial changes, clone the freshly read deck and edit the amounts in both zones. Run `checkedSideboard(current, proposed, moves)` before sending. Each move copies the printing fields from a current entry and specifies the number of copies and destination, for example `{ ...current.deck.sideboard[0], amount: 1, to: "cards" }`. List an outgoing move when exchanging cards. On success, `submitted: true` confirms XMage accepted the submission. The private `mainDeckChanges` receipt summarizes cards brought in and taken out by **name and quantity** relative to this prompt. The local check also catches printing differences. If the other seat is still choosing, wait. Read the new game ID once it starts.
+
+### Recover a sideboard wait
+
+If the submission receipt was lost, call `get_game_state` with the same seat selector. If it reports a new game, continue with its returned game ID. During sideboarding read `get_sideboard_state` for that seat. The window reports `open`, `sending`, `accepted` or `uncertain`. Only an open window accepts a new submission. An explicit deck refusal reopens the window for correction.
+
+For a sending, accepted or uncertain window, copy the latest state cursor into an ordinary wait:
+
+```json
+{"playerId":"<your-player-id>","afterCursor":42,"timeoutMs":20000}
+```
+
+Call `wait_for_decision` with these fields, replacing 42 with the observed cursor. A timeout lets you wait again from the returned state. A new game, a fresh sideboard decision or match completion changes what to do next. An uncertain window requires fresh engine evidence before another deck can be sent.
 
 ## Start a match for the Human Player
 

@@ -1,5 +1,6 @@
 import { McpError } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
+import { sideboardNeedsSubmission } from './game-seat.mjs';
 
 export function registerEvents(server, actor, request) {
   server.registerCapabilities({ events: {} });
@@ -21,7 +22,7 @@ export function registerEvents(server, actor, request) {
 function currentDecision(snapshot) {
   const { gameId, cursor, decision, sideboard, status, secondsRemaining } = snapshot;
   if (!gameId || !Number.isSafeInteger(cursor)) return null;
-  if (status === 'sideboarding' && sideboard?.decisionId && !sideboard.submitted) {
+  if (status === 'sideboarding' && sideboard?.decisionId && sideboardNeedsSubmission(sideboard)) {
     return { gameId, cursor, decisionId: sideboard.decisionId, kind: 'sideboarding', secondsRemaining };
   }
   if (status !== 'active' || selectionMissing(decision)) return null;

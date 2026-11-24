@@ -44,6 +44,10 @@ class GameEnded extends Error {
   }
 }
 
+export function sideboardNeedsSubmission(window) {
+  return Boolean(window && !window.submitted && (!window.submissionStatus || window.submissionStatus === 'open'));
+}
+
 function gameState(engine, gameId) {
   const state = engine.snapshot();
   if (gameId && state.gameId !== gameId) throw new ToolError('forbidden_game', 'Your seat does not control that game.');
@@ -306,6 +310,8 @@ export class GameSeat {
     const result = await waitFor(this.engine, (state) => {
       if (state.status === 'disconnected') return { event: 'disconnected' };
       if (gameId && state.gameId !== gameId) return { event: 'invalidated', state };
+      if (state.status === 'sideboarding' && args.afterCursor !== undefined && initial.sideboard?.decisionId === state.sideboard?.decisionId
+        && state.sideboard && !sideboardNeedsSubmission(state.sideboard)) return null;
       if (['game_over', 'sideboarding', 'match_over'].includes(state.status)) return { event: state.status, state };
       if (!predicate && state.rollbackRequest) return { event: 'rollback', state };
       if (state.epoch !== epoch) return { event: 'invalidated', state };
@@ -322,7 +328,7 @@ export class GameSeat {
     return { event: 'timeout', cursor: state.cursor, state };
   }
 
-  async submit(args, sequenceId, line) {
+  async submit(args, sequenceId, line, submission) {
     const { gameId, decisionId, choiceId, idempotencyKey, cursor, value } = args;
     const fingerprint = JSON.stringify([gameId, decisionId, choiceId, value]);
     const known = this.#outcomes.get(idempotencyKey);
@@ -337,13 +343,14 @@ export class GameSeat {
     if (state.decision?.id !== decisionId || (cursor !== undefined && state.cursor !== cursor)) {
       throw new ToolError('stale_decision', 'Read a fresh decision before responding.');
     }
+    if (submission) submission.decisionFirstObservedAtEpochMs = state.decision.firstObservedAtEpochMs ?? null;
     if (!state.decision.choices.some((choice) => choice.id === choiceId)) throw new ToolError('illegal_choice', 'Choose one of the choices in the current decision.');
     if (this.#uncertain === decisionId) throw new ToolError('uncertain_ack', 'The engine acknowledgement was lost. Request a fresh state.');
     if (this.#inFlight) throw new ToolError('decision_in_flight', 'Another decision is already being applied.');
     this.#inFlight = true;
     const outcome = (async () => {
       try {
-        return await this.engine.respond(decisionId, choiceId, value, line);
+        return await this.engine.respond(decisionId, choiceId, value, line, submission);
       } catch (error) {
         if (error.code !== 'illegal_choice') this.#uncertain = decisionId;
         throw error;
@@ -594,7 +601,7 @@ export class GameSeat {
     if (!sequence || sequence.gameId !== gameId) throw new ToolError('unknown_sequence', 'This seat does not have that sequence.');
     if (startCursor !== undefined && sequence.startCursor !== startCursor) throw new ToolError('unknown_sequence', 'The plan does not match that starting cursor.');
     const { controller, finishListeners, sampleTime, id, ...status } = sequence;
-    return { sequenceId: id, ...status, executionTime: sampleTime() };
+    return { sequenceId: id, ...status, ...(status.lastSubmission && { lastSubmission: { ...status.lastSubmission } }), executionTime: sampleTime() };
   }
 
   async waitSequenceStatus(args, timeoutMs, signal) {
@@ -1197,9 +1204,15 @@ export class GameSeat {
       // A later blink or recast must not spend this cast's remaining budget.
       if (castEntry && visibleDecision(this.snapshot())?.kind === 'priority') closeCastEntry();
       const submission = { stepIndex: sequence.completedSteps, actionIndex: sequence.actionIndex ?? null,
-        dispatchedAtEpochMs: Date.now(), finishedAtEpochMs: null, acknowledged: false };
+        cursor: args.cursor, decisionOpenedAtEpochMs: null, decisionFirstObservedAtEpochMs: null,
+        dispatchedAtEpochMs: null,
+        acknowledgedAtEpochMs: null, finishedAtEpochMs: null, acknowledged: false };
       sequence.lastSubmission = submission;
-      try { const result = await this.submit(args, sequence.id, sequence.appliedDecisions === 0 ? line : undefined); submission.acknowledged = true; return result; }
+      try {
+        const result = await this.submit(args, sequence.id, sequence.appliedDecisions === 0 ? line : undefined, submission);
+        submission.acknowledged = true;
+        return result;
+      }
       finally { submission.finishedAtEpochMs = Date.now(); }
     };
     const nextPredeterminedAnswer = (state) => {

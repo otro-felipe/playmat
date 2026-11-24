@@ -1,10 +1,14 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomBytes, randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
 import { createApi, RpcClient, EventBus, GameSession, PROMPT_EVENTS, stripMarkup, chatText, projectedChoices, commandForAgentChoice, describeAgentDecision, visibleAgentGame } from '../dist/engine-core.mjs';
 import { cardCatalogEntry, formatTag } from './catalog.mjs';
-import { ToolError, waitFor } from './game-seat.mjs';
+import { ToolError, sideboardNeedsSubmission, waitFor } from './game-seat.mjs';
 import { mainDeckChanges } from '../../product/sideboard-delta.mjs';
 import { TableConversation } from './table-conversation.mjs';
+
+// Associate native response dispatch with its own call, including asynchronous RPC completion.
+const answerDelivery = new AsyncLocalStorage();
 
 const ROLLBACK_VOTE = 'ADD_PERMISSION_TO_ROLLBACK_TURN';
 // Use the normal XMage defaults for the managed MCP identity, with distinct
@@ -85,6 +89,10 @@ function poolFromView(deck) {
 export class PlaymatEngineSeat {
   #signal = new Set();
   #promptIds = new WeakMap();
+  #promptObservedAt = new WeakMap();
+  #receivedPrompts = new Map();
+  #forgottenPromptId = -1;
+  #pendingPromptObservation = null;
   #enginePromptMessageId = null;
   #answerPromptMessageId = null;
   #answerLine = null;
@@ -148,15 +156,38 @@ export class PlaymatEngineSeat {
           while (args.length < expected) args.push(null);
           args.push(this.#answerLine);
         }
-        return rejectOnFalse(await dispatch(...args), 'engine_rejected', 'The engine did not accept that action.');
+        const delivery = answerDelivery.getStore();
+        if (delivery?.submission) delivery.submission.dispatchedAtEpochMs = Date.now();
+        const result = rejectOnFalse(await dispatch(...args), 'engine_rejected', 'The engine did not accept that action.');
+        if (delivery) {
+          delivery.acknowledged = true;
+          if (delivery.submission) delivery.submission.acknowledgedAtEpochMs = Date.now();
+        }
+        return result;
       };
     }
     this.api = api;
     this.bus.onAny(({ method, objectId, messageId }) => {
-      if (objectId === this.#session?.getState().gameId && PROMPT_EVENTS.includes(method)) {
+      this.#pendingPromptObservation = null;
+      const state = this.#session?.getState();
+      if (state && objectId === state.gameId && PROMPT_EVENTS.includes(method)) {
         this.#enginePromptMessageId = messageId;
+        // Capture receipt before GameSession processes the callback. Its view
+        // update can temporarily retain the previous prompt object.
+        let at = this.#receivedPrompts.get(messageId);
+        if (at === undefined && Number.isSafeInteger(messageId) && messageId > this.#forgottenPromptId) {
+          at = Date.now();
+          this.#receivedPrompts.set(messageId, at);
+          if (this.#receivedPrompts.size > 256) {
+            const oldest = this.#receivedPrompts.keys().next().value;
+            this.#receivedPrompts.delete(oldest);
+            this.#forgottenPromptId = Math.max(this.#forgottenPromptId, oldest);
+          }
+        }
+        this.#pendingPromptObservation = { previous: state.prompt, at: at ?? null };
       }
     });
+    this.rpc.onSessionStart(() => this.#resetPromptObservations());
     let initial = true;
     this.rpc.onStatus((status) => {
       if (status === 'reconnecting' || status === 'closed') {
@@ -175,11 +206,17 @@ export class PlaymatEngineSeat {
     });
     this.bus.on('START_GAME', (message) => this.#joinStartedGame(message));
     this.bus.on('SIDEBOARD', (message, event) => {
-      if (!message?.deck || !(message.currentTableId ?? event.objectId)
-          || !this.#allowHumanPlay || !this.#acceptsTable(message.currentTableId ?? event.objectId)) return;
+      const tableId = message?.currentTableId ?? event.objectId;
+      if (!message?.deck || !tableId || !this.#allowHumanPlay || !this.#acceptsTable(tableId)) return;
+      // A repeated callback for the same table and game cannot authorize another
+      // submission. START_GAME clears this window before the next game's sideboard.
+      if (this.#sideboard?.tableId === tableId && !sideboardNeedsSubmission(this.#sideboard)) {
+        this.#publish();
+        return;
+      }
       this.#sideboard = {
-        decisionId: randomUUID(), tableId: message.currentTableId ?? event.objectId,
-        deck: poolFromView(message.deck), deadline: message.time > 0 ? Date.now() + message.time * 1000 : null, submitted: false,
+        decisionId: randomUUID(), tableId,
+        deck: poolFromView(message.deck), deadline: message.time > 0 ? Date.now() + message.time * 1000 : null, submitted: false, submissionStatus: 'open',
       };
       this.#invalidate();
     });
@@ -272,6 +309,12 @@ export class PlaymatEngineSeat {
       && this.profileTableId === (actor.activeTableId ?? null);
   }
 
+  #resetPromptObservations() {
+    this.#receivedPrompts.clear();
+    this.#forgottenPromptId = -1;
+    this.#pendingPromptObservation = null;
+  }
+
   #joinStartedGame(message) {
     const { gameId, playerId, currentTableId } = message ?? {};
     if (!gameId || !playerId || !this.#allowHumanPlay || !this.#acceptsTable(currentTableId)) return;
@@ -280,6 +323,7 @@ export class PlaymatEngineSeat {
     if (existing?.gameId === gameId && existing.playerId === playerId) return;
     this.#boardUnsubscribe?.();
     this.#session?.dispose();
+    this.#resetPromptObservations();
     this.#enginePromptMessageId = null;
     this.#sideboard = null;
     this.#vote = null;
@@ -289,7 +333,15 @@ export class PlaymatEngineSeat {
     this.#tableId = currentTableId ?? this.#tableId;
     this.#gameTableId = this.#tableId;
     this.#session = new GameSession(this.api, this.bus, { gameId, playerId, mode: 'play' });
-    this.#boardUnsubscribe = this.#session.store.subscribe(() => this.#publish());
+    this.#boardUnsubscribe = this.#session.store.subscribe(() => {
+      const prompt = this.#session.getState().prompt;
+      const observation = this.#pendingPromptObservation;
+      if (observation && prompt && prompt !== observation.previous) {
+        this.#promptObservedAt.set(prompt, observation.at);
+        this.#pendingPromptObservation = null;
+      }
+      this.#publish();
+    });
     this.#invalidate();
     void this.api.gameJoin(gameId).then(() => this.#joinChat(gameId)).catch(() => this.#publish());
   }
@@ -331,12 +383,13 @@ export class PlaymatEngineSeat {
       timing,
       score: state?.endInfo ? { wins: state.endInfo.wins, losses: state.endInfo.loses, winsNeeded: state.endInfo.winsNeeded } : null,
       rollbackRequest: this.#pendingRollback(),
-      sideboard: this.#sideboard ? { decisionId: this.#sideboard.decisionId, submitted: this.#sideboard.submitted } : null,
-      decision: describeAgentDecision(decision),
+      sideboard: this.#sideboard ? { decisionId: this.#sideboard.decisionId, submitted: this.#sideboard.submitted, submissionStatus: this.#sideboard.submissionStatus } : null,
+      decision: decision ? { ...describeAgentDecision(decision), openedAtEpochMs: null,
+        firstObservedAtEpochMs: this.#promptObservedAt.get(state.prompt) ?? null } : null,
     };
   }
 
-  async respond(decisionId, choiceId, value, line) {
+  async respond(decisionId, choiceId, value, line, submission) {
     const state = this.#session?.getState();
     const decision = this.#decision(state);
     if (!decision || decision.id !== decisionId) throw new ToolError('stale_decision', 'Read the current engine decision again.');
@@ -347,7 +400,9 @@ export class PlaymatEngineSeat {
     this.#answerPromptMessageId = this.#enginePromptMessageId;
     this.#answerLine = line;
     try {
-      await this.#session.respond(command);
+      const delivery = { submission, acknowledged: false };
+      await answerDelivery.run(delivery, () => this.#session.respond(command));
+      if (!delivery.acknowledged) throw new ToolError('not_actionable', 'The engine did not dispatch this decision. Read the current state.');
     } catch (error) {
       if (error.code === -32602) void this.resync(state.gameId).catch(() => {});
       throw error;
@@ -562,13 +617,21 @@ export class PlaymatEngineSeat {
   async submitSideboard({ gameId, decisionId, deck }) {
     const sideboard = this.sideboardState(gameId);
     if (sideboard.submitted || sideboard.decisionId !== decisionId) throw new ToolError('stale_decision', 'Read the latest sideboard prompt.');
-    sideboard.submitted = true;
+    if (sideboard.submissionStatus === 'sending') throw new ToolError('decision_in_flight', 'The sideboard submission is in flight.');
+    if (sideboard.submissionStatus === 'uncertain') throw new ToolError('uncertain_ack', 'The previous sideboard submission has no confirmed result. Wait for the next game or a fresh sideboard window.');
+    sideboard.submissionStatus = 'sending';
+    this.#publish();
     try {
       rejectOnFalse(await this.api.deckSubmit(sideboard.tableId, deck), 'sideboard_refused', 'XMage rejected the sideboard submission.');
     } catch (error) {
-      sideboard.submitted = false;
+      const refused = error?.code === 'sideboard_refused' || error?.name === 'RpcError';
+      sideboard.submissionStatus = refused ? 'open' : 'uncertain';
+      this.#publish();
+      if (!refused) throw new ToolError('uncertain_ack', 'The sideboard acknowledgement is unknown. Read get_sideboard_state before continuing.');
       throw error;
     }
+    sideboard.submitted = true;
+    sideboard.submissionStatus = 'accepted';
     this.#publish();
     return { submitted: true, mainDeckChanges: mainDeckChanges(sideboard.deck, deck) };
   }
