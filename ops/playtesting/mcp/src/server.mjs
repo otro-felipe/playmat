@@ -110,10 +110,11 @@ const TurnPlayShape = z.object({ kind: z.literal('play'), select: ChoiceSelector
   mode: z.string().trim().min(1).max(2000).optional().describe('Exact visible mode option text, cast option label, or printed spell face name.'),
   targets: PlannedTargets.optional(),
   payWith: z.array(Payment).max(16).optional(),
+  optionalCosts: z.enum(['pay', 'decline']).optional().describe('Answer this cast\'s optional additional cost questions ("Pay Kicker {4} ?", buyback, multikicker). Include the extra mana in payWith when paying.'),
   expectTriggers: z.array(OwnTrigger).max(4).optional(), expectTargetTriggers: z.array(TargetTrigger).max(2).optional(),
 }).strict();
-const TurnPlay = TurnPlayShape.refine(({ playAs, expectCast, targets, payWith, spellAbilityId, modeId, mode }) => playAs !== 'land'
-  || (expectCast !== true && !targets?.length && !payWith?.length && !spellAbilityId && !modeId && !mode),
+const TurnPlay = TurnPlayShape.refine(({ playAs, expectCast, targets, payWith, spellAbilityId, modeId, mode, optionalCosts }) => playAs !== 'land'
+  || (expectCast !== true && !targets?.length && !payWith?.length && !spellAbilityId && !modeId && !mode && !optionalCosts),
 'A land action cannot include spell targets, casting mana or a spell forecast.')
   .refine(({ modeId, mode }) => !(modeId && mode), 'Use either a mode ID or exact mode text.');
 const TurnChooseShape = z.object({ kind: z.literal('choose'),

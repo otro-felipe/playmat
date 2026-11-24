@@ -1062,6 +1062,40 @@ test('[PM-AC-09-RESPONSES] a Yes/No question accepts its boolean answer', async 
   assert.deepEqual(f.applied.map(({ choiceId }) => choiceId), ['kicker-no']);
 });
 
+for (const optionalCosts of ['decline', 'pay', undefined]) {
+  test(`[PM-LINE-SEM-6] a play answers its kicker question with optionalCosts: ${optionalCosts ?? 'omitted'}`, async (t) => {
+    const burst = { id: 'burst', cardId: 'burst', name: 'Burst Lightning', types: ['INSTANT'],
+      rules: ['Kicker {4}', 'Burst Lightning deals 2 damage to any target. If this spell was kicked, it deals 4 damage instead.'] };
+    const mountain = { id: 'mountain', cardId: 'mountain', name: 'Mountain', types: ['LAND'], controllerId: 'pilot' };
+    const first = { id: 'cast', kind: 'priority', choices: [{ id: 'pass', type: 'pass' }, { id: 'cast-burst', type: 'object', objectId: burst.id, card: burst }] };
+    const f = await fixture(t, { first, initial: { ownHand: [burst], players: [
+      { id: 'pilot', yourSeat: true, battlefield: [mountain] }, { id: 'rival', yourSeat: false, life: 20, battlefield: [] }] },
+      onResponse({ choiceId }, update, state) {
+        if (choiceId === 'cast-burst') update({ decision: { id: 'kicker', kind: 'question', instruction: 'Pay Kicker {4} ?', sourceObjectId: burst.id,
+          choices: [button('button-0', 'No', false), button('button-1', 'Yes', true)] } });
+        else if (choiceId.startsWith('button-')) update({ decision: { id: 'target', kind: 'target', targetRole: 0, targetSourceId: burst.id,
+          instruction: 'Select any target', choices: [{ id: 'rival-target', type: 'object', objectId: 'rival' }] } });
+        else if (choiceId === 'rival-target') update({ decision: { id: 'pay', kind: 'payMana', choices: [{ id: 'tap-mountain', type: 'manaAbility', objectId: mountain.id, card: mountain }] } });
+        else if (choiceId === 'tap-mountain') update({ ownHand: [], stack: [{ ...burst, id: 'burst-stack', controllerId: 'pilot', targets: ['rival'] }],
+          decision: readyToPass('resolve') });
+        else if (choiceId === 'pass') update({ stack: [], decision: readyToPass('after'),
+          players: state.players.map((player) => player.yourSeat ? player : { ...player, life: 18 }),
+          sequenceEvidence: { ...state.sequenceEvidence, resolutions: { 'burst-stack': 1 }, resolutionRevision: 1 } });
+      } });
+    const play = { kind: 'play', select: { objectId: burst.id, zone: 'hand' }, when: 'priority',
+      targets: [{ role: 0, select: { objectId: 'rival' } }], payWith: [mountain.id], ...(optionalCosts ? { optionalCosts } : {}) };
+    const { result } = await f.call('play_line', { ...f.request, cursor: f.request.cursor, actions: [play] });
+    if (!optionalCosts) {
+      assert.equal(result.reason, 'response_available', JSON.stringify(result));
+      assert.deepEqual(f.applied.map(({ choiceId }) => choiceId), ['cast-burst']);
+      return;
+    }
+    assert.equal(result.status, 'completed', JSON.stringify(result));
+    assert.deepEqual(f.applied.map(({ choiceId }) => choiceId),
+      ['cast-burst', optionalCosts === 'pay' ? 'button-1' : 'button-0', 'rival-target', 'tap-mountain', 'pass']);
+  });
+}
+
 test('[PM-AC-09-RESPONSES] a Liliana discard rejects the tail and teaches the exact observed-choice recovery', async (t) => {
   const ownCard = { id: 'own-land', name: 'Mountain', types: ['LAND'] };
   const stackObject = { id: 'loyalty-stack', controllerId: 'rival', abilityType: 'ACTIVATED_NONMANA',

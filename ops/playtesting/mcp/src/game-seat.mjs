@@ -486,7 +486,7 @@ export class GameSeat {
           steps.push({ kind: 'answer', guard, requiresEmptyStack, select: action.select, playAs: action.playAs,
             expectCast: action.playAs === 'land' || action.expectCast === false ? false : 'auto', reevaluateAfter: action.reevaluateAfter,
             semanticPlay: true, spellAbilityId: action.spellAbilityId, expectTriggers: action.expectTriggers,
-            expectTargetTriggers: action.expectTargetTriggers });
+            expectTargetTriggers: action.expectTargetTriggers, optionalCosts: action.optionalCosts });
           if (action.spellAbilityId) steps.push({ kind: 'answer', guard: { kind: 'panel' }, select: { abilityId: action.spellAbilityId },
             semanticSpellOption: true, boundCast: true, expectCast: true });
           if (action.modeId || action.mode) steps.push({ kind: 'answer', guard: { kind: 'panel', modePicker: true },
@@ -1254,6 +1254,19 @@ export class GameSeat {
       previousDecisionId = state.decision.id;
       return true;
     };
+    // Kicker, multikicker and buyback ask "Pay … ?" from the card being cast.
+    const answerOptionalCost = async (state) => {
+      const decision = visibleDecision(state);
+      if (!pendingCast?.optionalCosts || decision?.kind !== 'question' || decision.id === previousDecisionId
+        || decision.sourceObjectId !== pendingCast.objectId || !/^Pay\b.*\?$/i.test(decision.instruction ?? '')) return false;
+      const choice = decision.choices.find((item) => booleanAnswer(item) === (pendingCast.optionalCosts === 'pay'));
+      if (!choice) return false;
+      await submit({ gameId: sequence.gameId, cursor: state.cursor, decisionId: decision.id, choiceId: choice.id,
+        idempotencyKey: `${sequence.id}:optional-cost:${decision.id}` });
+      sequence.appliedDecisions++;
+      previousDecisionId = decision.id;
+      return true;
+    };
     const nextPredeterminedAnswer = (state) => {
       const next = steps[sequence.completedSteps + 1];
       return matchesAnswer(state, next) && next.guard?.instruction !== undefined && plannedChoice(state, state.decision, next);
@@ -1360,7 +1373,7 @@ export class GameSeat {
             const decision = visibleDecision(state);
             if (!decision || decision.id === previousDecisionId) {
               if (!await waitForNext()) throw new ToolError('timeout', 'The next intended decision did not arrive.');
-            } else {
+            } else if (!await answerOptionalCost(state)) {
               if (step.kind === 'answer' && step.decisionId && step.decisionId !== decision.id && DISCRETE_PROMPTS.has(decision.kind)) {
                 throw new ToolError('stale_decision', 'The next choice refers to a different decisionId. Replan the remaining actions from this decision.', { field: 'decisionId' });
               }
@@ -1533,7 +1546,7 @@ export class GameSeat {
               || choice.type !== 'option' || choice.abilityType !== 'SPELL' || !choice.spellName) {
               throw new ToolError('bad_cast_expectation', 'Choose a typed spell option from the exact visible source of this cast.');
             }
-            pendingCast = { objectId: card.id, cardId: card.cardId, name: choice.spellName, playerId,
+            pendingCast = { objectId: card.id, cardId: card.cardId, name: choice.spellName, playerId, optionalCosts: step.optionalCosts ?? pendingCast?.optionalCosts,
               information: !!step.reevaluateAfter || !!pendingCast?.information, actionIndex: pendingCast?.actionIndex };
           } else if (step.expectCast && !castingPicker && !(step.expectCast === 'auto' && choice.card?.types?.includes('LAND'))) {
             // The engine's visible legal choice can cast from exile/graveyard too
@@ -1544,7 +1557,7 @@ export class GameSeat {
             if (decision.kind !== 'priority' || !playerId || !Array.isArray(card?.types) || card.types.includes('LAND')) {
               throw new ToolError('bad_cast_expectation', 'Expect a cast only for a visible legal spell from hand, exile or graveyard during priority; not a mode, target or activated ability.');
             }
-            pendingCast = { objectId: card.id, cardId: card.cardId, name: card.name, playerId, information: !!step.reevaluateAfter };
+            pendingCast = { objectId: card.id, cardId: card.cardId, name: card.name, playerId, information: !!step.reevaluateAfter, optionalCosts: step.optionalCosts };
             if (step.semanticPlay) {
               pendingCast.actionIndex = step.actionIndex;
               castingSources.set(step.actionIndex, { objectId: card.id, cardId: card.cardId });
@@ -1837,7 +1850,7 @@ export class GameSeat {
             if ((step.step || step.phase) && destinationReached(state)) break;
             if (visibleDecision(state) && state.decision.id !== previousDecisionId && state.decision.kind !== 'priority') {
               if (nextPredeterminedAnswer(state)) break;
-              if (await answerTokenDefender(state)) continue;
+              if (await answerTokenDefender(state) || await answerOptionalCost(state)) continue;
               throw new ToolError('response_available', 'An unplanned mandatory choice needs a fresh decision.');
             }
             if (destinationReached(state)) break;
