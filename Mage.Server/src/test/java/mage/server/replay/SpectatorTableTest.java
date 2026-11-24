@@ -2,13 +2,49 @@ package mage.server.replay;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonArray;
+import mage.game.Table;
+import mage.game.TwoPlayerMatch;
+import mage.game.match.ChampionshipRules;
+import mage.game.match.MatchOptions;
+import mage.players.Player;
 import mage.view.ChatMessage;
 import org.junit.jupiter.api.Test;
+import java.lang.reflect.Proxy;
 import java.util.Date;
+import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class SpectatorTableTest {
+    @Test void aTournamentBroadcastUsesMatchWinsBetweenGamesEvenWhileTheBoardIsUnchanged() {
+        MatchOptions options = new MatchOptions("Test", "Two Player Duel", false);
+        options.championship = new ChampionshipRules(UUID.randomUUID(), "Alice", "Bob", false, 1, 0);
+        TwoPlayerMatch match = new TwoPlayerMatch(options);
+        Player alice = seat("Alice"), bob = seat("Bob");
+        match.addPlayer(alice, null);
+        match.addPlayer(bob, null);
+        Table table = new Table(UUID.randomUUID(), "Duel", "Test", "Alice", null, List.of(), ignored -> {},
+                match, Set.of(), false);
+        SpectatorTable state = SpectatorTable.start(table, UUID.randomUUID());
+        JsonObject empty = new JsonObject();
+        state.frame(empty, empty, empty);
+        JsonObject live = SpectatorTable.lookup(table.getId(), table).getAsJsonObject("snapshot");
+        assertThat(live.getAsJsonObject("matchWins").get("Alice").getAsInt()).isZero();
+        match.getPlayers().get(0).addWin();
+        SpectatorTable.end(state);
+        JsonObject between = SpectatorTable.lookup(table.getId(), table).getAsJsonObject("snapshot");
+        assertThat(between.get("status").getAsString()).isEqualTo("between_games");
+        assertThat(between.getAsJsonObject("matchWins").get("Alice").getAsInt()).isOne();
+        assertThat(between.getAsJsonObject("matchWins").get("Bob").getAsInt()).isZero();
+        assertThat(between.getAsJsonObject("view")).isEqualTo(live.getAsJsonObject("view"));
+    }
+
+    private Player seat(String name) {
+        return (Player) Proxy.newProxyInstance(Player.class.getClassLoader(), new Class<?>[]{Player.class},
+                (proxy, method, args) -> "getName".equals(method.getName()) ? name : null);
+    }
+
     @Test void aRestoredFrameAndItsBranchArePublishedTogetherEvenWhenTheTurnDoesNotChange() {
         SpectatorTable table = new SpectatorTable(UUID.randomUUID(), UUID.randomUUID(), "Fixture");
         JsonObject view = new JsonObject();

@@ -1,5 +1,5 @@
 import {
-  Anvil, ArrowUpToLine, Castle, Crosshair, Eye, EyeOff, Feather, FlaskConical, Footprints, HeartPulse, Lock, LockOpen, Shield, ShieldCheck,
+  Anvil, ArrowUpToLine, Castle, Crosshair, Eye, EyeOff, Feather, FlaskConical, Footprints, HeartPulse, Hourglass, Lock, LockOpen, Shield, ShieldCheck,
   ShieldHalf, Skull, Sword, Swords, Users, Zap, type LucideIcon,
 } from 'lucide-react';
 import { memo, useMemo, useRef, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
@@ -270,9 +270,14 @@ function PlacedCard({ permanent, width, sleeve, clickable, selected, attacking, 
       </div>
 
       {notice && (
-        <span className={styles.landNotice} style={{ transform: tapped ? 'rotate(-90deg)' : undefined }}
-          title={t(`match.landAnimation.${notice}.detail`)}>
-          {t(`match.landAnimation.${notice}.short`)}
+        <span className={notice === 'recent' ? styles.recentLand : styles.landNotice}
+          style={{ transform: tapped ? 'rotate(-90deg)' : undefined }}
+          title={notice === 'recent' ? undefined : t(`match.landAnimation.${notice}.detail`)}>
+          {notice === 'recent'
+            ? <span role="img" aria-label={t('match.landAnimation.recent.short')} title={t('match.landAnimation.recent.tooltip')}>
+                <Hourglass size="1em" aria-hidden="true" />
+              </span>
+            : t(`match.landAnimation.${notice}.short`)}
           <span id={noticeId} className="visually-hidden">{t(`match.landAnimation.${notice}.detail`)}</span>
         </span>
       )}

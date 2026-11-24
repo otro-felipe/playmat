@@ -221,6 +221,7 @@ export default {
   'match.landAnimation.seeBoard': 'See the board',
   'match.landAnimation.back': 'Back to choice',
   'match.landAnimation.recent.short': 'Recent control',
+  'match.landAnimation.recent.tooltip': 'Summoning sickness if animated. This land can still tap for mana.',
   'match.landAnimation.recent.detail': 'This land has not been under continuous control since its controller’s last turn began. Recent control does not prevent a noncreature land from tapping for mana. If animated this turn, it needs haste to attack or use tap or untap abilities.',
   'match.landAnimation.needsHaste.short': 'Needs haste',
   'match.landAnimation.needsHaste.detail': 'If animated, this land needs haste to attack or use abilities with a tap or untap symbol this turn.',

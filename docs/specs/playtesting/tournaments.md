@@ -158,3 +158,7 @@ also cover the fourteen-round Worlds structure through the final. The
 [live engine scenarios](../../../ops/playtesting/mcp/test/tournament.live.test.mjs)
 exercise individual match rules, including the Worlds sideboard schedule and Swiss
 extra turns.
+
+### Live table broadcast
+
+A pairing broadcast shows the number of connected viewers across public and authorized expanded streams. Refreshing the board without opening a stream does not add a viewer. The header shows the pairing order and games won, including between games, and counts down the pairing deadline while it is timed and unfinished. Untimed tables and finished pairings omit the clock. Expanded views and public views use the same public score and clock.

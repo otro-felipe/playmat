@@ -4,6 +4,7 @@ import { privateSpectatorBoard } from './private-spectator-board.mjs'
 import { publicLineExplanations } from './line-explanations.mjs'
 import { tournamentReplayIndexes } from './tournament-replay-index.mjs'
 import { readSpectatorEngine } from './spectators.mjs'
+import { timestamp } from './tournament-state.mjs'
 
 const missing = () => new ProductError(404, 'This tournament broadcast is unavailable')
 
@@ -13,7 +14,7 @@ export function createTournamentBroadcast(pool, archive, engine = readSpectatorE
     const {
       rows: [row],
     } = await pool.query(
-      `SELECT p.id,p.table_id,p.match_id,p.completed,p.wins_a,p.wins_b,p.draws,p.result_reason,
+      `SELECT p.id,p.table_id,p.match_id,p.completed,p.deadline_at,p.wins_a,p.wins_b,p.draws,p.result_reason,
       CASE WHEN p.winner_entry=a.id THEN 'a' WHEN p.winner_entry=b.id THEN 'b' END AS winner_side,
       a.engine_name AS name_a,a.name AS display_a,a.owner_name AS owner_a,a.player_id AS player_a,
       b.engine_name AS name_b,b.name AS display_b,b.owner_name AS owner_b,b.player_id AS player_b
@@ -48,15 +49,25 @@ export function createTournamentBroadcast(pool, archive, engine = readSpectatorE
     const match = await pairing(id, pairId)
     const found = await engine(match.table_id, hands)
     const snapshot = found?.snapshot
-    if (!snapshot)
-      return publicSpectatorBoard({
-        tableId: match.table_id,
-        status: match.completed ? 'finished' : 'waiting',
-      })
-    if (snapshot.tableId !== match.table_id) throw missing()
-    roster(snapshot.view?.players, match)
-    const frame = { ...snapshot, players: roster(snapshot.players, match) }
-    return hands ? privateSpectatorBoard(frame) : publicSpectatorBoard(frame)
+    if (snapshot && snapshot.tableId !== match.table_id) throw missing()
+    roster(snapshot?.view?.players, match)
+    const frame = {
+      ...snapshot,
+      tableId: match.table_id,
+      status: match.completed ? 'finished' : (snapshot?.status ?? 'waiting'),
+      players: roster(snapshot?.players, match),
+    }
+    const board = hands ? privateSpectatorBoard(frame) : publicSpectatorBoard(frame)
+    const deadlineAt = timestamp(match.deadline_at)
+    const matchScore = ['a', 'b'].map(side => {
+      const name = match['name_' + side]
+      const viewSeat = board.view?.players.find(player => normalize(player.name) === normalize(name))
+      const native = Object.hasOwn(snapshot?.matchWins ?? {}, name) ? snapshot.matchWins[name] : undefined
+      const wins = match.completed ? match['wins_' + side]
+        : Number.isSafeInteger(native) && native >= 0 ? native : (viewSeat?.wins ?? 0)
+      return { name: match['display_' + side], wins }
+    })
+    return { ...board, matchScore, ...(board.status !== 'finished' && deadlineAt > 0 && { deadlineAt }) }
   }
 
   // Recheck the retained match before using cached frames. A retired object cannot

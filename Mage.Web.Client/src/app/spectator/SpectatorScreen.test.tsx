@@ -31,3 +31,48 @@ test.each(['public-board', 'both-hands'])('a %s broadcast drops abandoned reveal
   expect(board.getByRole('button', label)).toBeTruthy();
   board.unmount();
 });
+
+test('the live header shows the numeric audience, running table clock, and named match score across games', async () => {
+  const deadlineAt = Date.now() + 70_000;
+  const score = (winsA: number, winsB: number) => [{ name: 'Brasa', wins: winsA }, { name: 'Cirro', wins: winsB }];
+  const frame = {
+    role: 'spectator', gameId: null, visibility: 'public-board', status: 'waiting', spectators: 0,
+    players: [], view: null, hands: {}, chat: [], lines: [],
+    matchScore: score(0, 0), deadlineAt,
+  };
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(frame)));
+  class FixtureStream extends EventTarget {
+    close() {}
+  }
+  const stream = new FixtureStream();
+  vi.stubGlobal('EventSource', vi.fn(function () { return stream; }));
+  const board = render(<MemoryRouter><SpectatorBroadcast endpoint="/fixture" /></MemoryRouter>);
+  const header = await board.findByRole('banner');
+  await board.findByText(/0 watching/);
+  expect(header.textContent).not.toContain('{count}');
+  const matchScore = board.getByRole('group', { name: 'Match score' });
+  expect(matchScore.textContent).toContain('Brasa0–0Cirro');
+  expect(board.getByText('Table clock').nextElementSibling?.tagName).toBe('TIME');
+
+  const update = (payload: object) => act(() => { stream.dispatchEvent(new MessageEvent('snapshot', { data: JSON.stringify(payload) })); });
+  update({ ...frame, status: 'between_games', spectators: 2, matchScore: score(1, 0) });
+  expect(header.textContent).toContain('Between games · 2 watching');
+  expect(matchScore.textContent).toContain('Brasa1–0Cirro');
+
+  update({ ...frame, status: 'playing', spectators: 3, matchScore: score(1, 1), deadlineAt: undefined });
+  expect(header.textContent).toContain('Live · 3 watching');
+  expect(matchScore.textContent).toContain('Brasa1–1Cirro');
+  expect(board.queryByText('Table clock')).toBeNull();
+  board.unmount();
+});
+
+test('a standalone spectator feed with no audience count never displays a translation placeholder', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({
+    role: 'spectator', status: 'finished', gameId: null, players: [], hands: {}, lines: [], chat: [], view: null,
+  })));
+  const board = render(<MemoryRouter><SpectatorBroadcast endpoint="/fixture" /></MemoryRouter>);
+  await board.findByText('Match finished', { selector: 'header span' });
+  expect(board.getByRole('banner').textContent).not.toContain('{count}');
+  expect(board.queryByRole('group', { name: 'Match score' })).toBeNull();
+  board.unmount();
+});

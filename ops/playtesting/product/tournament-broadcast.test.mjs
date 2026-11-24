@@ -85,3 +85,42 @@ test('official AFK, game result and last playable board remain independent; a mi
   assert.equal(missing.capture.lastBoard,null)
   await assert.rejects(broadcast.replay(event,pair,null,new URLSearchParams({gameId:game})),{status:404})
 })
+
+test('the pairing clock and score use the native seats during play and the recorded result after completion', async t => {
+  const [event, pair, table, game, a, b] = Array.from({ length: 6 }, () => randomUUID())
+  const deadline = 1795500000000
+  const row = { id: pair, table_id: table, deadline_at: String(deadline), completed: false, wins_a: 0, wins_b: 0,
+    name_a: 'seat-a', name_b: 'seat-b', display_a: 'Brasa', display_b: 'Cirro' }
+  const players = [{ name: 'seat-b', playerId: b }, { name: 'seat-a', playerId: a }]
+  let snapshot = null
+  const broadcast = createTournamentBroadcast({ async query() { return { rows: [row] } } }, {},
+    async () => snapshot && ({ snapshot }))
+  t.after(() => broadcast.close())
+  const score = (a, b) => [{ name: 'Brasa', wins: a }, { name: 'Cirro', wins: b }]
+
+  const waiting = await broadcast.live(event, pair, null, false)
+  assert.deepEqual(waiting.matchScore, score(0, 0))
+  assert.equal(waiting.deadlineAt, deadline)
+  assert.equal(waiting.status, 'waiting')
+
+  snapshot = { tableId: table, gameId: game, status: 'between_games', players,
+    view: { players: players.map(p => ({ ...p, wins: 0 })) },
+    matchWins: { 'seat-b': 0, 'seat-a': 1, 'someone-else': 42 } }
+  const between = await broadcast.live(event, pair, null, false)
+  assert.deepEqual(between.matchScore, score(1, 0))
+  assert.equal(between.deadlineAt, deadline)
+  assert.equal(between.matchWins, undefined)
+  assert.equal(between.status, 'between_games')
+
+  delete snapshot.matchWins
+  snapshot.status = 'playing'
+  snapshot.view.players = players.map(p => ({ ...p, wins: 1 }))
+  assert.deepEqual((await broadcast.live(event, pair, null, false)).matchScore, score(1, 1))
+
+  Object.assign(row, { completed: true, wins_a: 2, wins_b: 1 })
+  snapshot.status = 'playing'
+  const finished = await broadcast.live(event, pair, null, false)
+  assert.deepEqual(finished.matchScore, score(2, 1))
+  assert.equal(finished.deadlineAt, undefined)
+  assert.equal(finished.status, 'finished')
+})

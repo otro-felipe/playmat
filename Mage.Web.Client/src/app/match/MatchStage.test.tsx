@@ -346,8 +346,9 @@ test('land animation compares identical legal targets by engine state before dec
     canPlayObjects: { objects: { old: {}, new: {}, legacy: {} } } };
   const card = (id: string) => game.container.querySelector<HTMLElement>(`[data-object-id="${id}"]`)!;
   game.updateView(view, true);
-  expect(card('new').textContent).toContain('Recent control');
-  expect(card('old').textContent).not.toContain('Recent control');
+  expect(within(card('new')).getByRole('img', { name: 'Recent control' }).getAttribute('title')).toMatch(/summoning sickness/i);
+  expect(within(card('new')).queryByText('Recent control')).toBeNull();
+  expect(within(card('old')).queryByRole('img', { name: 'Recent control' })).toBeNull();
   expect(card('new').getAttribute('aria-label')).not.toContain('summoning sick');
   expect(card('new').parentElement).not.toBe(card('old').parentElement);
   expect(card('new').getAttribute('role')).toBe('button');
@@ -382,11 +383,12 @@ test('land animation compares identical legal targets by engine state before dec
   expect(card('new').textContent).toContain('Grants haste');
   expect(card('new').textContent).not.toContain('Needs haste');
   game.updateView(view, true);
-  expect(card('new').textContent).toContain('Recent control');
+  expect(within(card('new')).getByRole('img', { name: 'Recent control' }).getAttribute('title')).toMatch(/summoning sickness/i);
+  expect(within(card('new')).queryByText('Recent control')).toBeNull();
   expect(card('new').textContent).not.toContain('Grants haste');
   const animated = { ...fresh, cardTypes: ['LAND' as const, 'CREATURE' as const] };
   game.updateView({ ...view, players: [{ ...view.players![0], battlefield: { new: animated } }, BOARD.players![1]] }, true);
   expect(card('new').getAttribute('aria-label')).toContain('summoning sick');
-  expect(card('new').textContent).not.toContain('Recent control');
+  expect(within(card('new')).queryByRole('img', { name: 'Recent control' })).toBeNull();
   game.dispose();
 });

@@ -5,6 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 import mage.game.Table;
+import mage.game.match.Match;
 import mage.view.ChatMessage;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -103,9 +104,16 @@ public final class SpectatorTable {
         JsonObject response = new JsonObject();
         response.addProperty("owner", state.owner);
         JsonObject snapshot = state.snapshot(includeSeatKnowledge);
-        if (state.ended && table != null && table.getState() != mage.constants.TableState.FINISHED
-                && table.getMatch() != null && table.getMatch().getEndTime() == null) {
-            snapshot.addProperty("status", "between_games");
+        Match match = table == null ? null : table.getMatch();
+        if (match != null) {
+            if (state.gameId != null && match.getOptions().championship != null) {
+                JsonObject wins = new JsonObject();
+                match.getPlayers().forEach(seat -> wins.addProperty(seat.getName(), seat.getWins()));
+                snapshot.add("matchWins", wins);
+            }
+            if (state.ended && table.getState() != mage.constants.TableState.FINISHED && match.getEndTime() == null) {
+                snapshot.addProperty("status", "between_games");
+            }
         }
         response.add("snapshot", snapshot);
         return response;

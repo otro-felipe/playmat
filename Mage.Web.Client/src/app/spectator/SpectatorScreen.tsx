@@ -33,7 +33,9 @@ export interface SpectatorSnapshot {
   lines: SpectatorLine[];
   facts?: TournamentBoardFact[];
   chat: SpectatorChatMessage[];
-  spectators: number;
+  spectators?: number;
+  matchScore?: { name: string; wins: number }[];
+  deadlineAt?: number;
 }
 
 const offlineApi = createApi({ async call() { throw new Error('Spectator sessions cannot send game commands'); } });
@@ -125,9 +127,14 @@ export function SpectatorBroadcast({ endpoint, tableId, path, onLeave, humanMcpN
   const t = useT();
   const [refresh, setRefresh] = useState(0);
   const { frame, problem, closedPath } = useBroadcast(endpoint, refresh);
+  const count = frame?.status !== 'finished' ? frame?.spectators : undefined;
+  const matchScore = frame?.matchScore ?? frame?.players.flatMap(player => {
+    const wins = frame.view?.players?.find(seat => seat.playerId === player.playerId)?.wins;
+    return wins === undefined ? [] : [{ name: player.displayName ?? player.name, wins }];
+  });
   const status = [frame?.visibility === 'both-hands' && t('watch.bothScope'), tableId && t('match.input.delegated'), frame && t(`watch.${frame.status}`),
-    frame && t('watch.viewers', { count: frame.spectators })].filter(Boolean).join(' · ');
-  return <PublicBroadcast.Provider value><MatchHumanSeat.Provider value={(frame?.humanMcpName || humanMcpName)?.toLowerCase() ?? null}><SpectatorFrame status={status} actions={<>
+    typeof count === 'number' && Number.isSafeInteger(count) && count >= 0 && t('watch.viewers', { count })].filter(Boolean).join(' · ');
+  return <PublicBroadcast.Provider value><MatchHumanSeat.Provider value={(frame?.humanMcpName || humanMcpName)?.toLowerCase() ?? null}><SpectatorFrame status={status} matchScore={matchScore} deadlineAt={frame?.deadlineAt} actions={<>
     {frame?.visibility === 'both-hands' && frame.seatKnowledge && <SeatKnowledge players={frame.players} knowledge={frame.seatKnowledge} />}
     {frame && (path || tableId) && !(path && frame.visibility === 'both-hands') && <SpectatorLink bothHands={frame.visibility === 'both-hands'} tableId={tableId} path={path} publicBoard={frame.visibility === 'public-board'} />}
     {actions}

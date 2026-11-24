@@ -19,6 +19,7 @@ export function createTournamentRoutes({
   requireScope,
 }) {
   const streams = new Set()
+  const spectators = new Map()
   const limitHeartbeat = createLimits({ seat: { client: 90, total: 32_000, window: 60_000 } })
   const acquireStream = createConcurrencyLimit(200, 12)
   let timer, running
@@ -57,16 +58,22 @@ export function createTournamentRoutes({
     return detail
   }
 
-  async function stream(req, res, read) {
+  async function stream(req, res, read, pairingKey) {
     const release = acquireStream(clientKey(req))
     if (!release) throw new ProductError(429, 'Too many tournament streams')
     let interval,
       busy = false,
       last,
-      lastSent = Date.now()
+      lastSent = Date.now(),
+      counted = false
     const close = () => {
       clearInterval(interval)
-      streams.delete(res)
+      if (!streams.delete(res)) return
+      if (counted) {
+        const remaining = spectators.get(pairingKey) - 1
+        if (remaining) spectators.set(pairingKey, remaining)
+        else spectators.delete(pairingKey)
+      }
       release()
     }
     streams.add(res)
@@ -85,8 +92,23 @@ export function createTournamentRoutes({
       }
     }
     // Validate access before switching protocols.
-    const first = JSON.stringify(await read())
-    if (res.destroyed) return
+    let first
+    try {
+      const data = await read()
+      if (res.destroyed) {
+        close()
+        return
+      }
+      if (pairingKey && data.status !== 'finished') {
+        counted = true
+        data.spectators = (spectators.get(pairingKey) ?? 0) + 1
+        spectators.set(pairingKey, data.spectators)
+      }
+      first = JSON.stringify(data)
+    } catch (error) {
+      close()
+      throw error
+    }
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-store',
@@ -152,9 +174,14 @@ export function createTournamentRoutes({
     ) {
       if (kind === 'watch') {
         const hands = url.searchParams.get('hands') === '1'
+        const pairingKey = id.toLowerCase() + '/' + pairId.toLowerCase()
+        const readLive = async (viewer) => {
+          const frame = await broadcast.live(id, pairId, viewer, hands)
+          return { ...frame, spectators: spectators.get(pairingKey) ?? 0 }
+        }
         if (tail)
-          await stream(req, res, async () => broadcast.live(id, pairId, await resolveActor(req), hands))
-        else send(res, 200, await broadcast.live(id, pairId, actor, hands))
+          await stream(req, res, async () => readLive(await resolveActor(req)), pairingKey)
+        else send(res, 200, await readLive(actor))
       } else if (kind === 'replay' && !tail)
         send(res, 200, await broadcast.replay(id, pairId, actor, url.searchParams))
       else throw missing()
