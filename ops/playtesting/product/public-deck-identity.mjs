@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs'
+import { inflateRawSync } from 'node:zlib'
 import { createRequire } from 'node:module'
 import {
   archetypesFor,
@@ -57,33 +58,70 @@ export const statisticsFormat = (format) =>
     .trim()
 let catalog
 
-// Read only the public card catalog shipped with this server. A name can have
-// multiple printings; use a mask only when all relevant rows agree.
+// The cards table carries front-face colors. Only printings whose second face
+// could add another color need a public CardView lookup.
+export function loadCatalogColors(db) {
+  const result = new Map()
+  const merge = (name, mask) => result.set(name, !result.has(name) || result.get(name) === mask ? mask : null)
+  for (const row of db
+    .prepare(
+      `SELECT DISTINCT name,colors FROM cards
+    WHERE NOT (double_faced OR modal_double_faced) OR identity=colors`
+    )
+    .iterate()) {
+    merge(key(row.name), row.colors)
+  }
+  const dictionary = db.prepare("SELECT value FROM meta WHERE key='viewDictionary'").get()?.value
+  for (const row of db
+    .prepare(
+      `SELECT c.name,c.colors,p.view FROM cards c LEFT JOIN printings p ON p.id=c.printing
+    WHERE (c.double_faced OR c.modal_double_faced) AND c.identity<>c.colors`
+    )
+    .iterate()) {
+    let mask = null
+    let backName
+    if (dictionary && row.view) {
+      try {
+        const view = JSON.parse(inflateRawSync(row.view, { dictionary, maxOutputLength: 1024 * 1024 }))
+        const back = view.secondCardFace
+        if (key(view.name) === key(row.name) && key(back?.name) && faceMask(view.color) === row.colors) {
+          backName = key(back.name)
+          const backMask = faceMask(back.color)
+          if (backMask !== null) mask = row.colors | backMask
+        }
+      } catch {
+        // An unreadable printing does not establish the reverse face's color.
+      }
+    }
+    merge(key(row.name), mask)
+    if (backName) merge(key(row.name) + ' // ' + backName, mask)
+  }
+  return result
+}
+
+function faceMask(color) {
+  const names = ['white', 'blue', 'black', 'red', 'green']
+  if (!color || !names.every((name) => typeof color[name] === 'boolean')) return null
+  return names.reduce((mask, name, i) => (color[name] ? mask | (1 << i) : mask), 0)
+}
+
 function catalogMask(name) {
   if (!catalog) {
-    catalog = new Map()
     const file = '/opt/xmage/cards-prebuilt/catalog.sqlite'
     if (existsSync(file)) {
       const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite')
       const db = new DatabaseSync(file, { readOnly: true })
       try {
-        for (const row of db
-          .prepare('SELECT DISTINCT name,colors,identity,double_faced,modal_double_faced FROM cards')
-          .iterate()) {
-          const n = key(row.name)
-          // When the reverse face has another color, a front-only mask is incomplete.
-          const mask = (row.double_faced || row.modal_double_faced) && row.identity !== row.colors ? null : row.colors
-          catalog.set(n, !catalog.has(n) || catalog.get(n) === mask ? mask : null)
-        }
+        catalog = loadCatalogColors(db)
       } finally {
         db.close()
       }
-    }
+    } else catalog = new Map()
   }
   return catalog.get(name) ?? null
 }
 
-function mainColors(cards, lookup) {
+export function mainColors(cards, lookup = catalogMask) {
   if (!cards?.length) return null
   let mask = 0
   for (const card of cards) {

@@ -1,6 +1,6 @@
 import { isId, transaction } from './decks.mjs'
 import { deckListSignature } from './deck-performance-identity.mjs'
-import { normalizedDeckColors, resolveHistoricalDeck, statisticsFormat } from './public-deck-identity.mjs'
+import { mainColors, normalizedDeckColors, resolveHistoricalDeck, statisticsFormat } from './public-deck-identity.mjs'
 
 async function storeComposition(db, fact) {
   if (!fact.signature) return null
@@ -16,6 +16,16 @@ async function storeComposition(db, fact) {
   return row.id
 }
 
+async function registeredSnapshot(db, entryId) {
+  const snapshot = { cards: [], sideboard: [] }
+  const { rows } = await db.query(
+    'SELECT zone,card_name,amount FROM tournament_entry_cards WHERE entry_id=$1 ORDER BY zone,position',
+    [entryId]
+  )
+  for (const card of rows) snapshot[card.zone]?.push({ cardName: card.card_name, amount: card.amount })
+  return snapshot
+}
+
 export async function recordTournamentDeck(db, entryId) {
   const {
     rows: [entry],
@@ -28,12 +38,7 @@ export async function recordTournamentDeck(db, entryId) {
     [entryId]
   )
   if (!entry) return
-  const snapshot = { cards: [], sideboard: [] }
-  const { rows } = await db.query(
-    'SELECT zone,card_name,amount FROM tournament_entry_cards WHERE entry_id=$1 ORDER BY zone,position',
-    [entryId]
-  )
-  for (const card of rows) snapshot[card.zone]?.push({ cardName: card.card_name, amount: card.amount })
+  const snapshot = await registeredSnapshot(db, entryId)
   const matches = snapshot.cards.length && deckListSignature(snapshot) === entry.list_signature
   const fact = resolveHistoricalDeck({
     format: entry.format,
@@ -149,6 +154,57 @@ export async function backfillOpeningDeckBatch(pool, limit = 16) {
   })
 }
 
+// Revisit only unknown palettes of already materialized starting lists. Keyset
+// pagination also advances over snapshots the installed catalog cannot prove.
+export async function backfillMissingDeckColors(pool, { lookup, limit = 16, stopped = () => false } = {}) {
+  let changed = 0
+  let cursor = ['', '00000000-0000-0000-0000-000000000000', '']
+  while (!stopped()) {
+    const { rows } = await pool.query(
+      `SELECT candidates.*,c.list_signature FROM (
+      SELECT 'entry' AS kind,id,'' AS seat,opening_composition_id AS composition FROM tournament_entries
+      WHERE opening_identity_resolved AND opening_colors IS NULL
+      UNION ALL
+      SELECT 'game',p.game_id,p.engine_key,p.opening_composition_id FROM game_players p
+      JOIN games g ON g.id=p.game_id WHERE g.game_number=1 AND p.opening_identity_resolved
+        AND p.opening_colors IS NULL AND p.deck_snapshot IS NOT NULL
+    ) candidates JOIN public_deck_compositions c ON c.id=composition
+    WHERE (kind,candidates.id,seat)>($1,$2::uuid,$3) ORDER BY kind,candidates.id,seat LIMIT $4`,
+      [...cursor, limit]
+    )
+    for (const row of rows) {
+      const snapshot =
+        row.kind === 'entry'
+          ? await registeredSnapshot(pool, row.id)
+          : (
+              await pool.query('SELECT deck_snapshot FROM game_players WHERE game_id=$1 AND engine_key=$2', [
+                row.id,
+                row.seat,
+              ])
+            ).rows[0]?.deck_snapshot
+      if (deckListSignature(snapshot) !== row.list_signature) continue
+      const colors = mainColors(snapshot.cards, lookup)
+      if (colors === null) continue
+      // A simultaneous re-registration or newly supplied palette wins.
+      const receipt =
+        row.kind === 'entry'
+          ? await pool.query(
+              'UPDATE tournament_entries SET opening_colors=$3 WHERE id=$1 AND opening_composition_id=$2 AND opening_colors IS NULL',
+              [row.id, row.composition, colors]
+            )
+          : await pool.query(
+              'UPDATE game_players SET opening_colors=$3 WHERE game_id=$1 AND opening_composition_id=$2 AND opening_colors IS NULL AND engine_key=$4',
+              [row.id, row.composition, colors, row.seat]
+            )
+      changed += receipt.rowCount
+    }
+    if (rows.length < limit) break
+    const last = rows.at(-1)
+    cursor = [last.kind, last.id, last.seat]
+  }
+  return changed
+}
+
 // The migration only runs while unresolved opening rows remain. Writes from
 // regular ingestion and enrollment materialize their own facts transactionally.
 export function startOpeningDeckBackfill(pool) {
@@ -158,6 +214,7 @@ export function startOpeningDeckBackfill(pool) {
   async function run() {
     try {
       while (!closed && (await backfillOpeningDeckBatch(pool))) await new Promise((resolve) => setImmediate(resolve))
+      await backfillMissingDeckColors(pool, { stopped: () => closed })
     } catch {
       if (!closed) {
         console.warn('opening_deck_backfill_retry')

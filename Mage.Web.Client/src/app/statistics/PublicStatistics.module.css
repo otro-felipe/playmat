@@ -136,6 +136,25 @@
   margin-bottom: 20px;
   font-size: 2.25rem;
 }
+.paletteLegend {
+  margin: -6px 0 10px;
+  color: var(--ink-soft);
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+.paletteLegend summary {
+  width: fit-content;
+  min-height: 44px;
+  padding: 10px 0;
+  cursor: pointer;
+}
+.paletteLegend summary::marker {
+  color: var(--decision-strong);
+}
+.paletteLegend p {
+  margin: 0 0 8px;
+  max-width: 74ch;
+}
 .perspective {
   color: var(--ink-soft);
   margin: -8px 0 16px;
@@ -361,6 +380,23 @@
     font-size: 0.92rem;
   }
 }
+@media (max-width: 24rem) {
+  .hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+  .sample {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    max-width: none;
+  }
+  .sample strong {
+    font-size: 1.65rem;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .rowLink svg,
   .group a {

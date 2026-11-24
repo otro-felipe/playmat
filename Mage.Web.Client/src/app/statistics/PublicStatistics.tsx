@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, ArrowUpRight, ChevronRight } from 'lucide-react';
-import { useEffect, useRef } from 'react';
+import { useEffect, useId, useRef } from 'react';
 import { Link, useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { registerMessages, useI18n, useT, type Translate } from '../i18n';
 import messages from '../i18n/en/events';
@@ -32,17 +32,32 @@ type Statistics = {
 };
 const colors: Color[] = ['W', 'U', 'B', 'R', 'G'];
 
-function Identity({ value }: { value: Row['colors'] }) {
+function PaletteSymbols({
+  value,
+  group,
+  descriptionId,
+}: {
+  value: Row['colors'];
+  group: Group;
+  descriptionId: string;
+}) {
   const t = useT();
   const ordered = colors.filter((c) => value?.includes(c));
   const symbols = !value ? [] : ordered.length ? ordered : ['C'];
-  const label = !value
+  const names = !value
     ? t('stats.unknownColors')
     : ordered.length
       ? ordered.map((c) => t(`stats.color.${c}`)).join(', ')
       : t('stats.colorless');
+  const label = t(group === 'deck' ? 'stats.paletteDeck' : 'stats.paletteArchetype', { colors: names });
   return (
-    <span className={styles.colors} role="img" aria-label={label} title={label}>
+    <span
+      className={styles.colors}
+      role="img"
+      aria-label={label}
+      aria-describedby={descriptionId}
+      title={label}
+    >
       {symbols.length ? (
         symbols.map((c) => <i key={c} aria-hidden="true" className={`ms ms-cost ms-${c.toLowerCase()}`} />)
       ) : (
@@ -51,6 +66,19 @@ function Identity({ value }: { value: Row['colors'] }) {
         </span>
       )}
     </span>
+  );
+}
+
+function PaletteLegend({ group, descriptionId }: { group: Group; descriptionId: string }) {
+  const t = useT();
+  return (
+    <details className={styles.paletteLegend}>
+      <summary>{t(group === 'deck' ? 'stats.legendDeck' : 'stats.legendArchetype')}</summary>
+      <div id={descriptionId}>
+        <p>{t('stats.legendSources')}</p>
+        <p>{t(group === 'deck' ? 'stats.legendDeckAgreement' : 'stats.legendArchetypeAgreement')}</p>
+      </div>
+    </details>
   );
 }
 
@@ -101,12 +129,16 @@ function ResultTable({
   heading,
   destination,
   selectedId,
+  group,
+  descriptionId,
 }: {
   rows: Row[];
   names: Map<string, string>;
   heading: string;
   destination: (id: string) => string;
   selectedId?: string;
+  group: Group;
+  descriptionId: string;
 }) {
   const t = useT();
   const locale = useI18n((s) => s.locale);
@@ -141,7 +173,7 @@ function ResultTable({
                 </Link>
               )}
               <div className={styles.meta}>
-                <Identity value={row.colors} />
+                <PaletteSymbols value={row.colors} group={group} descriptionId={descriptionId} />
                 <span>{row.format}</span>
               </div>
             </th>
@@ -170,6 +202,7 @@ function ResultTable({
 
 export function PublicStatistics() {
   const { id } = useParams();
+  const descriptionId = useId();
   const location = useLocation();
   const heading = useRef<HTMLHeadingElement>(null);
   const lastView = useRef<{ key: string; scope: string; selection: string; origin: string } | null>(null);
@@ -246,7 +279,7 @@ export function PublicStatistics() {
             </h1>
             {detail && (
               <div className={styles.meta}>
-                <Identity value={detail.colors} />
+                <PaletteSymbols value={detail.colors} group={group} descriptionId={descriptionId} />
                 <span>{detail.format}</span>
                 <span>·</span>
                 <span>{t('stats.results', { w: detail.wins, d: detail.draws, l: detail.losses })}</span>
@@ -293,12 +326,17 @@ export function PublicStatistics() {
           <section className={styles.results}>
             <h2>{detail ? t('stats.matchups') : t('stats.resultsHeading')}</h2>
             {detail && <p className={styles.perspective}>{t('stats.perspective', { name: title ?? '' })}</p>}
+            {(tableRows.length > 0 || detail) && (
+              <PaletteLegend group={group} descriptionId={descriptionId} />
+            )}
             {tableRows.length ? (
               <>
                 <ResultTable
                   rows={tableRows}
                   names={names}
                   heading={label}
+                  group={group}
+                  descriptionId={descriptionId}
                   selectedId={detail?.id}
                   destination={(selected) => link(group, selected)}
                 />

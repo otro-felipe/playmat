@@ -64,3 +64,44 @@ test('confirmed revisions take priority and conflicts stay unknown; unknown colo
     null
   )
 })
+
+test('the catalog uses both printed face colors while ignoring commander mana identity', async () => {
+  const { loadCatalogColors } = await import('./public-deck-identity.mjs')
+  const { DatabaseSync } = await import('node:sqlite')
+  const { deflateRawSync } = await import('node:zlib')
+  const db = new DatabaseSync(':memory:')
+  try {
+    db.exec(
+      'CREATE TABLE cards(name,colors,identity,double_faced,modal_double_faced,printing); CREATE TABLE printings(id,view); CREATE TABLE meta(key,value)'
+    )
+    const dictionary = Buffer.from('secondCardFace.white.blue.black.red.green')
+    db.prepare('INSERT INTO meta VALUES(?,?)').run('viewDictionary', dictionary)
+    const colors = (mask) =>
+      Object.fromEntries(['white', 'blue', 'black', 'red', 'green'].map((key, i) => [key, !!(mask & (1 << i))]))
+    const add = (id, name, front, identity, back, backName) => {
+      db.prepare('INSERT INTO cards VALUES(?,?,?,?,?,?)').run(name, front, identity, 0, backName ? 1 : 0, id)
+      const view = {
+        name,
+        color: colors(front),
+        ...(backName && { secondCardFace: { name: backName, color: back === null ? {} : colors(back) } }),
+      }
+      db.prepare('INSERT INTO printings VALUES(?,?)').run(id, deflateRawSync(JSON.stringify(view), { dictionary }))
+    }
+    add(1, 'Brightclimb Pathway', 0, 5, 0, 'Grimclimb Pathway')
+    add(2, 'Jennifer Walters', 1, 17, 17, 'The Sensational She-Hulk')
+    add(3, 'Kiora, Behemoth Beckoner', 18, 18, null, null)
+    add(4, 'Unverified', 1, 3, null, 'Missing face data')
+    add(5, 'Off-color activation', 1, 5, 1, 'White reverse')
+    const catalog = loadCatalogColors(db)
+    const palette = (...cards) =>
+      resolveHistoricalDeck({ format: 'Pioneer', snapshot: { cards } }, (name) => catalog.get(name)).colors
+    assert.deepEqual(palette('Brightclimb Pathway'), [])
+    assert.deepEqual(palette('Jennifer Walters'), ['W', 'G'])
+    assert.deepEqual(palette('Jennifer Walters', 'Brightclimb Pathway', 'Swamp'), ['W', 'B', 'G'])
+    assert.deepEqual(palette('Kiora, Behemoth Beckoner'), ['U', 'G'])
+    assert.deepEqual(palette('Off-color activation'), ['W'])
+    assert.equal(palette('Unverified'), null)
+  } finally {
+    db.close()
+  }
+})

@@ -149,5 +149,32 @@ test(
     await recordTournamentDeck(db, entry)
     assert.notEqual((await entryFact()).id, fact.id)
     assert.equal((await entryFact()).label, null)
+    const { backfillMissingDeckColors } = await import('./public-deck-materialization.mjs')
+    const before = await entryFact()
+    const lookup = (name) => (name === 'unknown fixture' ? 17 : null)
+    await db.query("UPDATE tournament_entries SET opening_archetype='fixture frozen',opening_colors=NULL WHERE id=$1", [
+      entry,
+    ])
+    await db.query('UPDATE game_players SET opening_colors=NULL WHERE game_id=$1', [g1])
+    const count = await backfillMissingDeckColors(db, { lookup, limit: 1 })
+    assert.ok(count >= 2)
+    const {
+      rows: [repaired],
+    } = await db.query(
+      'SELECT opening_composition_id,opening_archetype,opening_colors FROM tournament_entries WHERE id=$1',
+      [entry]
+    )
+    assert.deepEqual(repaired, {
+      opening_composition_id: before.id,
+      opening_archetype: 'fixture frozen',
+      opening_colors: ['W', 'G'],
+    })
+    await db.query("UPDATE game_players SET opening_colors=ARRAY['U'] WHERE game_id=$1", [g1])
+    assert.equal(await backfillMissingDeckColors(db, { lookup, limit: 1 }), 0)
+    assert.deepEqual(
+      (await db.query("SELECT opening_colors FROM game_players WHERE game_id=$1 AND engine_key='owner'", [g1])).rows[0]
+        .opening_colors,
+      ['U']
+    )
   }
 )

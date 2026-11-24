@@ -51,7 +51,7 @@ it('navigates between format-scoped archetypes and their matchups with a shareab
   expect(link.getAttribute('href')).toContain('selected=izzet');
   const row = link.closest('tr')!;
   expect(within(row).getByText('50%')).toBeTruthy();
-  expect(within(row).getByRole('img', { name: 'Blue, Red' })).toBeTruthy();
+  expect(within(row).getByRole('img', { name: 'Common archetype palette (Blue, Red)' })).toBeTruthy();
   fireEvent.change(page.getByRole('combobox', { name: 'Format' }), { target: { value: 'Pioneer' } });
   fireEvent.click(await page.findByRole('link', { name: 'Izzet Phoenix' }));
   expect(await page.findByRole('heading', { name: 'Matchups' })).toBeTruthy();
@@ -71,8 +71,8 @@ it('opens scoped anonymous deck details without confusing missing and colorless 
   expect(await page.findByRole('heading', { name: /Anonymous deck.*adbeef/i })).toBeTruthy();
   expect(fetch.mock.calls[0][0]).toContain('/api/playtesting/tournaments/cup/statistics');
   expect(page.getByRole('link', { name: 'League' }).getAttribute('href')).toBe('/tournaments/cup');
-  expect(page.getByRole('img', { name: 'Unknown colors' })).toBeTruthy();
-  expect(page.getByRole('img', { name: 'Colorless' })).toBeTruthy();
+  expect(page.getByRole('img', { name: 'Initial deck palette (Unknown colors)' })).toBeTruthy();
+  expect(page.getByRole('img', { name: 'Initial deck palette (Colorless)' })).toBeTruthy();
 });
 
 it('allows recovery from an unavailable selection and reports a genuinely empty comparison', async () => {
@@ -96,7 +96,7 @@ it('leaves unclassified archetypes unnamed and never guesses deck colors from a 
     selected: null,
   }));
   expect(await page.findByRole('link', { name: 'Unclassified' })).toBeTruthy();
-  expect(page.getAllByRole('img', { name: 'Unknown colors' })).toHaveLength(2);
+  expect(page.getAllByRole('img', { name: 'Common archetype palette (Unknown colors)' })).toHaveLength(2);
   expect(page.queryByText(/Anonymous deck/i)).toBeNull();
 });
 
@@ -153,3 +153,29 @@ it('preserves grouping and format across scopes and clears the tournament select
   await page.findByRole('heading', { name: 'Global statistics' });
   expect(fetch.mock.calls.at(-1)?.[0]).toBe('/api/playtesting/statistics?group=deck&format=Pioneer');
 });
+
+it.each([
+  ['deck', 'Initial deck palette (Blue, Green)', 'How are deck colors determined?'],
+  ['archetype', 'Common archetype palette (Blue, Green)', 'How are archetype colors determined?'],
+] as const)(
+  'explains a blue-green palette on a Mono-Green label in the %s report',
+  async (group, label, summary) => {
+    const green = { ...izzet, name: 'Mono-Green Devotion', colors: ['G', 'U'] };
+    const { page } = show('/statistics?group=' + group, () => ({
+      formats: ['Pioneer'],
+      matches: 2,
+      rows: [green],
+      selected: null,
+    }));
+    const icon = await page.findByRole('img', { name: label, description: /hybrid.*basic lands/i });
+    expect(icon.getAttribute('title')).toBe(label);
+    const disclosure = page.getByText(summary).closest('details')!;
+    expect(disclosure.open).toBe(false);
+    fireEvent.click(page.getByText(summary));
+    expect(disclosure.open).toBe(true);
+    expect(disclosure.textContent).toMatch(/declared colors.*main deck.*typical archetype palette/i);
+    expect(disclosure.textContent).toMatch(
+      group === 'archetype' ? /records for the archetype agree/i : /records for the same decklist agree/i,
+    );
+  },
+);
