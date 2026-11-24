@@ -121,9 +121,13 @@ test(
     assert.notEqual(decks.selected.unidentified, true)
     assert.equal(decks.selected.matchups.find((x) => x.id === c).name, 'Public Example')
     assert.equal((await publicDeckStatistics(db, { group: 'deck', selected: randomUUID() })).selected, null)
-    assert.equal((await publicDeckStatistics(db, { format: 'Modern' })).rows[0].colors, null)
-    assert.equal((await publicDeckStatistics(db, { format: 'Modern' })).rows[0].name, null)
-    assert.equal((await publicDeckStatistics(db, { group: 'deck', format: 'Modern' })).rows[0].unidentified, true)
+    // A game-two-only record has no opening identity. It counts, but stays out of the ranking.
+    const modern = await publicDeckStatistics(db, { format: 'Modern' })
+    assert.deepEqual([modern.format, modern.matches, modern.unclassified, modern.rows], ['Modern', 1, 2, []])
+    const modernDecks = await publicDeckStatistics(db, { group: 'deck', format: 'Modern' })
+    assert.deepEqual([modernDecks.unclassified, modernDecks.rows], [2, []])
+    // Without a requested format the busiest one is shown, never a mix of formats.
+    assert.equal((await publicDeckStatistics(db)).format, 'Pioneer')
     assert.doesNotMatch(JSON.stringify([report, decks]), /Private|internal-|Alice|Bob/)
     await assert.rejects(publicDeckStatistics(db, { group: 'player' }), { status: 400 })
     await assert.rejects(publicDeckStatistics(db, { tournamentId: randomUUID() }), { status: 404 })
@@ -276,12 +280,11 @@ test(
     const red = report.rows.find((row) => row.name === 'Red Deck Wins')
     assert.deepEqual(red.colors, ['R'])
     assert.equal(red.source, 'https://www.mtgtop8.com/archetype?a=862&f=PI')
-    assert.equal(report.rows.find((row) => row.name === null).colors, null)
+    assert.equal(report.rows.some((row) => row.name === null), false)
+    assert.equal(report.unclassified, 1)
     assert.doesNotMatch(JSON.stringify(report), /Private unpublished title/)
     const decks = await publicDeckStatistics(db, { group: 'deck' })
-    assert.equal(decks.rows.length, 1)
-    assert.equal(decks.rows[0].unidentified, true)
-    assert.equal(decks.rows[0].colors, null)
+    assert.deepEqual([decks.rows.length, decks.unclassified], [0, 2])
   },
 )
 
@@ -323,5 +326,99 @@ test(
     const detail = await publicDeckStatistics(db, { selected: red.id })
     const versus = detail.selected.matchups.find((row) => row.name === 'UR Aggro')
     assert.deepEqual([versus.games, versus.mulligans, versus.keptWins], [2, 2, 1], 'matchups report the selected deck’s own hands')
+  },
+)
+
+test(
+  'practice and casual results stay out, palettes follow the majority, and a selection shows its lists and kept hands',
+  { skip: !url },
+  async (t) => {
+    const { db, composition, match } = await fixture(t)
+    const red = await composition(null, ['R'])
+    const splash = await composition(null, ['R', 'W'])
+    const rival = await composition('Rival list', ['U', 'R'])
+    const lists = {
+      [red]: { cards: [{ cardName: 'Monastery Swiftspear', amount: 4 }, { cardName: 'Mountain', amount: 20 }], sideboard: [{ cardName: 'Abrade', amount: 2 }] },
+      [splash]: { cards: [{ cardName: 'Monastery Swiftspear', amount: 3 }, { cardName: 'Sacred Foundry', amount: 4 }], sideboard: [] },
+    }
+    async function played(sides, options) {
+      const result = await match(sides, options)
+      for (const [i, [comp]] of sides.entries()) {
+        if (!lists[comp]) continue
+        await db.query('UPDATE game_players SET deck_snapshot=$3,opening_snapshot_used=true WHERE game_id=$1 AND engine_key=$2', [
+          result.game, ['alice', 'bob'][i], JSON.stringify(lists[comp]),
+        ])
+      }
+      return result
+    }
+    const RDW = [red, 'Red Deck Wins'], SPLASH = [splash, 'Red Deck Wins'], UR = [rival, 'UR Aggro']
+    const first = await played([RDW, UR])
+    await played([RDW, UR], { winner: 'Bob' })
+    await played([SPLASH, UR])
+    // None of these may reach the statistics.
+    await played([RDW, [null, 'Basic Lands Practice']])
+    await played([[null, 'Creature Practice'], UR])
+    await played([RDW, UR], { format: 'Freeform' })
+    await played([RDW, UR], { format: 'Freeform Commander' })
+    // Alice keeps seven with Swiftspear and wins; a second game she mulligans once and loses.
+    await db.query("UPDATE games SET winner='Alice' WHERE id=$1", [first.game])
+    await db.query("UPDATE game_players SET mulligans=0 WHERE game_id=$1 AND engine_key='alice'", [first.game])
+    const second = randomUUID()
+    await db.query(
+      "INSERT INTO games(id,match_id,game_number,started_at,winner,status,archive_state) VALUES($1,$2,2,1,'Bob','completed','ready')",
+      [second, first.id],
+    )
+    await db.query("INSERT INTO game_players(game_id,engine_key,engine_name,human,mulligans) VALUES($1,'alice','Alice',true,1),($1,'bob','Bob',true,0)", [second])
+    for (const [game, cards] of [
+      [first.game, ['Monastery Swiftspear', 'Mountain']],
+      [second, ['Mountain']],
+    ]) {
+      await db.query("INSERT INTO game_performance_evidence(game_id,engine_key,kept_hand_known,opponent_view_known) VALUES($1,'alice',true,false)", [game])
+      for (const card of cards)
+        await db.query("INSERT INTO game_performance_cards(game_id,engine_key,evidence,card_name) VALUES($1,'alice','keep',$2)", [game, card])
+    }
+
+    const report = await publicDeckStatistics(db)
+    assert.deepEqual(report.formats, ['Pioneer'])
+    assert.equal(report.matches, 3)
+    assert.deepEqual(report.rows.map((row) => row.name), ['Red Deck Wins', 'UR Aggro'])
+    const rdw = report.rows[0]
+    // Two mono-red records outvote one splash list.
+    assert.deepEqual(rdw.colors, ['R'])
+    assert.deepEqual([record(rdw), rdw.games, rdw.gameWins], [[3, 2, 0, 1], 4, 1])
+
+    const archetype = (await publicDeckStatistics(db, { selected: rdw.id })).selected
+    assert.equal(archetype.list.kind, 'archetype')
+    assert.equal(archetype.list.lists, 2)
+    assert.deepEqual(archetype.list.main[0], { name: 'Monastery Swiftspear', lists: 2, copies: 3.5 })
+    assert.deepEqual(archetype.list.sideboard, [{ name: 'Abrade', lists: 1, copies: 2 }])
+    assert.deepEqual(archetype.hands.mulligans, [
+      { count: 0, games: 1, wins: 1 },
+      { count: 1, games: 1, wins: 0 },
+    ])
+    assert.deepEqual([archetype.hands.games, archetype.hands.wins], [2, 1])
+    assert.deepEqual(archetype.hands.cards, [
+      { name: 'Mountain', games: 2, wins: 1 },
+      { name: 'Monastery Swiftspear', games: 1, wins: 1 },
+    ])
+
+    const deck = (await publicDeckStatistics(db, { group: 'deck', selected: red })).selected
+    assert.deepEqual(deck.list, {
+      kind: 'deck',
+      main: [{ name: 'Mountain', amount: 20 }, { name: 'Monastery Swiftspear', amount: 4 }],
+      sideboard: [{ name: 'Abrade', amount: 2 }],
+    })
+    assert.equal((await publicDeckStatistics(db, { group: 'deck', selected: rival })).selected.list, null)
+    assert.doesNotMatch(JSON.stringify([report, archetype, deck]), /Private|internal-|Alice|Bob/)
+
+    // The one-time reset excludes every match that started before its cutoff, and only those.
+    const later = await played([RDW, UR])
+    await db.query('UPDATE matches SET started_at=1795556700000 WHERE id=$1', [later.id])
+    await db.query(await readFile(new URL('statistics-reset.sql', import.meta.url), 'utf8'))
+    await db.query(await readFile(new URL('statistics-reset.sql', import.meta.url), 'utf8'))
+    const reset = await publicDeckStatistics(db)
+    assert.equal(reset.matches, 1)
+    const { rows: [excluded] } = await db.query("SELECT count(*)::int AS n FROM match_statistics_exclusions WHERE author='service-operator'")
+    assert.equal(excluded.n, 7)
   },
 )

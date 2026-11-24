@@ -252,9 +252,13 @@ test('public statistics are readable without a session and accept only read oper
   const match = await archivedReviewMatch(f, {
     players: [{ engineName: 'FixturePilot', human: true }, { engineName: 'FixtureBot', human: false }],
   })
+  // A match without a format is casual: it never mixes into a format's statistics.
+  assert.equal((await (await f.path(path)).json()).matches, 0)
+  await withTestDatabase(f, db => db.query("UPDATE matches SET format='Pioneer' WHERE id=$1", [match.id]))
   const recorded = await (await f.path(path)).json()
   assert.equal(recorded.matches, 1)
-  assert.equal(recorded.rows.reduce((sum, row) => sum + row.n, 0), 2)
+  assert.equal(recorded.format, 'Pioneer')
+  assert.equal(recorded.unclassified + recorded.rows.reduce((sum, row) => sum + row.n, 0), 2)
   assert.ok(!JSON.stringify(recorded).includes('FixturePilot'))
   await withTestDatabase(f, db =>
     db.query('INSERT INTO match_statistics_exclusions(match_id,reason,author) VALUES ($1,$2,$3)',

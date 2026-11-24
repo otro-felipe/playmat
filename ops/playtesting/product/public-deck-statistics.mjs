@@ -7,7 +7,7 @@ import { archetypeColors, statisticsFormat } from './public-deck-identity.mjs'
 // Keep the archive as the eligibility authority even for a completed tournament pairing.
 // Project only opening identities and anonymous counts. Reading these never requires a replay,
 // a private deck name, a composition signature or a player's current library revision.
-const results = `
+const eligibleMatches = `
   WITH seats AS (
     SELECT m.id,m.table_id,eligible.id IS NOT NULL AS included,COALESCE(m.format,m.engine_format,'Unknown') AS format,
       NULLIF(lower(btrim(m.winner)),'') AS winner,p.engine_key,
@@ -59,10 +59,13 @@ const results = `
       CASE winner WHEN names[1] THEN 1 WHEN names[2] THEN -1 ELSE 0 END
     FROM attributed WHERE included AND $1 IS NULL AND pairing_id IS NULL AND physical_id IS NULL
       AND (winner IS NULL OR winner=ANY(names))
-  ), side_stats AS (
+  )`
+
+const results = eligibleMatches + `, side_stats AS (
     -- Every completed game of an eligible match, from one seat: opening hands and length.
     SELECT g.match_id AS id,p.engine_key AS k,count(*)::int AS games,
       count(p.mulligans)::int AS mull_known,coalesce(sum(p.mulligans),0)::int AS mulligans,
+      count(*) FILTER (WHERE lower(btrim(g.winner))=p.engine_key)::int AS game_wins,
       count(*) FILTER (WHERE p.mulligans=0)::int AS kept_games,
       count(*) FILTER (WHERE p.mulligans=0 AND lower(btrim(g.winner))=p.engine_key)::int AS kept_wins,
       count(*) FILTER (WHERE p.mulligans>0)::int AS mull_games,
@@ -75,6 +78,7 @@ const results = `
   ), counts AS (
     SELECT e.format,ca,cb,aa,ab,palette_a,palette_b,outcome,count(*)::int AS n,
       coalesce(sum(sa.games),0)::int AS games_a,coalesce(sum(sb.games),0)::int AS games_b,
+      coalesce(sum(sa.game_wins),0)::int AS game_wins_a,coalesce(sum(sb.game_wins),0)::int AS game_wins_b,
       coalesce(sum(sa.mull_known),0)::int AS mull_known_a,coalesce(sum(sb.mull_known),0)::int AS mull_known_b,
       coalesce(sum(sa.mulligans),0)::int AS mulligans_a,coalesce(sum(sb.mulligans),0)::int AS mulligans_b,
       coalesce(sum(sa.kept_games),0)::int AS kept_games_a,coalesce(sum(sb.kept_games),0)::int AS kept_games_b,
@@ -95,6 +99,12 @@ const results = `
   FROM counts LEFT JOIN public_deck_compositions a ON a.id=ca LEFT JOIN public_deck_compositions b ON b.id=cb
   LEFT JOIN cup_titles ta ON ta.opening_composition_id=ca LEFT JOIN cup_titles tb ON tb.opening_composition_id=cb`
 
+// Casual and multiplayer formats have no archetype catalog; their results would mix unrelated decks.
+const casualFormat = /freeform|commander|unknown/i
+// Rehearsal lists exercise the engine, not the metagame. A match against one says nothing about either deck.
+const practiceArchetypes = new Set(['Empty deck', 'Basic Lands Practice', 'Creature Practice'])
+const isPractice = (format, label) => practiceArchetypes.has(canonicalArchetype(format, label))
+
 // Unknown is a separate, format-scoped bucket. These keys encode only public labels.
 // Identified decks instead use the randomly issued public composition UUID.
 function categoryId(group, format, label) {
@@ -104,26 +114,32 @@ function categoryId(group, format, label) {
     .slice(0, 32)
 }
 
+// Rows archived before a catalog change still group under today's name.
+function archetypeName(format, archetype) {
+  const label = canonicalArchetype(format, archetype)
+  return label !== 'Other' && archetypesFor(format).includes(label) ? label : null
+}
+
 function category(group, format, composition, publicName, archetype, colors) {
   if (group === 'deck') {
-    if (composition) return { id: composition, name: publicName, format, colors }
+    // An unnamed list is shown by its archetype, so its row says what kind of deck it is.
+    if (composition) return { id: composition, name: publicName, archetype: archetypeName(format, archetype), format, colors }
     return { id: categoryId(group, format, null), name: null, unidentified: true, format, colors: null }
   }
-  // Rows archived before a catalog change still group under today's name.
-  const label = canonicalArchetype(format, archetype)
-  const name = label !== 'Other' && archetypesFor(format).includes(label) ? label : null
+  const name = archetypeName(format, archetype)
   return {
     id: categoryId(group, format, name), name, format, colors: colors ?? archetypeColors(name),
+    canonicalColors: archetypeColors(name),
     source: name ? archetypeSourceUrl(format, name) : null,
   }
 }
 
-const metrics = ['games', 'mulliganKnown', 'mulligans', 'keptGames', 'keptWins', 'mulliganGames', 'mulliganWins', 'timedGames', 'durationMs']
+const metrics = ['games', 'gameWins', 'mulliganKnown', 'mulligans', 'keptGames', 'keptWins', 'mulliganGames', 'mulliganWins', 'timedGames', 'durationMs']
 
 // One side of the aggregated duels: its own games and opening hands, and the shared game length.
 function side(row, s) {
   return {
-    games: row['games_' + s], mulliganKnown: row['mull_known_' + s], mulligans: row['mulligans_' + s],
+    games: row['games_' + s], gameWins: row['game_wins_' + s], mulliganKnown: row['mull_known_' + s], mulligans: row['mulligans_' + s],
     keptGames: row['kept_games_' + s], keptWins: row['kept_wins_' + s],
     mulliganGames: row['mull_games_' + s], mulliganWins: row['mull_wins_' + s],
     timedGames: row.timed ?? 0, durationMs: Number(row.duration ?? 0),
@@ -133,16 +149,34 @@ function side(row, s) {
 function add(map, category, outcome, count, stats = {}) {
   let row = map.get(category.id)
   if (!row) {
-    row = { ...category, n: 0, wins: 0, draws: 0, losses: 0, ...Object.fromEntries(metrics.map((m) => [m, 0])) }
+    const { colors, canonicalColors, ...rest } = category
+    row = { ...rest, n: 0, wins: 0, draws: 0, losses: 0, ...Object.fromEntries(metrics.map((m) => [m, 0])) }
+    Object.defineProperty(row, 'palettes', { value: { votes: new Map(), canonical: canonicalColors?.join('') ?? null } })
     map.set(row.id, row)
-  } else if (row.colors && (!category.colors || row.colors.join() !== category.colors.join())) {
-    row.colors = null
+  } else if (row.archetype !== undefined && row.archetype !== category.archetype) {
+    row.archetype = row.archetype ?? category.archetype
+    if (category.archetype && row.archetype !== category.archetype) row.archetype = null
+  }
+  if (category.colors) {
+    const key = category.colors.join('')
+    row.palettes.votes.set(key, (row.palettes.votes.get(key) ?? 0) + count)
   }
   row.n += count
   for (const m of metrics) row[m] += stats[m] ?? 0
   if (outcome > 0) row.wins += count
   else if (outcome < 0) row.losses += count
   else row.draws += count
+}
+
+// The palette most records agree on. A tie keeps the archetype's own palette when it is
+// one of the tied candidates, and is otherwise unknown.
+function settleColors(row) {
+  const { votes, canonical } = row.palettes
+  const top = Math.max(0, ...votes.values())
+  const tied = [...votes].filter(([, count]) => count === top).map(([key]) => key)
+  const key = tied.length === 1 ? tied[0] : tied.includes(canonical) ? canonical : votes.size ? null : canonical
+  row.colors = key == null ? null : [...key]
+  return row
 }
 
 function order(a, b) {
@@ -154,6 +188,143 @@ function order(a, b) {
   )
 }
 
+function snapshotCards(entries) {
+  const counts = new Map()
+  for (const card of Array.isArray(entries) ? entries : []) {
+    const raw = typeof card === 'string' ? card : (card?.cardName ?? card?.name)
+    const name = typeof raw === 'string' ? raw.trim() : ''
+    const amount = Number(card?.amount ?? card?.quantity ?? card?.count ?? 1)
+    if (!name || name.length > 200 || !Number.isSafeInteger(amount) || amount < 1) continue
+    counts.set(name, (counts.get(name) ?? 0) + amount)
+  }
+  return counts
+}
+
+const byCount = (a, b) => b.amount - a.amount || a.name.localeCompare(b.name)
+
+// The exact opening lists of the selected compositions. Only lists that reached an eligible,
+// published duel are read: a game's own snapshot, or a published tournament registration.
+async function compositionLists(pool, compositions) {
+  if (!compositions.length) return new Map()
+  const { rows } = await pool.query(
+    `SELECT DISTINCT ON (p.opening_composition_id) p.opening_composition_id AS id,p.deck_snapshot AS snapshot
+    FROM game_players p WHERE p.opening_composition_id=ANY($1::uuid[]) AND p.opening_snapshot_used
+      AND jsonb_typeof(p.deck_snapshot->'cards')='array'
+    ORDER BY p.opening_composition_id,p.game_id`,
+    [compositions],
+  )
+  const lists = new Map(rows.map((row) => [row.id, row.snapshot]))
+  const missing = compositions.filter((id) => !lists.has(id))
+  if (missing.length) {
+    const { rows: cards } = await pool.query(
+      `WITH chosen AS (
+        SELECT DISTINCT ON (opening_composition_id) opening_composition_id AS id,id AS entry
+        FROM tournament_entries WHERE opening_composition_id=ANY($1::uuid[]) ORDER BY opening_composition_id,id)
+      SELECT chosen.id,c.zone,c.card_name,c.amount FROM chosen JOIN tournament_entry_cards c ON c.entry_id=chosen.entry
+      ORDER BY chosen.id,c.zone,c.position`,
+      [missing],
+    )
+    for (const card of cards) {
+      if (!lists.has(card.id)) lists.set(card.id, { cards: [], sideboard: [] })
+      lists.get(card.id)[card.zone === 'sideboard' ? 'sideboard' : 'cards'].push({ cardName: card.card_name, amount: card.amount })
+    }
+  }
+  return lists
+}
+
+// Results by number of mulligans, and cards seen in a kept opening hand with how those games
+// ended. Hands come from the seat's own replay evidence, never from an opponent's hidden zone.
+async function openingHands(pool, seats) {
+  const { rows } = await pool.query(
+    `SELECT p.mulligans,lower(btrim(g.winner))=s.engine_key AS won,COALESCE(e.kept_hand_known,false) AS known,
+      ARRAY(SELECT c.card_name FROM game_performance_cards c
+        WHERE (c.game_id,c.engine_key)=(g.id,s.engine_key) AND c.evidence='keep') AS cards
+    FROM unnest($1::uuid[],$2::text[]) AS s(match_id,engine_key)
+    JOIN games g ON g.match_id=s.match_id AND g.status='completed'
+    JOIN game_players p ON p.game_id=g.id AND p.engine_key=s.engine_key
+    LEFT JOIN game_performance_evidence e ON (e.game_id,e.engine_key)=(g.id,s.engine_key)`,
+    [seats.map((seat) => seat[0]), seats.map((seat) => seat[1])],
+  )
+  const cards = new Map()
+  const mulligans = new Map()
+  let games = 0,
+    wins = 0
+  for (const row of rows) {
+    if (Number.isInteger(row.mulligans)) {
+      const count = Math.min(row.mulligans, 3)
+      const bucket = mulligans.get(count) ?? { count, games: 0, wins: 0 }
+      bucket.games++
+      if (row.won) bucket.wins++
+      mulligans.set(count, bucket)
+    }
+    if (!row.known) continue
+    games++
+    if (row.won) wins++
+    for (const name of new Set(row.cards)) {
+      const card = cards.get(name) ?? { name, games: 0, wins: 0 }
+      card.games++
+      if (row.won) card.wins++
+      cards.set(name, card)
+    }
+  }
+  return {
+    games,
+    wins,
+    mulligans: [...mulligans.values()].sort((a, b) => a.count - b.count),
+    cards: [...cards.values()].sort((a, b) => b.games - a.games || b.wins - a.wins || a.name.localeCompare(b.name)).slice(0, 80),
+  }
+}
+
+async function selectedDetails(pool, { tournamentId, group, filter, selected }) {
+  const { rows } = await pool.query(eligibleMatches + ' SELECT id,ka,kb,format,ca,cb,aa,ab FROM eligible', [tournamentId])
+  const seats = []
+  const compositions = new Map()
+  for (const row of rows) {
+    const format = statisticsFormat(row.format)
+    if (casualFormat.test(format) || (filter && format !== filter) || isPractice(format, row.aa) || isPractice(format, row.ab)) continue
+    for (const [key, composition, archetype] of [
+      [row.ka, row.ca, row.aa],
+      [row.kb, row.cb, row.ab],
+    ]) {
+      if (category(group, format, composition, null, archetype, null).id !== selected) continue
+      seats.push([row.id, key])
+      if (composition) compositions.set(composition, (compositions.get(composition) ?? 0) + 1)
+    }
+  }
+  const lists = await compositionLists(pool, [...compositions.keys()])
+  let list = null
+  if (group === 'deck') {
+    const snapshot = lists.get(selected)
+    if (snapshot) {
+      const zone = (entries) => [...snapshotCards(entries)].map(([name, amount]) => ({ name, amount })).sort(byCount)
+      list = { kind: 'deck', main: zone(snapshot.cards), sideboard: zone(snapshot.sideboard) }
+    }
+  } else if (lists.size) {
+    // Each distinct list counts once, whatever its number of participations.
+    const zones = { main: new Map(), sideboard: new Map() }
+    for (const snapshot of lists.values()) {
+      for (const [zone, entries] of [
+        ['main', snapshot.cards],
+        ['sideboard', snapshot.sideboard],
+      ]) {
+        for (const [name, amount] of snapshotCards(entries)) {
+          const card = zones[zone].get(name) ?? { name, lists: 0, copies: 0 }
+          card.lists++
+          card.copies += amount
+          zones[zone].set(name, card)
+        }
+      }
+    }
+    const zone = (cards) =>
+      [...cards.values()]
+        .map((card) => ({ name: card.name, lists: card.lists, copies: card.copies / card.lists }))
+        .sort((a, b) => b.lists - a.lists || b.copies - a.copies || a.name.localeCompare(b.name))
+        .slice(0, 75)
+    list = { kind: 'archetype', lists: lists.size, main: zone(zones.main), sideboard: zone(zones.sideboard) }
+  }
+  return { list, hands: seats.length ? await openingHands(pool, seats) : { games: 0, wins: 0, mulligans: [], cards: [] } }
+}
+
 export async function publicDeckStatistics(
   pool,
   { tournamentId = null, group = 'archetype', format, selected = null } = {},
@@ -161,7 +332,7 @@ export async function publicDeckStatistics(
   if (!['archetype', 'deck'].includes(group)) throw new ProductError(400, 'Unsupported statistics group')
   if (format != null && typeof format !== 'string') throw new ProductError(400, 'Unsupported format')
   const requestedFormat = historyFormatFilter(format)
-  const filter = requestedFormat && statisticsFormat(requestedFormat)
+  let filter = requestedFormat && statisticsFormat(requestedFormat)
   let tournamentName = null
   if (tournamentId !== null) {
     if (!isUuid(tournamentId)) throw new ProductError(404, 'Tournament not found')
@@ -172,16 +343,28 @@ export async function publicDeckStatistics(
     tournamentName = cup.name
   }
 
-  const { rows: counts } = await pool.query(results, [tournamentId])
-  const formats = new Set()
-  const rows = new Map()
-  const opponents = new Map()
-  let matches = 0
+  const { rows: allCounts } = await pool.query(results, [tournamentId])
+  const counts = allCounts.filter((row) => {
+    const format = statisticsFormat(row.format)
+    return !casualFormat.test(format) && !isPractice(format, row.aa) && !isPractice(format, row.ab)
+  })
+  const played = new Map()
   for (const row of counts) {
     const format = statisticsFormat(row.format)
-    formats.add(format)
+    played.set(format, (played.get(format) ?? 0) + row.n)
+  }
+  // Win rates from different formats are not comparable. Without a choice, show the busiest one.
+  if (!filter && tournamentId === null && played.size)
+    filter = [...played].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0][0]
+  const rows = new Map()
+  const opponents = new Map()
+  let matches = 0,
+    games = 0
+  for (const row of counts) {
+    const format = statisticsFormat(row.format)
     if (filter && format !== filter) continue
     matches += row.n
+    games += row.games_a ?? 0
     const a = category(group, format, row.ca, row.name_a, row.aa, row.palette_a?.split('') ?? null)
     const b = category(group, format, row.cb, row.name_b, row.ab, row.palette_b?.split('') ?? null)
     const sa = side(row, 'a'),
@@ -192,12 +375,27 @@ export async function publicDeckStatistics(
     if (selected === a.id) add(opponents, b, row.outcome, row.n, sa)
     if (selected === b.id) add(opponents, a, -row.outcome, row.n, sb)
   }
+  for (const row of [...rows.values(), ...opponents.values()]) settleColors(row)
+  // The ranking lists only identified archetypes and decks. Their unknown opponents still count
+  // in each record and matchup table.
+  const ranked = [...rows.values()].filter((row) => row.name !== null || (group === 'deck' && !row.unidentified))
+  const hidden = [...rows.values()].filter((row) => !ranked.includes(row)).reduce((total, row) => total + row.n, 0)
+  const detail = rows.get(selected)
 
   return {
     tournamentName,
-    formats: [...formats].sort(),
+    formats: [...played.keys()].sort(),
+    format: filter || null,
     matches,
-    rows: [...rows.values()].sort(order),
-    selected: rows.has(selected) ? { ...rows.get(selected), matchups: [...opponents.values()].sort(order) } : null,
+    games,
+    unclassified: hidden,
+    rows: ranked.sort(order),
+    selected: detail
+      ? {
+          ...detail,
+          matchups: [...opponents.values()].sort(order),
+          ...(await selectedDetails(pool, { tournamentId, group, filter, selected })),
+        }
+      : null,
   }
 }

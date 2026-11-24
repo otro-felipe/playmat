@@ -3,6 +3,7 @@ import { canonicalAccountScope } from './players.mjs'
 import { seatArchetype } from './archived-archetypes.mjs'
 import { exclusionView } from './match-statistics.mjs'
 import { createPerformance, historyFormatFilter } from './performance.mjs'
+import { evidenceLoader } from './performance-evidence.mjs'
 import { createHash } from 'node:crypto'
 import { readdir, readFile, rename, stat, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -315,6 +316,22 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
   if (purgeExpiredHistory && typeof store?.delete !== 'function') throw Error('Match history purge requires a replay store with deletion support')
   let activeScan
   let nextHistoryMaintenance = 0
+  let nextEvidenceBackfill = 0
+  // Public statistics read each seat's kept opening hand from its own replay evidence.
+  // Record it when a game is archived, and retry missing evidence for eligible games.
+  const loadEvidence = evidenceLoader(pool, game => rawEvents(store, game))
+  async function recordEvidence(where, values) {
+    try {
+      const { rows } = await pool.query(`SELECT g.id,g.archive_state,g.object_key,g.checksum,p.engine_key,p.engine_name,p.player_id
+        FROM games g JOIN game_players p ON p.game_id=g.id
+        WHERE g.status='completed' AND g.archive_state='ready' AND g.checksum IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM game_performance_evidence e WHERE (e.game_id,e.engine_key)=(g.id,p.engine_key))
+          AND ${where}`, values)
+      if (rows.length) await loadEvidence(rows)
+    } catch {
+      console.warn('Playmat opening-hand evidence delayed')
+    }
+  }
 
   async function scan({ markInterrupted = false, maintainHistory = Date.now() >= nextHistoryMaintenance } = {}) {
     if (markInterrupted) {
@@ -416,10 +433,19 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
           id, info.truncated || status !== 'completed' ? 'partial' : 'ready', hash, key,
         ])
         await removeStaging(join(stage, file), eventPath)
+        await recordEvidence('g.id=$1', [id])
       } catch (error) {
         if (pendingMatchId) pendingMatches.add(pendingMatchId)
         if (error.code !== 'ENOENT') console.warn('Playmat replay archive retry scheduled', { gameId: id })
       }
+    }
+    if (!markInterrupted && Date.now() >= nextEvidenceBackfill) {
+      nextEvidenceBackfill = Date.now() + 60_000
+      await recordEvidence(`g.id IN (SELECT g2.id FROM games g2 JOIN statistically_eligible_matches m ON m.id=g2.match_id
+        WHERE g2.status='completed' AND g2.archive_state='ready' AND g2.checksum IS NOT NULL
+          AND (SELECT count(*) FROM game_performance_evidence e WHERE e.game_id=g2.id)
+            < (SELECT count(*) FROM game_players p2 WHERE p2.game_id=g2.id)
+        ORDER BY random() LIMIT 4)`, [])
     }
     if (purgeExpiredHistory && !markInterrupted && maintainHistory) {
       nextHistoryMaintenance = Date.now() + 60_000

@@ -155,6 +155,7 @@ export async function createProduct({
     await refineMigratedDeckLists(pool)
     await pool.query(await readFile(resolve(directory, 'performance-schema.sql'), 'utf8'))
     await pool.query(await readFile(resolve(directory, 'public-deck-identity.sql'), 'utf8'))
+    await pool.query(await readFile(resolve(directory, 'statistics-reset.sql'), 'utf8'))
     await transaction(pool, async db => {
       await db.query("SELECT pg_advisory_xact_lock(hashtext(current_schema()),hashtext('tournament-archetypes'))")
       const before = await archetypeCoverage(db)
