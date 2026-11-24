@@ -50,9 +50,10 @@ export function createLimits(policies, { now = () => performance.now(), maxClien
 export function createConcurrencyLimit(total, perClient) {
   let active = 0
   const clients = new Map()
-  return key => {
+  // A caller may raise the per-client cap (rate-exempt administrators); the total stays shared.
+  return (key, cap = perClient) => {
     const count = clients.get(key) ?? 0
-    if (active >= total || count >= perClient) return undefined
+    if (active >= total || count >= cap) return undefined
     active++
     clients.set(key, count + 1)
     return () => {

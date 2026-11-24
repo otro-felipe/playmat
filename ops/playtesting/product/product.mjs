@@ -195,10 +195,25 @@ export async function createProduct({
     throw new ProductError(429, 'Too many requests. Try again shortly.')
   }
 
-  function gateAccount(res, group, actor, releases) {
-    throttleRequest(res, checkAccount(group, actor.accountId))
+  // Administrator accounts skip per-account budgets; instance-wide budgets still apply.
+  // Cached briefly so a revoked role stops the exemption within the TTL.
+  const exemptAccounts = new Map()
+  async function rateExempt(accountId) {
+    const now = Date.now()
+    const cached = exemptAccounts.get(accountId)
+    if (cached && cached.expiresAt > now) return cached.value
+    if (exemptAccounts.size > 1000) for (const [key, entry] of exemptAccounts) if (entry.expiresAt <= now) exemptAccounts.delete(key)
+    const { rows: [account] } = await pool.query('SELECT tournament_admin FROM accounts WHERE id=$1 AND enabled', [accountId])
+    const value = account?.tournament_admin === true
+    exemptAccounts.set(accountId, { value, expiresAt: now + 30_000 })
+    return value
+  }
+
+  async function gateAccount(res, group, actor, releases) {
+    const exempt = await rateExempt(actor.accountId)
+    if (!exempt) throttleRequest(res, checkAccount(group, actor.accountId))
     if (!['archive', 'export', 'theory'].includes(group)) return
-    const release = (group === 'export' ? archiveExports : heavyWork)(actor.accountId)
+    const release = (group === 'export' ? archiveExports : heavyWork)(actor.accountId, exempt ? Infinity : undefined)
     if (!release) throttleRequest(res, 2)
     releases.push(release)
   }
@@ -216,7 +231,7 @@ export async function createProduct({
   async function legacy(req, res, releases) {
     const actor = await id.fromEngine(req.headers['x-playmat-engine-user'])
     if (!actor) throw new ProductError(401, 'Authentication required')
-    gateAccount(res, 'archive', actor, releases)
+    await gateAccount(res, 'archive', actor, releases)
     const params = await body(req)
     switch (params.method) {
       case 'replayList': {
@@ -443,9 +458,10 @@ export async function createProduct({
       const principal = await id.recoveryPrincipal(actor)
       if (principal) res.setHeader('X-Playmat-Seat', principal.seatId)
       if (principal?.connectionId) res.setHeader('X-Playmat-Connection', principal.connectionId)
-      return send(res, 200, { ...identityView(actor), ...(canonicalAgent ? { canonicalAgent } : {}), ...(principal ? { recoverySeatId: principal.seatId } : {}) })
+      const exempt = await rateExempt(actor.accountId)
+      return send(res, 200, { ...identityView(actor), ...(canonicalAgent ? { canonicalAgent } : {}), ...(principal ? { recoverySeatId: principal.seatId } : {}), ...(exempt ? { rateExempt: true } : {}) })
     }
-    gateAccount(res, group, actor, releases)
+    await gateAccount(res, group, actor, releases)
     const endpoint = path.slice('/api/playtesting/'.length)
     if (endpoint === 'player-slots' && req.method === 'POST') return send(res,201,await createPlayerSlot(pool,actor,await body(req,'json',2048)))
     if (endpoint === 'players') {
@@ -650,7 +666,7 @@ export async function createProduct({
     startMcpEvents: events.start,
     startTournaments: tournamentRoutes.start,
     stopTournaments: tournamentRoutes.stop,
-    setTournamentAdmins: ids=>setTournamentAdmins(pool,ids),
+    setTournamentAdmins: async ids=>{ try { return await setTournamentAdmins(pool,ids) } finally { exemptAccounts.clear() } },
     async dropTestSchema() {
       await stopOpeningDeckBackfill()
       if (!schema.startsWith('test_')) throw Error('Refusing to remove data outside an isolated test schema')

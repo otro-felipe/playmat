@@ -2564,3 +2564,26 @@ test('tournament board, administrative hands and completed replay share a pairin
   assert.deepEqual((await (await f.path(base+'/replay')).json()).games,replay.games)
   assert.equal((await f.path(uri+'/pairings/'+randomUUID()+'/replay?gameId='+gameId)).status,404)
 })
+
+test('forward auth marks administrator accounts, including their agent connections, as exempt from per-account budgets', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const admin = await signIn(f, 'RateAdmin')
+  const ordinary = await signIn(f, 'RateOrdinary')
+  const adminAgent = { Authorization: 'Bearer ' + await f.product.provisionAgent('RateAdmin', 'RateAdminPilot', ['play']) }
+  const ordinaryAgent = { Authorization: 'Bearer ' + await f.product.provisionAgent('RateOrdinary', 'RateOrdinaryPilot', ['play']) }
+  const adminId = (await (await f.path('/api/playtesting/me', { headers: admin })).json()).accountId
+  await f.product.setTournamentAdmins([adminId])
+  const identity = async headers => (await f.path('/internal/verify', { headers })).json()
+  assert.equal((await identity(adminAgent)).rateExempt, true)
+  assert.equal((await identity(admin)).rateExempt, true)
+  assert.equal((await identity(ordinaryAgent)).rateExempt, undefined)
+  assert.equal((await identity(ordinary)).rateExempt, undefined)
+  // Per-account archive budgets: 60 a minute and 3 concurrent. Both accounts share the loopback
+  // source budget (90 a minute), which is not exempt, so the totals stay under it.
+  const archive = headers => f.path('/api/playtesting/matches', { headers })
+  const ordinaryStatuses = (await Promise.all(Array.from({ length: 10 }, () => archive(ordinary)))).map(r => r.status)
+  assert.ok(ordinaryStatuses.includes(429), 'ordinary account keeps its per-account concurrency')
+  const adminStatuses = []
+  for (let i = 0; i < 65; i += 5) adminStatuses.push(...(await Promise.all(Array.from({ length: Math.min(5, 65 - i) }, () => archive(admin)))).map(r => r.status))
+  assert.ok(adminStatuses.every(status => status !== 429), 'administrator exceeds per-account rate and concurrency')
+})

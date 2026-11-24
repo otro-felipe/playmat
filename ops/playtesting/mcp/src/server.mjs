@@ -730,16 +730,28 @@ export function createMcpServer({
     }
     throw new ToolError('capacity', 'The beta seat limit has been reached.');
   }
+  // Colocated pilots share one source address, so the pre-authentication budget is wider
+  // than one account's. Both windows are per minute.
   const rate = createLimits({
-    ingress: { client: 240, total: 2400, window: 60_000 },
-    account: { client: 150, total: 2000, window: 60_000 },
+    ingress: { client: 1200, total: 6000, window: 60_000 },
+    account: { client: 600, total: 4000, window: 60_000 },
   });
   // An SDK client keeps its GET event stream open while making tool calls.
   // An eight-seat tournament plus its organizer can use nine of each per account.
-  const authSlots = createConcurrencyLimit(32, 9);
+  // A rate-exempt (administrator) account skips its per-account rate and caps and is
+  // bounded only by the instance-wide totals below.
+  const authSlots = createConcurrencyLimit(32, 16);
   const streamSlots = createConcurrencyLimit(24, 9);
   const operationSlots = createConcurrencyLimit(48, 9);
   const combinedSlots = createConcurrencyLimit(48, 18);
+  const limitLog = new Map();
+  function logLimited(reason) {
+    const now = Date.now();
+    const entry = limitLog.get(reason);
+    if (entry && now - entry.at < 10_000) { entry.count++; return; }
+    console.warn('MCP request limited', { reason, suppressed: entry?.count ?? 0 });
+    limitLog.set(reason, { at: now, count: 0 });
+  }
   const server = createServer({ requestTimeout: 30_000, headersTimeout: 10_000 }, async (req, res) => {
     const pathname = req.url?.split('?')[0];
     if (pathname === '/healthz' && req.method === 'GET') {
@@ -751,6 +763,7 @@ export function createMcpServer({
     function limited(seconds, reason) {
       res.setHeader('X-Playmat-Limit-Reason', reason);
       res.setHeader('Retry-After', String(seconds));
+      logLimited(reason);
       return reply(res, 429, -32029, 'Too many MCP requests. Try again shortly.');
     }
     const source = clientKey(req);
@@ -773,12 +786,14 @@ export function createMcpServer({
     if (!actor || !actor.accountId || !actor.engineName || !Array.isArray(actor.scopes)) return unauthorized();
 
     if (res.destroyed) return;
-    const accountWait = rate('account', actor.accountId);
+    const exempt = actor.rateExempt === true;
+    const accountWait = exempt ? 0 : rate('account', actor.accountId);
     if (accountWait) return limited(accountWait, 'account-rate');
     const stream = req.method === 'GET';
-    const releaseKind = (stream ? streamSlots : operationSlots)(actor.accountId);
+    const accountCap = exempt ? Infinity : undefined;
+    const releaseKind = (stream ? streamSlots : operationSlots)(actor.accountId, accountCap);
     if (!releaseKind) return limited(2, stream ? 'stream-concurrency' : 'operation-concurrency');
-    const releaseCombined = combinedSlots(actor.accountId);
+    const releaseCombined = combinedSlots(actor.accountId, accountCap);
     if (!releaseCombined) {
       releaseKind();
       return limited(2, 'global-concurrency');

@@ -40,7 +40,9 @@
 			reverse_proxy 127.0.0.1:17172 {
 				header_up X-Forwarded-For {http.request.header.X-Playmat-Client-IP}
 				header_up X-Real-IP {http.request.header.X-Playmat-Client-IP}
-				stream_timeout 15m
+				# Railway exempts WebSockets from its 15-minute HTTP limit. A short cut here
+				# dropped live games every 15 minutes; this only bounds a revoked session.
+				stream_timeout 12h
 			}
 		}
 

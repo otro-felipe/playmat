@@ -170,7 +170,7 @@ test(
 )
 
 test(
-  'authentication allows nine from one source and thirty-two globally, then releases capacity',
+  'authentication allows sixteen from one source and thirty-two globally, then releases capacity',
   { timeout: 8000 },
   async (t) => {
     const begun = Promise.withResolvers(),
@@ -179,20 +179,21 @@ test(
     let inFlight = 0
     const url = await start(t, {
       authorize: async (token) => {
-        if (++inFlight === 9) begun.resolve()
+        if (++inFlight === 16) begun.resolve()
         if (inFlight === 32) allBegun.resolve()
         await complete.promise
         return { accountId: token, engineName: 'Fixture', scopes: ['play'] }
       },
     })
-    const pending = Array.from({ length: 9 }, () => request(url))
+    // Distinct accounts behind one source, so only authentication admission is measured.
+    const pending = Array.from({ length: 16 }, (_, i) => request(url, { token: 'colocated' + i }))
     try {
       await Promise.race([
         begun.promise,
         ...pending.map(async (r) => assert.fail('Authentication ended early with HTTP ' + (await r).status)),
       ])
       await limited(await request(url), 'auth-concurrency')
-      const others = Array.from({ length: 23 }, (_, i) => {
+      const others = Array.from({ length: 16 }, (_, i) => {
         const group = Math.floor(i / 8)
         return request(url, { token: 'owner' + group, ip: '192.0.2.' + (group + 1) })
       })
@@ -277,5 +278,80 @@ test(
       await Promise.allSettled([...streams.map(stream => stream.body.cancel()), ...ops])
     }
     assert.ok((await Promise.all(ops)).every((res) => res.status === 200))
+  },
+)
+
+test(
+  'a rate-exempt administrator account passes per-account caps and rate while instance totals still apply',
+  { timeout: 20000 },
+  async (t) => {
+    const reached = Promise.withResolvers(),
+      finish = Promise.withResolvers()
+    const tournamentId = randomUUID()
+    let running = 0
+    const url = await start(t, {
+      authorize: async (token) => ({
+        accountId: token,
+        engineName: 'Fixture',
+        scopes: ['play'],
+        ...(token === 'admin' && { rateExempt: true }),
+      }),
+      product: async () => {
+        if (++running === 16) reached.resolve()
+        await finish.promise
+        return { standings: [] }
+      },
+    })
+    const streams = [],
+      ops = []
+    try {
+      // Sixteen colocated pilots on one administrator account: streams and operations above nine.
+      for (let i = 0; i < 16; i++) {
+        const response = await request(url, { token: 'admin', method: 'GET' })
+        streams.push(response)
+        assert.equal(response.status, 200)
+      }
+      for (let i = 0; i < 16; i++)
+        ops.push(
+          request(url, {
+            token: 'admin',
+            body: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_tournament', arguments: { tournamentId } } },
+          }),
+        )
+      await Promise.race([
+        reached.promise,
+        ...ops.map(async (req) => assert.fail('Operation ended early with HTTP ' + (await req).status)),
+      ])
+      // An ordinary account keeps its per-account caps (eight streams still fit the instance total of 24).
+      for (let i = 0; i < 8; i++) {
+        const response = await request(url, { token: 'owner', method: 'GET' })
+        streams.push(response)
+        assert.equal(response.status, 200)
+      }
+      await limited(await request(url, { token: 'owner', method: 'GET' }), 'stream-concurrency')
+    } finally {
+      finish.resolve()
+      await Promise.allSettled([...streams.map((stream) => stream.body.cancel()), ...ops])
+    }
+    assert.ok((await Promise.all(ops)).every((res) => res.status === 200))
+
+    // Per-account rate: an ordinary account stops after its minute budget; the administrator does not.
+    async function burst(token, count) {
+      const statuses = []
+      for (let i = 0; i < count; i += 50) {
+        const batch = await Promise.all(
+          Array.from({ length: Math.min(50, count - i) }, () => request(url, { token, ip: '198.51.100.' + (token === 'admin' ? 1 : 2) })),
+        )
+        for (const res of batch) {
+          statuses.push(res.status === 429 ? res.headers.get('x-playmat-limit-reason') : res.status)
+          await res.body?.cancel()
+        }
+      }
+      return statuses
+    }
+    const owner = await burst('rate-owner', 650)
+    assert.ok(owner.includes('account-rate'), 'ordinary account should reach its per-minute budget')
+    const admin = await burst('admin', 650)
+    assert.ok(admin.every((status) => status === 200), 'administrator should not be rate limited per account')
   },
 )
