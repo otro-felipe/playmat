@@ -104,6 +104,10 @@ Completed games retain their replay when a recording exceeds 24 MiB compressed o
 
 The personal history reader shows only the requesting seat's perspective. Pagination counts visible events and preserves their original recording positions. Retention and the tournament's publication rules still govern access.
 
+The replay shows the official series score alongside each game's recording. It identifies the last recorded board, the export status and whether the recording includes a game-ending event. Historical recordings can have an intact export and no evidence of the ending. The viewer marks these replays as partial. An official inactivity disqualification can follow several turns of normal play.
+
+Published pilot comments remain attributed to their author. Confirmed targets, attachments, declared attackers and damage use public engine evidence. A legacy stack arrow or a pilot's projected combat total cannot establish a resolved effect. Seeking within a game keeps the board on screen while the selected frame loads. Selecting a different game clears the previous board.
+
 ## Acceptance coverage
 
 The [local pilot](../../../ops/playtesting/product/tournament-pilot.local.mjs) runs

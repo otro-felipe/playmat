@@ -13,7 +13,8 @@ export function createTournamentBroadcast(pool, archive, engine = readSpectatorE
     const {
       rows: [row],
     } = await pool.query(
-      `SELECT p.id,p.table_id,p.match_id,p.completed,
+      `SELECT p.id,p.table_id,p.match_id,p.completed,p.wins_a,p.wins_b,p.draws,p.result_reason,
+      CASE WHEN p.winner_entry=a.id THEN 'a' WHEN p.winner_entry=b.id THEN 'b' END AS winner_side,
       a.engine_name AS name_a,a.name AS display_a,a.owner_name AS owner_a,a.player_id AS player_a,
       b.engine_name AS name_b,b.name AS display_b,b.owner_name AS owner_b,b.player_id AS player_b
       FROM tournament_pairings p JOIN tournament_entries a ON a.id=p.entry_a
@@ -67,7 +68,7 @@ export function createTournamentBroadcast(pool, archive, engine = readSpectatorE
       record.hands?.[p.name] ?? record.hands?.[p.playerId] ?? record.review?.seatViews?.[p.playerId]?.myHand ?? {},
     ]))
     return privateSpectatorBoard({
-      tableId:match.table_id, gameId:game.id, status:'playing', players, view:record.view, hands, revision,
+      tableId:match.table_id, gameId:game.id, status:record.terminalBoard === true ? 'finished' : 'playing', players, view:record.view, hands, revision,
     })
   }
 
@@ -75,26 +76,38 @@ export function createTournamentBroadcast(pool, archive, engine = readSpectatorE
     const match = await pairing(id, pairId)
     if (!match.completed && !actor?.isAdmin) throw missing()
     const { rows: games } = await pool.query(
-      `SELECT g.id,g.object_key,g.checksum,g.game_number,g.started_at FROM matches m
+      `SELECT g.id,g.object_key,g.checksum,g.game_number,g.started_at,g.status,g.archive_state,g.truncated,g.winner,g.result FROM matches m
       JOIN games g ON m.id=g.match_id
       WHERE (m.id=$2 OR ($2 IS NULL AND m.table_id IN
         (SELECT table_id FROM tournament_pairing_tables WHERE pairing_id=$1)))
-      AND g.object_key IS NOT NULL AND EXISTS(SELECT FROM match_history_retention_window r WHERE r.match_id=m.id)
-      ORDER BY g.game_number`,
+      AND EXISTS(SELECT FROM match_history_retention_window r WHERE r.match_id=m.id)
+      ORDER BY g.game_number,g.started_at,g.id`,
       [match.id, match.match_id],
     )
     const gameId = query.get('gameId')
     if (!gameId) {
       const result = []
       for (const game of games) {
-        const count = await indexes.read(game, (record, rev) => projectFrame(match, game, record, rev), true)
-        result.push({gameId:game.id, frameCount:count})
+        const {frameCount, ...ending} = game.object_key
+          ? await indexes.read(game, (record, rev) => projectFrame(match, game, record, rev), true)
+          : {frameCount:0, lastBoard:null, lastPublicEvent:null, terminalEvent:false, cause:null}
+        const exportState = game.truncated || game.archive_state === 'partial' ||
+          ['interrupted','abandoned'].includes(game.status) ? 'partial'
+          : game.object_key ? 'ready' : game.archive_state === 'pending' ? 'pending' : 'unavailable'
+        const outcome = game.winner && normalize(game.winner) === normalize(match.name_a) ? 'a'
+          : game.winner && normalize(game.winner) === normalize(match.name_b) ? 'b'
+            : game.result === 'Game is a draw' ? 'draw' : null
+        result.push({gameId:game.id, gameNumber:game.game_number, frameCount, capture:{...ending, exportState, outcome}})
       }
-      return { games: result }
+      const officialResult = match.completed ? {
+        a:match.display_a, b:match.display_b, winsA:match.wins_a, winsB:match.wins_b, draws:match.draws,
+        winner:match.winner_side ?? null, reason:match.result_reason ?? null,
+      } : null
+      return { games: result, officialResult }
     }
     const game = games.find((g) => g.id === gameId)
     const value = query.get('frame') ?? '0'
-    if (!game || !/^\d{1,9}$/.test(value)) throw missing()
+    if (!game?.object_key || !/^\d{1,9}$/.test(value)) throw missing()
     const {board, lines} = await indexes.read(game, (record, rev) => projectFrame(match, game, record, rev), false, Number(value))
     const seats = new Map(board.players.map(p => [p.playerId, p]))
     return {...board, lines:publicLineExplanations(lines, seats, game.id)}

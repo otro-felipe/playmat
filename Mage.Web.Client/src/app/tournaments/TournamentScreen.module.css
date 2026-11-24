@@ -354,3 +354,10 @@ details > summary {
     font-size: 2.5rem;
   }
 }
+
+.replayEnding {
+  flex-basis: 100%;
+  font-size: var(--text-sm);
+  color: var(--ink-soft);
+}
+.replayEnding strong { color: var(--ink); }

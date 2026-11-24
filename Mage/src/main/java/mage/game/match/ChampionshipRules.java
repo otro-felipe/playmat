@@ -13,6 +13,8 @@ public final class ChampionshipRules implements Serializable {
     private final int firstSideboard;
     public volatile long deadlineAt;
     public volatile String disqualified;
+    /** Set only by the rule that ends a specific game on the round clock. */
+    public volatile UUID clockEndedGame;
     public String choosingSeat;
     public boolean gamesTiedOnEntry;
     private boolean suddenDeath;

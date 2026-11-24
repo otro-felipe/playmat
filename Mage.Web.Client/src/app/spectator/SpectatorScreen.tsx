@@ -17,6 +17,8 @@ import { SpectatorFrame } from './SpectatorFrame';
 import { SpectatorLink } from './SpectatorLink';
 import styles from './SpectatorBoard.module.css';
 
+import type { TournamentBoardFact } from '../tournaments/TournamentFrameEvidence';
+
 export interface SpectatorSnapshot {
   role: 'spectator';
   visibility?: 'public-board' | 'both-hands';
@@ -29,6 +31,7 @@ export interface SpectatorSnapshot {
   humanMcpName?: string;
   players: { playerId: string; name: string; displayName?: string }[];
   lines: SpectatorLine[];
+  facts?: TournamentBoardFact[];
   chat: SpectatorChatMessage[];
   spectators: number;
 }

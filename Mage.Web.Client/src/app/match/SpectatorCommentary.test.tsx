@@ -25,13 +25,13 @@ test('only the last real message appears beside its seat and a deduplicated line
   expect(rows[0].textContent).toMatch(/Table chat.*Agente.*Buen ataque/);
   expect(rows[1].textContent).toContain('Agente2');
   expect(rows[1].textContent).not.toContain('Guardo');
-  fireEvent.click(within(rows[1]).getByRole('button', { name: 'The agent submitted a line of play' }));
+  fireEvent.click(within(rows[1]).getByRole('button', { name: 'Pilot commentary' }));
   expect(within(page.getByRole('dialog')).getByText(/Guardo/)).toBeTruthy();
   fireEvent.click(within(page.getByRole('dialog')).getByRole('button', {name:'Close'}));
   expect(page.queryByRole('textbox')).toBeNull();
   act(() => { vi.advanceTimersByTime(60_000); });
   expect(within(page.getByLabelText('seat two')).queryByText(/Guardo/)).toBeNull();
-  expect(within(page.getByRole('list')).getByRole('button',{name:'The agent submitted a line of play'})).toBeTruthy();
+  expect(within(page.getByRole('list')).getByRole('button',{name:'Pilot commentary'})).toBeTruthy();
 });
 
 test('a private player, replay or different game cannot mount a public audience note', () => {

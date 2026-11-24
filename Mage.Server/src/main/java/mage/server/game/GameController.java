@@ -530,6 +530,9 @@ public class GameController implements GameCallback {
                                 //player.leave();
                             }
                         } else {
+                            if (!user.isConnected() && replayRecorder != null) {
+                                replayRecorder.playerDeparted(player.getId(), ReplayRecorder.Departure.DISCONNECT);
+                            }
                             problemPlayerFixes = "leave on disconnected";
                             logger.warn("User disconnected, leave him after forced join: player " + player.getName() + " in gameId: " + game.getId());
                             player.leave();
@@ -543,6 +546,7 @@ public class GameController implements GameCallback {
                     }
 
                     if (!user.isConnected() && user.getSecondsDisconnected() > GAME_TIMEOUTS_CANCEL_PLAYER_GAME_JOINING_AFTER_INACTIVE_SECS) {
+                        if (replayRecorder != null) replayRecorder.playerDeparted(player.getId(), ReplayRecorder.Departure.DISCONNECT);
                         // Cancel player join possibility lately
                         logger.debug("Player " + player.getName() + " - canceled joining game (after "
                                 + user.getSecondsDisconnected() + " secs of inactivity) gameId: " + game.getId());
@@ -689,6 +693,7 @@ public class GameController implements GameCallback {
                 if (playerId != null) {
                     Player player = game.getPlayer(playerId);
                     if (player != null) {
+                        if (replayRecorder != null) replayRecorder.playerDeparted(playerId, ReplayRecorder.Departure.CONCESSION);
                         game.informPlayers(player.getLogName() + " wants to concede");
                         game.setConcedingPlayer(getPlayerId(userId));
                     }

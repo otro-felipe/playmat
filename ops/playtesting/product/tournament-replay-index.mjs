@@ -15,6 +15,7 @@ async function buildIndex(records, game, project) {
     const frames = [],
       lines = [],
       seen = new Set()
+    let lastBoard = null, lastPublicEvent = null, terminalEvent = false, cause = null
     let offset = 0
     async function append(value) {
       const bytes = Buffer.from(JSON.stringify(value))
@@ -34,6 +35,18 @@ async function buildIndex(records, game, project) {
       return JSON.parse(bytes.toString('utf8'))
     }
     for await (const record of records) {
+      const timing = Number.isFinite(record.t) && record.t >= 0 ? {elapsedMs:record.t} : {}
+      if (record.kind === 'spectatorEnd') lastPublicEvent = {
+        kind:record.terminal === true ? 'game_end' : 'recording_closed', ...timing,
+      }
+      if (record.kind === 'rollback') lastPublicEvent = {kind:'rollback', ...timing}
+      if (['GAME','STATUS'].includes(record.log?.messageType)) lastPublicEvent = {kind:'game_log', ...timing}
+      // Legacy spectatorEnd also fires on abandonment. It does not prove that the game ended.
+      if (record.kind === 'spectatorEnd' && record.terminal === true) {
+        terminalEvent = true
+        cause = ['inactivity','player_clock','round_clock','concession','disconnect'].includes(record.cause)
+          ? record.cause : null
+      }
       const note = record.kind === 'line' && lineText(record)
       if (
         note &&
@@ -44,6 +57,7 @@ async function buildIndex(records, game, project) {
       ) {
         const lineId = game.id + ':' + record.actorPlayerId + ':' + record.commandId
         if (!seen.has(lineId)) {
+          lastPublicEvent = {kind:'public_line', ...timing}
           seen.add(lineId)
           lines.push(
             await append({
@@ -57,12 +71,17 @@ async function buildIndex(records, game, project) {
         }
       }
       if (record.view?.players?.length !== 2) continue
-      const board = await append(project(record, frames.length))
+      const projection = project(record, frames.length)
+      lastBoard = {frame:frames.length, status:projection.status ?? 'playing'}
+      lastPublicEvent = {kind:'board', ...timing}
+      if (Number.isSafeInteger(projection.view?.turn)) lastBoard.turn = projection.view.turn
+      if (projection.view?.step) lastBoard.step = projection.view.step
+      const board = await append(projection)
       frames.push({ ...board, lineCount: lines.length })
     }
     if (frames.length) frames.at(-1).lineCount = lines.length
     return {
-      count: frames.length,
+      summary: {frameCount:frames.length, lastBoard, lastPublicEvent, terminalEvent, cause},
       async frame(number) {
         const frame = frames[number]
         if (!frame) throw new ProductError(404, 'This tournament broadcast is unavailable')
@@ -82,7 +101,7 @@ async function buildIndex(records, game, project) {
  * share a build; a viewer seeking while an entry is evicted retains its file. */
 export function tournamentReplayIndexes(archive) {
   const entries = new Map(),
-    counts = new Map(),
+    summaries = new Map(),
     waiters = []
   let builders = 0,
     reclaiming
@@ -126,15 +145,15 @@ export function tournamentReplayIndexes(archive) {
   }
   async function read(game, project, indexOnly, number) {
     const key = game.id + '/' + game.checksum
-    if (indexOnly && counts.has(key)) return counts.get(key)
+    if (indexOnly && summaries.has(key)) return summaries.get(key)
     let entry = entries.get(key)
     if (!entry) {
       entry = { users: 0 }
       entry.pending = build(game, project)
         .then((index) => {
           entry.index = index
-          if (counts.size >= 128) counts.delete(counts.keys().next().value)
-          counts.set(key, index.count)
+          if (summaries.size >= 128) summaries.delete(summaries.keys().next().value)
+          summaries.set(key, index.summary)
           return index
         })
         .catch((error) => {
@@ -147,7 +166,7 @@ export function tournamentReplayIndexes(archive) {
     entry.users++
     try {
       const index = await entry.pending
-      return indexOnly ? index.count : await index.frame(number)
+      return indexOnly ? index.summary : await index.frame(number)
     } finally {
       entry.users--
       // Retain a full eight-player round for simultaneous spectators.
@@ -162,7 +181,7 @@ export function tournamentReplayIndexes(archive) {
       }),
     )
     entries.clear()
-    counts.clear()
+    summaries.clear()
   }
   return { read, close }
 }

@@ -1,4 +1,5 @@
 import { publicLineExplanations } from './line-explanations.mjs'
+import { tournamentBoardFacts } from './tournament-board-facts.mjs'
 import { createHmac, randomBytes } from 'node:crypto'
 import { isUuid } from './decks.mjs'
 
@@ -135,9 +136,11 @@ export function publicSpectatorBoard(snapshot) {
   }))
   const gameId = isUuid(snapshot.gameId) ? snapshot.gameId : null
   const roster = new Map(players.filter(p => p.playerId).map(p => [p.playerId,p]))
+  const view = gameId ? publicView(snapshot.view,roster,gameId) : null
+  const facts = view ? tournamentBoardFacts(snapshot.view,view,players) : []
   return {role:'spectator',visibility:'public-board',...pick(snapshot,['tableId'],isUuid),
     gameId,status:statuses.has(snapshot.status) ? snapshot.status : 'waiting',
-    ...numbers(snapshot,['revision','spectators']),
-    ...pick(snapshot,['rollbackRevision'],n=>Number.isSafeInteger(n) && n>=0),players,view:gameId ? publicView(snapshot.view,roster,gameId) : null,
+    ...numbers(snapshot,['revision','spectators']),...(facts.length ? {facts} : {}),
+    ...pick(snapshot,['rollbackRevision'],n=>Number.isSafeInteger(n) && n>=0),players,view,
     hands:{},lines:gameId ? publicLineExplanations(snapshot.lines,roster,gameId) : [],chat:[]}
 }

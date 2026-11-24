@@ -1824,6 +1824,7 @@ public abstract class GameImpl implements Game {
             if (gameOptions.championship.useLifeAtEndOfExtraTurns()) {
                 if (applyTournamentLifeTiebreaker()) return;
             } else {
+                gameOptions.championship.clockEndedGame = getId();
                 championshipDraw = true;
                 winnerId = null;
                 end();
@@ -2777,7 +2778,9 @@ public abstract class GameImpl implements Game {
         for (Player player : state.getPlayers().values()) {
             if (!player.hasLost() && player.getLife() < highest) lost |= player.lost(this);
         }
-        return lost && checkIfGameIsOver();
+        if (!lost || !checkIfGameIsOver()) return false;
+        gameOptions.championship.clockEndedGame = getId();
+        return true;
     }
 
     protected boolean checkStateBasedActions() {

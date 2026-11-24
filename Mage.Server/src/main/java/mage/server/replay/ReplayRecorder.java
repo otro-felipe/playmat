@@ -13,11 +13,13 @@ import mage.game.trace.ReplayDecision;
 import mage.game.trace.ReplayPrompt;
 import mage.players.Player;
 import mage.server.game.GameChangeKey;
+import mage.server.game.GameEventFeed;
 import mage.server.playtesting.ProductGateway;
 import mage.server.websocket.rpc.JsonCodec;
 import mage.view.CardsView;
 import mage.view.ChatMessage;
 import mage.view.GameView;
+import mage.view.GameEventView;
 import org.apache.log4j.Logger;
 
 import java.io.BufferedWriter;
@@ -30,6 +32,8 @@ import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Collections;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -60,11 +64,13 @@ public final class ReplayRecorder {
     private final Map<String, HashCode> authoredLines = new HashMap<>();
     private String lastFrame;
     private int lastFrameCursor = -1;
+    private long lastBoardEventSeq;
     private long replayBranch;
     private ReplayDecision.Subscription decisionSubscription;
     /** what the game looked like at the last snapshot, cheaply (see {@link GameChangeKey}) */
     private String lastKey;
     private boolean finished;
+    private final Map<UUID, Departure> recordedDepartures = new HashMap<>();
     /** the file couldn't be written */
     private boolean broken;
 
@@ -413,7 +419,13 @@ public final class ReplayRecorder {
             if (info.reviewVersion != null || broadcast != null) {
                 key += ReplayEvidence.knowledgeKey(game);
             }
-            if (!always && key.equals(lastKey)) {
+            GameEventFeed feed = GameEventFeed.of(game.getId());
+            List<GameEventView> changes = feed == null || feed.lastSeq() <= lastBoardEventSeq
+                    ? Collections.emptyList() : feed.since(lastBoardEventSeq, null);
+            long through = changes.isEmpty() ? lastBoardEventSeq : changes.get(changes.size() - 1).getSeq();
+            List<GameEventView> facts = ReplayBoardEvents.confirmed(changes);
+            if (!always && key.equals(lastKey) && facts.isEmpty()) {
+                lastBoardEventSeq = through;
                 return lastFrameCursor;
             }
             // written straight to text, {"view":...,"hands":{"name":...},"t":ms}: a JSON tree first would cost as
@@ -421,6 +433,7 @@ public final class ReplayRecorder {
             StringBuilder frame = new StringBuilder(32 * 1024).append("{\"view\":");
             GameView spectator = info.reviewVersion == null
                     ? new GameView(game.getState(), game, null, watcherId) : GameView.forReplay(game, null, watcherId);
+            if (!facts.isEmpty()) spectator.setEvents(facts);
             JsonObject visible = info.reviewVersion != null || broadcast != null ? ReplayEvidence.spectatorFrame(spectator) : null;
             JsonObject review = info.reviewVersion == null ? null : ReplayEvidence.protectedFrame(game, visible);
             if (info.reviewVersion == null) {
@@ -430,6 +443,7 @@ public final class ReplayRecorder {
                 frame.append(",\"review\":");
                 JsonCodec.GSON.toJson(review, frame);
             }
+            if (game.getState().isGameOver()) frame.append(",\"terminalBoard\":true");
             frame.append(",\"hands\":{");
             boolean first = true;
             JsonObject names = new JsonObject(), hands = new JsonObject();
@@ -451,11 +465,13 @@ public final class ReplayRecorder {
             String snapshot = frame.toString();
             lastKey = key;
             if (snapshot.equals(lastFrame)) {
+                lastBoardEventSeq = through;
                 return lastFrameCursor;
             }
             lastFrame = snapshot;
             lastFrameCursor = info.events;
             write(snapshot + ",\"t\":" + elapsed() + "}");
+            if (!broken) lastBoardEventSeq = through;
             return broken ? -1 : lastFrameCursor;
         } catch (Throwable e) {
             if (info.reviewVersion != null) {
@@ -488,6 +504,41 @@ public final class ReplayRecorder {
         write(event.toString());
     }
 
+    public enum Departure { CONCESSION, DISCONNECT }
+
+    /** Only an accepted concede command or a server-enforced disconnect loss calls this. */
+    public synchronized void playerDeparted(UUID playerId, Departure reason) {
+        if (!finished && !game.getState().isGameOver()) {
+            recordedDepartures.putIfAbsent(playerId, reason);
+        }
+    }
+
+    static String recordedEndCause(Game game, Map<UUID, Departure> recordedDepartures) {
+        if (game.getOptions() != null && game.getOptions().championship != null
+                && game.getId().equals(game.getOptions().championship.clockEndedGame)) return "round_clock";
+        for (Player player : game.getPlayers().values()) {
+            if (player.hasIdleTimeout()) return "inactivity";
+            if (player.hasTimerTimeout()) return "player_clock";
+            if (!player.hasWon() && (player.hasLost() || player.hasLeft()) && recordedDepartures.containsKey(player.getId())) {
+                return recordedDepartures.get(player.getId()) == Departure.CONCESSION ? "concession" : "disconnect";
+            }
+        }
+        return null;
+    }
+
+    static JsonObject endMarker(Game game, String result, Map<UUID, Departure> departures) {
+        JsonObject end = new JsonObject();
+        end.addProperty("kind", "spectatorEnd");
+        // Controller removal also calls finish(null), without a game-ending action.
+        boolean terminal = result != null && game.getState().isGameOver();
+        end.addProperty("terminal", terminal);
+        if (terminal) {
+            String reason = recordedEndCause(game, departures);
+            if (reason != null) end.addProperty("cause", reason);
+        }
+        return end;
+    }
+
     /** the game is over (or abandoned): the replay becomes available */
     public synchronized void finish(String result) {
         if (finished) {
@@ -499,8 +550,7 @@ public final class ReplayRecorder {
         frame(true);
         if (broadcast != null && canWrite()) {
             JsonObject snapshot = broadcast.snapshot();
-            JsonObject end = new JsonObject();
-            end.addProperty("kind", "spectatorEnd");
+            JsonObject end = endMarker(game, result, recordedDepartures);
             end.addProperty("t", elapsed());
             end.add("hands", snapshot.get("hands"));
             end.add("players", snapshot.get("players"));

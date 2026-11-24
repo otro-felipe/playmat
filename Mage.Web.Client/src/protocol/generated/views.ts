@@ -285,6 +285,7 @@ export interface CardView extends SimpleCardView {
     cardIcons?: CardIcon[];
     cardId?: string;
     cardTypes?: CardType[];
+    chosenTargetIds?: string[];
     color?: ObjectColor;
     controlledByOwner?: boolean;
     controllerId?: string;

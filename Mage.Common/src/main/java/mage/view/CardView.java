@@ -128,6 +128,8 @@ public class CardView extends SimpleCardView {
     protected ArtRect artRect = ArtRect.NORMAL;
 
     protected List<UUID> targets;
+    // Stack arrows also include effect pointers. Only chosen rules targets belong in spectator confirmations.
+    protected Set<UUID> chosenTargetIds;
     protected List<List<UUID>> spellTargetGroups;
     protected UUID pairedCard;
     protected UUID preparedFromId;
@@ -257,6 +259,7 @@ public class CardView extends SimpleCardView {
 
         this.artRect = cardView.artRect;
         this.targets = cardView.targets == null ? null : new ArrayList<>(cardView.targets);
+        this.chosenTargetIds = cardView.chosenTargetIds == null ? null : new LinkedHashSet<>(cardView.chosenTargetIds);
         this.spellTargetGroups = cardView.spellTargetGroups == null ? null : cardView.spellTargetGroups.stream()
                 .map(ArrayList<UUID>::new)
                 .collect(Collectors.toList());
@@ -1279,6 +1282,10 @@ public class CardView extends SimpleCardView {
         for (Target target : targets) {
             if (target.isChosen(game)) {
                 uniqueTarget.addAll(target.getTargets());
+                if (!target.isNotTarget() && !target.getTargets().isEmpty()) {
+                    if (this.chosenTargetIds == null) this.chosenTargetIds = new LinkedHashSet<>();
+                    this.chosenTargetIds.addAll(target.getTargets());
+                }
             }
         }
 
