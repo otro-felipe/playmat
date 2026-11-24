@@ -177,7 +177,13 @@ test('[PM-VIEW-01] compact state, line and wait carry the same actionable combat
   assert.equal(compactWait.payload.event, 'line_stopped');
   assert.equal(compactWait.payload.planOwnsExecution, false);
   assert.equal(compactWait.payload.needsAgent, true);
-  assert.deepEqual(compactWait.payload.state, compactLine.payload.state);
+  // Rules already delivered in this game are omitted from later compact receipts.
+  const withoutRules = (state) => JSON.parse(JSON.stringify(state, (key, value) => key === 'rules' || key === 'rulesOmitted' ? undefined : value));
+  assert.deepEqual(withoutRules(compactWait.payload.state), withoutRules(compactLine.payload.state));
+  assert.equal(compactWait.payload.state.players[1].battlefield[0].rules, undefined);
+  assert.match(compactWait.payload.state.rulesOmitted, /get_game_state/);
+  assert.deepEqual(compact.payload.players[1].battlefield[0].rules, cottage.rules);
+  assert.deepEqual(compactWait.payload.state.stack[0].abilityText, lingeringAbility.abilityText);
 
   const targetSelection = (state) => {
     const blocker = state.combat[0].blockers[0];
@@ -191,7 +197,7 @@ test('[PM-VIEW-01] compact state, line and wait carry the same actionable combat
     assert.equal(state.decision.instruction, target.instruction);
     const choice = state.decision.choices.find(({ objectId }) => objectId === attacker.id);
     const card = choice.card ?? state.players[1].battlefield.find(({ id }) => id === choice.cardRef);
-    assert.deepEqual(card.rules, cottage.rules);
+    assert.equal(card.name, cottage.name);
     assert.equal(choice.label, cottage.name);
     return choose(state, choice, 'target');
   };

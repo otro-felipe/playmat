@@ -16,7 +16,7 @@ import { registerMatchReviewPrompt, scoredPositions } from './match-review.mjs';
 import { registerPostMatchReviewPrompt, reviewManifestInput, reviewEvidenceInput, reviewAnnotationsInput, saveReviewAnnotationsInput } from './postmatch-review.mjs';
 import { closedPlayerReceipts, playLine, waitForLine } from './line-runtime.mjs';
 import { registerTheorycraftTools } from './theorycraft.mjs';
-import { compactGameState, formatGameReceipt } from './state-view.mjs';
+import { compactGameState, createViewMemory, formatGameReceipt, resetViewMemory } from './state-view.mjs';
 import { cancelPlayerReservation, checkPlayerSelection, inspectPlayerReservation, playerLease, requirePlayerControl, resolvePlayerActor, samePlayerControl } from './player-seats.mjs';
 
 const Uuid = z.uuid();
@@ -25,7 +25,7 @@ const StringId = z.string().min(1).max(120);
 const Format = z.enum(['Standard', 'Pioneer', 'Modern']);
 const Cursor = z.number().int().nonnegative();
 const Value = z.union([z.number().int(), z.array(z.number().int().nonnegative()).max(128)]);
-const StateView = z.enum(['full', 'compact']).optional().describe('Use compact for gameplay. A choice cardRef identifies a visible card in the same state. Use full (the default) for inline choice cards and printing details.');
+const StateView = z.enum(['full', 'compact']).optional().describe('Use compact for gameplay. A choice cardRef identifies a visible card in the same state. Compact play_line and wait receipts omit card rules already sent in this game; get_game_state sends them all again. Use full (the default) for inline choice cards and printing details.');
 const GameCondition = {
   phase: z.string().min(1).max(32).optional(),
   step: z.string().min(1).max(40).optional(),
@@ -207,10 +207,18 @@ function textResult(value, isError = false) {
   return { content: [{ type: 'text', text: JSON.stringify(value) }], isError };
 }
 
+// What compact receipts already delivered to each seat in its current game.
+const viewMemories = new WeakMap();
+function viewMemory(seat) {
+  if (!seat || typeof seat !== 'object') return undefined;
+  if (!viewMemories.has(seat)) viewMemories.set(seat, createViewMemory());
+  return viewMemories.get(seat);
+}
+
 function decisionReceipt(seat, receipt, view) {
   const state = receipt.state;
-  if (state && !receipt.planOwnsExecution) return formatGameReceipt({ ...receipt, state: seat.withChoiceActions(state) }, view);
-  return formatGameReceipt(receipt, view);
+  if (state && !receipt.planOwnsExecution) return formatGameReceipt({ ...receipt, state: seat.withChoiceActions(state) }, view, viewMemory(seat));
+  return formatGameReceipt(receipt, view, viewMemory(seat));
 }
 
 function rejectedLine({ gameId, cursor, commandId, view }, rejection) {
@@ -335,7 +343,10 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
     'play', ({ gameId, view }) => {
       const seat = getSeat();
       const state = seat.withChoiceActions(seat.snapshot(gameId));
-      return view === 'compact' ? compactGameState(state) : state;
+      // A state read restarts compact memory: it always carries every visible rule.
+      const memory = viewMemory(seat);
+      resetViewMemory(memory);
+      return view === 'compact' ? compactGameState(state, memory) : state;
     }, true);
   tool('list_recoverable_matches', 'List matches reserved to this exact account or agent grant, with stable participant links and confirmed boundaries.', {},
     'play', () => getSeat().engine.recoveryList(), true);
