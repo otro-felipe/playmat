@@ -2578,6 +2578,9 @@ test('forward auth marks administrator accounts, including their agent connectio
   assert.equal((await identity(admin)).rateExempt, true)
   assert.equal((await identity(ordinaryAgent)).rateExempt, undefined)
   assert.equal((await identity(ordinary)).rateExempt, undefined)
+  // The engine learns the exemption only through this forward-auth header.
+  assert.equal((await f.path('/internal/verify?scope=play', { headers: adminAgent })).headers.get('X-Playmat-Rate-Exempt'), '1')
+  assert.equal((await f.path('/internal/verify?scope=play', { headers: ordinaryAgent })).headers.get('X-Playmat-Rate-Exempt'), null)
   // Per-account archive budgets: 60 a minute and 3 concurrent. Both accounts share the loopback
   // source budget (90 a minute), which is not exempt, so the totals stay under it.
   const archive = headers => f.path('/api/playtesting/matches', { headers })

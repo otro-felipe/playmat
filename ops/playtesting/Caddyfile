@@ -22,6 +22,7 @@
 		request_header -X-Playmat-Account
 		request_header -X-Playmat-Seat
 		request_header -X-Playmat-Connection
+		request_header -X-Playmat-Rate-Exempt
 		request_header X-Playmat-Client-IP {remote_host}
 		request_header @railwayClient X-Playmat-Client-IP {http.request.header.X-Real-IP}
 
@@ -35,7 +36,7 @@
 		handle /ws {
 			forward_auth 127.0.0.1:8790 {
 				uri /internal/verify?scope=play
-				copy_headers X-Playmat-Canonical-Agent X-Playmat-User X-Playmat-Account X-Playmat-Seat X-Playmat-Connection
+				copy_headers X-Playmat-Canonical-Agent X-Playmat-User X-Playmat-Account X-Playmat-Seat X-Playmat-Connection X-Playmat-Rate-Exempt
 			}
 			reverse_proxy 127.0.0.1:17172 {
 				header_up X-Forwarded-For {http.request.header.X-Playmat-Client-IP}

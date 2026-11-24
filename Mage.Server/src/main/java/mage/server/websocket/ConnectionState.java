@@ -41,6 +41,7 @@ final class ConnectionState implements RpcConnection {
     private volatile String signedOnUser;
     private mage.server.recovery.RecoveryPrincipal recoveryPrincipal;
     private boolean canonicalAgent;
+    private boolean rateExempt;
     private volatile HumanTableScope humanScope;
     private volatile HumanSeatChannel humanChannel;
 
@@ -149,6 +150,9 @@ final class ConnectionState implements RpcConnection {
 
     @Override public boolean isCanonicalAgent() { return canonicalAgent; }
     void setCanonicalAgent(boolean canonicalAgent) { this.canonicalAgent = canonicalAgent; }
+
+    boolean isRateExempt() { return rateExempt; }
+    void setRateExempt(boolean rateExempt) { this.rateExempt = rateExempt; }
 
     @Override public mage.server.recovery.RecoveryPrincipal getRecoveryPrincipal() { return recoveryPrincipal; }
     void setRecoveryPrincipal(mage.server.recovery.RecoveryPrincipal principal) { recoveryPrincipal = principal; }

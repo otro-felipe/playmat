@@ -459,6 +459,7 @@ export async function createProduct({
       if (principal) res.setHeader('X-Playmat-Seat', principal.seatId)
       if (principal?.connectionId) res.setHeader('X-Playmat-Connection', principal.connectionId)
       const exempt = await rateExempt(actor.accountId)
+      if (exempt) res.setHeader('X-Playmat-Rate-Exempt', '1')
       return send(res, 200, { ...identityView(actor), ...(canonicalAgent ? { canonicalAgent } : {}), ...(principal ? { recoverySeatId: principal.seatId } : {}), ...(exempt ? { rateExempt: true } : {}) })
     }
     await gateAccount(res, group, actor, releases)

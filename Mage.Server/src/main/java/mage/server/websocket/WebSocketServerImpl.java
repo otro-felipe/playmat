@@ -173,6 +173,8 @@ public class WebSocketServerImpl extends WebSocketServer {
         state.setSignedOnUser(signedOnUser(conn, handshake));
         if (state.getSignedOnUser() != null && mage.server.playtesting.ProductGateway.enabled()) {
             state.setCanonicalAgent("1".equals(handshake.getFieldValue("X-Playmat-Canonical-Agent")));
+            // Set only by the product's forward auth (Caddy strips client copies) or the loopback MCP.
+            state.setRateExempt("1".equals(handshake.getFieldValue("X-Playmat-Rate-Exempt")));
             try {
                 state.setRecoveryPrincipal(new mage.server.recovery.RecoveryPrincipal(
                         java.util.UUID.fromString(handshake.getFieldValue("X-Playmat-Account")),
@@ -320,7 +322,7 @@ public class WebSocketServerImpl extends WebSocketServer {
             if (mage.server.playtesting.ProductGateway.enabled()) {
                 mage.server.recovery.RecoveryPrincipal principal = state.getRecoveryPrincipal();
                 String key = principal == null ? state.getRemoteHost() : principal.accountId.toString();
-                if (!expensiveRequests.allow(key, method)) {
+                if (!expensiveRequests.allow(key, method, principal != null && state.isRateExempt())) {
                     throw new RpcException(RpcException.RATE_LIMITED, "Too many expensive requests, try again shortly");
                 }
             }

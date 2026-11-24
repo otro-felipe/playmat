@@ -114,7 +114,7 @@ export class PlaymatEngineSeat {
   #chat = new TableConversation();
   #invitePresentation = null;
 
-  constructor({ engineUrl, engineName, trustedHeader, accountId, recoverySeatId, connectionId, canonicalAgent = false, authenticationHeaders = {}, guardedPrompts = true, managedPriorityStops = false, humanTableId = null, playerId, activeTableId, flag }) {
+  constructor({ engineUrl, engineName, trustedHeader, accountId, recoverySeatId, connectionId, canonicalAgent = false, rateExempt = false, authenticationHeaders = {}, guardedPrompts = true, managedPriorityStops = false, humanTableId = null, playerId, activeTableId, flag }) {
     this.engineUrl = engineUrl;
     this.managedPriorityStops = managedPriorityStops;
     this.engineName = engineName;
@@ -135,6 +135,7 @@ export class PlaymatEngineSeat {
         ...(accountId && recoverySeatId ? { 'X-Playmat-Account': accountId, 'X-Playmat-Seat': recoverySeatId } : {}),
         ...(connectionId ? { 'X-Playmat-Connection': connectionId } : {}),
         ...(canonicalAgent ? { 'X-Playmat-Canonical-Agent': '1' } : {}),
+        ...(rateExempt && accountId && recoverySeatId ? { 'X-Playmat-Rate-Exempt': '1' } : {}),
       }, maxPayload: 4 * 1024 * 1024 }),
       requestTimeoutMs: 12_000, heartbeatTimeoutMs: 30_000, maxReconnectAttempts: 4, stateDiffs: false,
     });

@@ -31,10 +31,15 @@ final class WebSocketTrafficLimit {
     }
 
     boolean allow(String principal, String method) {
-        return !EXPENSIVE.contains(method) || acquire(principal);
+        return allow(principal, method, false);
     }
 
-    private synchronized boolean acquire(String principal) {
+    /** A rate-exempt (administrator) account skips its own budget but still spends the instance budget. */
+    boolean allow(String principal, String method, boolean exempt) {
+        return !EXPENSIVE.contains(method) || acquire(principal, exempt);
+    }
+
+    private synchronized boolean acquire(String principal, boolean exempt) {
         long now = clock.getAsLong();
         if (now - windowStart >= WINDOW) {
             counts.clear();
@@ -42,7 +47,7 @@ final class WebSocketTrafficLimit {
             windowStart = now;
         }
         int count = counts.getOrDefault(principal, 0);
-        if (used >= perInstance || count >= perAccount) {
+        if (used >= perInstance || (!exempt && count >= perAccount)) {
             return false;
         }
         counts.put(principal, count + 1);

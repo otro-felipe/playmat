@@ -20,4 +20,18 @@ public class WebSocketTrafficLimitTest {
         clock.set(60_000_000_000L);
         assertThat(limit.allow("alice", "soloFork")).isTrue();
     }
+
+    @Test
+    public void anExemptAccountSkipsItsOwnBudgetButStillSpendsTheInstanceBudget() {
+        AtomicLong clock = new AtomicLong();
+        WebSocketTrafficLimit limit = new WebSocketTrafficLimit(clock::get, 2, 5);
+        assertThat(limit.allow("admin", "roomCreateTable", true)).isTrue();
+        assertThat(limit.allow("admin", "matchStart", true)).isTrue();
+        assertThat(limit.allow("admin", "roomCreateTable", true)).isTrue();
+        assertThat(limit.allow("admin", "matchStart", true)).isTrue();
+        assertThat(limit.allow("alice", "roomCreateTable")).isTrue();
+        assertThat(limit.allow("admin", "matchStart", true)).isFalse();
+        assertThat(limit.allow("bob", "matchStart")).isFalse();
+        assertThat(limit.allow("admin", "sendPlayerBoolean", true)).isTrue();
+    }
 }
