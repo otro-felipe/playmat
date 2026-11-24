@@ -82,7 +82,7 @@ async function fixture(t) {
   };
 }
 
-test('[PM-VIEW-04] a pilot finishes a game from compact receipts and always knows the rules of visible cards', async (t) => {
+test('[PM-VIEW-05] a pilot finishes a game from compact receipts and always knows the rules of visible cards', async (t) => {
   const call = await fixture(t);
   const knownRules = new Map();
   let bytes = 0, responses = 0, warnings = 0;

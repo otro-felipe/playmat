@@ -9,6 +9,10 @@ const matchupStrategy = readGuide('matchup-strategy');
 const usesMatchupStrategy = new Set(['card-catalog', 'replay-analysis']);
 const guides = [
   {
+    name: 'core', title: 'Play Thoughtseize',
+    description: 'Startup guide: decision loop, compact view, minimal valid play_line examples and what to do after each stop.',
+  },
+  {
     name: 'getting-started', title: 'Start a Thoughtseize match',
     description: 'Join with an invite, use engine decisions, sideboard, and follow the table’s chat mode.',
   },
@@ -40,15 +44,17 @@ const guides = [
 }));
 const GuideId = z.enum(guides.map(({ name }) => name));
 const guideList = guides.map(({ text, ...guide }) => guide);
-const bootstrapNames = new Set(['getting-started', 'card-catalog', 'turn-planning', 'rules']);
-const bootstrapGuides = guides.filter(({ name }) => bootstrapNames.has(name));
+// The bundle stays well under client tool-output limits: the core guide in full and
+// an index of the detailed guides, which agents read by guideId when needed.
+const bootstrapGuides = guides.filter(({ name }) => name === 'core');
 const guideBundle = {
-  version: createHash('sha256').update(JSON.stringify(bootstrapGuides)).digest('hex'),
+  version: createHash('sha256').update(JSON.stringify(guides)).digest('hex'),
   guides: bootstrapGuides,
+  detailedGuides: guideList.filter(({ name }) => name !== 'core'),
 };
 export const replayAnalysisGuide = guides.find(({ name }) => name === 'replay-analysis').text;
 
-export const guideBootstrap = 'Before creating, joining or playing a match, call get_guide({"bundle":true}) to load all four full guides: getting-started, turn-planning, card-catalog and rules. Repeat after losing conversation context. Listing guides alone does not load their contents.';
+export const guideBootstrap = 'Before creating, joining or playing a match, call get_guide({"bundle":true}) to load the core guide. Read a detailed guide (getting-started, turn-planning, card-catalog or rules) with get_guide({"guideId":"…"}) when the core guide points to it. Repeat after losing conversation context. Listing guides alone does not load their contents.';
 
 export const sequenceInstructions = 'Prefer play_line for the longest justified line. Legacy play_sequence and submit_sequence accept guarded engine steps, return turn_changed across a turn boundary and never treat land drops as ignorable responses. The standalone pass_until actively declines optional responses through rival actions in the current turn. Use a guarded line when a rival action should return control. Inspect the legacy sequence receipt and current state after interruptions.';
 
@@ -56,9 +62,7 @@ export const chatInstructions = 'Follow the host chatMode: quiet has no unsolici
 
 export const guideInstructions = [
   guideBootstrap,
-  'Use play_line for the longest justified line from your observed game state. Include known plays, targets, costs, choices and combat together. The executor handles routine priority handoffs. Stop and replan from the returned state on a meaningful opponent action, new information, or an unplanned required choice. Use choose for any visible engine prompt. Pass once deliberately with pass_priority, or use a terminal pass_until with my_upkeep to plan before drawing or my_draw to plan after drawing. The default if_no_play policy stops for legal plays, including free or alternate costs; use decline_optional only as a strategic choice.',
-  'Keep the live decision loop active: null secondsRemaining is not unlimited decision time. It is a sampled cumulative match clock, separate from timing.inactivity. Use the server response-inactivity deadline when status is running; zero requires immediate attention, and unknown/null never means unlimited time. Resolve pending legal choices promptly; polling, chat, resync and webhook subscriptions do not answer or renew them. Inspect the state returned even after a wait timeout.',
-  'Use guideId to read one guide. Clients with native resource support can read the equivalent resources.',
+  'Use play_line for the longest justified line from your observed game state and replan from the returned state when it stops. Answer pending legal choices promptly: a null clock never means unlimited time, and polling or chat does not renew the inactivity deadline.',
   chatInstructions,
   'In chatty matches, greet the opposing pilot and reply naturally to their table messages. Use wait_for_chat alongside play_line or wait_for_decision with its own chat cursor. With sequential-only tools, look for chatCursor and call list_chat. Send messages to the rival with send_chat. Use the optional explanation on play_line or play_turn for a spectator-facing account of the play, purpose, possible responses and relevant alternatives from public facts. Agents play from their own seat.',
   'An absent or unknown chatMode means quiet. Never carry Coach advice over to another table without its host choosing it.',
@@ -72,7 +76,7 @@ export function registerGuides(mcp) {
   mcp.registerTool('get_guide', {
     description: `Read the complete Thoughtseize guide bundle, a single guide, or the guide index. ${guideBootstrap}`,
     inputSchema: {
-      bundle: z.boolean().optional().describe('Set true to read all four full guides and their shared version in one call.'),
+      bundle: z.boolean().optional().describe('Set true to read the core guide, the index of detailed guides and the shared version in one call.'),
       guideId: GuideId.optional().describe('Read one guide by ID. Omit both inputs to list the guide index.'),
     },
     annotations: { readOnlyHint: true, openWorldHint: false },

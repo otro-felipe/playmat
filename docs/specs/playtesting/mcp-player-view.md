@@ -2,11 +2,15 @@
 
 ### PM-VIEW-01 — Equivalent gameplay choices
 
-The MCP gameplay tools `get_game_state`, `play_line` and `wait_for_decision` accept `view: "compact"`. The response retains the game, epoch, cursor, timing, legal choices and all state needed to make a play, including rules, costs, ability text, targets, damage, and combat assignments. Execution status, progress and interruption signals remain available. Omitting `view` returns the existing full contract. Changing only the response view on a retained command does not replay an action.
+The MCP gameplay tools `get_game_state`, `play_line` and `wait_for_decision` accept `view: "compact"`. The response retains the game, epoch, cursor, timing, legal choices and all state needed to make a play, including costs, ability text, targets, damage, and combat assignments. `get_game_state` carries every visible card's rules. Within one game, compact `play_line` and `wait_for_decision` receipts omit the rules of a card name and text the seat already received and set `rulesOmitted`; the stack always carries its rules. A `get_game_state` read restarts that memory. Execution status, progress and interruption signals remain available. Omitting `view` returns the existing full contract. Changing only the response view on a retained command does not replay an action.
 
 ### PM-VIEW-02 — References within one snapshot
 
 A choice can carry `cardRef` in compact mode when its card matches a single visible card record in the same state by object ID and gameplay fields. Repeated identical records in the battlefield and combat describe one object. Conflicting records, cards without usable IDs and cards visible only in the prompt stay inline. Pile membership and current prompt text stay available. Compact cards omit empty hint lists and printing metadata. Live hints with content remain available because they can describe restrictions and other active effects.
+
+### PM-VIEW-05 — Compact without repetition
+
+Compact cards omit `cardId` equal to `id`, a `controllerId` equal to the player whose zone holds them, zero damage, `tapped:false`, empty lists, the zero power and toughness of a non-creature, and the executor-only `zoneChangeCounter` and `enteringSpellId`. `sequenceEvidence` keeps its epoch and revision counters; the action, resolution and combat ledgers stay with the executor. An unchanged `timing.warning` is sent once per game and later receipts set `warningRepeated:true`. A plain single-colour mana choice omits `payWithOptions` and reports `manaColors`; it pays with its `objectId`. Players list public command-zone objects in `command`. A scripted game played only from compact receipts reaches its end with every visible card's rules already delivered (`compact-game.test.mjs`). `scripts/measure-compact-view.mjs` replays a pilot JSONL: the 24 November 2026 two-game match fell from 16.8 KB to 7.0 KB per state response.
 
 ### PM-VIEW-03 — Resume a line
 
@@ -25,6 +29,7 @@ The HTTP tests in `ops/playtesting/mcp/test/player-view.test.mjs` cover these sc
 | PM-VIEW-03 | `compact wait keeps rollback state and rejects incompatible command filters` |
 | PM-VIEW-03 | `timeout and stale-line recovery keep the current cursor in compact state` |
 | PM-VIEW-04 | `an ambiguous ability label can be recovered with the observed choice ID` |
+| PM-VIEW-05 | `a pilot finishes a game from compact receipts and always knows the rules of visible cards` (`compact-game.test.mjs`) |
 
 The isolated XMage fixture in `ops/playtesting/product/sequence.local.mjs` checks paired UTF-8 MCP text lengths and equivalent prompts from actual engine callbacks. The fixture emits numeric sizes and its named scenarios.
 

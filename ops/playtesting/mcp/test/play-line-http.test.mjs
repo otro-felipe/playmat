@@ -1973,3 +1973,23 @@ test('[PM-LINE-PUBLIC] play_turn uses its sequence ID for the authored explanati
   await f.call('get_sequence_status',{gameId,sequenceId:result.sequenceId});
   assert.deepEqual(f.applied.map(answer=>answer.line),[{commandId:result.sequenceId,explanation}]);
 });
+
+test('[PM-LINE-04] every core guide example passes the published play_line schema', async (t) => {
+  const guide = await readFile(new URL('../guides/core.md', import.meta.url), 'utf8');
+  const examples = [...guide.matchAll(/```json\n([\s\S]*?)\n```/g)].map(([, body]) => JSON.parse(body));
+  assert.ok(examples.length >= 6, 'The core guide shows a minimal line for each common shape');
+  for (const example of examples) {
+    const f = await fixture(t);
+    const { isError, result } = await f.call('play_line', { ...example, gameId: f.request.gameId, cursor: f.request.cursor });
+    assert.equal(isError, false, `${example.commandId}: ${JSON.stringify(result)}`);
+    assert.notEqual(result.code, 'invalid_line_arguments', `${example.commandId}: ${JSON.stringify(result.issues)}`);
+  }
+  const f = await fixture(t);
+  const { result } = await f.call('play_line', { ...f.request, actions: [{ kind: 'choose', guard: { kind: 'mulligan' }, select: { label: 'Keep' } }] });
+  assert.equal(result.code, 'invalid_line_arguments', 'The guide names this unguarded keep as rejected');
+  for (const misplaced of [{ kind: 'pass_until', destination: 'my_upkeep', expectedStackIds: ['stack-id'] }]) {
+    const reply = await f.rawCall('play_line', { ...f.request, actions: [misplaced] });
+    assert.equal(reply.isError, true, 'expectedStackIds inside an action is a schema error');
+    assert.match(reply.content[0].text, /expectedStackIds/);
+  }
+});

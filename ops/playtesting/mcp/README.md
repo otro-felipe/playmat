@@ -39,7 +39,9 @@ An event-capable client uses `events/list`, `events/subscribe` and `events/unsub
 
 If you have ChatGPT Dot, add Thoughtseize as a private custom MCP server using OAuth. Ask your dot to monitor both events for your Thoughtseize account. Each event includes only enough information for the client to look up the current invitation or decision.
 
-The server advertises these guides at initialization. Every model loads all four complete texts with `get_guide({"bundle":true})` before creating, joining or playing, and again after losing context. The bundle version is a fingerprint of its full contents. `get_guide({})` returns the index and `get_guide({"guideId":"getting-started"})` reads one guide. Native MCP clients can read the equivalent resources. These options work before joining a table. The bootstrap appears in MCP initialization and gameplay tool descriptions. Guide reads are an instruction to the model.
+The server advertises these guides at initialization. Every model loads the core guide with `get_guide({"bundle":true})` before creating, joining or playing, and again after losing context. The bundle holds the core guide in full (about 11 KB, well under client tool-output limits) and an index of the detailed guides. The bundle version is a fingerprint of every guide. `get_guide({})` returns the index and `get_guide({"guideId":"turn-planning"})` reads one guide. Native MCP clients can read the equivalent resources. These options work before joining a table. The bootstrap appears in MCP initialization and gameplay tool descriptions. Guide reads are an instruction to the model.
+
+- `playmat://guides/core` covers the decision loop, the compact view, minimal valid `play_line` examples and every stop code.
 
 - `playmat://guides/getting-started` covers invitations, the decision loop, sideboarding and the host's chosen chat mode.
 - `playmat://guides/card-catalog` covers card lookup, deck validation and public archetype research.

@@ -112,6 +112,7 @@ test('an invited agent can discover Thoughtseize and read its guides before join
   const turnPlanning = 'playmat://guides/turn-planning';
   const rules = 'playmat://guides/rules';
   const expected = new Map([
+    ['playmat://guides/core', /play_line[\s\S]*expectedStackIds[\s\S]*chat_closed/],
     [gettingStarted, /join_game[\s\S]*wait_for_decision[\s\S]*send_chat/],
     [cardCatalog, /search_cards[\s\S]*find_possible_responses/],
     [turnPlanning, /play_sequence[\s\S]*expectCast/],
@@ -165,8 +166,8 @@ test('[PM-AC-08] a tools-only connector can discover and read the same guides as
   }
   const { error, value: { guides } } = await call(client, 'get_guide');
   assert.equal(error, false);
-  assert.deepEqual(new Set(guides.map(({ name }) => name)), new Set([...ids, 'replay-analysis', 'player-dispatch']));
-  assert.equal(guides.length, ids.length + 2);
+  assert.deepEqual(new Set(guides.map(({ name }) => name)), new Set(['core', ...ids, 'replay-analysis', 'player-dispatch']));
+  assert.equal(guides.length, ids.length + 3);
 
   const { resources } = await client.listResources();
   for (const guide of guides) {
@@ -202,21 +203,25 @@ test('[PM-REVIEW-API-8] replay prompt includes matchup research, omissions and a
   assert.match(coachGuide, /same matchup strategy in.*card-catalog/i);
 });
 
-test('[PM-LINE-04] one bootstrap returns all four complete guides without opening a seat', async (t) => {
+test('[PM-LINE-04] one bootstrap returns the core guide and the detailed-guide index without opening a seat', async (t) => {
   const { url, fixtures } = await start(t);
   const client = await connect(t, url, 'fixture-other');
   const bundle = await call(client, 'get_guide', { bundle: true });
   assert.equal(bundle.error, false);
   assert.equal(client.getServerVersion().version, '0.5.0');
   assert.match(bundle.value.version, /^[a-f0-9]{64}$/);
-  assert.equal(bundle.value.guides.length, 4);
-  const onboarding = bundle.value.guides.find(({ name }) => name === 'getting-started');
+  assert.deepEqual(bundle.value.guides.map(({ name }) => name), ['core']);
+  assert.ok(JSON.stringify(bundle.value).length < 16_384, 'The bundle stays well under client tool-output limits');
+  assert.deepEqual(new Set(bundle.value.detailedGuides.map(({ name }) => name)),
+    new Set(['getting-started', 'card-catalog', 'turn-planning', 'rules', 'player-dispatch', 'replay-analysis']));
+  for (const guideId of ['getting-started', 'turn-planning', 'card-catalog', 'rules']) {
+    assert.match(bundle.value.guides[0].text, new RegExp('`' + guideId + '`'), `The core guide points to ${guideId}`);
+  }
+  const onboarding = (await call(client, 'get_guide', { guideId: 'getting-started' })).value;
   for (const term of ['Partida', 'Juego', 'Jugador Humano', 'Jugador MCP', 'Agente', 'Oponente', 'Biblioteca', 'Historial']) {
     assert.ok(onboarding.text.includes('**' + term), term);
   }
   assert.match((await call(client, 'get_guide', { guideId: 'replay-analysis' })).value.text, /\*\*Biblioteca/);
-  assert.deepEqual(new Set(bundle.value.guides.map(({ name }) => name)),
-    new Set(['getting-started', 'card-catalog', 'turn-planning', 'rules']));
   for (const guide of bundle.value.guides) {
     const resource = await client.readResource({ uri: guide.uri });
     assert.equal(guide.text, resource.contents[0].text);
@@ -234,8 +239,7 @@ test('[PM-LINE-04] one bootstrap returns all four complete guides without openin
 test('[PM-PLAYER-01] the startup guide routes interleaved work through one SDK client and the selected playerId', async t => {
   const { url } = await start(t);
   const client = await connect(t, url, 'fixture-player');
-  const { guides } = (await call(client, 'get_guide', { bundle: true })).value;
-  const text = guides.find(guide => guide.name === 'getting-started').text;
+  const { text } = (await call(client, 'get_guide', { guideId: 'getting-started' })).value;
   const code = text.match(/## Choose a player on each call[\s\S]*?```js\n([\s\S]*?)\n```/);
   assert.ok(code, 'The installed startup bundle must include the single-connection player example');
   const join = text.match(/join_game\((\{[^\n]*?\})\)/);
@@ -264,8 +268,7 @@ test('[PM-PLAYER-01] the startup guide routes interleaved work through one SDK c
 test('[PM-GAME-01a] the bundled sideboard example submits the latest seat and guards the intended printing moves', async (t) => {
   const { url } = await start(t);
   const client = await connect(t, url, 'fixture-player');
-  const { guides } = (await call(client, 'get_guide', { bundle: true })).value;
-  const onboarding = guides.find(guide => guide.name === 'getting-started').text;
+  const onboarding = (await call(client, 'get_guide', { guideId: 'getting-started' })).value.text;
   const snippet = onboarding.match(/## Sideboard between games[\s\S]*?```js\n([\s\S]*?)\n```/);
   assert.ok(snippet, 'the actual startup bundle contains the executable sideboarding example');
   // Run the published SDK code against a controlled pair of private-seat responses.
