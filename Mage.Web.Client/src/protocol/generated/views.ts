@@ -1397,6 +1397,12 @@ export interface ErrorInfo {
     type?: string;
 }
 
+export interface ExileCardView extends Serializable {
+    cardId?: string;
+    playableBy?: string[];
+    sourceId?: string;
+}
+
 export interface ExpansionSetInfo {
     blockName?: string;
     hasBasicLands?: boolean;
@@ -1504,6 +1510,7 @@ export interface GameView extends Serializable {
     combat?: CombatGroupView[];
     companion?: RevealedView[];
     events?: GameEventView[];
+    exilePresentation?: ExileCardView[];
     sequenceEvidence?: SequenceEvidenceView;
     exiles?: { [index: string]: CardView }[];
     gameCycle?: number;

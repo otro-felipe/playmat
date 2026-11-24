@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { CardView } from '../../protocol/generated/views';
+import type { ExileSelection } from './exilePresentation';
 
 /** Local, per-match UI state: what is hovered, held or open. Game state lives in the GameSession. */
 interface MatchUiState {
@@ -15,7 +16,7 @@ interface MatchUiState {
   /** a creature being dragged onto an attacker to block it, and the attacker under the pointer */
   blockDrag: { blockerId: string; attackerId: string | null } | null;
   /** zone viewer (graveyard, exile...) */
-  viewer: { title: string; cards: CardView[] } | null;
+  viewer: { title: string; cards: CardView[]; exile?: ExileSelection } | null;
   /** the player whose dungeon is laid out room by room (DungeonViewer) */
   dungeonOf: string | null;
   logOpen: boolean;

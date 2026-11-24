@@ -68,6 +68,7 @@ import { useOpponentVoice } from './useOpponentVoice';
 import { setCardMotion, useFlipOrigin } from './flip';
 import { GameLog } from './GameLog';
 import { SpectatorCommentary, SpectatorCommentaryProvider } from './SpectatorCommentary';
+import { ExilePresentationContext, presentExile, selectedExile } from './exilePresentation';
 import { RecentActions } from './RecentActions';
 import { stackTargetConnections } from './stackTargetArrows';
 import { seatAlias, type SeatDisplayNames } from './seatDisplayNames';
@@ -231,6 +232,8 @@ function MatchBoard({ session, state, replayLog, replayHands, publicSpectator, r
   }, [session, mode, broadcastDelay, publicSpectator]);
   const viewer = useMatchUi((ui) => ui.viewer);
   const openViewer = useMatchUi((ui) => ui.openViewer);
+  const exile = useMemo(() => presentExile(view), [view]);
+  const viewerCards = viewer?.exile ? selectedExile(exile, viewer.exile) : viewer?.cards ?? NO_CARDS;
   const deckSleeves = useSleeves();
   const catalog = useCosmetics((cosmetics) => cosmetics.byKey);
   const [holding, setHolding] = useState(false);
@@ -658,7 +661,7 @@ function MatchBoard({ session, state, replayLog, replayHands, publicSpectator, r
 
   const stage = (
     // basic lands show their players' land styles anywhere on the stage (B301, ui/landStyles.ts)
-    <LandStyleContext.Provider value={landStyleOf}><TokenArtContext.Provider value={tokenArtOf}><CardStyleContext.Provider value={cardStylesOf}><Stage style={matStyle} contained={mode === 'replay' || !!publicSpectator || !!state.browserInputLock}>
+    <LandStyleContext.Provider value={landStyleOf}><TokenArtContext.Provider value={tokenArtOf}><CardStyleContext.Provider value={cardStylesOf}><ExilePresentationContext.Provider value={exile}><Stage style={matStyle} contained={mode === 'replay' || !!publicSpectator || !!state.browserInputLock}>
       {(stage) => {
         // the stage widens with the window and the field takes the extra width; a portrait window gets the tall layout
         // "Match size" grows the creatures and the hand for a laptop screen (#147)
@@ -890,7 +893,7 @@ function MatchBoard({ session, state, replayLog, replayHands, publicSpectator, r
               />
             )}
             {interaction.mode === 'panel' && prompt && !awaitingServer && <ChoicePanel prompt={prompt} sourceId={choiceSource} dungeon={myDungeon} onCommand={onCommand} xLimit={announceLimit} startAtLimit={automation.xDefaultsToMax} />}
-            {viewer && <ZoneViewer title={viewer.title} cards={viewer.cards} onClose={() => openViewer(null)} />}
+            {viewer && <ZoneViewer title={viewer.title} cards={viewerCards} exile={!!viewer.exile} onClose={() => openViewer(null)} />}
             {shownDungeon && shownDungeonPlayer && (
               <DungeonViewer
                 title={shownDungeonPlayer.playerId === board.me?.player.playerId ? `Your dungeon: ${shownDungeon.name}` : `${shownDungeonPlayer.name}'s dungeon: ${shownDungeon.name}`}
@@ -927,11 +930,11 @@ function MatchBoard({ session, state, replayLog, replayHands, publicSpectator, r
               </Dialog>
             )}
             <CardZoom large={spectating && largeZoom} big={bigZoom} />
-            <CardDetail view={view} extra={pickerCards ?? viewer?.cards ?? NO_CARDS} sleeveOf={sleeveOf} attacking={attacking} blocking={blocking} />
+            <CardDetail view={view} extra={pickerCards ?? viewerCards} sleeveOf={sleeveOf} attacking={attacking} blocking={blocking} />
           </div>
         );
       }}
-    </Stage></CardStyleContext.Provider></TokenArtContext.Provider></LandStyleContext.Provider>
+    </Stage></ExilePresentationContext.Provider></CardStyleContext.Provider></TokenArtContext.Provider></LandStyleContext.Provider>
   );
   return state.browserInputLock ? <SpectatorFrame actions={
     <InputLockNotice lock={state.browserInputLock} onLeave={leave} leaveLabel={leaveLabel} onResync={onResync} />

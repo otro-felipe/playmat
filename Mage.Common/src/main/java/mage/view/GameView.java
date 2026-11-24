@@ -62,6 +62,7 @@ public class GameView implements Serializable {
     private final Map<String, SimpleCardsView> watchedHands = new HashMap<>();
     private final CardsView stack = new CardsView();
     private final List<ExileView> exiles = new ArrayList<>();
+    private final List<ExileCardView> exilePresentation;
     private final List<RevealedView> revealed = new ArrayList<>();
     private final List<LookedAtView> lookedAt = new ArrayList<>();
     private final List<RevealedView> companion = new ArrayList<>();
@@ -223,6 +224,8 @@ public class GameView implements Serializable {
         for (ExileZone exileZone : state.getExile().getExileZones()) {
             exiles.add(new ExileView(exileZone, game, createdForPlayerId));
         }
+        // A replay's seat evidence is an overlay on the shared frame, which already owns these annotations.
+        this.exilePresentation = liveView || createdForPlayerId == null ? ExileCardView.capture(state, game) : null;
         for (String name : state.getRevealed().keySet()) {
             revealed.add(new RevealedView(name, state.getRevealed().get(name), game));
         }

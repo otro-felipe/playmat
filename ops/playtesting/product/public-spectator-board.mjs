@@ -83,6 +83,18 @@ function concealedObjects(objects) {
   return {concealed,markedIds}
 }
 
+function publicExilePresentation(entries, players, roster) {
+  const visibleIds = zone => Object.values(zone).filter(card => !card.faceDown && isUuid(card.id)).map(card => card.id)
+  const exiled = new Set(players.flatMap(player => visibleIds(player.exile)))
+  const sources = new Set(players.flatMap(player => visibleIds(player.battlefield)))
+  const projected = list(entries).filter(entry => record(entry) && exiled.has(entry.cardId)).flatMap(entry => {
+    const sourceId = sources.has(entry.sourceId) ? entry.sourceId : null
+    const playableBy = [...new Set(list(entry.playableBy).filter(playerId => roster.has(playerId)))]
+    return sourceId || playableBy.length ? [{cardId:entry.cardId, ...(sourceId && {sourceId}), ...(playableBy.length > 0 && {playableBy})}] : []
+  })
+  return projected.length ? {exilePresentation:projected} : {}
+}
+
 function publicView(view, roster, gameId) {
   if (!record(view)) return null
   const objects = publicObjects(view)
@@ -118,10 +130,11 @@ function publicView(view, roster, gameId) {
     commandList:list(p.commandList).filter(record).map(c => card(c.id,c)).filter(Boolean),
   })
   const revealed = groups => list(groups).filter(record).map(group => ({cards:zone(group.cards)}))
+  const players = list(view.players).filter(record).map(boardPlayer)
   return {...numbers(view,['turn']),...pick(view,['phase'],v => phases.has(v)),...pick(view,['step'],v => steps.has(v)),
     ...pick(view,['activePlayerId'],v => roster.has(v)),
     ...pick(view,['activePlayerName','priorityPlayerName'],v => playerNames.has(v)),
-    players:list(view.players).filter(record).map(boardPlayer),stack:zone(view.stack),exiles:list(view.exiles).map(zone),
+    players,stack:zone(view.stack),exiles:list(view.exiles).map(zone),...publicExilePresentation(view.exilePresentation,players,roster),
     companion:revealed(view.companion),revealed:revealed(view.revealed),
     combat:list(view.combat).filter(record).map(g => ({
       attackers:zone(g.attackers),blockers:zone(g.blockers),...bools(g,['isBlocked']),

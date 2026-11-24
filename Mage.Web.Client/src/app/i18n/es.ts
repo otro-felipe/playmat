@@ -2087,6 +2087,9 @@ const es: Catalog = {
 
   // the match stage
   'match.cards': { one: '{label}, {count} carta', other: '{label}, {count} cartas' },
+  'match.exile.held': 'Exilio de {source}',
+  'match.exile.canPlay': '{name} puede jugar desde el exilio',
+  'match.exile.playable': 'Exilio jugable',
   'match.handEarlier': { one: 'Mostrar {count} carta anterior', other: 'Mostrar {count} cartas anteriores' },
   'match.handLater': { one: 'Mostrar {count} carta más', other: 'Mostrar {count} cartas más' },
   'match.stack.count': '×{count}',

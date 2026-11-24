@@ -176,7 +176,7 @@ export function projectReplayEvent(event, viewer) {
   if (!event.view || typeof event.view !== 'object') return null
   const view = pick(event.view, [
     'activePlayerId', 'activePlayerName', 'attackOption', 'bufferTime', 'combat', 'companion', 'events',
-    'exiles', 'gameCycle', 'phase', 'priorityPlayerName', 'priorityTime', 'rangeOfInfluence',
+    'exilePresentation', 'exiles', 'gameCycle', 'phase', 'priorityPlayerName', 'priorityTime', 'rangeOfInfluence',
     'revealed', 'rollbackTurnsAllowed', 'stack', 'step', 'turn',
   ])
   view.players = (event.view.players ?? []).map(player => pick(player, [

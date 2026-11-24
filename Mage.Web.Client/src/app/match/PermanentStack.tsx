@@ -15,6 +15,7 @@ import { ATTACHMENT_OFFSET_RATIO, cardKey, groupUnits, stackBadge, stackOffsetRa
 import { useFlip } from './flip';
 import './matchMessages';
 import { useMatchUi } from './matchUi';
+import { useExilePresentation } from './exilePresentation';
 import { useStage } from './stageContext';
 import { isMatchObjectKey, preventMatchObjectMouseFocus } from './keyboard';
 import { recentlyControlledLand, type LandNotice } from './landAnimation';
@@ -264,6 +265,8 @@ function PlacedCard({ permanent, width, sleeve, clickable, selected, attacking, 
         <CardFace card={permanent} sleeve={sleeve} size={width > 140 ? 'normal' : 'small'} />
       </div>
 
+      {!isClickable && <ExileSourceBadge permanent={permanent} />}
+
       <div className={styles.marks} style={{ transform: tapped ? 'rotate(-90deg)' : undefined }}>
         {isAttacking && <span className={[styles.mark, styles.markAttack].join(' ')} title="Attacking"><Swords size={13} aria-hidden="true" /></span>}
         {isBlocking && <span className={styles.mark} title="Blocking"><Shield size={13} aria-hidden="true" /></span>}
@@ -327,6 +330,29 @@ function PlacedCard({ permanent, width, sleeve, clickable, selected, attacking, 
       {!isCreature && loyalty && <span className={[styles.pt, styles.loyalty].join(' ')}>{loyalty}</span>}
       {count && <span className={styles.count} data-turned={tapped ? '' : undefined}>{count}</span>}
     </div>
+  );
+}
+
+function ExileSourceBadge({ permanent }: { permanent: PermanentView }) {
+  const t = useT();
+  const { bySource } = useExilePresentation();
+  const openViewer = useMatchUi((state) => state.openViewer);
+  const setZoom = useMatchUi((state) => state.setZoom);
+  const sourceId = permanent.id;
+  const cards = sourceId ? bySource.get(sourceId) : undefined;
+  if (!sourceId || !permanent.name || !cards?.length) return null;
+  const count = cards.length;
+  const title = t('match.exile.held', { source: permanent.name });
+  return (
+    <button type="button" className={styles.exileSource} style={{ transform: permanent.tapped ? 'rotate(-90deg)' : undefined }}
+      aria-label={t('match.cards', { label: title, count })} title={title}
+      onMouseDown={(event) => event.stopPropagation()}
+      onClick={() => {
+        setZoom(null);
+        openViewer({ title, cards, exile: { sourceId } });
+      }}>
+      <Lock size={16} aria-hidden="true" /> {count}
+    </button>
   );
 }
 

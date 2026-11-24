@@ -237,6 +237,41 @@
   box-shadow: inset 0 0 0 1px var(--ink-faint);
 }
 
+.exileSource {
+  position: absolute;
+  left: 4%;
+  bottom: 4%;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 26px;
+  padding: 0 7px;
+  border: 1px solid var(--ink-faint);
+  border-radius: 6px;
+  background: var(--mat-900);
+  color: var(--ink-strong);
+  font-family: var(--font-print);
+  font-size: max(17px, calc(var(--touch-target, 0px) * 0.27));
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.exileSource:hover,
+.exileSource:focus-visible {
+  border-color: var(--brass-ink);
+  color: var(--brass-ink);
+}
+
+:global([data-touch]) .exileSource::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: var(--touch-target);
+  height: var(--touch-target);
+  translate: -50% -50%;
+  content: '';
+}
+
 /* power/toughness plate printed over the card's corner */
 .pt {
   position: absolute;

@@ -57,6 +57,27 @@ test('face-down and concealed representations share only a public sleeve in ever
   }
 })
 
+test('only face-up exile cards, public battlefield sources and known players keep exile presentation',()=>{
+  const input=frame()
+  const source={id:randomUUID(),name:'Temporary Lockdown'}
+  const exile={id:randomUUID(),name:'Wrenn’s Resolve'}
+  const unknown=randomUUID()
+  input.view.players[0].battlefield[source.id]=source
+  input.view.players[0].exile[exile.id]=exile
+  input.view.exilePresentation=[
+    {cardId:exile.id,sourceId:source.id,playableBy:[playerId,unknown,playerId],privateText},
+    {cardId:hidden.id,sourceId:source.id,playableBy:[playerId]},
+    {cardId:visible.id,sourceId:source.id,playableBy:[playerId]},
+    {cardId:exile.id,sourceId:hidden.id,playableBy:[unknown]},
+  ]
+  const result=publicSpectatorBoard(input)
+  assert.deepEqual(result.view.exilePresentation,[{cardId:exile.id,sourceId:source.id,playableBy:[playerId]}])
+  assert.ok(!JSON.stringify(result).includes(privateText))
+  assert.ok(!JSON.stringify(result).includes(hidden.id))
+  assert.ok(!JSON.stringify(result).includes(unknown))
+  assert.equal(Object.hasOwn(publicSpectatorBoard(frame()).view,'exilePresentation'),false)
+})
+
 test('untrusted nested presentation fields never become public values, map keys, or stack ability captions',()=>{
   const f=frame()
   f.view.stack={

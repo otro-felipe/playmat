@@ -22,7 +22,7 @@ export async function readSpectatorEngine(tableId,privateSeats=false) {
   return response.json()
 }
 
-const boardFields = ['activePlayerId','activePlayerName','attackOption','bufferTime','combat','companion','exiles','phase','players',
+const boardFields = ['activePlayerId','activePlayerName','attackOption','bufferTime','combat','companion','exilePresentation','exiles','phase','players',
   'priorityPlayerName','priorityTime','rangeOfInfluence','revealed','stack','step','turn']
 const playerFields = ['attachments','battlefield','commandList','controlled','counters','designationNames','exile','graveyard','handCount','hasLeft',
   'hasPriority','initiative','isActive','isHuman','libraryCount','life','manaPool','monarch','name','playerId','topCard','wins','winsNeeded']

@@ -148,6 +148,13 @@
   cursor: pointer;
 }
 
+.exileCaption {
+  padding: 4px 2px 0;
+  color: var(--ink-soft);
+  font-size: 16px;
+  line-height: 1.25;
+}
+
 .pickable:hover {
   transform: translateY(-4px);
 }

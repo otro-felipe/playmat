@@ -20,6 +20,7 @@ import { cleanText } from '../ui/text';
 import './matchMessages';
 import { useChoiceKeyboard } from './useChoiceKeyboard';
 import { useMatchUi } from './matchUi';
+import { useExilePresentation } from './exilePresentation';
 import { useKeyboardHints } from './useKeyboardHints';
 import { stampArt } from './touches';
 import { usePaintedArt } from '../career/careerArt';
@@ -574,9 +575,12 @@ function VictoryStamp({ id }: { id: string }) {
 }
 
 /** A zone's cards laid out to read (graveyard, exile, revealed). */
-export function ZoneViewer({ title, cards, onClose }: { title: string; cards: CardView[]; onClose(): void }) {
+export function ZoneViewer({ title, cards, exile = false, onClose }: { title: string; cards: readonly CardView[]; exile?: boolean; onClose(): void }) {
   const keyboard = useChoiceKeyboard();
   const zoom = useHoverZoom();
+  const t = useT();
+  const formatName = usePlayerNames();
+  const { sourceNames, permittedPlayers } = useExilePresentation();
   return (
     <div ref={keyboard} tabIndex={-1} className={styles.scrim} role="dialog" aria-modal="true" aria-label={title} onClick={onClose}>
       <div className={styles.panel} onClick={(event) => event.stopPropagation()}>
@@ -586,7 +590,17 @@ export function ZoneViewer({ title, cards, onClose }: { title: string; cards: Ca
         </header>
         {cards.length === 0 ? <p className={styles.panelText}>Empty.</p> : (
           <div className={styles.grid}>
-            {cards.map((card) => <div key={card.id} className={styles.pick} data-card-id={card.id} {...zoom(card)}><CardFace card={card} size="normal" /></div>)}
+            {cards.map((card) => {
+              const source = exile && card.id ? sourceNames.get(card.id) : undefined;
+              const players = exile && card.id ? permittedPlayers.get(card.id) : undefined;
+              return <div key={card.id} className={styles.pick} data-card-id={card.id} {...zoom(card)}>
+                <CardFace card={card} size="normal" />
+                {source && <div className={styles.exileCaption}>{t('match.exile.held', { source })}</div>}
+                {players?.map(player => <div key={player.playerId} className={styles.exileCaption}>
+                  {t('match.exile.canPlay', { name: formatName(player.name ?? '') })}
+                </div>)}
+              </div>;
+            })}
           </div>
         )}
       </div>

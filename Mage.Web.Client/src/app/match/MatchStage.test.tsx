@@ -83,6 +83,36 @@ const BOARD: GameView = {
   canPlayObjects: { objects: { bolt: {} } },
 };
 
+test('spectators can inspect linked exile cards and cross-owner play permission on the current frame', () => {
+  const game = match(true);
+  const view: GameView = { ...BOARD, myPlayerId: undefined, players: [
+    { playerId: 'me', name: 'Alice', battlefield: { lockdown: { id: 'lockdown', name: 'Temporary Lockdown' } } },
+    { playerId: 'them', name: 'Bob', exile: {
+      bears: { id: 'bears', name: 'Grizzly Bears' },
+      bolt: { id: 'bolt', name: 'Lightning Bolt' },
+      hidden: { id: 'hidden', name: 'Private test card', faceDown: true },
+    } },
+  ], exilePresentation: [
+    { cardId: 'bears', sourceId: 'lockdown' },
+    { cardId: 'bolt', playableBy: ['me'] },
+    { cardId: 'hidden', sourceId: 'lockdown', playableBy: ['me'] },
+  ] };
+  game.updateView(view, false);
+  fireEvent.click(game.getByRole('button', { name: /Exiled by Temporary Lockdown, 1 card/ }));
+  let dialog = within(game.getByRole('dialog', { name: 'Exiled by Temporary Lockdown' }));
+  expect(dialog.getByText('Grizzly Bears')).toBeTruthy();
+  expect(dialog.queryByText('Lightning Bolt')).toBeNull();
+  fireEvent.click(dialog.getByRole('button', { name: 'Close' }));
+  fireEvent.click(game.getByRole('button', { name: /Alice can play from exile, 1 card/ }));
+  dialog = within(game.getByRole('dialog', { name: 'Alice can play from exile' }));
+  expect(dialog.getByText('Lightning Bolt')).toBeTruthy();
+  expect(dialog.queryByText('Private test card')).toBeNull();
+  game.updateView({ ...view, exilePresentation: [{ cardId: 'bears', sourceId: 'lockdown' }] }, false);
+  expect(dialog.getByText('Empty.')).toBeTruthy();
+  expect(game.queryByRole('button', { name: /Alice can play from exile/ })).toBeNull();
+  game.dispose();
+});
+
 test.each([{ targets: ['shock'] }, { targets: [] }])('[READ-AC-005] opens the revealed hand with ineligible cards visible but disabled ($targets)', ({ targets }) => {
   const game = match();
   const cards = {

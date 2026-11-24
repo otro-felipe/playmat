@@ -1,5 +1,5 @@
 import { usePlayerNames } from '../ui/usePlayerIdentity';
-import { BookOpen, Castle, Crown, Skull, Sparkles, Ban } from 'lucide-react';
+import { BookOpen, Castle, Crown, Skull, Sparkles, Ban, ArrowUpFromLine } from 'lucide-react';
 import { useRef, type ReactNode } from 'react';
 import type { CommanderStatus } from '../../core/game/commander';
 import { playerDungeon, type Dungeon } from '../../core/game/dungeon';
@@ -10,6 +10,7 @@ import { CardFace } from '../ui/CardFace';
 import { cardKey } from './boardModel';
 import { useFlip, useFlipOrigin } from './flip';
 import { useMatchUi } from './matchUi';
+import { useExilePresentation } from './exilePresentation';
 import styles from './Piles.module.css';
 
 export interface CommandProps {
@@ -55,8 +56,11 @@ export function Piles({ player, sleeve, isMe, commanders = [], clickable, onCast
 
       <PileOfCards objectId={`graveyard:${player.playerId}`} title={`${name} graveyard`} label="Graveyard" cards={graveyard} sleeve={sleeve} inHand={inHand} onOpen={() => openViewer({ title: `${name} graveyard`, cards: [...graveyard].reverse() })} />
       {exile.length > 0 && (
-        <PileOfCards objectId={`exile:${player.playerId}`} title={`${name} exile`} label="Exile" cards={exile} sleeve={sleeve} inHand={inHand} onOpen={() => openViewer({ title: `${name} exile`, cards: exile })} />
+        <PileOfCards objectId={`exile:${player.playerId}`} title={`${name} exile`} label="Exile" cards={exile} sleeve={sleeve} inHand={inHand} onOpen={() => openViewer({
+          title: `${name} exile`, cards: exile, exile: player.playerId ? { ownerId: player.playerId } : undefined,
+        })} />
       )}
+      <PlayableExilePile player={player} sleeve={sleeve} />
       {waiting.map((commander) => (
         <CommanderPile key={commander.id} commander={commander} sleeve={sleeve} castable={!!clickable?.has(commander.id)} onCast={onCast} owner={name} />
       ))}
@@ -135,18 +139,33 @@ function usePileZoom(card: CardView | undefined, sleeve: string) {
   };
 }
 
-function PileOfCards({ title, label, cards, sleeve, onOpen, inHand, objectId }: { title: string; label: string; cards: CardView[]; sleeve: string; onOpen(): void; inHand?: ReadonlySet<string>; objectId?: string }) {
+function PileOfCards({ title, label, cards, sleeve, onOpen, inHand, objectId, animateTop = true }: { title: string; label: string; cards: CardView[]; sleeve: string; onOpen(): void; inHand?: ReadonlySet<string>; objectId?: string; animateTop?: boolean }) {
   const t = useT();
   const top = cards[cards.length - 1];
   const zoom = usePileZoom(top, sleeve);
   return (
     <button type="button" className={styles.pile} data-object-id={objectId} aria-label={t('match.cards', { label: title, count: cards.length })} onClick={onOpen} disabled={cards.length === 0} {...zoom}>
       {/* a new top card is a new element: it lands on the pile from wherever that card was */}
-      <PileTop key={top ? cardKey(top) : 'empty'} top={top} count={cards.length} sleeve={sleeve} inHand={!!top && !!inHand?.has(cardKey(top))} />
+      <PileTop key={top ? cardKey(top) : 'empty'} top={top} count={cards.length} sleeve={sleeve} inHand={!animateTop || (!!top && !!inHand?.has(cardKey(top)))} />
       <span className={styles.count}>{cards.length}</span>
       <span className={styles.label}>{label}</span>
     </button>
   );
+}
+
+function PlayableExilePile({ player, sleeve }: { player: PlayerView; sleeve?: string }) {
+  const t = useT();
+  const formatName = usePlayerNames();
+  const { byPlayer } = useExilePresentation();
+  const openViewer = useMatchUi((state) => state.openViewer);
+  const playerId = player.playerId;
+  const cards = playerId ? byPlayer.get(playerId) : undefined;
+  if (!playerId || !cards?.length) return null;
+  const title = t('match.exile.canPlay', { name: formatName(player.name ?? '') });
+  const open = () => openViewer({ title, cards, exile: { playerId } });
+  return sleeve === undefined
+    ? <MiniButton icon={<ArrowUpFromLine size={16} aria-hidden="true" />} count={cards.length} label={title} onOpen={open} />
+    : <PileOfCards title={title} label={t('match.exile.playable')} cards={cards} sleeve={sleeve} onOpen={open} animateTop={false} />;
 }
 
 function PileTop({ top, count, sleeve, inHand }: { top: CardView | undefined; count: number; sleeve: string; inHand: boolean }) {
@@ -184,8 +203,11 @@ export function MiniPiles({ player, commanders = [] }: { player: PlayerView } & 
       </span>
       <MiniButton icon={<Skull size={16} aria-hidden="true" />} count={graveyard.length} label={`${name} graveyard`} onOpen={() => openViewer({ title: `${name} graveyard`, cards: [...graveyard].reverse() })} />
       {exile.length > 0 && (
-        <MiniButton icon={<Ban size={16} aria-hidden="true" />} count={exile.length} label={`${name} exile`} onOpen={() => openViewer({ title: `${name} exile`, cards: exile })} />
+        <MiniButton icon={<Ban size={16} aria-hidden="true" />} count={exile.length} label={`${name} exile`} onOpen={() => openViewer({
+          title: `${name} exile`, cards: exile, exile: player.playerId ? { ownerId: player.playerId } : undefined,
+        })} />
       )}
+      <PlayableExilePile player={player} />
       {dungeon && (
         <button
           type="button"

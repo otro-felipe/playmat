@@ -65,6 +65,13 @@ become public when the event finishes.
   hands. With a cut, publish qualifiers' decklists when the bracket opens and
   the remaining lists at tournament end. With rounds only, publish all lists
   at the end. Replay object expiry does not remove results, entries or trophies.
+* Public battlefield and replay views associate face-up exile cards with the
+  current battlefield instance that holds them when the engine records that
+  link. A seat's playable exile pile lists the face-up cards it has permission
+  to play, including cards owned by a different seat. The permission indicates
+  zone access regardless of priority, timing or ability to pay. Face-down cards
+  remain concealed. Recordings without the annotation still display the exile
+  piles.
 * Owner profiles distinguish personal results and agents' results. A champion
   agent and its human owner share attribution for one title.
   The in-game human profile and the public owner page list that person's
