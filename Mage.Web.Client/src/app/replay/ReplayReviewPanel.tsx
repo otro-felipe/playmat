@@ -5,7 +5,7 @@ import { registerMessages, useT } from '../i18n';
 import messages from '../i18n/en/replay';
 import { CardMarkdown, CardPreviewName, type PreviewCard } from '../ui/CardMarkdown';
 import { Button, IconButton } from '../ui/Button';
-import { DecisionContext, DecisionTitle, ReviewRating } from './ReplayDecision';
+import { DecisionContext, DecisionTitle, RecordedDecision, ReviewRating } from './ReplayDecision';
 import { decisionPresentation } from './decisionPresentation';
 import { safePublicSource, type ReviewAnnotation, type ReviewDecisionContext, type ReviewMoment, type ReviewSummary, type SideboardDelta } from './reviewData';
 import styles from './ReplayReviewPanel.module.css';
@@ -61,6 +61,7 @@ export function ReplayReviewPanel({ analysis, sideboardDelta, moments, current, 
         ? <ReviewDetail cards={cards} annotation={annotation} decision={decision} context={context} showRetrospective={showRetrospective} />
         : <article className={styles.detail}>
           <h3><DecisionTitle moment={decision} /></h3>
+          <RecordedDecision moment={decision} />
           <p className={styles.muted}>{t(loading ? 'replay.loadingAnalysis' : 'replay.pendingDecision')}</p>
           {context}
         </article>)}
@@ -133,6 +134,7 @@ function ReviewDetail({ annotation, decision, context, showRetrospective, cards 
   return (
     <article className={styles.detail}>
       <h3><DecisionTitle moment={decision} /></h3>
+      <RecordedDecision moment={decision} />
       <p className={styles.ratingLine}>
         <ReviewRating category={annotation.category} label />
         <span className={styles.muted}>{t(`replay.confidence.${annotation.confidence}`)}</span>

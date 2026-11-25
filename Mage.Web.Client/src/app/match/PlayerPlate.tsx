@@ -4,8 +4,8 @@ import type { AgentModel } from '../ui/agentModel';
 import { PlayerLabel } from '../ui/PlayerLabel';
 import { playerLabelText } from '../ui/playerIdentity';
 import { usePlayerIdentity } from '../ui/usePlayerIdentity';
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { Heart, Swords } from 'lucide-react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { Hand, Heart, Swords } from 'lucide-react';
 import { COMMANDER_DAMAGE_LETHAL } from '../../core/game/commander';
 import { POOL_MANA, poolId } from '../../core/game/payment';
 import { ROPE_SECONDS, ropeSecondsLeft, ropeVisible } from '../../core/game/rope';
@@ -51,6 +51,10 @@ export interface PlayerPlateProps {
   outOfRange?: boolean;
   /** the look the player chose (servers with accounts): their Career avatar and title, a supporter's ring and heart */
   look?: PlayerLook | null;
+  /** cards in the player's hand, shown on the seat so revealed or recorded cards never hide the count */
+  handCount?: number;
+  /** a control printed beside life, such as a replay's line reasoning */
+  accessory?: ReactNode;
 }
 
 const ROPE_TICK_MS = 250;
@@ -93,7 +97,7 @@ function useRopeSeconds(player: PlayerView): number {
 }
 
 /** A player's seat: who they are, their life, counters, floating mana and clock. */
-export function PlayerPlate({ bubbleSide, player, displayName, modelInfo, isMe, targetable, selected, deciding, sleeve, onClick, toPay, payable, onPay, commanderDamage = [], outOfRange = false, look }: PlayerPlateProps) {
+export function PlayerPlate({ bubbleSide, player, displayName, modelInfo, isMe, targetable, selected, deciding, sleeve, onClick, toPay, payable, onPay, commanderDamage = [], outOfRange = false, look, handCount, accessory }: PlayerPlateProps) {
   const t = useT();
   const identity = usePlayerIdentity(player.name ?? '');
   const recordedModel = modelInfo ?? identity;
@@ -210,6 +214,13 @@ export function PlayerPlate({ bubbleSide, player, displayName, modelInfo, isMe, 
               <span className={styles.unit} aria-hidden="true">life</span>
             </>
           )}
+          {handCount !== undefined && !out && (
+            <span className={styles.handCount} role="img" aria-label={t('match.plate.hand', { count: handCount })}
+              title={t('match.plate.hand', { count: handCount })} data-testid="plate-hand-count">
+              <Hand size={16} aria-hidden="true" /><b>{handCount}</b>
+            </span>
+          )}
+          {accessory}
           {delta && !out && (
             <span key={`d${delta.key}`} className={[styles.delta, delta.value < 0 ? styles.deltaDown : styles.deltaUp].join(' ')}>
               {delta.value > 0 ? `+${delta.value}` : delta.value}

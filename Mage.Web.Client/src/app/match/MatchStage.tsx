@@ -6,7 +6,7 @@ import type { AgentModel } from '../ui/agentModel';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { Menu } from 'lucide-react';
 import { PRIVATE_PLAYTESTING } from '../playtesting';
-import { Fragment, lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { GameSession, GameSessionState } from '../../core/game/gameSession';
 import { deriveInteraction, type Command } from '../../core/game/interaction';
@@ -193,6 +193,8 @@ export interface MatchStageProps {
   seatDisplayNames?: SeatDisplayNames;
   /** Declared model data from the frame, keyed by engine player ID. */
   seatModels?: Readonly<Record<string, AgentModel>>;
+  /** replays: a control printed on a seat beside its life (an agent's line reasoning), keyed by engine player ID */
+  plateAccessories?: Readonly<Record<string, ReactNode>>;
 }
 
 export function MatchStage(props: MatchStageProps) {
@@ -208,7 +210,7 @@ export function MatchStage(props: MatchStageProps) {
     : stage}</PlayerNames.Provider>;
 }
 
-function MatchBoard({ session, state, replayLog, replayHands, publicSpectator, reviewLayout, onLeave, leaveLabel, seatDisplayNames, seatModels }: MatchStageProps) {
+function MatchBoard({ session, state, replayLog, replayHands, publicSpectator, reviewLayout, onLeave, leaveLabel, seatDisplayNames, seatModels, plateAccessories }: MatchStageProps) {
   const formatName = usePlayerNames();
   const { view, interaction, playerId, awaitingServer, prediction } = state;
   const mode = state.browserInputLock ? 'observeHuman' : state.mode;
@@ -708,6 +710,7 @@ function MatchBoard({ session, state, replayLog, replayHands, publicSpectator, r
                 sleeve={theirSleeves.get(opponent.player.playerId!) ?? sleeves.theirs}
                 displayName={seatAlias(opponent.player.name ?? '', seatDisplayNames)}
                 modelInfo={seatModels?.[opponent.player.playerId ?? '']}
+                accessory={plateAccessories?.[opponent.player.playerId ?? '']}
                 look={lookOf(opponent.player)}
                 handCount={opponent.player.handCount ?? 0}
                 liveHand={!!publicSpectator}
@@ -737,6 +740,8 @@ function MatchBoard({ session, state, replayLog, replayHands, publicSpectator, r
                     player={board.me.player}
                     displayName={seatAlias(board.me.player.name ?? '', seatDisplayNames)}
                     modelInfo={seatModels?.[board.me.player.playerId ?? '']}
+                    handCount={board.me.player.handCount ?? undefined}
+                    accessory={plateAccessories?.[board.me.player.playerId ?? '']}
                     isMe={board.me.isMe}
                     sleeve={sleeves.mine}
                     look={lookOf(board.me.player)}
@@ -1032,11 +1037,12 @@ function landTaps(groups: PermanentGroup[]) {
 }
 
 /** An opponent's half: their rows mirrored above the seam, their seat, piles and hidden hand. */
-function OpponentSide({ board, index, count, sleeve, handCount, replayHand, liveHand, revealed, deciding, layout, commanders, commanderDamage, outOfRange, look, displayName, modelInfo, ...row }: RowProps & {
+function OpponentSide({ board, index, count, sleeve, handCount, replayHand, liveHand, revealed, deciding, layout, commanders, commanderDamage, outOfRange, look, displayName, modelInfo, accessory, ...row }: RowProps & {
   layout: MatchLayout;
   look: PlayerLook | undefined;
   displayName?: string;
   modelInfo?: AgentModel;
+  accessory?: ReactNode;
   board: PlayerBoard;
   index: number;
   count: number;
@@ -1070,6 +1076,8 @@ function OpponentSide({ board, index, count, sleeve, handCount, replayHand, live
           commanderDamage={commanderDamage}
           outOfRange={outOfRange}
           look={look}
+          handCount={handCount}
+          accessory={accessory}
         />
         {look?.pet && count === 1 && (
           <div className={styles.theirPet}>

@@ -155,6 +155,23 @@
   gap: 8px;
 }
 
+/* cards in hand: a small printed chip beside life, readable whatever the hand fan shows */
+.handCount {
+  display: inline-flex;
+  align-self: center;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--radius-control);
+  box-shadow: inset 0 0 0 1.5px var(--ink-faint);
+  font-family: var(--font-print);
+  font-size: 17px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  color: var(--ink-dim);
+}
+
 /* life: big printed numerals, like a spindown face */
 .life {
   font-family: var(--font-print);

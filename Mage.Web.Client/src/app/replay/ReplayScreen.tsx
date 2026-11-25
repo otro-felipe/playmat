@@ -2,7 +2,7 @@ import { audienceText } from '../match/spectatorFeed';
 import { MatchHumanSeat, useEnabledHumanSeat } from '../ui/humanSeat';
 import { PlayerNames, useRosterNames } from '../ui/usePlayerIdentity';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { Brain, ChevronFirst, ChevronLast, GitBranch, Pause, Play, StepBack, StepForward } from 'lucide-react';
+import { ChevronFirst, ChevronLast, GitBranch, Pause, Play, StepBack, StepForward } from 'lucide-react';
 import { useEffect, useEffectEvent, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useStore } from 'zustand';
@@ -22,9 +22,9 @@ import { useSession } from '../stores/session';
 import { notify } from '../stores/toasts';
 import { Button, IconButton } from '../ui/Button';
 import { Dialog } from '../ui/Dialog';
-import { CardMarkdown } from '../ui/CardMarkdown';
 import { decisionFrame, replayName } from './decisionPresentation';
-import { ReplayDecisionMarkers, RecordedDecision } from './ReplayDecision';
+import { ReplayDecisionMarkers } from './ReplayDecision';
+import { LineReasoning, type ShownLine } from './ReplayLineReasoning';
 import { ReplayReviewPanel, ReviewSwitch } from './ReplayReviewPanel';
 import { frameProjection, loadPrivateReplayPage, loadReviewAnnotations, loadReviewEvents, loadReviewManifest, loadReviewPlays, perspectivesFor, type ReviewMoment } from './reviewData';
 import styles from './ReplayScreen.module.css';
@@ -73,8 +73,6 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
   const [playing, setPlaying] = useState(action === undefined && !Number.isFinite(startFrame));
   const [speed, setSpeed] = useState(1);
   const [analysisOpen, setAnalysisOpen] = useState(() => search.get('analysis') === '1');
-  const [showLineExplanations, setShowLineExplanations] = useState(true);
-  const explanationsId = useId();
   const [bothHands, setBothHands] = useState(true);
   const [requestedSeat, setRequestedSeat] = useState<string>();
   const mobilePanel = useSyncExternalStore(subscribePanelSize, () => window.matchMedia(MOBILE_PANEL).matches, () => false);
@@ -222,10 +220,10 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
     retry: false,
   });
   const recorded = scope ? privateFrameQuery.data?.events.find((item) => item.cursor === frameCursor && item.view) : undefined;
-  const visibleLines = (recorded?.lines ?? []).flatMap(line => {
+  const visibleLines = useMemo(() => (recorded?.lines ?? []).flatMap((line): ShownLine[] => {
     const text = audienceText(line, scope === 'full' || scope === 'seat');
     return text?.trim() ? [{ ...line, text }] : [];
-  });
+  }), [recorded?.lines, scope]);
   const projection = useMemo(() => {
     if (!frame) return null;
     const ownPerspective = !!ownSeat && ownSeat === playerId;
@@ -389,8 +387,17 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
   const previousFrameCursor = frames[Math.min(index, last) - 1]?.cursor ?? -1;
   const draws = privateFrameQuery.data?.events.filter((event) =>
     event.type === 'draw' && event.card?.name && event.cursor > previousFrameCursor && event.cursor <= frameCursor) ?? [];
+  // Loading is silent: a status line that comes and goes with each page would resize the table while it plays.
   const viewStatus = (showBoth || otherSeat) && (privateFrameQuery.isError ? t('replay.privateFrameError')
-    : privateFrameQuery.isPending ? t('replay.privateFrameLoading') : !shownHand ? t('replay.privateFrameMissing') : null);
+    : !privateFrameQuery.isPending && !shownHand ? t('replay.privateFrameMissing') : null);
+  const linesBySeat = new Map<string, ShownLine[]>();
+  for (const line of visibleLines) {
+    const seatPlayer = perspectives.find((seat) => seat.seatId === line.seatId)?.playerId
+      ?? frame.view.players?.find((player) => player.name === line.actor)?.playerId;
+    if (seatPlayer) linesBySeat.set(seatPlayer, [...linesBySeat.get(seatPlayer) ?? [], line]);
+  }
+  const plateAccessories = Object.fromEntries([...linesBySeat].map(([seatPlayer, lines]) =>
+    [seatPlayer, <LineReasoning key={seatPlayer} lines={lines} onPlay={jump} />]));
   const reviewError = annotations.isError || eventQuery.isError || selectedPlay.isError || selectedAnnotation.isError;
   const setAnalysis = (open: boolean) => {
     setPlaying(false);
@@ -418,8 +425,6 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
               <div className={styles.reviewControls}>
                 <ReviewSwitch label={t('replay.showAnalysis')} checked={analysisOpen} onCheckedChange={setAnalysis}
                   controls={analysisOpen && !mobilePanel ? panelId : undefined} />
-                {visibleLines.length > 0 && <ReviewSwitch label={t('replay.lineExplanations')} checked={showLineExplanations}
-                  onCheckedChange={setShowLineExplanations} controls={explanationsId} />}
                 {canShowBoth && <ReviewSwitch label={t('replay.showBothHands')} checked={showBoth}
                   onCheckedChange={(checked) => { setPlaying(false); setBothHands(checked); }} />}
                 {!!perspectives.length && (
@@ -431,23 +436,14 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
                   </label>
                 )}
               </div>
-              {viewStatus && <p className={styles.coverage} role="status">{viewStatus}</p>}
               {partialArchive && <p className={styles.coverage}>{t('replay.partialArchive')}</p>}
               {manifest.status === 'active' && <p className={styles.coverage}>{t('replay.matchActive')}</p>}
-              {decision && <RecordedDecision moment={decision} />}
-              {visibleLines.length > 0 && <section id={explanationsId} hidden={!showLineExplanations}
-                className={styles.lineExplanations} aria-label={t('replay.lineExplanations')}>
-                {showLineExplanations && visibleLines.map((line) => (
-                  <div key={line.cursor} className={styles.lineExplanation}>
-                    <Brain size={18} aria-hidden="true" />
-                    <div><strong>{replayName(line.actor, t, formatName)}</strong><p><CardMarkdown text={line.text} /></p></div>
-                  </div>
-                ))}
-              </section>}
             </div>
           )}
           <div className={styles.board}>
-            <MatchStage session={session} state={state} replayHands={projection?.hands} reviewLayout={!!manifest} replayLog={replayLog} onLeave={leave} />
+            <MatchStage session={session} state={state} replayHands={projection?.hands} reviewLayout={!!manifest} replayLog={replayLog}
+              plateAccessories={plateAccessories} onLeave={leave} />
+            {viewStatus && <p className={styles.viewStatus} role="status">{viewStatus}</p>}
             {!!draws.length && (
               <ul className={styles.recordedDraws} aria-label={t('replay.draws')}>
                 {draws.flatMap(({ actorPlayerId, card, cursor }) => {

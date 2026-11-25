@@ -233,10 +233,26 @@ function cardReference(card) {
     ...(typeof card.cardNumber === 'string' ? { cardNumber: card.cardNumber } : {}) }
 }
 
-function replayLinesByFrame(rows, perspectives, seat, scope) {
+// The plays a seat carried out after explaining a line, until its next explained line
+// or the end of that turn. Passes are routine priority handoffs, not plays.
+const linePlayLimit = 12
+function linePlays(line, nextLineCursor, turn, positions, presentation) {
+  const plays = []
+  for (const position of positions) {
+    if (position.cursor <= line.cursor || position.seatId !== line.seatId || position.actual?.kind === 'pass') continue
+    if (position.cursor >= nextLineCursor || position.evidence?.turn !== turn || plays.length >= linePlayLimit) break
+    const displayed = presentation(position)
+    plays.push({ cursor: position.cursor, frameCursor: position.frameCursor, turn: position.evidence.turn,
+      seatId: position.seatId, text: position.actual.text, ...displayed })
+  }
+  return plays
+}
+
+function replayLinesByFrame(rows, perspectives, seat, scope, positions = [], presentation = null) {
   const byFrame = new Map()
   const seen = new Set()
-  for (const { cursor, frameCursor, event } of rows) {
+  const authored = []
+  for (const { cursor, frameCursor, event, turn } of rows) {
     if (event.kind !== 'line' || frameCursor === null || typeof event.commandId !== 'string'
       || !event.commandId || event.commandId.length > 120) continue
     const actor = perspectives.find(player => player.playerId && player.playerId === event.actorPlayerId)
@@ -246,8 +262,18 @@ function replayLinesByFrame(rows, perspectives, seat, scope) {
     if (!note || seen.has(key)) continue
     seen.add(key)
     if (!byFrame.has(frameCursor)) byFrame.set(frameCursor, [])
-    byFrame.get(frameCursor).push({ cursor, commandId: scope === 'full' || scope === 'seat' && seat?.seatId === actor.seatId ? event.commandId : publicLineId(key),
-      actor: actor.name, seatId: actor.seatId, ...note })
+    const line = { cursor, commandId: scope === 'full' || scope === 'seat' && seat?.seatId === actor.seatId ? event.commandId : publicLineId(key),
+      actor: actor.name, seatId: actor.seatId, ...note }
+    byFrame.get(frameCursor).push(line)
+    authored.push({ line, turn })
+  }
+  if (presentation) {
+    const ordered = [...positions].sort((a, b) => a.cursor - b.cursor)
+    authored.forEach(({ line, turn }, index) => {
+      const next = authored.slice(index + 1).find(({ line: later }) => later.seatId === line.seatId)
+      const plays = linePlays(line, next?.line.cursor ?? Infinity, turn, ordered, presentation)
+      if (plays.length) line.plays = plays
+    })
   }
   // A decision and its resulting board often occupy adjacent frames. Keep the last
   // explained line in view through this turn until the next authored line begins.
@@ -617,7 +643,7 @@ export function createPostMatchReview(pool, archive, permissions) {
       const positions = new Map(data.positions.map(position => [position.cursor, position]))
       const presentation = indexReplayPresentation(data.rows, data.positions, data.perspectives, data.capture)
       const { decisionContext } = decisionContextFor(data)
-      const lines = purpose === 'replay' ? replayLinesByFrame(data.rows, data.perspectives, seat, scope) : null
+      const lines = purpose === 'replay' ? replayLinesByFrame(data.rows, data.perspectives, seat, scope, data.positions, presentation) : null
       const events = purpose === 'analysis'
         ? analysisEvidence(data, seat, { ...options, includeBefore }, presentation, decisionContext)
         : pageRows(data.rows, options, row => projectRow(row, seat, scope, data.perspectives, data.typed, positions.get(row.cursor), presentation, decisionContext, lines.get(row.cursor)))

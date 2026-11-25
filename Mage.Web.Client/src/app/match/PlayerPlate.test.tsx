@@ -16,3 +16,22 @@ describe('player plate identity', () => {
     expect(avatar().textContent).toBe('P');
   });
 });
+
+describe('player plate hand count', () => {
+  const props = { isMe: false, targetable: false, selected: false, deciding: false, onClick: () => undefined };
+
+  it('prints the cards in hand on the seat, including zero, with an accessible count', () => {
+    const { getByTestId, getByRole, rerender, queryByTestId } = render(<PlayerPlate {...props} handCount={4} player={{ name: 'Rival', life: 18 }} />);
+    expect(getByTestId('plate-hand-count').textContent).toBe('4');
+    expect(getByRole('img', { name: '4 cards in hand' })).toBeTruthy();
+    rerender(<PlayerPlate {...props} handCount={0} player={{ name: 'Rival', life: 18 }} />);
+    expect(getByTestId('plate-hand-count').textContent).toBe('0');
+    rerender(<PlayerPlate {...props} player={{ name: 'Rival', life: 18 }} />);
+    expect(queryByTestId('plate-hand-count')).toBeNull();
+  });
+
+  it('keeps the accessory beside life', () => {
+    const { getByRole } = render(<PlayerPlate {...props} handCount={2} accessory={<button type="button">Reasoning</button>} player={{ name: 'Rival', life: 18 }} />);
+    expect(getByRole('button', { name: 'Reasoning' })).toBeTruthy();
+  });
+});

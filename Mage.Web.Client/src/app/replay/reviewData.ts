@@ -134,9 +134,12 @@ export interface ReviewMoment {
   category?: ReviewCategory;
 }
 
+/** An agent's explained line and the plays its seat carried out until its next line or the end of that turn. */
+export type ReplayLine = LineExplanation & { cursor: number; commandId: string; actor: string; seatId: string; plays?: ReviewMoment[] };
+
 export interface ReviewEvent extends ReviewMoment {
   type?: string;
-  lines?: (LineExplanation & { cursor: number; commandId: string; actor: string; seatId: string })[];
+  lines?: ReplayLine[];
   actorPlayerId?: string;
   decision?: ReviewDecisionContext;
   decisions?: ReviewDecisionContext[];

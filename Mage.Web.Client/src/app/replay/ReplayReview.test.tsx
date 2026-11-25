@@ -13,9 +13,10 @@ vi.mock(import('../connection'), async (original) => {
   return { ...actual, api: { ...actual.api, replayPage: vi.fn() } };
 });
 vi.mock('../solo/soloData', () => ({ useSoloTurns: () => ({ data: [] }) }));
-vi.mock('../match/MatchStage', () => ({ MatchStage: ({ state, replayHands }: {
+vi.mock('../match/MatchStage', () => ({ MatchStage: ({ state, replayHands, plateAccessories }: {
   state: { playerId: string | null; view?: GameView };
   replayHands?: Record<string, Record<string, { name?: string }>>;
+  plateAccessories?: Record<string, import('react').ReactNode>;
 }) => (
   <div aria-label="Test table">
     <div data-testid="seat">{state.playerId}</div>
@@ -23,6 +24,7 @@ vi.mock('../match/MatchStage', () => ({ MatchStage: ({ state, replayHands }: {
     <div data-testid="stack">{Object.values(state.view?.stack ?? {}).map(({ name }) => name).join(', ')}</div>
     <div data-testid="hand">{Object.values(state.view?.myHand ?? {}).map(({ name }) => name).join(', ')}</div>
     <div data-testid="full-hands">{Object.values(replayHands ?? {}).flatMap((hand) => Object.values(hand).map(({ name }) => name)).join(', ')}</div>
+    {Object.entries(plateAccessories ?? {}).map(([playerId, accessory]) => <div key={playerId} data-testid={`plate-${playerId}`}>{accessory}</div>)}
   </div>
 ) }));
 
@@ -251,14 +253,15 @@ test('[PM-REVIEW-UI-4] a timeline marker opens the recorded stack and shows the 
   const marker = await within(timeline).findByRole('button', { name: /Normal.*Burst Lightning/ });
   fireEvent.click(marker);
   await waitFor(() => expect(screen.getByTestId('stack').textContent).toBe('Burst Lightning'));
-  const decision = screen.getByRole('region', { name: 'Recorded decision' });
-  expect(within(decision).getByText('Kicked')).toBeTruthy();
-  expect(within(decision).getByText('Sheoldred')).toBeTruthy();
-  expect(within(decision).getByLabelText('Normal')).toBeTruthy();
-  expect(decision.textContent).not.toMatch(/mcp_|\[28c\]|\[711\]/);
+  expect(screen.queryByLabelText('Recorded decision')).toBeNull();
 
   fireEvent.click(screen.getByRole('switch', { name: 'Show analysis' }));
   expect(await screen.findByRole('heading', { name: /Alice casts Burst Lightning targeting Sheoldred/ })).toBeTruthy();
+  const decision = screen.getByLabelText('Recorded decision');
+  expect(within(decision).getByText('Kicked')).toBeTruthy();
+  expect(within(decision).getByText('Sheoldred')).toBeTruthy();
+  expect(within(screen.getByRole('article')).getByText('Normal')).toBeTruthy();
+  expect(decision.textContent).not.toMatch(/mcp_|\[28c\]|\[711\]/);
   const noteTitle = screen.getByRole('article').querySelector('h3')!;
   expect(within(noteTitle).getByRole('button', { name: 'Burst Lightning, show card' })).toBeTruthy();
 });
@@ -296,7 +299,7 @@ test('[PM-REVIEW-UI-2] a missing archived opponent hand never displays the actin
 test('[PM-REVIEW-UI-6] Left and Right use the same action cursor as the playback buttons without taking focus', async () => {
   const { container } = openReplay();
   const next = await screen.findByRole('button', { name: 'Next play' });
-  await screen.findByText('Played Island');
+  await within(await screen.findByRole('group', { name: 'Reviewed decisions' })).findByRole('button', { name: /Burst Lightning/ });
   const replay = container.querySelector('[data-replay-cursor]')!;
   expect(replay.getAttribute('data-replay-cursor')).toBe('1');
 
@@ -533,16 +536,25 @@ test('[PM-REVIEW-UI-8] annotation card links select a face and legacy names reta
 test.each([
   { reasoning: 'Keep mana available.' },
   { audience:'public', explanation:'Keep mana available.', reasoning:'Legacy text must not replace the public explanation.' },
-])('[PM-LINE-REPLAY-1] the viewer can hide an authorized explanation independently of the analysis panel', async (note) => {
+])('[PM-LINE-REPLAY-1] the seat’s brain opens the agent’s explanation and the plays it sent', async (note) => {
   const original = request.getMockImplementation()!;
+  const sent = { cursor: 3, frameCursor: 2, actionFrameCursor: 4, turn: 7, seatId: 'alice-seat', actor: 'Alice', actual, text: actual.text };
   request.mockImplementation((path, options) => path.includes('/evidence?') && path.includes('scope=full')
-    ? json({ next: null, events: [{ cursor: 0, view, lines: [{ cursor: 1, commandId: 'a', actor: 'Alice', seatId: 'alice-seat', ...note }] }] })
+    ? json({ next: null, events: [{ cursor: 0, view, lines: [{ cursor: 1, commandId: 'a', actor: 'Alice', seatId: 'alice-seat', ...note, plays: [sent] }] }] })
     : original(path, options));
-  openReplay();
-  expect(await screen.findByText('Keep mana available.')).toBeTruthy();
-  const toggle = screen.getByRole('switch', { name: 'Line explanations' });
-  fireEvent.click(toggle);
+  openReplay('/replay/game?frame=0');
+  const brain = await within(await screen.findByTestId('plate-alice-player')).findByRole('button', { name: 'See the reasoning of Alice' });
   expect(screen.queryByText('Keep mana available.')).toBeNull();
-  fireEvent.click(toggle);
-  expect(screen.getByText('Keep mana available.')).toBeTruthy();
+  expect(screen.queryByRole('switch', { name: /explanations/i })).toBeNull();
+  expect(screen.queryByTestId('plate-bob-player')).toBeNull();
+  fireEvent.click(brain);
+  const dialog = screen.getByRole('dialog', { name: 'Reasoning of Alice' });
+  expect(within(dialog).getByText('Keep mana available.')).toBeTruthy();
+  expect(dialog.textContent).not.toContain('Legacy text');
+  fireEvent.click(within(dialog).getByRole('button', { name: /Alice casts Burst Lightning targeting Sheoldred/ }));
+  expect(screen.queryByRole('dialog')).toBeNull();
+  await waitFor(() => expect(screen.getByTestId('stack').textContent).toBe('Burst Lightning'));
+  fireEvent.click(brain);
+  fireEvent.keyDown(document, { key: 'Escape' });
+  expect(screen.queryByRole('dialog')).toBeNull();
 });

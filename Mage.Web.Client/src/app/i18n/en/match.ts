@@ -113,6 +113,7 @@ export default {
   'match.plate.disconnectedTitle': 'Lost connection to the server. They have a few minutes to come back before they lose.',
   'match.plate.aria.lost': '{name}, out of the game',
   'match.plate.aria.disconnected': 'disconnected',
+  'match.plate.hand': { one: '{count} card in hand', other: '{count} cards in hand' },
 
   // a card publicly revealed from hand, still in it
   'match.hand.revealed': 'Revealed',

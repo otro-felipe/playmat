@@ -319,6 +319,28 @@ test('[PM-LINE-REPLAY-1] a frame groups both agents’ explanations according to
   assert.equal(frames[2].lines, undefined, 'an unexplained later turn does not inherit an earlier plan')
 })
 
+test('[PM-LINE-REPLAY-2] each explained line lists the plays its seat carried out until its next line or turn', async () => {
+  const cast = (actor, name) => ({ kind: 'action', action: 'cast', actorPlayerId: actor.playerId, objectId: randomUUID(),
+    card: { id: randomUUID(), name } })
+  const { read } = fixture(({ alice, bob, frame }) => ({
+    rows: [frame(),
+      { kind: 'line', commandId: 'a', actorPlayerId: alice.playerId, reasoning: 'Develop, then hold up removal.' },
+      cast(alice, 'Badgermole Cub'), frame(),
+      cast(bob, 'Opposing spell'), frame(),
+      { kind: 'action', action: 'pass', actorPlayerId: alice.playerId, decision: { playableCount: 0, passKind: 'automatic' } },
+      { kind: 'line', commandId: 'b', actorPlayerId: alice.playerId, reasoning: 'Answer the threat.' },
+      cast(alice, 'Fatal Push'), frame(),
+      frame({ turn: 3 }), cast(alice, 'Next turn spell'), frame({ turn: 3 })],
+  }))
+  const frames = (await read({ scope: 'seat', purpose: 'replay' })).events.filter(row => row.type === 'frame')
+  const playsOf = row => row.lines?.map(line => [line.reasoning, (line.plays ?? []).map(play => play.actual.cardRef?.name)])
+  assert.deepEqual(playsOf(frames[0]), [['Develop, then hold up removal.', ['Badgermole Cub']]])
+  assert.deepEqual(playsOf(frames[2]), [['Answer the threat.', ['Fatal Push']]],
+    'the opponent, routine passes and the following explained line are not part of the first line')
+  assert.equal(frames.at(-1).lines, undefined, 'a later turn is not attributed to an earlier line')
+  assert.equal(frames[0].lines[0].plays[0].actor, 'Alice')
+})
+
 test('[PM-LINE-PUBLIC] explicit spectator lines survive archival and never publish legacy notes or table talk', async () => {
   const explanation='🃏'.repeat(4000)
   const {read}=fixture(({alice,bob,frame})=>{

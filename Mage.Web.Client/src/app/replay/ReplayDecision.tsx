@@ -39,26 +39,20 @@ export function DecisionTitle({ moment }: { moment: ReviewMoment }) {
   return <CardMarkdown text={fullTitle} cards={cards} />;
 }
 
+/** What a decision committed besides its title: targets, choices and the mana paid. */
 export function RecordedDecision({ moment }: { moment: ReviewMoment }) {
   const t = useT();
   const formatName = usePlayerNames();
-  const { shortTitle, targets, cards } = decisionPresentation(moment, t, formatName);
+  const { targets } = decisionPresentation(moment, t, formatName);
   const modes = [moment.actual?.castMode, ...(moment.actual?.modes ?? [])].flatMap((value) => value ? [cleanDecisionText(value, t, formatName)] : []);
   const mana = Object.entries(moment.actual?.paidMana ?? {}).map(([symbol, amount]) => `${amount} ${symbol}`).join(' + ');
+  if (!targets.length && !modes.length && !mana) return null;
   return (
-    <section className={styles.decision} aria-label={t('replay.decision')}>
-      <div className={styles.title}>
-        {moment.category && <ReviewRating category={moment.category} />}
-        <strong><CardMarkdown text={shortTitle} cards={cards} /></strong>
-      </div>
-      {(targets.length > 0 || modes.length > 0 || mana) && (
-        <dl>
-          {targets.length > 0 && <div><dt>{t('replay.targets')}</dt><dd><CardMarkdown text={targets.map(({ name }) => name).join(', ')} cards={targets.filter((target) => target.kind !== 'player')} /></dd></div>}
-          {modes.length > 0 && <div><dt>{t('replay.choices')}</dt><dd>{modes.join(', ')}</dd></div>}
-          {mana && <div><dt>{t('replay.manaPaid')}</dt><dd>{mana}</dd></div>}
-        </dl>
-      )}
-    </section>
+    <dl className={styles.decision} aria-label={t('replay.decision')}>
+      {targets.length > 0 && <div><dt>{t('replay.targets')}</dt><dd><CardMarkdown text={targets.map(({ name }) => name).join(', ')} cards={targets.filter((target) => target.kind !== 'player')} /></dd></div>}
+      {modes.length > 0 && <div><dt>{t('replay.choices')}</dt><dd>{modes.join(', ')}</dd></div>}
+      {mana && <div><dt>{t('replay.manaPaid')}</dt><dd>{mana}</dd></div>}
+    </dl>
   );
 }
 
