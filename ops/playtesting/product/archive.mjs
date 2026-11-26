@@ -271,11 +271,26 @@ function gameView(row) {
     result: row.result, winner: row.winner, startPlayer: row.start_player, turns: row.turns,
     events: row.events, archiveState: row.archive_state, status: row.status,
     truncated: row.truncated, players: row.players, replayAvailable: Boolean(row.object_key && row.viewer),
-    ownMulligans: row.own_mulligans, viewerName: row.viewer,
+    ownMulligans: row.own_mulligans, viewerName: row.viewer, endCause: row.end_cause ?? null,
   }
 }
 
-const selectGame = `
+// XMage ends the whole match when a seat times out (inactivity or player clock) or leaves, not only the game.
+const matchEndingCauses = new Set(['inactivity', 'player_clock', 'round_clock', 'disconnect'])
+export const replayEndCauses = new Set([...matchEndingCauses, 'concession'])
+
+// The last game's non-played ending explains a completed match that stopped early.
+function matchEndCause(match, games) {
+  if (match.status !== 'completed') return null
+  const last = games.filter(game => game.status === 'completed').at(-1)
+  return matchEndingCauses.has(last?.endCause) ? last.endCause : null
+}
+
+// Viewer seats are $1. Owned profile seats ($N) view only completed matches: an account
+// connection never reads a live hand of its own players while another pilot is still playing.
+const viewerSeat = profiles => `(p.engine_key=ANY($1::text[]) OR (m.status='completed' AND p.engine_key=ANY($${profiles}::text[])))`
+const viewerOrder = profiles => `array_position($1::text[] || $${profiles}::text[],p.engine_key)`
+const selectGame = profiles => `
   SELECT g.*, m.table_id, m.name, m.format, m.engine_format, m.status AS match_status,
     (SELECT json_agg(jsonb_build_object('name',p.engine_name,'human',p.human,'displayName',COALESCE(profile.display_name,a.username,p.engine_name),
         'isMcp',a.id IS NOT NULL,'model',p.model,'reasoningEffort',p.reasoning_effort)
@@ -283,14 +298,14 @@ const selectGame = `
         || CASE WHEN profile.id IS NOT NULL THEN jsonb_build_object('profileId',profile.id,'flag',profile.flag) ELSE '{}'::jsonb END
         || CASE WHEN p.engine_key=delegated_owner.username_key THEN '{"humanMcpAllowed":true}'::jsonb ELSE '{}'::jsonb END
         || CASE WHEN m.status='completed' AND p.archetype IS NOT NULL
-             AND (p.engine_key=ANY($1::text[]) OR match_deck_published(m.table_id,p.engine_key)) THEN jsonb_build_object('archetype',p.archetype)
+             AND (${viewerSeat(profiles)} OR match_deck_published(m.table_id,p.engine_key)) THEN jsonb_build_object('archetype',p.archetype)
                 ELSE '{}'::jsonb END ORDER BY p.engine_name)
        FROM game_players p LEFT JOIN agent_grants seat ON p.human AND seat.engine_key=p.engine_key
        LEFT JOIN accounts a ON a.id=seat.account_id LEFT JOIN player_profiles profile ON profile.id=seat.player_id WHERE p.game_id=g.id) AS players,
-    (SELECT p.engine_key FROM game_players p WHERE p.game_id=g.id AND p.engine_key=ANY($1::text[])
-       ORDER BY array_position($1::text[],p.engine_key) LIMIT 1) AS viewer,
-    (SELECT p.mulligans FROM game_players p WHERE p.game_id=g.id AND p.engine_key=ANY($1::text[])
-       ORDER BY array_position($1::text[],p.engine_key) LIMIT 1) AS own_mulligans
+    (SELECT p.engine_key FROM game_players p WHERE p.game_id=g.id AND ${viewerSeat(profiles)}
+       ORDER BY ${viewerOrder(profiles)} LIMIT 1) AS viewer,
+    (SELECT p.mulligans FROM game_players p WHERE p.game_id=g.id AND ${viewerSeat(profiles)}
+       ORDER BY ${viewerOrder(profiles)} LIMIT 1) AS own_mulligans
   FROM games g JOIN matches m ON m.id=g.match_id
   LEFT JOIN human_match_seats hs ON hs.table_id=m.table_id AND hs.allowed
   LEFT JOIN accounts delegated_owner ON delegated_owner.id=hs.account_id`
@@ -317,6 +332,7 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
   let activeScan
   let nextHistoryMaintenance = 0
   let nextEvidenceBackfill = 0
+  let nextEndCauseBackfill = 0
   // Public statistics read each seat's kept opening hand from its own replay evidence.
   // Record it when a game is archived, and retry missing evidence for eligible games.
   const loadEvidence = evidenceLoader(pool, game => rawEvents(store, game))
@@ -351,6 +367,7 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
     }
     const knownFiles = new Set(files)
     const pendingMatches = new Set()
+    const archivedGames = []
     // Ingest the game records first so a match's final marker can finalize even a match that
     // never made it to PostgreSQL before process exit.
     files.sort((left, right) => Number(left.endsWith('.match.json')) - Number(right.endsWith('.match.json')))
@@ -434,6 +451,7 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
         ])
         await removeStaging(join(stage, file), eventPath)
         await recordEvidence('g.id=$1', [id])
+        archivedGames.push(id)
       } catch (error) {
         if (pendingMatchId) pendingMatches.add(pendingMatchId)
         if (error.code !== 'ENOENT') console.warn('Playmat replay archive retry scheduled', { gameId: id })
@@ -447,11 +465,36 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
             < (SELECT count(*) FROM game_players p2 WHERE p2.game_id=g2.id)
         ORDER BY random() LIMIT 4)`, [])
     }
+    if (archivedGames.length) await recordEndCauses(archivedGames.length, archivedGames)
+    if (!markInterrupted && Date.now() >= nextEndCauseBackfill) {
+      nextEndCauseBackfill = Date.now() + 60_000
+      await recordEndCauses()
+    }
     if (purgeExpiredHistory && !markInterrupted && maintainHistory) {
       nextHistoryMaintenance = Date.now() + 60_000
       await pruneMatchHistory(pool, pendingMatches)
       await deleteExpiredReplayObjects(pool, store)
     }
+  }
+
+  // Read the terminal marker of just archived games, then of older games newest first. A failed read stays unchecked.
+  async function recordEndCauses(limit = 8, ids = null) {
+    const { rows } = await pool.query(`SELECT id,object_key,checksum FROM games
+      WHERE status='completed' AND checksum IS NOT NULL AND object_key IS NOT NULL AND NOT end_cause_checked
+        AND ($2::uuid[] IS NULL OR id=ANY($2::uuid[]))
+      ORDER BY ended_at DESC NULLS LAST,id LIMIT $1`, [limit, ids])
+    for (const game of rows) {
+      try {
+        let cause = null
+        for await (const record of streamReplayRecords(store, game)) {
+          if (record?.kind === 'spectatorEnd' && record.terminal === true) cause = replayEndCauses.has(record.cause) ? record.cause : null
+        }
+        await pool.query('UPDATE games SET end_cause=$2,end_cause_checked=TRUE WHERE id=$1', [game.id, cause])
+      } catch {
+        console.warn('Playmat replay end cause retry scheduled', { gameId: game.id })
+      }
+    }
+    return rows.length
   }
 
   async function recoverInterrupted(bytes) {
@@ -480,12 +523,24 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
     return activeScan
   }
 
+  // The account connection also views its own players' completed games, as its browser session does.
+  // A perspective chooses exactly one owned player's seat.
+  async function historySeats(actor) {
+    if (actor.perspectiveSeat) return { seats: [], profiles: [actor.perspectiveSeat] }
+    const profiles = canonicalAccountScope(actor,'history')
+      ? (await pool.query('SELECT engine_key FROM agent_grants WHERE account_id=$1 AND player_id IS NOT NULL ORDER BY created_at,engine_key',
+        [actor.accountId])).rows.map(row => row.engine_key)
+      : []
+    return { seats: viewerNames(actor), profiles }
+  }
+
   async function authorizedGame(actor, id) {
     if (!isUuid(id)) throw new ProductError(404, 'Replay not found')
+    const { seats, profiles } = await historySeats(actor)
     const { rows: [game] } = await pool.query(
-      `${selectGame} JOIN retained_match_history h ON h.match_id=m.id AND h.account_id=$3
-       WHERE g.id=$2 AND EXISTS(SELECT 1 FROM game_players p WHERE p.game_id=g.id AND p.engine_key=ANY($1::text[]))`,
-      [viewerNames(actor), id, actor.accountId],
+      `${selectGame(4)} JOIN retained_match_history h ON h.match_id=m.id AND h.account_id=$3
+       WHERE g.id=$2 AND EXISTS(SELECT 1 FROM game_players p WHERE p.game_id=g.id AND ${viewerSeat(4)})`,
+      [seats, id, actor.accountId, profiles],
     )
     if (!game) throw new ProductError(404, 'Replay not found')
     return game
@@ -534,13 +589,9 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
     const limit = Math.max(1, Math.min(100, Number.parseInt(opts.limit ?? '25', 10) || 25))
     const matchId = opts.id ?? null
     if (matchId !== null && !isUuid(matchId)) throw new ProductError(404, 'Match not found')
-    const seats = viewerNames(actor)
-    const profiles = canonicalAccountScope(actor,'history')
-      ? (await pool.query('SELECT engine_key FROM agent_grants WHERE account_id=$1 AND player_id IS NOT NULL',[actor.accountId])).rows
-      : []
-    // Profile ownership extends completed score lookup. Replay projections still require a viewer seat.
-    const resultSeat = "(p.engine_key=ANY($1::text[]) OR (m.status='completed' AND p.engine_key=ANY($3::text[])))"
-    const profileSeats = profiles.map(row => row.engine_key)
+    const { seats, profiles: profileSeats } = await historySeats(actor)
+    // Profile ownership extends completed score lookup and the replay viewer seat.
+    const resultSeat = viewerSeat(3)
     const { rows } = await pool.query(
       `SELECT m.*, x.reason, x.author, x.marked_at FROM matches m JOIN retained_match_history h ON h.match_id=m.id AND h.account_id=$2
        LEFT JOIN match_statistics_exclusions x ON x.match_id=m.id
@@ -553,7 +604,7 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
     )
     const page = rows.slice(0, limit)
     const { rows: games } = await pool.query(
-      `${selectGame} WHERE g.match_id=ANY($2::uuid[]) AND EXISTS(SELECT 1 FROM game_players p WHERE p.game_id=g.id AND ${resultSeat})
+      `${selectGame(3)} WHERE g.match_id=ANY($2::uuid[]) AND EXISTS(SELECT 1 FROM game_players p WHERE p.game_id=g.id AND ${resultSeat})
        ORDER BY g.game_number,g.id`,
       [seats, page.map(m => m.id), profileSeats],
     )
@@ -562,7 +613,7 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
         id: m.id, tableId: m.table_id, name: m.name, format: m.format ?? m.engine_format ?? 'Unknown', status: m.status, winner: m.winner,
         startedAt: Number(m.started_at), endedAt: m.ended_at ? Number(m.ended_at) : null,
         statisticsExclusion: exclusionView(m), canExcludeFromStatistics: !actor.agent && m.status !== 'active' && !m.reason,
-        games: games.filter(g => g.match_id === m.id).map(gameView),
+        ...(views => ({ endCause: matchEndCause(m, views), games: views }))(games.filter(g => g.match_id === m.id).map(gameView)),
       })),
       cursor: rows.length > limit ? cursorFrom(page.at(-1)) : null,
     }
@@ -641,6 +692,6 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
     return zipSync(all, { level: 4 })
   }
 
-  return { archiveGames, matchList, replayPage, evaluation, exportReplays, authorizeExport, statistics, performance,
+  return { archiveGames, recordEndCauses, matchList, replayPage, evaluation, exportReplays, authorizeExport, statistics, performance,
     reviewGame, reviewGames, reviewOwnDeckPair, streamTournamentRecords: game => streamReplayRecords(store, game), readReviewArchive: game => rawEvents(store, game) }
 }

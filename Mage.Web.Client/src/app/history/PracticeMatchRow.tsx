@@ -37,6 +37,7 @@ export function PracticeMatchRow({ match, account, selected, onSelect, initially
         </Fragment>) : match.name}
         {rivals.some(rival => rival.archetype) && <small>{rivals.filter(rival => rival.archetype).map(rival => displayArchetype(t, rival.archetype)).join(', ')}</small>}
         {match.statisticsExclusion && <small>{t('history.excludedFromStats')}</small>}
+        {match.endCause && <small>{t(`history.endCause.${match.endCause}`)}</small>}
         <small className={styles.mobileArchetype}>{t('history.yourArchetype')} · {displayArchetype(t, viewer?.archetype)}</small>
       </span>
       <span className={styles.archetype}>{displayArchetype(t, viewer?.archetype)}</span>

@@ -1,6 +1,10 @@
 const replay = {
   'history.excludeFromStats': 'Exclude from statistics',
   'history.excludedFromStats': 'Excluded from statistics',
+  'history.endCause.inactivity': 'Closed for inactivity',
+  'history.endCause.player_clock': 'Closed when a clock ran out',
+  'history.endCause.round_clock': 'Closed by the round clock',
+  'history.endCause.disconnect': 'Closed by a disconnection',
   'history.exclusionEffect': 'All games in this match will be excluded from both players’ statistics. The result and replays stay in History.',
   'history.exclusionReason': 'Reason',
   'history.saveExclusion': 'Save exclusion',

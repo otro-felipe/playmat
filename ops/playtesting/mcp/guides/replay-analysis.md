@@ -2,7 +2,7 @@
 
 Use the shared matchup strategy below. Review uses the acting seat's knowledge at the time and records public references and later revelations in their designated fields.
 
-Call `get_match_review`, `read_review_evidence` and the other history tools on the account connection **without** `playerId`. The host account reads every seat it owns once the match is completed and archived; passing a `playerId` returns `history_account_only`.
+Call `get_match_review`, `read_review_evidence` and the other history tools on the account connection. The host account reads every seat it owns once the match is completed and archived. On `list_matches`, `get_match` and `get_replay`, an optional `playerId` of an owned player chooses that seat's perspective, for example `get_replay({"gameId":"<game>","playerId":"<owned player>"})`; without it the account's first owned seat in the game is used. A live match of your players stays hidden until it completes. A player-bound connection returns `history_account_only`.
 
 ## Grade decisions and omissions
 
@@ -19,7 +19,7 @@ Keep a pilot's published comment attributed to that pilot. To describe a target,
 
 Build the attack from the confirmed attacker declaration. An animated land can be on the battlefield throughout combat without attacking. When explaining damage, record power at the relevant damage step, blocks, damage recipients and the recorded damage. A projected total in a pilot comment or a change in life alone cannot determine the damage dealt by a specific attacker. If the recording ends before damage, describe the last confirmed combat state and leave damage unknown.
 
-Report the official series score, any recorded closing reason, and how much of the final game the replay covers. A drawn series can contain a deciding game whose final position is missing. A series closed for inactivity can contain many turns of play. Identify a concession, disconnection or clock expiry only when the corresponding event is recorded.
+Report the official series score, any recorded closing reason, and how much of the final game the replay covers. `endCause` on a game and on its match names a result that was not played out: `inactivity`, `player_clock`, `round_clock`, `disconnect` or, for one game, `concession`. A match whose `endCause` is `inactivity` ended when one seat timed out, so XMage awarded the whole series. Do not report that as a played win. A drawn series can contain a deciding game whose final position is missing. A series closed for inactivity can contain many turns of play. Identify a concession, disconnection or clock expiry only when the corresponding event is recorded.
 
 ## Read pilot timing and receipts
 

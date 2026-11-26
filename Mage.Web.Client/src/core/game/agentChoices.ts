@@ -153,6 +153,7 @@ interface AgentChoice {
   abilityType?: AbilityType;
   abilityId?: string;
   spellName?: string;
+  castCost?: string;
   manaColors?: ManaColor[];
   plainMana?: boolean;
   manaAbilities?: { abilityId: string; manaColors?: ManaColor[] }[];
@@ -160,6 +161,39 @@ interface AgentChoice {
   nonManaAbilities?: { abilityId: string; label?: string; abilityText?: string }[];
   answer?: boolean;
   intent?: 'attack_all' | 'confirm_attack' | 'confirm_block' | 'confirm_targets';
+}
+
+const NO_ALTERNATIVE_COST = /^Cast with no alternative cost: /;
+const ALTERNATIVE_COST = /^Cast with (?:(.+?) )?alternative cost: /;
+
+/**
+ * XMage asks for a spell's alternative cost (Evoke, Dash, ...) with a plain choice list whose items are
+ * "Cast with Evoke alternative cost: {W/B}{W/B} (source: Emptiness [1cf])" and, unless an alternative is
+ * required, "Cast with no alternative cost: {4}{W/B}{W/B}". The items carry the cast object as a hint.
+ * Name each item by its cost ("Evoke", "none") and the cast by its visible source, or return null.
+ */
+function castCosts(options: string[][], hints: { [key: string]: string[] } | undefined,
+  visible: (id: unknown) => string | undefined) {
+  if (!options.length) return null;
+  const names: string[] = [];
+  for (const [, text] of options) {
+    const label = stripMarkup(text);
+    if (NO_ALTERNATIVE_COST.test(label)) names.push('none');
+    else {
+      const alternative = ALTERNATIVE_COST.exec(label);
+      if (!alternative) return null;
+      names.push(alternative[1] ?? 'alternative');
+    }
+  }
+  const plain = options.findIndex(([, text]) => NO_ALTERNATIVE_COST.test(stripMarkup(text)));
+  const hinted = (index: number) => {
+    const [type, value] = hints?.[options[index][0]] ?? [];
+    return type === 'GAME_OBJECT' ? visible(value) : undefined;
+  };
+  const sources = plain >= 0 ? [hinted(plain)] : options.map((_, index) => hinted(index));
+  const sourceId = sources[0];
+  if (!sourceId || sources.some((id) => id !== sourceId)) return null;
+  return { sourceId, names };
 }
 
 // XMage abbreviates its priority labels before expanding {this}. Compare in the
@@ -207,6 +241,12 @@ export function projectedChoices(state: GameSessionState, promptId: string) {
     const source = visible[id] ?? Object.values(view.stack ?? {}).find((card) => card.cardId === id);
     return source && !source.faceDown && !source.hideInfo ? id : undefined;
   };
+  // A spell being cast is on the stack under its spell ID; name it by its card ID, as in hand.
+  const visibleCastSourceId = (id: unknown) => {
+    const spell = typeof id === 'string' ? view.stack?.[id] : undefined;
+    return visibleSourceId(spell?.cardId ?? id);
+  };
+  let castCostSourceId: string | undefined;
   const sourceObjectId = prompt.kind === 'chooseAbility' ? visibleSourceId(prompt.sourceObjectId)
     : prompt.kind === 'ask' ? visibleSourceId(prompt.options.abilitySourceId) : undefined;
   const targetSourceId = prompt.kind === 'target' ? visibleSourceId(prompt.options.targetSourceId) : undefined;
@@ -299,8 +339,12 @@ export function projectedChoices(state: GameSessionState, promptId: string) {
     case 'chooseChoice': {
       const keys = Object.entries(prompt.choice.keyChoices ?? {});
       const options = keys.length ? keys : (prompt.choice.choices ?? []).map((label) => [label, label]);
+      const costs = castCosts(options, prompt.choice.hintData, visibleCastSourceId);
+      if (costs) castCostSourceId = costs.sourceId;
       options.forEach(([value, label], index) => {
-        choices.push(projectChoice({ type: 'string', value }, `option-${index}`, stripMarkup(label), 'option'));
+        const choice = projectChoice({ type: 'string', value }, `option-${index}`, stripMarkup(label), 'option');
+        if (costs) choice.castCost = costs.names[index];
+        choices.push(choice);
       });
       if (!prompt.choice.required) choices.push(projectChoice({ type: 'string', value: '' }, 'skip', 'Skip', 'button'));
       break;
@@ -337,6 +381,7 @@ export function projectedChoices(state: GameSessionState, promptId: string) {
     ...(triggerOrder ? { triggerOrder: true } : {}),
     ...(sourceObjectId ? { sourceObjectId } : {}),
     ...(sourceObjectId && prompt.kind === 'chooseAbility' && prompt.modePicker ? { modePicker: true } : {}),
+    ...(castCostSourceId ? { sourceObjectId: castCostSourceId, castCostPicker: true } : {}),
     ...(paymentSourceId ? { paymentSourceId } : {}),
     ...(targetZone ? { targetZone } : {}),
     ...(targetSourceId ? { targetSourceId } : {}),
@@ -350,7 +395,7 @@ type AgentDecision = NonNullable<ReturnType<typeof projectedChoices>>;
 export function describeAgentDecision(decision: AgentDecision | null) {
   return decision && {
     ...decision,
-    choices: decision.choices.map(({ id, label, type, card, cards, objectId, intent, canPlayLand, abilityType, spellName, triggerSourceId, abilityId, manaColors, manaAbilities, spellAbilities, nonManaAbilities, plainMana, answer }) => ({
+    choices: decision.choices.map(({ id, label, type, card, cards, objectId, intent, canPlayLand, abilityType, spellName, castCost, triggerSourceId, abilityId, manaColors, manaAbilities, spellAbilities, nonManaAbilities, plainMana, answer }) => ({
       id, label, type, ...(card ? { card } : {}), ...(cards ? { cards } : {}), ...(objectId ? { objectId } : {}), ...(intent ? { intent } : {}),
       ...(canPlayLand ? { canPlayLand } : {}),
       ...(abilityType ? { abilityType } : {}),
@@ -362,6 +407,7 @@ export function describeAgentDecision(decision: AgentDecision | null) {
       ...(plainMana !== undefined ? { plainMana } : {}),
       ...(answer !== undefined ? { answer } : {}),
       ...(spellName ? { spellName } : {}),
+      ...(castCost ? { castCost } : {}),
       ...(triggerSourceId ? { triggerSourceId } : {}),
     })),
   };

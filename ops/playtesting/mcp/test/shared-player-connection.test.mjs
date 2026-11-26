@@ -23,12 +23,13 @@ test('one connection addresses both private projections and receipts of one game
     assert.equal(req.headers.authorization, 'Bearer fixture-canonical');
     const id = req.headers['x-playmat-player-id'];
     const player = players.find(p => p.playerId === id);
-    calls.push({ path:req.url, id });
+    calls.push({ path:req.url, id, perspective:req.headers['x-playmat-perspective'] });
     res.setHeader('content-type', 'application/json');
     if (id && !player) { res.writeHead(403); res.end('{}'); return; }
     if (req.url === '/internal/verify') res.end(JSON.stringify(player ?? {...base, playerSelectionEnabled:selectable}));
     else if (req.url === '/api/playtesting/players') res.end(JSON.stringify({ players: player ? [player] : players }));
     else if (req.url.startsWith('/api/playtesting/decks?')) res.end(JSON.stringify({ decks:['shared-library'] }));
+    else if (req.url.startsWith('/api/playtesting/replays/')) res.end(JSON.stringify({ events:[], perspective:req.headers['x-playmat-perspective'] ?? null }))
     else if (req.url === '/internal/mcp-events/list') res.end(JSON.stringify({ events:[], reader:id }));
     else { res.writeHead(404); res.end('{}'); }
   });
@@ -80,7 +81,10 @@ test('one connection addresses both private projections and receipts of one game
     assert.deepEqual((await call('list_players',{playerId})).players.map(p=>p.playerId),[playerId]);
     assert.deepEqual(await call('list_decks',{playerId}),{decks:['shared-library']});
     assert.ok(calls.some(c=>c.path.includes('/decks?') && c.id===playerId));
-    assert.equal((await call('get_replay',{playerId,gameId})).code,'history_account_only');
+    // On the account connection, a history playerId chooses the owned player's perspective, never a player actor.
+    assert.equal((await call('get_replay',{playerId,gameId})).code,undefined);
+    assert.deepEqual(calls.filter(c=>c.path.startsWith('/api/playtesting/replays/')).at(-1),
+      {path:`/api/playtesting/replays/${gameId}?start=0&count=25`,id:undefined,perspective:playerId});
     assert.equal((await call('get_game_state',{playerId,humanTableId:tableId})).code,'player_forbidden');
   }
   const commandId='same-command';

@@ -1158,7 +1158,7 @@ test('one canonical OAuth connection selects only enabled account players and ke
   assert.equal((await f.request('/internal/verify',select(ids[0],renewed))).status,403)
 })
 
-test('account history can read a completed profile BO3 score without opening its live hand or a foreign series', {skip:!databaseUrl}, async t => {
+test('account history can read a completed profile BO3 score and replay without opening its live hand or a foreign series', {skip:!databaseUrl}, async t => {
   const f = await fixture(t)
   const owner = await f.login('ScoreOwner')
   const outsider = await f.login('OtherOwner')
@@ -1205,12 +1205,65 @@ test('account history can read a completed profile BO3 score without opening its
   assert.equal(score.winner,home.engineName)
   assert.equal(score.status,'completed')
   assert.deepEqual(score.games.map(g=>g.winner),winners)
-  assert.ok(score.games.every(game => !game.replayAvailable))
+  // Completed: the account connection views its first owned player's seat, or the perspective it names.
+  assert.ok(score.games.every(game => game.replayAvailable && game.viewerName === home.engineName.toLowerCase()))
   assert.equal(JSON.stringify(score).includes('fixture private'),false)
+  const own = await (await f.request(replay+'?start=0&count=5',history)).json()
+  assert.equal(own.info.viewerName,home.engineName.toLowerCase())
+  assert.equal(JSON.stringify(own).includes('fixture private away'),false)
+  const awayView = {...history,'X-Playmat-Perspective':away.playerId}
+  const chosen = await (await f.request(matchPath,awayView)).json()
+  assert.ok(chosen.games.every(game => game.viewerName === away.engineName.toLowerCase()))
+  const awayPage = await (await f.request(replay+'?start=0&count=5',awayView)).json()
+  assert.equal(awayPage.info.viewerName,away.engineName.toLowerCase())
+  assert.equal(JSON.stringify(awayPage).includes('fixture private home'),false)
+  assert.equal((await f.request(replay,{...foreign,'X-Playmat-Perspective':away.playerId})).status,403)
+  assert.equal((await f.request(replay,{...fixed,'X-Playmat-Perspective':away.playerId})).status,403)
+  assert.equal((await f.request(replay,{...owner,'X-Playmat-Perspective':away.playerId})).status,403)
   assert.deepEqual(await ids(foreign),[])
   assert.equal((await f.request(matchPath,foreign)).status,404)
   for (const headers of [fixed,playOnly]) assert.equal((await f.request(matchPath,headers)).status,403)
   assert.equal((await f.request(replay,foreign)).status,404)
+})
+
+test('an inactivity loss records why the game and its whole match ended without a played win', {skip:!databaseUrl}, async t => {
+  // Opus Bo3 of 26 November 2026: G1 played out, G2 lost to the 900 s response timeout, match closed 1-1.
+  const f = await fixture(t)
+  const owner = await f.login('CauseOwner')
+  const make = async displayName => (await f.request('/api/playtesting/players',{...owner,'Content-Type':'application/json'},{displayName,mcpEnabled:true})).json()
+  const crisol = await make('Crisol')
+  const vera = await make('Vera')
+  const history = await authorizePilot(f,owner,'history')
+  async function record(ends, winner) {
+    const match = randomUUID(), table = randomUUID(), now = Date.now()
+    for (const [i,end] of ends.entries()) {
+      const game = randomUUID()
+      await writeFile(join(f.replayDirectory,game+'.json'),JSON.stringify({
+        gameId:game,gameNumber:i+1,matchId:match,tableId:table,winsNeeded:2,deckType:'Constructed - Pioneer',
+        startedAt:now+i*10,endedAt:now+i*10+1,result:'Game finished',winner:end.winner,
+        players:[crisol,vera].map(p=>({name:p.engineName,human:true})),
+      }))
+      const records = [{t:1,view:{turn:1}}, ...(end.marker ? [{t:2,kind:'spectatorEnd',...end.marker}] : [])]
+      await writeFile(join(f.replayDirectory,game+'.ndjson.gz'),gzipSync(records.map(r => JSON.stringify(r)).join('\n')))
+    }
+    await writeFile(join(f.replayDirectory,match+'.match.json'),JSON.stringify({matchId:match,endedAt:now+40,winner}))
+    await f.product.archiveGames()
+    return (await (await f.request('/api/playtesting/matches/'+match,history)).json())
+  }
+  const timedOut = await record([
+    {winner:crisol.engineName, marker:{terminal:true}},
+    {winner:vera.engineName, marker:{terminal:true,cause:'inactivity'}},
+  ], vera.engineName)
+  assert.deepEqual(timedOut.games.map(game => game.endCause), [null,'inactivity'])
+  assert.equal(timedOut.endCause,'inactivity')
+  assert.equal(timedOut.winner,vera.engineName)
+  // A conceded game is a game result, not a match abandonment; unrecognized or non-terminal causes stay null.
+  const conceded = await record([
+    {winner:vera.engineName, marker:{terminal:true,cause:'concession'}},
+    {winner:vera.engineName, marker:{terminal:false,cause:'inactivity'}},
+  ], vera.engineName)
+  assert.deepEqual(conceded.games.map(game => game.endCause), ['concession',null])
+  assert.equal(conceded.endCause,null)
 })
 
 test('browser history replay serves the retained human or owned profile seat and detects a missing archive', { skip: !databaseUrl }, async t => {
@@ -1251,7 +1304,8 @@ test('browser history replay serves the retained human or owned profile seat and
     assert.deepEqual([page.events[0].view.turn, ...page.events[0].view.players.map(player => player.life)], [9, 9, 10])
     assert.equal((await f.request(replay, outsider)).status, 404)
     assert.equal((await f.request(replay, rival)).status, rivalStatus)
-    if (players === seats) assert.equal((await f.request(replay, canonical)).status, 404)
+    // The account connection reads its own completed profile games from the same first owned seat.
+    if (players === seats) assert.equal((await (await f.request(replay, canonical)).json()).info.viewerName, viewer.toLowerCase())
     f.store.clear()
     assert.equal((await f.request(replay, owner)).status, 503)
   }

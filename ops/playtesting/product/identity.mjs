@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'no
 import { promisify } from 'node:util'
 import { selectOAuthPlayer } from './players.mjs'
 import { declaredRuntime } from './player-runtime.mjs'
-import { normalize, ProductError, transaction } from './decks.mjs'
+import { isUuid, normalize, ProductError, transaction } from './decks.mjs'
 
 const derive = promisify(scrypt)
 const saltPattern = /^[a-z0-9_-]{22}$/i
@@ -259,6 +259,16 @@ export function createIdentity(pool, insecureCookie, resolveOAuth = async () => 
     return token && digestPattern.test(token) ? digest(token) : null
   }
 
+  // On the account connection, a perspective names one owned player whose seat reads its completed archive.
+  async function withPerspective(selected, perspective) {
+    if (perspective === undefined || !selected) return selected
+    if (!selected.accountAgent || selected.playerId) throw new ProductError(403,'Choose a perspective only on the account connection')
+    const { rows: [seat] } = isUuid(perspective) ? await pool.query(
+      'SELECT engine_key FROM agent_grants WHERE account_id=$1 AND player_id=$2 AND revoked_at IS NULL', [selected.accountId, perspective.toLowerCase()]) : { rows: [] }
+    if (!seat) throw new ProductError(403,'This account does not own that player')
+    return { ...selected, perspectiveSeat: seat.engine_key }
+  }
+
   async function signOut(req) {
     const session = sessionDigest(req)
     if (session) await pool.query('DELETE FROM browser_sessions WHERE digest=$1', [session])
@@ -276,9 +286,10 @@ export function createIdentity(pool, insecureCookie, resolveOAuth = async () => 
         'SELECT a.id, a.username, g.engine_name, g.scopes FROM agent_grants g JOIN accounts a ON a.id=g.account_id WHERE g.digest=$1 AND g.revoked_at IS NULL AND a.enabled AND NOT g.oauth_managed',
         [tokenDigest],
       )
-      return selectOAuthPlayer(pool, row ? actor(row.id, row.username, row.engine_name, row.scopes, true) : await resolveOAuth(tokenDigest), selected)
+      const selectedActor = await selectOAuthPlayer(pool, row ? actor(row.id, row.username, row.engine_name, row.scopes, true) : await resolveOAuth(tokenDigest), selected)
+      return withPerspective(selectedActor, req.headers['x-playmat-perspective'])
     }
-    if (selected !== undefined) throw new ProductError(403,'A player selector requires an MCP connection')
+    if (selected !== undefined || req.headers['x-playmat-perspective'] !== undefined) throw new ProductError(403,'A player selector requires an MCP connection')
     const session = sessionDigest(req)
     if (!session) return null
     const { rows: [row] } = await pool.query(

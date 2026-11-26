@@ -158,7 +158,7 @@ const LinePassUntilShape = z.object({
   kind: z.literal('pass_until'),
   destination: z.enum(['my_upkeep', 'my_draw', 'end_step', 'current_turn']).describe('Next own upkeep, forthcoming own draw (including this turn from upkeep), this turn’s end step, or an explicit current-turn condition. For example, current_turn with step BEGIN_COMBAT or POSTCOMBAT_MAIN and priority self returns your decision there.'),
   policy: z.enum(['if_no_play', 'decline_optional']).default('if_no_play').describe('Decline optional plays only when explicitly intended, for example to bluff a response. Both policies stop on an opponent action, new information or an unplanned required choice.'),
-  declineFromDecisionId: StringId.optional().describe('With decline_optional on a single action, decline only options visible at this exact ordinary priority. Stop for a different option, even on the same source.'),
+  declineFromDecisionId: StringId.optional().describe('With decline_optional on the first action, decline only options visible at this exact ordinary priority; later actions may follow. Stop for a different option, even on the same source.'),
   ...GameCondition,
 }).strict();
 const LinePassUntil = LinePassUntilShape.refine((value) => (value.destination === 'current_turn') === hasDestination(value),
@@ -268,17 +268,18 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
       _meta: { securitySchemes: scopes.map(value => ({ type: 'oauth2', scopes: [value] })) },
     }, async (args, extra) => {
       try {
-        const selectedContext = await contextFor(args.playerId);
+        // History stays on the account. Its playerId names the owned player whose seat views the archive.
+        const selectedContext = await contextFor(scope === 'history' ? undefined : args.playerId);
         const { actor, human, terminalReceipt, reauthorize, ownsLegacyGame } = selectedContext;
-        if (scope === 'history' && (actor.playerId || args.playerId !== undefined)) {
-          throw new ToolError('history_account_only', 'Review and history tools read the account archive. Omit playerId on an account connection; a player-bound connection cannot read history.');
+        if (scope === 'history' && actor.playerId) {
+          throw new ToolError('history_account_only', 'Review and history tools read the account archive. Use the account connection; a player-bound connection cannot read history. There, playerId optionally chooses an owned player\'s perspective.');
         }
         if (!actor.scopes.includes(scope)) {
           throw new ToolError('forbidden', name === 'create_tournament'
             ? 'An administrator must authorize the account connection with the optional tournaments:manage permission.'
             : 'This credential lacks the required scope.');
         }
-        checkPlayerSelection(actor, args, name);
+        checkPlayerSelection(actor, scope === 'history' ? { ...args, playerId: undefined } : args, name);
         const humanRoute = args.humanTableId && (gameTool || name === 'start_match');
         if (args.humanTableId && !humanRoute) throw new ToolError('player_forbidden', 'Use the opted-in Human Player tools for this table.');
         if (actor.playerSelectionEnabled && ['play', 'chat'].includes(scope)
@@ -288,6 +289,7 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
         }
         const { playerId, ...selected } = args;
         const { humanTableId, ...input } = selected;
+        if (scope === 'history' && playerId !== undefined) selected.perspective = playerId;
         const execute = async () => {
           if (actor.playerId && name === 'wait_for_decision' && input.gameId && input.commandId
               && input.afterCursor === undefined && input.afterDecisionId === undefined) {
@@ -680,13 +682,13 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
   tool('update_deck', 'Save a revision if your current deck revision still matches.', {
     library: DeckLibrary, deckId: LibraryDeckId, expectedRevision: z.number().int().positive(), name: z.string().min(1).max(120), format: Format, archetype: z.string().min(1).max(150), deck: Deck,
   }, 'decks', (args) => fromProduct('update_deck', args));
-  tool('list_matches', 'List your finished and interrupted matches, filtered by format.', {
+  tool('list_matches', 'List your finished and interrupted matches, filtered by format. endCause names a series that ended without being played out, such as inactivity. On the account connection, playerId optionally chooses an owned player\'s perspective.', {
     format: Format.optional(), cursor: z.string().max(160).optional(), limit: z.number().int().min(1).max(50).default(25),
   }, 'history', (args) => fromProduct('list_matches', args), true);
-  tool('get_match', 'Read one participant-authorized match and its games.', { matchId: Uuid },
+  tool('get_match', 'Read one participant-authorized match and its games, with endCause when a game or the series was not played out. On the account connection, playerId optionally chooses an owned player\'s perspective.', { matchId: Uuid },
     'history', (args) => fromProduct('get_match', args), true);
   const replayPage = { gameId: Uuid, start: Cursor.default(0), count: z.number().int().min(1).max(50).default(25) };
-  tool('get_replay', 'Read one redacted replay page from your perspective.', replayPage, 'history',
+  tool('get_replay', 'Read one redacted replay page from your perspective. On the account connection, playerId chooses which owned player\'s completed seat to view.', replayPage, 'history',
     (args) => fromProduct('get_replay', args), true);
   tool('query_match_events', 'Read ordered, authorized and cursor-paginated events for one game to analyze its play.', replayPage, 'history',
     (args) => fromProduct('get_replay', args), true);

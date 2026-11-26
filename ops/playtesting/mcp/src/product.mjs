@@ -8,7 +8,7 @@ export function createProductClient(baseUrl, publicUrl) {
     throw new Error('The Thoughtseize product service must bind on loopback.');
   }
 
-  async function request(token, path, { method = 'GET', body, playerId, inviteToken } = {}) {
+  async function request(token, path, { method = 'GET', body, playerId, inviteToken, perspective } = {}) {
     return fetch(new URL(path, base), {
       method, redirect: 'error', signal: AbortSignal.timeout(12_000),
       headers: {
@@ -16,6 +16,7 @@ export function createProductClient(baseUrl, publicUrl) {
         authorization: `Bearer ${token}`,
         ...(playerId && { 'X-Playmat-Player-Id': playerId }),
         ...(inviteToken && { 'X-Playmat-Invite-Token': inviteToken }),
+        ...(perspective && { 'X-Playmat-Perspective': perspective }),
         ...(body === undefined ? {} : { 'content-type': 'application/json' }),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -34,7 +35,9 @@ export function createProductClient(baseUrl, publicUrl) {
     return { ...actor, scopes: [...scopes] };
   }
 
-  async function operation(token, name, args, playerId) {
+  async function operation(token, name, input, playerId) {
+    // A history perspective travels as a header, never inside a request body.
+    const { perspective, ...args } = input ?? {};
     const encode = encodeURIComponent;
     const root = '/api/playtesting';
     let path;
@@ -167,7 +170,7 @@ export function createProductClient(baseUrl, publicUrl) {
       default:
         throw new ToolError('invalid_operation', 'No such Thoughtseize operation.');
     }
-    const response = await request(token, path, { ...config, playerId,
+    const response = await request(token, path, { ...config, playerId, perspective,
       ...(['list_joinable_games','inspect_game_invite','get_game_invite'].includes(name) && {inviteToken:args.inviteToken}) });
     if (!response.ok) {
       if (name === 'create_tournament' && response.status === 409) {

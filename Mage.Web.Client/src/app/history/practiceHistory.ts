@@ -21,6 +21,7 @@ export interface PracticeGame {
   startPlayer?: string | null;
   turns?: number | null;
   ownMulligans?: number | null;
+  endCause?: 'inactivity' | 'player_clock' | 'round_clock' | 'disconnect' | 'concession' | null;
   players: PracticePlayer[] | null;
   analysis?: ReviewSummary;
 }
@@ -33,6 +34,8 @@ export interface PracticeMatch {
   winner?: string | null;
   startedAt: number;
   statisticsExclusion?: { reason: string; author: string; markedAt: string } | null;
+  /** Why the series ended without being played out. */
+  endCause?: 'inactivity' | 'player_clock' | 'round_clock' | 'disconnect' | null;
   canExcludeFromStatistics?: boolean;
   games: PracticeGame[];
   analysis?: ReviewSummary;

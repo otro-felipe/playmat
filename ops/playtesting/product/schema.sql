@@ -296,3 +296,8 @@ CREATE TABLE IF NOT EXISTS external_mcp_invite_links (
   table_id uuid PRIMARY KEY REFERENCES invitations(table_id) ON DELETE CASCADE,
   capability text NOT NULL UNIQUE
 );
+
+-- Why a game ended when it was not played out: inactivity, player_clock, round_clock, concession or disconnect.
+-- Read from the replay's terminal spectatorEnd marker; end_cause_checked records that the archive was read.
+ALTER TABLE games ADD COLUMN IF NOT EXISTS end_cause text;
+ALTER TABLE games ADD COLUMN IF NOT EXISTS end_cause_checked boolean NOT NULL DEFAULT false;

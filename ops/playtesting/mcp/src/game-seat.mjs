@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { publicActivationText } from '../dist/engine-core.mjs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { priorityChoiceActions, visiblePlaySource } from './priority-choice-actions.mjs';
-import { absentPaymentIndex, paymentOptions } from './payment-sources.mjs';
+import { absentPaymentIndex, ManaAbilityMemory, paymentOptions, stableOption } from './payment-sources.mjs';
 import { observedAttacks, observedBlocks, PlannedDefenderCombat, PlannedPermanentCombat } from './planned-combat.mjs';
 import { canCallCoin, drawTriggerSources, guardsEffectQuestion, needsEffectReevaluation, needsSpellReevaluation,
   needsStackReevaluation, optionalInformationEffect, plansInformationBranch, sameTriggerText, triggeredEffect } from './effect-boundaries.mjs';
@@ -214,7 +214,8 @@ function plannedChoice(state, decision, step) {
     if (step.playAs === 'land' && choice.canPlayLand !== true) return false;
     if (zone && !cards?.some((card) => card.id === (choice.card?.id ?? choice.objectId))) return false;
     if (step.semanticSpellOption && choice.abilityType !== 'SPELL') return false;
-    if (step.semanticMode && (choice.type !== 'option' || !choice.abilityId || ['Done', 'Cancel'].includes(choice.label))) return false;
+    if (step.semanticMode && (choice.type !== 'option' || !choice.abilityId && !choice.castCost || ['Done', 'Cancel'].includes(choice.label))) return false;
+    if (step.semanticMode && choice.castCost) return label !== undefined && sameCastCost(choice, label);
     const sourceAbilities = decision.kind === 'payMana' ? choice.manaAbilities ?? [] : [choice];
     if ((abilityId !== undefined || manaColor !== undefined) && !sourceAbilities.some((ability) =>
       (abilityId === undefined || ability.abilityId === abilityId) && (manaColor === undefined || ability.manaColors?.includes(manaColor)))) return false;
@@ -228,6 +229,29 @@ function plannedChoice(state, decision, step) {
   });
   if (matches.length > 1) throw new ToolError('ambiguous_choice', 'Several legal choices match. Use the current decisionId and the matching choiceId, or narrow the selector to one visible object or exact option.');
   return matches[0];
+}
+
+// "Evoke", "Cast with Evoke alternative cost" or the exact label all name the Evoke item.
+function sameCastCost(choice, label) {
+  const wanted = label.trim().toLowerCase();
+  return [choice.castCost, choice.label?.split(':', 1)[0], choice.label].some((name) => name?.trim().toLowerCase() === wanted);
+}
+
+// A hand ability's printed keyword, such as "Cycling {2} (...)", starts one of the card's rules.
+function handAbilityRule(card, mode) {
+  const wanted = mode?.trim().toLowerCase();
+  return !!wanted && card?.rules?.some((rule) => {
+    const text = rule.trim().toLowerCase();
+    return text.startsWith(wanted) && /^(?:$|[\s{—–:-])/.test(text.slice(wanted.length));
+  });
+}
+
+// The one non-spell option of an ability picker whose label starts with the declared keyword.
+function handAbilityOption(picker, mode) {
+  const wanted = mode.trim().toLowerCase();
+  const options = picker.choices.filter((item) => item.type === 'option' && item.abilityType && item.abilityType !== 'SPELL'
+    && item.label?.trim().toLowerCase().startsWith(wanted));
+  return options.length === 1 ? options[0] : undefined;
 }
 
 // A grouped mana choice can contain useful side effects. Only demonstrably plain
@@ -251,6 +275,7 @@ export class GameSeat {
   #current = null;
   #inFlight = false;
   #uncertain = null;
+  #manaAbilities = new ManaAbilityMemory();
 
   constructor(engine, { sequenceTimeoutMs = SEQUENCE_TIMEOUT_MS, maxSequenceWallMs = MAX_SEQUENCE_WALL_MS } = {}) {
     this.engine = engine;
@@ -260,7 +285,23 @@ export class GameSeat {
 
   snapshot(gameId) { return gameState(this.engine, gameId); }
 
+  // A payment that names a renewed granted mana ability resolves to its
+  // current ID; anything unproven keeps the declared ID and stays illegal.
+  #resolveManaStep(step, decision) {
+    if (decision?.kind !== 'payMana') return step;
+    const declared = step.payment ?? (step.select?.objectId && step.select.abilityId
+      ? { sourceId: step.select.objectId, abilityId: step.select.abilityId, color: step.select.manaColor } : null);
+    if (!declared?.abilityId) return step;
+    const source = decision.choices.find((choice) => (choice.objectId ?? choice.card?.id) === declared.sourceId);
+    const abilityId = source && this.#manaAbilities.resolve(declared.sourceId, declared.abilityId, declared.color, source.manaAbilities);
+    if (!abilityId || abilityId === declared.abilityId) return step;
+    return { ...step,
+      ...(step.payment ? { payment: { ...step.payment, abilityId } } : {}),
+      ...(step.select?.abilityId ? { select: { ...step.select, abilityId } } : {}) };
+  }
+
   withChoiceActions(state) {
+    this.#manaAbilities.observe(state);
     const decision = state?.decision;
     if (state?.status !== 'active' || state.rollbackRequest || this.#current || this.#inFlight
       || !decision?.id || this.#uncertain === decision.id || !decision.choices?.length) return state;
@@ -299,7 +340,7 @@ export class GameSeat {
       respondNow: 'Priority is still open. Inspect all visible legal plays, including free spells and useful abilities. Choose a response if you want one.',
       passOnce: { kind: 'pass_priority' },
       declineKnown: { ...stop.boundary, policy: 'decline_optional', declineFromDecisionId: stop.decisionId },
-      instructions: 'To pass once, copy passOnce. If you decide to decline these same visible options until the requested boundary, copy the entire declineKnown action, including declineFromDecisionId, as the only action of a fresh play_line from this cursor. Omitting that field also declines newly legal options.',
+      instructions: 'To pass once, copy passOnce. If you decide to decline these same visible options until the requested boundary, copy the entire declineKnown action, including declineFromDecisionId, as the first action of a fresh play_line from this cursor; the rest of your line may follow it. Omitting that field also declines newly legal options.',
     };
   }
 
@@ -486,12 +527,15 @@ export class GameSeat {
           steps.push({ kind: 'answer', guard, requiresEmptyStack, select: action.select, playAs: action.playAs,
             expectCast: action.playAs === 'land' || action.expectCast === false ? false : 'auto', reevaluateAfter: action.reevaluateAfter,
             semanticPlay: true, spellAbilityId: action.spellAbilityId, expectTriggers: action.expectTriggers,
-            expectTargetTriggers: action.expectTargetTriggers, optionalCosts: action.optionalCosts });
+            expectTargetTriggers: action.expectTargetTriggers, optionalCosts: action.optionalCosts,
+            handMode: action.mode && !action.modeId ? action.mode : undefined });
           if (action.spellAbilityId) steps.push({ kind: 'answer', guard: { kind: 'panel' }, select: { abilityId: action.spellAbilityId },
             semanticSpellOption: true, boundCast: true, expectCast: true });
-          if (action.modeId || action.mode) steps.push({ kind: 'answer', guard: { kind: 'panel', modePicker: true },
+          // A mode names a modal option, an alternative cost (Evoke) or an ability played from hand (Cycling).
+          if (action.modeId || action.mode) steps.push({ kind: 'answer', guard: { kind: 'panel' },
             select: action.modeId ? { abilityId: action.modeId } : { label: action.mode }, semanticMode: true, boundCast: true });
         }
+        const normalCastCost = !activating && !action.mode && !action.modeId && action.playAs !== 'land';
         const targetRoles = new Map();
         for (const target of action.targets ?? []) {
           const role = target.role;
@@ -503,14 +547,14 @@ export class GameSeat {
           steps.push({ kind: 'answer',
             guard: { kind: 'target', instruction: target.instruction, targetZone: target.targetZone, targetRole: role,
               targetSourceId: activating ? action.sourceId : undefined },
-            select: target.select, intendedTargetIds: roleIds, semanticTarget: true, boundCast: true,
+            select: target.select, intendedTargetIds: roleIds, semanticTarget: true, boundCast: true, normalCastCost,
             singleDeclaredTarget: !activating && action.targets.length === 1 });
         }
         if (action.payWith?.length) steps[firstStep].payWith = action.payWith;
         for (const [paymentIndex, entry] of (action.payWith ?? []).entries()) {
           const payment = typeof entry === 'string' ? { sourceId: entry } : entry;
           steps.push({ kind: 'answer', guard: { kind: 'payMana' }, select: { objectId: payment.sourceId, zone: 'battlefield' },
-            payment: payment.color || payment.abilityId ? payment : undefined, paymentIndex, boundCast: true,
+            payment: payment.color || payment.abilityId ? payment : undefined, paymentIndex, boundCast: true, normalCastCost,
             activationSourceId: activating ? action.sourceId : undefined });
         }
       } else if (action.kind === 'choose') {
@@ -543,12 +587,13 @@ export class GameSeat {
         }
         let knownOptions;
         if (action.declineFromDecisionId !== undefined) {
-          if (actions.length !== 1 || action.policy !== 'decline_optional') throw new ToolError('bad_sequence',
-            'A decline from an observed decision must be the only action and use decline_optional.', { actionIndex, field: 'declineFromDecisionId' });
+          // The observed options exist only before any other action. Later actions may follow the boundary.
+          if (actionIndex !== 0 || action.policy !== 'decline_optional') throw new ToolError('bad_sequence',
+            'A decline from an observed decision must be the first action and use decline_optional. Later actions may follow it.', { actionIndex, field: 'declineFromDecisionId' });
           if (initial.priority !== 'self' || decision?.kind !== 'priority' || decision.id !== action.declineFromDecisionId) {
             throw new ToolError('stale_decision', 'Choose from the current ordinary priority before declining options.', { actionIndex, field: 'declineFromDecisionId' });
           }
-          knownOptions = structuredClone(optionalPlays(decision));
+          knownOptions = structuredClone(optionalPlays(decision).map(stableOption));
         }
         steps.push({ kind: 'pass_to_boundary', destination, phase, step, priority, intermediate: tail.length > 0,
           skipOptionalResponses: action.policy === 'decline_optional', knownOptions });
@@ -1028,6 +1073,14 @@ export class GameSeat {
         throw new ToolError('state_changed', 'Selected triggers did not enter at the top of the stack in the declared order.');
       }
       for (const item of added) {
+        // XMage activates the declared hand ability (Cycling) directly when it is the only usable one.
+        if (nextCast?.handMode && item.abilityType === 'ACTIVATED_NONMANA' && item.controllerId === nextCast.playerId
+          && [nextCast.objectId, nextCast.cardId].includes(item.sourceId)) {
+          if (nextCast.information) explicitInformationObjects.add(item.id);
+          if (nextCast.actionIndex !== undefined) handledSpellModes.add(nextCast.actionIndex);
+          nextCast = null;
+          continue;
+        }
         if (nextCast && item.cardId === nextCast.cardId && item.controllerId === nextCast.playerId
           && item.name === nextCast.name && item.id !== item.cardId && !item.abilityType) {
           for (const trigger of nextTriggers) {
@@ -1117,6 +1170,7 @@ export class GameSeat {
       signal.throwIfAborted();
       const state = this.snapshot();
       checkStack(state, checkGame(state));
+      this.#manaAbilities.observe(state);
       return state;
     };
     const observable = (state) => {
@@ -1163,6 +1217,7 @@ export class GameSeat {
           .some((field) => guard[field] !== undefined && guard[field] !== decision[field]))) return false;
       const sourceId = castingSources.get(step.actionIndex)?.objectId;
       if (step.activationSourceId && guard.kind === 'payMana') return decision.paymentSourceId === step.activationSourceId;
+      if (step.semanticMode && !decision.modePicker && !decision.castCostPicker) return false;
       if (step.semanticMode || step.semanticSpellOption) return !!sourceId && decision.sourceObjectId === sourceId;
       if (step.semanticTarget && guard.targetRole !== undefined) return !!sourceId && decision.targetSourceId === sourceId;
       if (step.boundCast && guard.kind === 'payMana' && decision.paymentSourceId && sourceId) return decision.paymentSourceId === sourceId;
@@ -1263,6 +1318,19 @@ export class GameSeat {
       if (!choice) return false;
       await submit({ gameId: sequence.gameId, cursor: state.cursor, decisionId: decision.id, choiceId: choice.id,
         idempotencyKey: `${sequence.id}:optional-cost:${decision.id}` });
+      sequence.appliedDecisions++;
+      previousDecisionId = decision.id;
+      return true;
+    };
+    // A play without a mode is a normal cast: answer XMage's alternative cost chooser with "no alternative cost".
+    const answerNormalCastCost = async (state, step) => {
+      const decision = visibleDecision(state);
+      if (!step?.normalCastCost || !decision?.castCostPicker || decision.id === previousDecisionId
+        || decision.sourceObjectId !== castingSources.get(step.actionIndex)?.objectId) return false;
+      const normal = decision.choices.filter((item) => item.castCost === 'none');
+      if (normal.length !== 1) throw new ToolError('response_available', 'This cast requires an alternative cost. Declare it with play.mode.');
+      await submit({ gameId: sequence.gameId, cursor: state.cursor, decisionId: decision.id, choiceId: normal[0].id,
+        idempotencyKey: `${sequence.id}:normal-cost:${decision.id}` });
       sequence.appliedDecisions++;
       previousDecisionId = decision.id;
       return true;
@@ -1373,7 +1441,7 @@ export class GameSeat {
             const decision = visibleDecision(state);
             if (!decision || decision.id === previousDecisionId) {
               if (!await waitForNext()) throw new ToolError('timeout', 'The next intended decision did not arrive.');
-            } else if (!await answerOptionalCost(state)) {
+            } else if (!await answerOptionalCost(state) && !await answerNormalCastCost(state, step)) {
               if (step.kind === 'answer' && step.decisionId && step.decisionId !== decision.id && DISCRETE_PROMPTS.has(decision.kind)) {
                 throw new ToolError('stale_decision', 'The next choice refers to a different decisionId. Replan the remaining actions from this decision.', { field: 'decisionId' });
               }
@@ -1408,7 +1476,7 @@ export class GameSeat {
           if (step.resumeCastId && (state.stack[0]?.id !== step.resumeCastId || state.stack[0].unpaid !== true)) {
             throw new ToolError('response_available', 'The spell is no longer awaiting the resumed casting choices.');
           }
-          const castingPicker = pendingCast && !decision.modePicker && ['panel', 'chooseAbility'].includes(decision.kind)
+          const castingPicker = pendingCast && !decision.modePicker && !decision.castCostPicker && ['panel', 'chooseAbility'].includes(decision.kind)
             && matchesAnswer(state, step);
           if (step.semanticTarget && step.guard?.instruction === undefined && step.guard?.targetRole === undefined) {
             throw new ToolError('response_available', 'An unresolved target needs its exact instruction or engine role; an absent prompt is not target evidence.');
@@ -1455,7 +1523,8 @@ export class GameSeat {
               throw new ToolError('state_changed', 'The visible blocker assignments differ from the declared plan.');
             }
           }
-          const choice = plannedChoice(state, decision, step);
+          const manaStep = this.#resolveManaStep(step, decision);
+          const choice = plannedChoice(state, decision, manaStep);
           if (!choice && decision.kind === 'payMana' && step.select?.objectId
             && !decision.choices.some(c => (c.objectId ?? c.card?.id) === step.select.objectId)) {
             throw new ToolError('source_unavailable',
@@ -1557,7 +1626,8 @@ export class GameSeat {
             if (decision.kind !== 'priority' || !playerId || !Array.isArray(card?.types) || card.types.includes('LAND')) {
               throw new ToolError('bad_cast_expectation', 'Expect a cast only for a visible legal spell from hand, exile or graveyard during priority; not a mode, target or activated ability.');
             }
-            pendingCast = { objectId: card.id, cardId: card.cardId, name: card.name, playerId, information: !!step.reevaluateAfter, optionalCosts: step.optionalCosts };
+            pendingCast = { objectId: card.id, cardId: card.cardId, name: card.name, playerId, information: !!step.reevaluateAfter, optionalCosts: step.optionalCosts,
+              ...(handAbilityRule(card, step.handMode) ? { handMode: step.handMode } : {}) };
             if (step.semanticPlay) {
               pendingCast.actionIndex = step.actionIndex;
               castingSources.set(step.actionIndex, { objectId: card.id, cardId: card.cardId });
@@ -1568,9 +1638,9 @@ export class GameSeat {
               }
             }
           }
-          const selectedMana = step.payment && {
-            abilityId: step.payment.abilityId,
-            manaColor: step.payment.color,
+          const selectedMana = manaStep.payment && {
+            abilityId: manaStep.payment.abilityId,
+            manaColor: manaStep.payment.color,
           };
           const availableMana = choice.manaAbilities ?? [];
           const sameMana = (ability) => (!selectedMana.abilityId || ability.abilityId === selectedMana.abilityId)
@@ -1606,7 +1676,16 @@ export class GameSeat {
             const observed = await waitForNext();
             if (!observed) throw new ToolError('timeout', 'The spell did not reach its next decision.');
             const picker = observed.decision;
-            if (pendingCast && picker.kind === 'panel' && !picker.modePicker && picker.sourceObjectId === pendingCast.objectId) {
+            const handOption = pendingCast?.handMode && picker.kind === 'panel' && !picker.modePicker && !picker.castCostPicker
+              && picker.sourceObjectId === pendingCast.objectId ? handAbilityOption(picker, pendingCast.handMode) : undefined;
+            if (handOption) {
+              // The declared hand ability, not the spell. The stack witness accepts its activation instead of a cast.
+              await submit({ gameId: sequence.gameId, cursor: observed.cursor, decisionId: picker.id, choiceId: handOption.id,
+                idempotencyKey: `${sequence.id}:hand:${sequence.completedSteps}` });
+              handledSpellModes.add(step.actionIndex);
+              sequence.appliedDecisions++;
+              previousDecisionId = picker.id;
+            } else if (pendingCast && picker.kind === 'panel' && !picker.modePicker && !picker.castCostPicker && picker.sourceObjectId === pendingCast.objectId) {
               const spellOptions = picker.choices.filter((item) => item.type === 'option' && item.abilityType === 'SPELL' && item.spellName);
               const requestedMode = nextStep?.semanticMode ? nextStep.select : undefined;
               const matchingModes = requestedMode ? spellOptions.filter((item) => requestedMode.abilityId !== undefined
@@ -1656,7 +1735,10 @@ export class GameSeat {
             if (!observed) throw new ToolError('timeout', 'The mana source did not reach its next decision.');
             const picker = observed.decision;
             if (picker.kind === 'panel' && picker.sourceObjectId === step.payment.sourceId) {
-              const options = picker.choices.filter((item) => item.abilityType === 'ACTIVATED_MANA' && sameMana(item));
+              const manaOptions = picker.choices.filter((item) => item.abilityType === 'ACTIVATED_MANA');
+              const pickerAbility = this.#manaAbilities.resolve(step.payment.sourceId, selectedMana.abilityId, selectedMana.manaColor, manaOptions);
+              const options = manaOptions.filter((item) => (!selectedMana.abilityId || item.abilityId === pickerAbility)
+                && (!selectedMana.manaColor || item.manaColors?.includes(selectedMana.manaColor)));
               if (options.length !== 1) throw new ToolError(options.length ? 'ambiguous_choice' : 'illegal_choice',
                 'Select exactly one legal ability for this mana source and color.');
               await submit({ gameId: sequence.gameId, cursor: observed.cursor, decisionId: picker.id, choiceId: options[0].id,
@@ -1832,7 +1914,7 @@ export class GameSeat {
               }
               throw new ToolError('response_available', 'A currently legal play needs your decision before advancing.');
             }
-            if (step.knownOptions && options.some(option => !step.knownOptions.some(known => isDeepStrictEqual(known, option)))) {
+            if (step.knownOptions && options.some(option => !step.knownOptions.some(known => isDeepStrictEqual(known, stableOption(option))))) {
               throw new ToolError('response_available', 'A new or changed optional play is available. Inspect it before advancing.');
             }
             if (++passCount > 80) throw new ToolError('pass_limit', 'The advance reached its priority window limit.');
