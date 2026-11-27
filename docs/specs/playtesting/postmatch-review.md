@@ -58,6 +58,7 @@ Verify API and MCP permissions with both participants and an unrelated account, 
 
 - `ops/playtesting/product/product.test.mjs` covers automatic capture and historical access in PM-REVIEW-PRIV-1 through PM-REVIEW-PRIV-4 and the persisted review API boundaries.
 - The PM-REVIEW-API-6 tests in `ops/playtesting/product/product.test.mjs` verify adjacent submitted-list differences for both seats, opponent hand visibility, incomplete lists and the inter-game boundary.
+- The [named-seat OAuth fixture](../../../ops/playtesting/product/oauth.test.mjs) `[PM-REVIEW-PRIV-3, PM-REVIEW-API-11] canonical history reviews both owned named seats only after the tournament pairing closes` verifies the same covered archive is unavailable to the account while the pairing is open, supports a quality verdict after it closes, and stays private from other credentials.
 - `ops/playtesting/product/replay-capture.local.mjs` and `replay-review.local.mjs` exercise native Java capture and authenticated native MCP for owned, alternate and full views. The script archives the actual recorded game into an isolated store and checks a committed draw, cast, target, payment, and annotation retry.
 - The `[PM-REVIEW-API-8]` test in `ops/playtesting/mcp/test/acceptance.test.mjs` verifies matchup guidance in the native prompt. The guide resource is checked against the tools-only interface and four-game-guide bootstrap.
 - `ops/playtesting/product/review-presentation.test.mjs` covers PM-REVIEW-CAPTURE-2 with a witnessed stack, recorded modes and targets, and legacy spell and discard references.

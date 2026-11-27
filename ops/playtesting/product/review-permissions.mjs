@@ -1,5 +1,6 @@
 import { viewerNames } from './identity.mjs'
 import { isUuid, normalize, ProductError, transaction } from './decks.mjs'
+import { canonicalAccountScope } from './players.mjs'
 
 const reviewCaptureVersion = 2
 
@@ -76,9 +77,21 @@ export function createReviewPermissions(pool) {
       owned: owners.get(player.engine_key) === actor.accountId
         && (!actor.playerId || player.engine_key===normalize(actor.engineName))
         && (match.tournament_match_completed !== false || player.engine_key===normalize(actor.engineName)) }))
-    const viewer = viewerNames(actor).map(name => perspectives.find(seat => seat.owned && seat.seatId === name)).find(Boolean)
-    if (!viewer) throw new ProductError(404, 'Match not found')
     const atEnd = match.status === 'completed' && match.tournament_match_completed !== false
+    const owned = perspectives.filter(seat => seat.owned)
+    let viewer = viewerNames(actor).map(name => owned.find(seat => seat.seatId === name)).find(Boolean)
+    if (!viewer && atEnd && owned.length && !actor.playerId && canonicalAccountScope(actor, 'history')) {
+      // History includes the account's named profiles, including retired seats.
+      // A profile can anchor the review only if the capture also verifies ownership.
+      const { rows: [profile] } = await db.query(
+        `SELECT engine_key FROM agent_grants WHERE account_id=$1 AND player_id IS NOT NULL
+         AND engine_key=ANY($2::text[]) AND ($3::text IS NULL OR engine_key=$3)
+         ORDER BY created_at,engine_key LIMIT 1`,
+        [actor.accountId, owned.map(seat => seat.seatId), actor.perspectiveSeat ?? null],
+      )
+      viewer = owned.find(seat => seat.seatId === profile?.engine_key)
+    }
+    if (!viewer) throw new ProductError(404, 'Match not found')
     const ownersKnown = humanKeys.length > 0 && humanKeys.every(key => owners.get(key))
     const stableSeats = !captured || exactSeats(captured, players)
     const fullAvailable = atEnd && ownersKnown && stableSeats

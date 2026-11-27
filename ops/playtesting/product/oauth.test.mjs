@@ -1311,6 +1311,87 @@ test('browser history replay serves the retained human or owned profile seat and
   }
 })
 
+test('[PM-REVIEW-PRIV-3, PM-REVIEW-API-11] canonical history reviews both owned named seats only after the tournament pairing closes', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const owner = await f.login('NamedReviewOwner')
+  const outsider = await f.login('NamedReviewOutsider')
+  const ownerId = (await (await f.request('/api/playtesting/me', owner)).json()).accountId
+  const post = (path, headers, body, method = 'POST') =>
+    f.request(path, { ...headers, 'Content-Type': 'application/json' }, body, method)
+  const profiles = []
+  for (const displayName of ['Opening Seat', 'Second Seat']) {
+    const result = await post('/api/playtesting/players', owner, { displayName, mcpEnabled: true })
+    assert.equal(result.status, 201)
+    profiles.push(await result.json())
+  }
+  const history = await authorizePilot(f, owner, 'history')
+  const foreign = await authorizePilot(f, outsider, 'history')
+  const seat = await authorizePilot(f, owner, 'play', profiles[0].playerId)
+  const manual = { Authorization: 'Bearer ' + await f.product.provisionAgent('NamedReviewOwner', 'NamedReviewReader', ['history']) }
+  await f.product.setTournamentAdmins([ownerId])
+  const tournament = await post('/api/playtesting/tournaments', owner, { name: 'Named Review Cup', format: 'Pioneer' })
+  assert.equal(tournament.status, 201)
+  const event = (await tournament.json()).id
+  const tableId = randomUUID(), matchId = randomUUID(), gameId = randomUUID(), pairingId = randomUUID()
+  const now = Date.now()
+  const db = new pg.Client({ connectionString: databaseUrl, options: '-c search_path=' + f.schema })
+  await db.connect()
+  t.after(() => db.end())
+  const entries = []
+  for (const profile of profiles) {
+    const { rows: [entry] } = await db.query(
+      `INSERT INTO tournament_entries(tournament_id,owner_id,player_id,name,owner_name,engine_name,deck_id,deck_revision,deck_name)
+       VALUES ($1,$2,$3,$4,$4,$5,'fixture-deck',1,'Fixture') RETURNING id`,
+      [event, ownerId, profile.playerId, profile.displayName, profile.engineName],
+    )
+    entries.push(entry.id)
+  }
+  await db.query("UPDATE tournaments SET status='playing',round_number=1 WHERE id=$1", [event])
+  await db.query(
+    `INSERT INTO tournament_pairings(id,tournament_id,round_number,stage,number,best_of,entry_a,entry_b,table_id,match_id,opened_at)
+     VALUES($1,$2,1,'swiss',1,3,$3,$4,$5,$6,$7)`,
+    [pairingId, event, ...entries, tableId, matchId, now],
+  )
+  const players = profiles.map(profile => ({ name: profile.engineName, human: true, playerId: randomUUID(), life: 19 }))
+  const seal = await post('/internal/review-capture', {}, { matchId, tableId,
+    seats: players.map(({ name, playerId, human }) => ({ engineName: name, playerId, human })),
+  })
+  assert.equal(seal.status, 200)
+  assert.equal((await seal.json()).reviewVersion, 2)
+  await writeFile(join(f.replayDirectory, gameId + '.json'), JSON.stringify({
+    gameId, matchId, tableId, gameNumber: 1, startedAt: now, endedAt: now + 2, winner: players[0].name, players,
+  }))
+  await writeFile(join(f.replayDirectory, gameId + '.ndjson.gz'),
+    gzipSync(JSON.stringify({ t: 1, view: { turn: 1, players } })))
+  await writeFile(join(f.replayDirectory, matchId + '.match.json'), JSON.stringify({ matchId, endedAt: now + 3, winner: players[0].name }))
+  await f.product.archiveGames()
+  const review = '/api/playtesting/review/matches/' + matchId
+  const game = '/api/playtesting/review/games/' + gameId
+  for (const path of [review, game, game + '/evidence?scope=full']) {
+    assert.equal((await f.request(path, history)).status, 404, 'the scored archive cannot bypass an open tournament pairing')
+  }
+  await db.query('UPDATE tournament_pairings SET completed=true WHERE id=$1', [pairingId])
+  assert.equal((await f.request('/api/playtesting/matches/' + matchId, history)).status, 200)
+  const manifest = await f.request(review, history)
+  assert.equal(manifest.status, 200)
+  const { games: [reviewed] } = await manifest.json()
+  assert.equal(reviewed.viewerSeatId, profiles[0].engineName)
+  assert.deepEqual(reviewed.perspectives.map(({ owned }) => owned), [true, true])
+  assert.equal(reviewed.fullAvailable, true)
+  const perspective = await f.request(game, { ...history, 'X-Playmat-Perspective': profiles[1].playerId })
+  assert.equal(perspective.status, 200)
+  assert.equal((await perspective.json()).viewerSeatId, profiles[1].engineName)
+  const update = { archiveRevision: reviewed.archiveRevision, goodQuality: true }
+  assert.equal((await post(game + '/quality', history, update, 'PUT')).status, 200)
+  assert.equal((await (await f.request(game, history)).json()).goodQuality, true)
+  const evidence = await f.request(game + '/evidence?scope=full', history)
+  assert.equal(evidence.status, 200)
+  for (const auth of [foreign, manual, seat]) {
+    assert.ok([403, 404].includes((await f.request(review, auth)).status))
+    assert.ok([403, 404].includes((await post(game + '/quality', auth, update, 'PUT')).status))
+  }
+})
+
 test('two MCP seats automatically publish one owner-discoverable board from invitation through the archived final', {skip:!databaseUrl}, async t => {
   const tableId = randomUUID(), replacement = randomUUID()
   const engine = new Map()
