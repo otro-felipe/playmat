@@ -21,6 +21,20 @@ Build the attack from the confirmed attacker declaration. An animated land can b
 
 Report the official series score, any recorded closing reason, and how much of the final game the replay covers. `endCause` on a game and on its match names a result that was not played out: `inactivity`, `player_clock`, `round_clock`, `disconnect` or, for one game, `concession`. A match whose `endCause` is `inactivity` ended when one seat timed out, so XMage awarded the whole series. Do not report that as a played win. A drawn series can contain a deciding game whose final position is missing. A series closed for inactivity can contain many turns of play. Identify a concession, disconnection or clock expiry only when the corresponding event is recorded.
 
+Read the public ending separately from the last decision's `before` view. Call `get_match_review` with `archiveOnly: true` if the detailed review is too large. Use the game's exact `tableId` and `archiveRevision` in this bounded request.
+
+```json
+{
+  "gameId": "<game ID>",
+  "tableId": "<archived table ID>",
+  "archiveRevision": "<archive revision>",
+  "purpose": "terminal",
+  "scope": "public"
+}
+```
+
+Send it to `read_review_evidence`. A confirmed `terminalEvidence.board` is the public post-action frame. Its `archiveAnchor` uses a `review_cursor` and its `anchor` uses the public `spectator_frame` index. Preserve the kind when citing either anchor. `incomplete` or `unavailable` means the archive cannot certify the final board. The official outcome and recorded cause can still be known. A terminal board can show a life total after damage. Identify who dealt the damage from separate public engine evidence.
+
 ## Read pilot timing and receipts
 
 Use the command ID and the submitting seat's game ID and cursor to reconcile a line and its receipt. Report the number of applied decisions even when it is zero. For an interrupted line, report the applied prefix and the new decision separately. Review the replacement against the later cursor before calling it a retry. Cursors from different seats belong to separate streams.

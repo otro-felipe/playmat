@@ -143,6 +143,26 @@ test('[PM-REVIEW-API-5] native MCP discovers and forwards scoped review and anno
   assert.deepEqual(requests[3].body, { archiveRevision: 'fixture-revision', entries: [entry] });
 });
 
+test('[PM-REVIEW-API-14] native MCP forwards bounded public terminal evidence for the exact archived table', async t => {
+  const { mcp, requests } = await start(t);
+  const [owner, rival] = await Promise.all(['owner', 'rival'].map(actor => connect(t, mcp, actor)));
+  const name = 'read_review_evidence';
+  const args = { gameId: GAME, tableId: MATCH, archiveRevision: 'a'.repeat(64), scope: 'public', purpose: 'terminal' };
+  const { tools } = await owner.listTools();
+  const spec = tools.find(tool => tool.name === name);
+  assert.equal(spec.annotations?.readOnlyHint, true);
+  assert.ok(spec.inputSchema.properties.purpose.enum.includes('terminal'));
+  assert.equal((await call(rival, name, args)).data.code, 'forbidden');
+  assert.equal((await call(owner, name, args)).error, false);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].method, 'GET');
+  const route = new URL(requests[0].path, 'http://product.local');
+  assert.equal(route.pathname, `/api/playtesting/review/games/${GAME}/evidence`);
+  assert.deepEqual(Object.fromEntries(route.searchParams), {
+    tableId: MATCH, archiveRevision: args.archiveRevision, scope: 'public', purpose: 'terminal',
+  });
+});
+
 test('[PM-REVIEW-API-11] native MCP forwards the explicit boolean quality verdict and archive revision', async t => {
   const { mcp, requests } = await start(t);
   const [owner, rival] = await Promise.all(['owner', 'rival'].map(actor => connect(t, mcp, actor)));

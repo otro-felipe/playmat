@@ -8,6 +8,7 @@ import { indexReplayPresentation, publicDiscardLinks, publicSourceCard } from '.
 import { genericChoiceKinds, indexCommittedDecisions, structuredChoice } from './review-decisions.mjs'
 import { submittedSideboardDelta } from './sideboard-delta.mjs'
 import { ownsGameQuality, qualityDetails, qualityInput, storeGameQuality, verifyQualityArchiveAnchor } from './review-quality.mjs'
+import { readTerminalReplayEvidence } from './review-terminal.mjs'
 
 const pageLimit = 40
 const capturedActions = new Set(['cast', 'land', 'activate', 'attack', 'block', 'mulligan', 'keep', 'sideboard', 'pass', 'pay', 'select'])
@@ -25,7 +26,7 @@ function immutableRevision(game) {
 function archiveManifest(game, access) {
   const archiveRevision = immutableRevision(game)
   return {
-    gameId: game.id, matchId: game.match_id, gameNumber: game.game_number,
+    gameId: game.id, matchId: game.match_id, tableId: game.table_id, gameNumber: game.game_number,
     status: game.match_status, gameStatus: game.status,
     archiveRevision, goodQuality: game.good_quality,
     ...(gameReady(game) && ownsGameQuality(game, access) ? qualityDetails(game, archiveRevision) : {}),
@@ -651,6 +652,21 @@ export function createPostMatchReview(pool, archive, permissions) {
       const access = await accessGame(actor, game)
       requireReady(game)
       const archiveRevision = immutableRevision(game)
+      if (query.purpose === 'terminal') {
+        if (query.scope !== 'public' || !isUuid(query.tableId) || !/^[a-f0-9]{64}$/.test(query.archiveRevision ?? '')
+            || Object.keys(query).some(key => !['scope', 'purpose', 'tableId', 'archiveRevision'].includes(key))) {
+          throw new ProductError(400, 'Use public terminal evidence with the exact table and archive revision, without paging or seat options')
+        }
+        if (query.tableId.toLowerCase() !== game.table_id) throw new ProductError(409, 'The game belongs to another archived table')
+        checkArchiveRevision(query.archiveRevision, archiveRevision)
+        const terminalEvidence = await readTerminalReplayEvidence(archive.streamReviewArchive(game), game)
+        const retained = await archive.reviewGame(id)
+        await accessGame(actor, retained)
+        requireReady(retained)
+        if (retained.table_id !== game.table_id) throw new ProductError(409, 'The game belongs to another archived table')
+        checkArchiveRevision(archiveRevision, immutableRevision(retained))
+        return { gameId: game.id, matchId: game.match_id, tableId: game.table_id, archiveRevision, scope: 'public', purpose: 'terminal', terminalEvidence }
+      }
       checkArchiveRevision(query.archiveRevision, archiveRevision)
       const scope = query.scope ?? 'seat'
       const purpose = query.purpose ?? 'replay'

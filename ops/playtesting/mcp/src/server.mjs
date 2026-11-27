@@ -716,7 +716,7 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
       if (Boolean(args.matchId) === Boolean(args.gameId)) throw new ToolError('invalid_input', 'Supply one matchId or gameId.');
       return fromProduct('get_match_review', args);
     }, true);
-  tool('read_review_evidence', 'Read bounded recorded evidence by turn or exact archive cursor. Analysis returns the acting seat’s preceding position and any recorded opening, choice or priority context. Use replay purpose for an authorized retrospective.',
+  tool('read_review_evidence', 'Read bounded recorded evidence by turn or exact archive cursor. Analysis returns the acting seat’s preceding position. For a public post-action terminal board, use terminal purpose with public scope and the exact tableId and archiveRevision, including when detailed review is too large. Use replay purpose for an authorized retrospective.',
     reviewEvidenceInput, 'history', (args) => fromProduct('read_review_evidence', args), true);
   tool('list_review_annotations', 'Read saved event-linked annotations by game, turn, cursor or authorized seat.',
     reviewAnnotationsInput, 'history', (args) => fromProduct('list_review_annotations', args), true);

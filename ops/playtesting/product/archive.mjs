@@ -549,8 +549,8 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
 
   const reviewMetadata = `
     SELECT g.id,g.match_id,g.game_number,g.status,g.archive_state,g.object_key,g.checksum,g.review_version,g.review_incomplete,g.truncated,g.good_quality,
-      g.quality_reason,g.quality_anchor_kind,g.quality_anchor_cursor,g.quality_archive_revision,g.end_cause,
-      m.status AS match_status,m.format,m.engine_format,
+      g.quality_reason,g.quality_anchor_kind,g.quality_anchor_cursor,g.quality_archive_revision,g.end_cause,g.winner,g.result,
+      m.status AS match_status,m.table_id,m.format,m.engine_format,
       (SELECT json_agg(json_build_object('name',p.engine_name,'seatId',p.engine_key,'playerId',p.player_id,'human',p.human)
                        ORDER BY p.engine_key)
        FROM game_players p WHERE p.game_id=g.id) AS players

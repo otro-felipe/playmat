@@ -96,7 +96,7 @@ export function createTournamentBroadcast(pool, archive, engine = readSpectatorE
       record.hands?.[p.name] ?? record.hands?.[p.playerId] ?? record.review?.seatViews?.[p.playerId]?.myHand ?? {},
     ]))
     return privateSpectatorBoard({
-      tableId:match.table_id, gameId:game.id, status:record.terminalBoard === true ? 'finished' : 'playing', players, view:record.view, hands, revision,
+      tableId:game.archive_table_id ?? match.table_id, gameId:game.id, status:record.terminalBoard === true ? 'finished' : 'playing', players, view:record.view, hands, revision,
     })
   }
 
@@ -104,7 +104,7 @@ export function createTournamentBroadcast(pool, archive, engine = readSpectatorE
     const match = await pairing(id, pairId)
     if (!match.completed && !actor?.isAdmin) throw missing()
     const { rows: games } = await pool.query(
-      `SELECT g.id,g.object_key,g.checksum,g.game_number,g.started_at,g.status,g.archive_state,g.truncated,g.winner,g.result FROM matches m
+      `SELECT g.id,g.object_key,g.checksum,g.game_number,g.started_at,g.status,g.archive_state,g.truncated,g.winner,g.result,m.table_id AS archive_table_id FROM matches m
       JOIN games g ON m.id=g.match_id
       WHERE (m.id=$2 OR ($2 IS NULL AND m.table_id IN
         (SELECT table_id FROM tournament_pairing_tables WHERE pairing_id=$1)))

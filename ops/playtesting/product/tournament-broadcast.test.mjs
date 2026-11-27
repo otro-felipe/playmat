@@ -40,7 +40,7 @@ test('[CUP-AC-006] live and replay preserve distinct public stack abilities, a d
 })
 
 test('replay shows only published decisions up to the selected frame, attributed to the player', async t => {
-  const [event, pair, table, game, a, b] = Array.from({ length: 6 }, () => randomUUID())
+  const [event, pair, table, game, a, b, archivedTable] = Array.from({ length: 7 }, () => randomUUID())
   const view = { players: [{ name: 'a', playerId: a }, { name: 'b', playerId: b }] }
   const marker = { kind: 'line', actorPlayerId: a, commandId: 'first', at: 11, turn: 2,
     audience: 'public', explanation: 'Ataco para presionar sus vidas.' }
@@ -51,7 +51,7 @@ test('replay shows only published decisions up to the selected frame, attributed
     display_a: 'Brasa', display_b: 'Cirro', owner_a: 'Felipe', owner_b: 'Felipe', player_a: a, player_b: b,
     provider_b:'gemini', model_b:'gemini-fixture' }
   const pool = { async query(sql) {
-    return { rows: sql.includes('JOIN tournament_entries') ? [row] : [{ id: game, checksum: 'v1', object_key:'fixture' }] }
+    return { rows: sql.includes('JOIN tournament_entries') ? [row] : [{ id: game, checksum: 'v1', object_key:'fixture', archive_table_id:archivedTable }] }
   } }
   const broadcast = createTournamentBroadcast(pool, { streamTournamentRecords() { return records } })
   t.after(() => broadcast.close())
@@ -63,6 +63,7 @@ test('replay shows only published decisions up to the selected frame, attributed
   assert.deepEqual(await notes(1), [[a, marker.explanation]])
   assert.deepEqual(await notes(2), [[a, marker.explanation], [b, 'Bloqueo.'], [a, 'El daño en mesa es letal.']])
   const replay = await broadcast.replay(event, pair, null, new URLSearchParams({ gameId: game, frame:0 }))
+  assert.equal(replay.tableId, archivedTable)
   assert.equal(replay.players.find(p => p.playerId === b).provider, 'gemini')
   assert.equal(replay.players.find(p => p.playerId === b).model, 'gemini-fixture')
 })

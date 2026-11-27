@@ -40,10 +40,11 @@ const entry = z.object({
 
 export const reviewManifestInput = {
   matchId: z.uuid().optional(), gameId: z.uuid().optional(),
-  archiveOnly: z.boolean().optional().describe('Return retained archive status, revision and game quality, including the reason where authorized, without opening replay evidence. Coverage is partial in this mode.'),
+  archiveOnly: z.boolean().optional().describe('Return retained archive status, table ID, revision and game quality, including the reason where authorized, without opening replay evidence. Coverage is partial in this mode.'),
 }
 export const reviewEvidenceInput = {
-  ...query, purpose: z.enum(['analysis', 'replay']).default('analysis'),
+  ...query, purpose: z.enum(['analysis', 'replay', 'terminal']).default('analysis'),
+  tableId: z.uuid().optional().describe('For terminal evidence, the archived table ID from get_match_review. Supply the exact archiveRevision and public scope without paging or seat options.'),
   scope: z.enum(['seat', 'public', 'full']).default('seat'),
   count: z.number().int().min(1).max(12).optional(),
   includeBefore: z.boolean().optional().describe('Omit before-state payloads from public analysis pages when false.'),

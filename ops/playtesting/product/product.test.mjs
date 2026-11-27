@@ -443,6 +443,80 @@ test('[PM-REVIEW-API-13] quality reasons follow verified replay anchors, ending 
   assert.equal(after.qualityAnchor, undefined)
 })
 
+test('[PM-REVIEW-API-14] terminal evidence seals a verified post-action record without private data', { skip: !databaseUrl }, async t => {
+  const objects = new Map()
+  const f = await fixture(t, objects)
+  const alice = await signIn(f, 'SealAlice')
+  const bob = await signIn(f, 'SealBob')
+  const outsider = await signIn(f, 'SealOutsider')
+  const players = ['SealAlice', 'SealBob']
+  const match = await historyMatch(f, players, Date.now())
+  const legacy = await historyMatch(f, players, Date.now())
+  const stopped = await historyMatch(f, players, Date.now())
+  const [gameId] = match.games
+  const [legacyGameId] = legacy.games
+  const [stoppedGameId] = stopped.games
+  const [aliceId, bobId, faceUp, faceDown] = Array.from({ length: 4 }, randomUUID)
+  const frame = (life, step) => ({ view: { turn: 11, phase: 'COMBAT', step, players: [
+    { name: players[0], playerId: aliceId, life, handCount: 3,
+      battlefield: { [faceUp]: { id: faceUp, name: 'Forest', tapped: true },
+        [faceDown]: { id: faceDown, faceDown: true, name: 'PRIVATE FACE' } }, topCard: { name: 'PRIVATE TOP' } },
+    { name: players[1], playerId: bobId, life: 19, handCount: 1 },
+  ], stack: {}, myHand: { card: { name: 'PRIVATE HAND' } } }, hands: { SealAlice: { name: 'PRIVATE HAND' } }, review: { hidden: 'PRIVATE REVIEW' } })
+  await addReplay(f, match.id, gameId, players, [
+    frame(10, 'DECLARE_ATTACKERS'), { kind: 'action', action: 'pass', actorPlayerId: aliceId, preActionCursor: 0 },
+    { t: 8, log: { messageType: 'GAME', message: 'Ending fixture' } },
+    { ...frame(-1, 'COMBAT_DAMAGE'), terminalBoard: true }, { kind: 'spectatorEnd', terminal: true, hands: { name: 'PRIVATE END' } },
+  ])
+  await addReplay(f, legacy.id, legacyGameId, players, [{ ...frame(-1,'COMBAT_DAMAGE'), terminalBoard: true },
+    { kind: 'rollback', turn: 11 }, frame(10,'DECLARE_ATTACKERS'), { kind: 'spectatorEnd', terminal: false }])
+  await addReplay(f, stopped.id, stoppedGameId, players, [frame(10,'DECLARE_ATTACKERS'),
+    { kind: 'spectatorEnd', terminal: true, cause: 'round_clock' }])
+  await f.product.archiveGames()
+  await withTestDatabase(f, db => db.query("UPDATE games SET winner='SealBob' WHERE id=$1", [gameId]))
+  const root = '/api/playtesting/review/games/'
+  const manifestFor = async id => (await (await f.path(root + id + '?archiveOnly=true', { headers: alice })).json())
+  const manifest = await manifestFor(gameId)
+  const request = (receipt = manifest, headers = alice, extra = {}) => {
+    const query = new URLSearchParams({ tableId: receipt.tableId, archiveRevision: receipt.archiveRevision,
+      purpose: 'terminal', scope: 'public', ...extra })
+    return f.path(root + receipt.gameId + '/evidence?' + query, { headers })
+  }
+  assert.equal(manifest.tableId, match.id)
+  for (const headers of [alice,bob]) {
+    const response = await request(manifest, headers)
+    assert.equal(response.status, 200)
+    const evidence = await response.json()
+    assert.deepEqual([evidence.gameId,evidence.tableId,evidence.archiveRevision],[gameId,match.id,manifest.archiveRevision])
+    const seal = evidence.terminalEvidence
+    assert.deepEqual(seal.outcome,{kind:'win',winnerName:'SealBob'})
+    assert.equal(seal.status,'confirmed')
+    assert.deepEqual(seal.anchor,{kind:'spectator_frame',cursor:1})
+    assert.deepEqual(seal.archiveAnchor,{kind:'review_cursor',cursor:3})
+    assert.equal(seal.board.gameState,'finished')
+    assert.equal(seal.board.step,'COMBAT_DAMAGE')
+    assert.deepEqual(seal.board.players.map(({playerId,life})=>[playerId,life]),[[aliceId,-1],[bobId,19]])
+    assert.doesNotMatch(JSON.stringify(seal),new RegExp('PRIVATE|'+faceDown))
+  }
+  assert.equal((await request(manifest,{})).status,401)
+  assert.equal((await request(manifest,outsider)).status,404)
+  assert.equal((await request(manifest,alice,{tableId:randomUUID()})).status,409)
+  assert.equal((await request(manifest,alice,{archiveRevision:'0'.repeat(64)})).status,409)
+  assert.equal((await request(manifest,alice,{scope:'full'})).status,400)
+  assert.equal((await request(manifest,alice,{cursor:'1'})).status,400)
+  const incomplete = (await (await request(await manifestFor(legacyGameId))).json()).terminalEvidence
+  assert.equal(incomplete.status,'incomplete')
+  assert.equal(incomplete.anchor,undefined)
+  assert.equal(incomplete.board,undefined)
+  const interrupted = (await (await request(await manifestFor(stoppedGameId))).json()).terminalEvidence
+  assert.equal(interrupted.status,'incomplete')
+  assert.equal(interrupted.cause,'round_clock')
+  assert.equal(interrupted.board,undefined)
+  const get = objects.get
+  objects.get = () => Buffer.from('corrupt object')
+  try { assert.equal((await request()).status,503) } finally { objects.get = get }
+})
+
 test('[PM-REVIEW-API-12] archive-only review reads retained revisions without opening replay objects', { skip: !databaseUrl }, async t => {
   const objects = new Map()
   const f = await fixture(t, objects)
@@ -456,8 +530,8 @@ test('[PM-REVIEW-API-12] archive-only review reads retained revisions without op
   const get = (path, headers = owner) => f.path(path, { headers })
   const detailed = await (await get(matchPath)).json()
   assert.equal(detailed.games.length, 2)
-  const expected = detailed.games.map(({ gameId, matchId, gameNumber, status, gameStatus, archiveRevision, goodQuality, coverage }) => ({
-    gameId, matchId, gameNumber, status, gameStatus, archiveRevision, goodQuality, coverage: { archive: coverage.archive, partial: true },
+  const expected = detailed.games.map(({ gameId, matchId, tableId, gameNumber, status, gameStatus, archiveRevision, goodQuality, coverage }) => ({
+    gameId, matchId, tableId, gameNumber, status, gameStatus, archiveRevision, goodQuality, coverage: { archive: coverage.archive, partial: true },
   }))
   let reads = 0
   objects.get = () => { reads++; throw new Error('Synthetic replay projection failure') }
@@ -1087,7 +1161,7 @@ async function historyMatch(f, names, time, { active = false, gameCount = 1 } = 
   return { id, games }
 }
 
-test('completed tournament-sized captures larger than 24 MiB are archived and verified before spool cleanup', {skip:!databaseUrl}, async t => {
+test('[PM-REVIEW-API-14] large archived captures retain bounded terminal evidence and verify the full checksum', {skip:!databaseUrl}, async t => {
   const objects = new Map()
   const f = await fixture(t, objects)
   const alice = await signIn(f, 'Alice')
@@ -1097,8 +1171,11 @@ test('completed tournament-sized captures larger than 24 MiB are archived and ve
   await writeFile(join(f.replayDirectory, match + '.match.json'), JSON.stringify({matchId:match, endedAt:Date.now()}))
   const line = JSON.stringify({view:{players:[{name:'Alice'},{name:'Bob'}]},
     hands:{Alice:{fixture:'own'},Bob:{fixture:'other'}}, extra:'x'.repeat(32*1024)}) + '\n'
+  const postAction = { ...JSON.parse(line), terminalBoard:true, view:{turn:11,step:'COMBAT_DAMAGE',players:[
+    {name:'Alice',playerId:randomUUID(),life:19},{name:'Bob',playerId:randomUUID(),life:-1},
+  ]} }
   // Stored gzip blocks reproduce the compressed-object limit with deterministic input.
-  const bytes = gzipSync('{"kind":"line"}\n' + line.repeat(780), {level:0})
+  const bytes = gzipSync('{"kind":"line"}\n' + line.repeat(779) + JSON.stringify(postAction) + '\n', {level:0})
   assert.ok(bytes.length > 24*1024*1024)
   await writeFile(join(f.replayDirectory, game + '.ndjson.gz'), bytes)
   await f.product.archiveGames()
@@ -1121,9 +1198,20 @@ test('completed tournament-sized captures larger than 24 MiB are archived and ve
   assert.equal(JSON.stringify(last.events).includes('"other"'), false)
   const pastEnd = await (await page(900)).json()
   assert.deepEqual([pastEnd.start, pastEnd.events], [780, []])
+  const review = `/api/playtesting/review/games/${game}`
+  const {archiveRevision,tableId} = await (await f.path(review+'?archiveOnly=true',{headers:alice})).json()
+  assert.equal((await f.path(review,{headers:alice})).status,503)
+  const terminal = () => f.path(review+'/evidence?'+new URLSearchParams({archiveRevision,tableId,scope:'public',purpose:'terminal'}),{headers:alice})
+  const seal = (await (await terminal()).json()).terminalEvidence
+  assert.equal(seal.status,'confirmed')
+  assert.deepEqual(seal.anchor,{kind:'spectator_frame',cursor:779})
+  assert.deepEqual(seal.archiveAnchor,{kind:'review_cursor',cursor:780})
+  assert.deepEqual(seal.board.players.map(player=>player.life),[19,-1])
+  assert.ok(JSON.stringify(seal).length < 2000)
   // A page containing the first visible row must still reject a bad checksum at EOF.
   objects.set([...objects.keys()][0], Buffer.concat([bytes, gzipSync('\n')]))
   assert.equal((await page(0)).status, 503)
+  assert.equal((await terminal()).status,503)
 })
 
 test('[PM-AC-21] history retains twenty completed matches per account across its seats and blocks old direct reads', { skip: !databaseUrl }, async t => {
