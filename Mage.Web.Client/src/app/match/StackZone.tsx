@@ -1,5 +1,5 @@
 import { usePlayerNames } from '../ui/usePlayerIdentity';
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, type CSSProperties } from 'react';
 import type { CardView, GameView } from '../../protocol/generated/views';
 import { publicCardName, publicTargetLabels } from '../../core/game/publicTargets';
 import { isStackAbility } from '../../core/game/cards';
@@ -12,12 +12,14 @@ import { zoneKeys } from './boardModel';
 import { useFlip } from './flip';
 import { useMatchUi } from './matchUi';
 import { seatAlias, type SeatDisplayNames } from './seatDisplayNames';
+import { useStage } from './stageContext';
 import styles from './StackZone.module.css';
 
 export interface StackZoneProps {
   /** top of the stack first */
   items: CardView[];
   view?: GameView | null;
+  presentation?: 'table' | 'broadcast';
   seatDisplayNames?: SeatDisplayNames;
   clickable: ReadonlySet<string>;
   selected: ReadonlySet<string>;
@@ -28,14 +30,18 @@ export interface StackZoneProps {
 }
 
 /** Spells and abilities waiting to resolve, stacked at the right of the table; the top one resolves first. */
-export function StackZone({ items, view = null, seatDisplayNames, clickable, selected, sleeveOf, onClick, originOf }: StackZoneProps) {
+export function StackZone({ items, view = null, presentation = 'table', seatDisplayNames, clickable, selected, sleeveOf, onClick, originOf }: StackZoneProps) {
   // a spell keeps its card's identity (abilities have no card of their own): it is the card that left the hand
   const keys = useMemo(() => zoneKeys(items.map((item) => (isStackAbility(item) ? { id: item.id } : item))), [items]);
   const formatName = usePlayerNames();
+  const { scale } = useStage();
+  const compact = presentation === 'broadcast' && items.some(isStackAbility);
+  const textScale = compact ? { '--stack-readable-text': `${Math.max(18, Math.ceil(13 / scale))}px` } as CSSProperties : undefined;
   const targets = useMemo(() => items.map((item) => publicTargetLabels(item, view).map((label) => formatName(label, seatAlias(label, seatDisplayNames)))), [items, view, seatDisplayNames, formatName]);
   if (items.length === 0) return null;
   return (
-    <section className={styles.zone} aria-label={`Stack, ${items.length} ${items.length === 1 ? 'object' : 'objects'}`}>
+    <section className={[styles.zone, compact ? styles.broadcast : ''].join(' ')} style={textScale}
+      aria-label={`Stack, ${items.length} ${items.length === 1 ? 'object' : 'objects'}`}>
       <h2 className={styles.label}>Stack</h2>
       <ol className={styles.list}>
         {items.map((item, index) => (
@@ -47,6 +53,7 @@ export function StackZone({ items, view = null, seatDisplayNames, clickable, sel
             clickable={clickable.has(item.id!)}
             selected={selected.has(item.id!)}
             sleeve={sleeveOf(item)}
+            compact={compact}
             onClick={onClick}
             origin={originOf(item)}
             targets={targets[index]}
@@ -57,13 +64,14 @@ export function StackZone({ items, view = null, seatDisplayNames, clickable, sel
   );
 }
 
-function StackItem({ item, index, total, clickable, selected, sleeve, onClick, origin, targets }: {
+function StackItem({ item, index, total, clickable, selected, sleeve, compact, onClick, origin, targets }: {
   item: CardView;
   index: number;
   total: number;
   clickable: boolean;
   selected: boolean;
   sleeve: string;
+  compact: boolean;
   onClick(id: string): void;
   origin: string | undefined;
   targets: string[];
@@ -79,7 +87,8 @@ function StackItem({ item, index, total, clickable, selected, sleeve, onClick, o
   const door = roomCastDoor(item);
   const castLabel = door ? t('match.room.casting', { name: door }) : null;
   const next = index === 0 && <span className={styles.next}>Resolving next</span>;
-  const effect = item.faceDown || item.hideInfo ? undefined : item.stackAbility?.effect;
+  const effect = item.faceDown || item.hideInfo ? undefined : item.stackAbility?.effect
+    ?? (compact && ability ? t('ui.ability.effectUnavailable') : undefined);
   useFlip(ability ? item.id : (item.cardId ?? item.id), ref, { fallbackOrigin: origin });
 
   return (
@@ -105,8 +114,11 @@ function StackItem({ item, index, total, clickable, selected, sleeve, onClick, o
       data-object-id={item.id}
       aria-label={`${castLabel ?? publicCardName(item)}${effect ? `: ${effect}` : ''}${index === 0 ? ', resolves next' : ''}${targets.length ? `, targets: ${targets.join(', ')}` : ''}`}
     >
-      {ability ? <AbilityCard ability={item} sleeve={sleeve} /> : <CardFace card={face} sleeve={sleeve} size="normal" />}
-      {castLabel ? <div className={styles.roomStatus}><span>{castLabel}</span>{next}</div> : next}
+      {compact && next}
+      {ability ? <AbilityCard ability={item} sleeve={sleeve} presentation={compact ? 'broadcast' : 'card'} />
+        : compact ? <div className={styles.broadcastSpell}>{castLabel ?? publicCardName(item)}</div>
+          : <CardFace card={face} sleeve={sleeve} size="normal" />}
+      {!compact && (castLabel ? <div className={styles.roomStatus}><span>{castLabel}</span>{next}</div> : next)}
       <span className={styles.arrowOrigin} data-stack-arrow-origin={item.id} aria-hidden="true" />
     </li>
   );

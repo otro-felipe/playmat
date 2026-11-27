@@ -186,7 +186,7 @@ test('[PM-REVIEW-API-13] native MCP forwards bounded Markdown and an explicit qu
   const name = 'save_game_quality';
   const archiveRevision = 'a'.repeat(64);
   const reason = { gameId: GAME, archiveRevision, goodQuality: false,
-    qualityReason: 'The closing turn lacks evidence.\n\n- The request has no confirmed resolution.',
+    qualityReason: 'F7 The closing turn lacks evidence.\n\n- The request has no confirmed resolution.',
     qualityAnchor: { kind: 'spectator_frame', cursor: 7 } };
   for (const invalid of [
     { ...reason, qualityReason: 'x'.repeat(1201) },
@@ -195,9 +195,15 @@ test('[PM-REVIEW-API-13] native MCP forwards bounded Markdown and an explicit qu
   ]) assert.equal((await judge.callTool({ name, arguments: invalid })).isError, true);
   assert.equal(requests.length, 0);
   assert.equal((await call(judge, name, reason)).error, false);
+  const nativeReason = { ...reason, qualityReason: 'R11 The archive records the decision.',
+    qualityAnchor: { kind: 'review_cursor', cursor: 11 } };
+  assert.equal((await call(judge, name, nativeReason)).error, false);
   const { gameId, ...body } = reason;
   assert.deepEqual(requests, [{
     actor: 'owner', method: 'PUT', path: `/api/playtesting/review/games/${gameId}/quality`, body,
+  }, {
+    actor: 'owner', method: 'PUT', path: `/api/playtesting/review/games/${gameId}/quality`,
+    body: { ...body, qualityReason: nativeReason.qualityReason, qualityAnchor: nativeReason.qualityAnchor },
   }]);
 });
 

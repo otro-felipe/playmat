@@ -403,6 +403,7 @@ export default {
   'ui.ability': 'Ability',
   'ui.ability.triggered': 'Triggered ability',
   'ui.ability.activated': 'Activated ability',
+  'ui.ability.effectUnavailable': 'Effect text unavailable',
 
   // Public landing and signup
   'public.title': 'Play Magic.',

@@ -66,3 +66,38 @@
 .text p {
   margin: 0;
 }
+
+.broadcast {
+  aspect-ratio: auto;
+}
+
+.broadcast .card {
+  display: block;
+  padding: 0.65em 0.8em;
+  overflow: visible;
+  font-size: var(--stack-readable-text, 18px);
+}
+
+.broadcast :is(.title, .kind, .text) {
+  padding: 0;
+  overflow: visible;
+  overflow-wrap: anywhere;
+}
+
+.broadcast .title {
+  font-size: 1.05em;
+  line-height: 1.1;
+  text-transform: none;
+  white-space: normal;
+}
+
+.broadcast .kind {
+  margin: 0.24em 0 0.28em;
+  font-size: 0.88em;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.broadcast .text {
+  font-size: 1em;
+}

@@ -123,3 +123,55 @@
 :global([data-layout='tall']) .item {
   width: 170px;
 }
+
+.broadcast {
+  width: 310px;
+  font-size: var(--stack-readable-text, 18px);
+}
+
+:global([data-layout='tall']) .broadcast {
+  width: 420px;
+}
+
+.broadcast .label {
+  font-size: 1em;
+}
+
+.broadcast .list {
+  display: grid;
+  gap: 0.45em;
+  max-height: calc(var(--stage-height, 1080px) * 0.48);
+  overflow: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  padding: 7px;
+  margin: -7px;
+}
+
+.broadcast .item {
+  position: relative;
+  top: auto;
+  left: auto;
+  width: 100%;
+  min-width: 0;
+  filter: none;
+}
+
+.broadcast .next {
+  position: static;
+  display: block;
+  text-align: center;
+  translate: none;
+  font-size: 0.9em;
+  margin-bottom: 0.3em;
+}
+
+.broadcastSpell {
+  padding: 0.4em 0.8em;
+  border-radius: var(--card-radius);
+  background: var(--paper);
+  color: var(--paper-ink);
+  font-family: var(--font-print);
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}

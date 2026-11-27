@@ -1,0 +1,138 @@
+.controls {
+  --replay-control: 36px;
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.context,
+.playback {
+  display: grid;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.context {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+}
+
+.playback {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.back {
+  flex-direction: row-reverse;
+  min-height: var(--replay-control);
+  min-width: var(--replay-control);
+  color: var(--ink-soft);
+  text-decoration: none;
+}
+
+.pairing,
+.replayTitle {
+  min-width: 0;
+  margin: 0;
+  font-family: var(--font-print);
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.15;
+  color: var(--ink-strong);
+}
+
+.pairing {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) auto minmax(0, max-content);
+  justify-content: start;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.pairing > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pairing > strong {
+  padding: 2px 7px;
+  border-radius: var(--radius-control);
+  background: var(--mat-950);
+  font-variant-numeric: tabular-nums;
+}
+
+.transport {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.icon {
+  min-height: var(--replay-control);
+  min-width: var(--replay-control);
+}
+
+.icon:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.icon.play:not(:disabled) {
+  background: var(--decision);
+  color: var(--decision-ink);
+}
+
+.icon.play:not(:disabled):hover {
+  background: var(--decision-strong);
+}
+
+.select {
+  min-height: var(--replay-control);
+  padding-inline: var(--space-2);
+  border: 1px solid var(--mat-400);
+  border-radius: var(--radius-control);
+  background-color: var(--mat-950);
+  color: var(--ink-strong);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.speed {
+  width: 4rem;
+}
+
+.seek {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.seek > input {
+  width: 100%;
+  min-width: 0;
+  height: var(--replay-control);
+  margin: 0;
+  accent-color: var(--decision);
+}
+
+.counter {
+  min-width: 4ch;
+  color: var(--ink-soft);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+@media (max-width: 650px) {
+  .controls { --replay-control: 44px; }
+  .context, .playback, .pairing { gap: var(--space-1); }
+  .back { padding-inline: 0; gap: 0; }
+  .backLabel { display: none; }
+  .pairing, .replayTitle { font-size: 1.05rem; }
+  .pairing > strong { padding-inline: 4px; }
+  .transport { gap: 0; }
+  .speed { width: 3.75rem; }
+}

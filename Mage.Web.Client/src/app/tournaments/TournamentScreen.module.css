@@ -354,11 +354,13 @@ details > summary {
 }
 
 .replayEnding {
-  flex-basis: 100%;
+  display: grid;
+  gap: var(--space-3);
   font-size: var(--text-sm);
+  line-height: 1.55;
   color: var(--ink-soft);
 }
-.replayEnding strong { color: var(--ink); }
+.replayEnding strong { display: block; color: var(--ink-strong); }
 
 /* Bracket | Statistics | Decklists */
 .tabs {

@@ -1,14 +1,17 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { ArrowLeft, Info, Pause, Play, StepBack, StepForward } from 'lucide-react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { registerMessages, useT } from '../i18n';
 import messages from '../i18n/en/events';
 import { SpectatorBroadcast, ProjectedBoard, type SpectatorSnapshot } from '../spectator/SpectatorScreen';
 import { SpectatorFrame } from '../spectator/SpectatorFrame';
 import { PublicBroadcast } from '../ui/usePlayerIdentity';
-import { Button, ButtonLink } from '../ui/Button';
+import { Button, ButtonLink, IconButton } from '../ui/Button';
+import { Dialog } from '../ui/Dialog';
 import { request, tournamentApi, tournamentPath, useTournament } from './tournamentApi';
 import styles from './TournamentScreen.module.css';
+import replayStyles from './TournamentReplay.module.css';
 import { TournamentFrameEvidence } from './TournamentFrameEvidence';
 import type { PhaseStep } from '../../protocol/generated/views';
 
@@ -55,12 +58,14 @@ type Capture = {
   lastBoard: { frame: number; status: string; turn?: number; step?: PhaseStep } | null;
 };
 type ReplayIndex = { officialResult: OfficialResult | null; games: { gameId: string; gameNumber: number; frameCount: number; capture: Capture }[] };
+const playbackSpeeds = [0.5, 1, 2, 4];
+const frameDelayMs = 1100;
 
 function ReplayEnding({ official, capture }: { official?: OfficialResult | null; capture?: Capture }) {
   const t = useT();
   if (!official && !capture) return null;
   const last = capture?.lastBoard;
-  return <section className={styles.replayEnding} aria-label={t('cup.replayClosing')}>
+  return <div className={styles.replayEnding}>
     {official && <div>
       <strong>{t('cup.replayOfficial')}</strong>{' '}
       {t('cup.replayScore', { a: official.a, b: official.b, wa: official.winsA, wb: official.winsB })}
@@ -81,7 +86,7 @@ function ReplayEnding({ official, capture }: { official?: OfficialResult | null;
       {official && (capture.outcome === 'a' || capture.outcome === 'b') && <> · {t('cup.replayGameWinner', { name: official[capture.outcome] })}</>}
       {capture.cause && <> · {t(`cup.replayCause.${capture.cause}`)}</>}
     </div>}
-  </section>;
+  </div>;
 }
 export function TournamentReplay() {
   const { id = '', pairingId = '' } = useParams();
@@ -90,15 +95,22 @@ export function TournamentReplay() {
 }
 function Replay({ endpoint, back }: { endpoint: string; back: string }) {
   const t = useT();
-  const [gameIndex, setGame] = useState(0);
-  const [frameIndex, setFrame] = useState(0);
+  const [selectedGame, setGame] = useState<string>();
+  const [requestedFrame, setFrame] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState(1);
+  const [infoOpen, setInfoOpen] = useState(false);
+  const infoButton = useRef<HTMLButtonElement>(null);
   const index = useQuery({
     queryKey: [endpoint],
     queryFn: ({ signal }) => request<ReplayIndex>(endpoint, undefined, signal),
     retry: false,
   });
-  const game = index.data?.games[gameIndex];
+  const games = index.data?.games ?? [];
+  const game = games.find(({ gameId }) => gameId === selectedGame) ?? games[0];
+  const count = game?.frameCount ?? 0;
+  const last = Math.max(0, count - 1);
+  const frameIndex = Math.min(requestedFrame, last);
   const frame = useQuery<SpectatorSnapshot>({
     queryKey: [endpoint, game?.gameId, frameIndex],
     enabled: !!game?.frameCount,
@@ -112,72 +124,79 @@ function Replay({ endpoint, back }: { endpoint: string; back: string }) {
     retry: false,
     gcTime: 5000,
   });
-  const last = (game?.frameCount ?? 0) - 1;
   useEffect(() => {
-    if (!playing || !frame.data || frame.isPlaceholderData || frameIndex >= last) return;
-    const timer = window.setTimeout(() => setFrame((i) => i + 1), 1100);
+    if (!playing || !frame.data?.view || frame.isPlaceholderData || frameIndex >= last) return;
+    const timer = window.setTimeout(() => {
+      const next = frameIndex + 1;
+      setFrame(next);
+      if (next === last) setPlaying(false);
+    }, frameDelayMs / speed);
     return () => window.clearTimeout(timer);
-  }, [frame.data, frame.isPlaceholderData, frameIndex, last, playing]);
+  }, [frame.data, frame.isPlaceholderData, frameIndex, last, playing, speed]);
   const current = frame.data;
+  const official = index.data?.officialResult;
+  const position = count ? frameIndex + 1 : 0;
+  const canPlay = count > 1;
+  const isPlaying = playing && frameIndex < last;
+  const canShowInfo = Boolean(official || game?.capture || current?.facts?.length);
+  const title = t('cup.replayTitle');
+  function seekTo(next: number) {
+    setPlaying(false);
+    setFrame(next);
+  }
+  function togglePlayback() {
+    if (frameIndex === last) {
+      setFrame(0);
+      setPlaying(true);
+    } else {
+      setPlaying(!isPlaying);
+    }
+  }
   return (
     <PublicBroadcast.Provider value>
       <SpectatorFrame
-        status={t('cup.replay')}
-        actions={
-          <>
-            <ReplayEnding official={index.data?.officialResult} capture={game?.capture}/>
-            {current?.view && <TournamentFrameEvidence facts={current.facts}/>}
-            {!!game && (
-              <>
-                <select
-                  aria-label={t('cup.replay')}
-                  value={gameIndex}
-                  onChange={(e) => {
-                    setPlaying(false);
-                    setGame(Number(e.target.value));
-                    setFrame(0);
-                  }}
-                >
-                  {index.data!.games.map((g, i) => (
-                    <option key={g.gameId} value={i}>
-                      {t('cup.game', { n: g.gameNumber ?? i + 1 })}
-                    </option>
-                  ))}
-                </select>
-                <label>
-                  {t('cup.frame')}{' '}
-                  <input
-                    type="range"
-                    disabled={!game.frameCount}
-                    min={0}
-                    max={Math.max(0, last)}
-                    value={frameIndex}
-                    onChange={(e) => {
-                      setPlaying(false);
-                      setFrame(Number(e.target.value));
-                    }}
-                  />{' '}
-                  {game.frameCount ? frameIndex + 1 : 0}/{game.frameCount}
-                </label>
-                <Button
-                  size="sm"
-                  disabled={last <= 0}
-                  onClick={() => {
-                    if (frameIndex === last) {
-                      setFrame(0);
-                      setPlaying(true);
-                    } else setPlaying(!playing);
-                  }}
-                >
-                  {t(playing && frameIndex < last ? 'cup.stopReplay' : 'cup.playReplay')}
-                </Button>
-              </>
-            )}
-            <ButtonLink href={back} size="sm">
-              {t('cup.public')}
+        customHeader={{ label: title, content: <div className={replayStyles.controls}>
+          <div className={replayStyles.context}>
+            <ButtonLink href={back} size="sm" variant="quiet" className={replayStyles.back}
+              aria-label={t('cup.replayBack')} title={t('cup.replayBack')} icon={<ArrowLeft size={18} />}>
+              <span className={replayStyles.backLabel}>{t('cup.replayTournament')}</span>
             </ButtonLink>
-          </>
-        }
+            {official ? (
+              <h1 className={replayStyles.pairing} aria-label={t('cup.replayScore', {
+                a: official.a, b: official.b, wa: official.winsA, wb: official.winsB,
+              })}>
+                <span title={official.a}>{official.a}</span><strong>{official.winsA}–{official.winsB}</strong>
+                <span title={official.b}>{official.b}</span>
+              </h1>
+            ) : <h1 className={replayStyles.replayTitle}>{title}</h1>}
+            <select className={replayStyles.select} aria-label={t('cup.replayGame')} value={game?.gameId ?? ''}
+              disabled={!game} onChange={event => { setGame(event.target.value); seekTo(0); }}>
+              {!game && <option value="">{t('cup.replayGame')}</option>}
+              {games.map((item, i) => <option key={item.gameId} value={item.gameId}>{t('cup.game', { n: item.gameNumber ?? i + 1 })}</option>)}
+            </select>
+            <IconButton ref={infoButton} label={t('cup.replayInfo')} icon={<Info size={18} />} className={replayStyles.icon}
+              aria-haspopup="dialog" disabled={!canShowInfo} onClick={() => { setPlaying(false); setInfoOpen(true); }} />
+          </div>
+          <div className={replayStyles.playback}>
+            <div className={replayStyles.transport}>
+              <IconButton label={t('cup.replayPrevious')} icon={<StepBack size={18} />} className={replayStyles.icon}
+                disabled={frameIndex <= 0} onClick={() => seekTo(frameIndex - 1)} />
+              <IconButton label={t(isPlaying ? 'cup.stopReplay' : 'cup.playReplay')} icon={isPlaying ? <Pause size={18} /> : <Play size={18} />}
+                className={`${replayStyles.icon} ${replayStyles.play}`} disabled={!canPlay} onClick={togglePlayback} />
+              <IconButton label={t('cup.replayNext')} icon={<StepForward size={18} />} className={replayStyles.icon}
+                disabled={frameIndex >= last} onClick={() => seekTo(frameIndex + 1)} />
+            </div>
+            <label className={replayStyles.seek}>
+              <input type="range" aria-label={t('cup.replayPosition')} aria-valuetext={t('cup.replayPositionValue', { position, count })}
+                min={0} max={last} value={frameIndex} disabled={!canPlay} onChange={event => seekTo(Number(event.target.value))} />
+              <span aria-hidden="true" className={replayStyles.counter}>{position} / {count}</span>
+            </label>
+            <select className={`${replayStyles.select} ${replayStyles.speed}`} aria-label={t('cup.replaySpeed')} value={speed}
+              disabled={!canPlay} onChange={event => setSpeed(Number(event.target.value))}>
+              {playbackSpeeds.map(rate => <option key={rate} value={rate}>{t('cup.replayRate', { rate })}</option>)}
+            </select>
+          </div>
+        </div> }}
       >
         {current?.view && current.gameId ? (
           <ProjectedBoard frame={current} gameId={current.gameId} />
@@ -187,6 +206,10 @@ function Replay({ endpoint, back }: { endpoint: string; back: string }) {
           </p>
         )}
       </SpectatorFrame>
+      <Dialog open={infoOpen} onOpenChange={setInfoOpen} title={t('cup.replayClosing')} returnFocusRef={infoButton}>
+        <ReplayEnding official={official} capture={game?.capture} />
+        {current?.view && <TournamentFrameEvidence facts={current.facts} />}
+      </Dialog>
     </PublicBroadcast.Provider>
   );
 }

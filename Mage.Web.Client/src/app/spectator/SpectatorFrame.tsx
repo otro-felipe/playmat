@@ -8,17 +8,19 @@ import styles from './SpectatorBoard.module.css';
 
 export type ScoreSeat = AgentModel & { name: string; wins: number };
 
-export function SpectatorFrame({ status, actions, children, matchScore, deadlineAt }: {
+export function SpectatorFrame({ status, actions, children, matchScore, deadlineAt, customHeader }: {
   status?: ReactNode;
   actions?: ReactNode;
   children: ReactNode;
   matchScore?: ScoreSeat[];
   deadlineAt?: number;
+  customHeader?: { label: string; content: ReactNode };
 }) {
   const [left, right] = matchScore?.length === 2 ? matchScore : [];
   const t = useT();
   return <main className={styles.shell}>
-    <header role="banner" aria-label={t('watch.broadcast')} className={styles.header}>
+    <header role="banner" aria-label={customHeader?.label ?? t('watch.broadcast')} className={styles.header}>
+      {customHeader?.content ?? <>
       <div className={styles.title}><Eye size={20} aria-hidden="true" /><h1>{t('watch.mode')}</h1>
         {status && <span role="status" className={styles.status}>{status}</span>}
       </div>
@@ -35,6 +37,7 @@ export function SpectatorFrame({ status, actions, children, matchScore, deadline
         </div>}
       </div>}
       {actions && <div className={styles.actions}>{actions}</div>}
+      </>}
     </header>
     <div className={styles.board}>{children}</div>
   </main>;

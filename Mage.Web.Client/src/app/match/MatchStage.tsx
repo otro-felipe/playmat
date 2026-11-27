@@ -776,7 +776,8 @@ function MatchBoard({ session, state, replayLog, replayHands, publicSpectator, r
             )}
 
             <Reveals key={state.rollbackRevision} groups={reveals} myPlayerId={myId} opponentIds={opponentIds} autoDismiss={autoDismissReveals} />
-            <StackZone items={stack} view={view} seatDisplayNames={seatDisplayNames} clickable={clickable} selected={interaction.selected} sleeveOf={sleeveOf} onClick={onClick} originOf={originOf} />
+            <StackZone items={stack} view={view} presentation={publicSpectator ? 'broadcast' : 'table'} seatDisplayNames={seatDisplayNames}
+              clickable={clickable} selected={interaction.selected} sleeveOf={sleeveOf} onClick={onClick} originOf={originOf} />
             {mode !== 'replay' && <RecentActions key={`actions:${state.gameId}`} session={session} seatDisplayNames={seatDisplayNames} />}
             {board.me && seatHand && (
               <Hand

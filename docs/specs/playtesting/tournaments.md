@@ -188,11 +188,21 @@ extra turns.
 
 A pairing broadcast shows the number of connected viewers across public and authorized expanded streams. Refreshing the board without opening a stream does not add a viewer. The header shows the pairing order and games won, including between games, and counts down the pairing deadline while it is timed and unfinished. Untimed tables and finished pairings omit the clock. Expanded views and public views use the same public score and clock.
 
+### CUP-AC-007 — Navigate a replay from a compact toolbar
+
+The replay puts the return link, pairing score, game selector, and information button on its first row. The second row groups previous frame, play or pause, next frame, the position slider, and playback speed. These controls remain visible and usable on a phone. The recording status, official result details, and evidence for the current frame are available in the replay information dialog. Escape closes the dialog and returns focus to its button.
+
+Playback starts at 1× and advances only after the selected frame loads. It stops at the last frame. Playing from the last frame starts the same game again. A manual step, slider movement, game change, or opening replay information pauses playback. Seeking within a game keeps the preceding board on screen while the next frame loads. Switching games clears the preceding game's board, returns to the new game's first frame, and retains the selected speed. A single frame remains visible with stepping and playback unavailable. An empty recording explains its state without offering active transport controls.
+
+The [replay client scenarios](../../../Mage.Web.Client/src/app/tournaments/TournamentReplayNavigation.test.tsx) cover game changes and empty recordings. The [Chromium scenarios](../../../Mage.Web.Client/e2e/private-spectator-tournament-replay.spec.ts) check transport, keyboard and focus, playback speed, and layout at desktop, tablet, and phone widths.
+
 ### CUP-AC-006 — Read the abilities waiting on the stack
 
 Live spectators and replay viewers see spells and abilities in resolution order. Each ability can identify its publicly visible source and the rules text of that ability. Two abilities from the same source remain distinct. A token can be the source. A source that has left the battlefield remains identifiable when the engine can establish its public face from that incarnation.
 
-A concealed source never contributes its identity, rules, artwork or stable source ID. An older replay can name a source when its recorded identity matches an unmasked card in a public zone of the same frame. If the recording cannot establish the ability text independently of its contextual rules and hints, the viewer sees only the established source and ability kind. An unavailable source remains generic.
+A concealed source never contributes its identity, rules, artwork or stable source ID. An older replay can name a source when its recorded identity matches an unmasked card in a public zone of the same frame. It may show an effect when the archived declaration matches exactly one verified printed declaration for that face and ability kind. Only the printed declaration reaches the spectator. An unmatched or ambiguous declaration leaves the source and kind visible with an explicit absence of effect text. An unavailable source remains generic.
+
+The public broadcast stack displays the effect and next resolution in separate readable rows, with the same resolution order on desktop and touch. Targets require the engine's chosen-target field and a visible object or participant in the same frame. Legacy related-object pointers grant no chosen targets.
 
 | Scenario | Automated evidence |
 | --- | --- |
@@ -200,6 +210,10 @@ A concealed source never contributes its identity, rules, artwork or stable sour
 | CUP-AC-006 | `ops/playtesting/product/tournament-broadcast.test.mjs` · `[CUP-AC-006] live and replay preserve distinct public stack abilities, a departed token, and resolution order` |
 | CUP-AC-006 | `ops/playtesting/product/public-spectator-board.test.mjs` · `[CUP-AC-006] masks concealed sources and derives only corroborated names from old frames` |
 | CUP-AC-006 | `Mage.Web.Client/src/app/match/StackZone.test.tsx` · `[CUP-AC-006] shows two distinct abilities from the same source in resolution order` |
+| CUP-AC-006 | `ops/playtesting/product/public-spectator-board.test.mjs` · `[CUP-AC-006] recovers only exact printed effects from the two legacy replay cases`; `[CUP-AC-006] projects only explicitly chosen and visible stack targets` |
+| CUP-AC-006 | `ops/playtesting/product/legacy-stack-effect.test.mjs` · `[CUP-AC-006] recovers an independent full triggered declaration from the exact catalog printing`; `[CUP-AC-006] withholds ambiguous or malformed declarations and mismatched printings` |
+| CUP-AC-006 | `Mage.Web.Client/src/app/match/StackZone.test.tsx` · `[CUP-AC-006] presents a readable spectator effect and an explicit fallback without interaction` |
+| CUP-AC-006 | `Mage.Web.Client/e2e/private-spectator-stack.spec.ts` · `[CUP-AC-006] spectator effects stay legible in resolution order at 1440px` and `at 390px` |
 
 ## Public deck and archetype statistics
 

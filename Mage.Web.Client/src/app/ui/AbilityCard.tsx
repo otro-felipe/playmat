@@ -21,25 +21,28 @@ function kindOf(card: CardView): MessageKey {
  * An ability on the stack, printed as its own card: the source's art and name, what kind of ability it is, and its
  * text. It never depends on a full card picture, so it reads even when the source has none.
  */
-export function AbilityCard({ ability, sleeve, style, className }: {
+export function AbilityCard({ ability, sleeve, style, className, presentation = 'card' }: {
   ability: CardView;
   sleeve?: string;
   style?: CSSProperties;
   className?: string;
+  presentation?: 'card' | 'broadcast';
 }) {
   const t = useT();
-  const source: CardView | undefined = ability.stackAbility ? ability.stackAbility.source : (ability as StackAbilityView).sourceCard;
-  const art = useCardImage(source?.expansionSetCode ? source : null, source && showsBackFace(source) ? 'back' : 'front', 'art_crop');
+  const compact = presentation === 'broadcast';
+  const source: CardView | undefined = compact || ability.stackAbility ? ability.stackAbility?.source : (ability as StackAbilityView).sourceCard;
+  const art = useCardImage(!compact && source?.expansionSetCode ? source : null, source && showsBackFace(source) ? 'back' : 'front', 'art_crop');
   const name = source?.displayName ?? source?.name ?? t('ui.ability');
   // the server's live hints follow the rules with an icon name in front ("ICON_GOOD..."): print them as plain lines (#173)
   const { rules, hints } = splitRules(ability);
-  const text = ability.stackAbility ? [ability.stackAbility.effect].filter((line): line is string => !!line)
+  const text = compact ? [ability.stackAbility?.effect ?? t('ui.ability.effectUnavailable')]
+    : ability.stackAbility ? [ability.stackAbility.effect].filter((line): line is string => !!line)
     : [...rules.map(stripMarkup), ...hints.map((hint) => hint.text)].filter(Boolean);
   return (
-    <div className={[styles.sleeve, className ?? ''].join(' ')} style={{ ...(sleeve ? { '--sleeve': sleeve } : {}), ...style } as CSSProperties}>
+    <div className={[styles.sleeve, compact ? styles.broadcast : '', className ?? ''].join(' ')} style={{ ...(sleeve ? { '--sleeve': sleeve } : {}), ...style } as CSSProperties}>
       <div className={styles.card}>
         <div className={styles.title}>{name}</div>
-        <div className={styles.art} style={typeof art === 'string' ? { backgroundImage: `url("${art}")` } : undefined} />
+        {!compact && <div className={styles.art} style={typeof art === 'string' ? { backgroundImage: `url("${art}")` } : undefined} />}
         <div className={styles.kind}>{t(kindOf(ability))}</div>
         <div className={styles.text}>
           {text.slice(0, 4).map((line, index) => <p key={index}><PromptText text={line} /></p>)}

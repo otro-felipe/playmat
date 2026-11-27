@@ -346,7 +346,7 @@ test('[PM-REVIEW-API-13] quality reasons follow verified replay anchors, ending 
   const low = { archiveRevision, goodQuality: false, qualityReason: 'The reviewer lacks native traces for the closing turns.',
     qualityAnchor: { kind: 'insufficient_evidence' } }
   const accepted = { archiveRevision, goodQuality: true,
-    qualityReason: 'The replay shows both pilots continuing after the rewind.\n\n- The board returned to a stable turn.',
+    qualityReason: 'R3 The replay shows both pilots continuing after the rewind.\n\n- The board returned to a stable turn.',
     qualityAnchor: { kind: 'review_cursor', cursor: 3 } }
   const save = (value, headers = judge, id = gameId) => f.path(gamePath(id) + '/quality', json('PUT', headers, value))
   for (const invalid of [
@@ -417,9 +417,11 @@ test('[PM-REVIEW-API-13] quality reasons follow verified replay anchors, ending 
       assert.equal(manifest.qualityAnchor, undefined)
     }
   }
-  const spectator = { ...accepted, goodQuality: false, qualityReason: '- A visible play was missed.',
+  const spectator = { ...accepted, goodQuality: false, qualityReason: 'F2 A visible play was missed.',
     qualityAnchor: { kind: 'spectator_frame', cursor: 2 } }
   assert.deepEqual(await (await save(spectator)).json(), { gameId, ...spectator })
+  const historicalSpectator = { ...spectator, qualityReason: 'R2 Historical wording from a spectator review.' }
+  assert.deepEqual(await (await save(historicalSpectator)).json(), { gameId, ...historicalSpectator })
   assert.equal((await (await save(low)).json()).qualityReason, low.qualityReason)
   assert.equal((await (await save({ archiveRevision, goodQuality: true })).json()).qualityReason, undefined)
   await withTestDatabase(f, db => db.query("UPDATE games SET end_cause='round_clock' WHERE id=$1", [gameId]))

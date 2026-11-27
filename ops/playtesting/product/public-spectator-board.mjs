@@ -1,5 +1,6 @@
 import { publicLineExplanations } from './line-explanations.mjs'
 import { tournamentBoardFacts } from './tournament-board-facts.mjs'
+import { legacyStackEffect } from './legacy-stack-effect.mjs'
 import { createHmac, randomBytes } from 'node:crypto'
 import { isUuid } from './decks.mjs'
 
@@ -110,6 +111,7 @@ function publicView(view, roster, gameId) {
   const {concealed,markedIds} = concealedObjects(objects)
   const publicIds = new Set(objects.flatMap(([key,c]) => [key,c.id]).filter(isUuid))
   const publicSources = new Map(objects.filter(([key,c]) => !concealed.has(c) && !abilityCard(c) && isUuid(key) && key === c.id && label(c.name)))
+  const stackIds = new Set(cardEntries(view.stack).filter(([key,c]) => key === c.id && isUuid(key) && !concealed.has(c)).map(([key]) => key))
   function currentSource(card) {
     return {id:card.id,name:card.name,kind:card.isToken === true ? 'token' : 'card',...printing(card)}
   }
@@ -129,8 +131,16 @@ function publicView(view, roster, gameId) {
     const source = capturedSource ? {name:declared.name,kind:declared.kind,...printing(declared),
       ...(corroborated?.name === declared.name ? {id:sourceId,...printing(corroborated)} : {})}
       : !captured && corroborated ? currentSource(corroborated) : undefined
-    const effect = capturedSource && effectText(captured.effect) ? captured.effect : undefined
+    const effect = captured ? (capturedSource && effectText(captured.effect) ? captured.effect : undefined)
+      : legacyStackEffect(card, source, legacyType)
     return kind || source ? {...(kind && {kind}),...(source && {source}),...(effect && {effect})} : undefined
+  }
+  function chosenTargets(key, c) {
+    if (!stackIds.has(key) || view.stack[key] !== c) return {}
+    const targets = [...new Set(list(c.chosenTargetIds))].filter(id => id !== c.id && (
+      publicSources.has(id) || stackIds.has(id) || roster.has(id)
+    ))
+    return targets.length ? {targets} : {}
   }
   function opaque(key) {
     return 'object-' + createHmac('sha256',maskKey).update(JSON.stringify([gameId,key ?? null])).digest('hex').slice(0,24)
@@ -143,11 +153,11 @@ function publicView(view, roster, gameId) {
       ...pick(c,['ownerId','controllerId'],v => roster.has(v))}
     if (abilityCard(c)) {
       const stackAbility = publicAbility(c)
-      return {...state,isAbility:true,name:'Ability',...(stackAbility && {stackAbility})}
+      return {...state,isAbility:true,name:'Ability',...(stackAbility && {stackAbility}),...(stackAbility?.source && chosenTargets(key,c))}
     }
     return {...state,...pick(c,['name'],label),...printing(c),
       ...pick(c,['power','toughness','loyalty','defense'],v => typeof v==='string' && /^[-+\d*/X]{1,8}$/.test(v)),
-      ...(Array.isArray(c.cardTypes) && {cardTypes:c.cardTypes.filter(t => cardTypes.has(t))})}
+      ...(Array.isArray(c.cardTypes) && {cardTypes:c.cardTypes.filter(t => cardTypes.has(t))}),...chosenTargets(key,c)}
   }
   function zone(input) {
     return Object.fromEntries(cardEntries(input).map(([key,c]) => card(key,c)).filter(Boolean).map(c => [c.id,c]))

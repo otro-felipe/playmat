@@ -11,7 +11,7 @@ vi.mock('../spectator/SpectatorScreen', () => ({
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-it('keeps the board mounted while seeking and clears it when switching games', async () => {
+it('[CUP-AC-007] keeps the board mounted while seeking and clears it when switching games', async () => {
   let deliver!: (value: Response) => void;
   const snapshot = (gameId: string, revision: number) => Response.json({ gameId, revision, view: {} });
   vi.stubGlobal('fetch', (input: string) => {
@@ -31,8 +31,21 @@ it('keeps the board mounted while seeking and clears it when switching games', a
   expect(page.queryByRole('article')).toBe(board);
   deliver(snapshot('first', 3));
   expect(await page.findByText('first frame 3')).toBe(board);
-  fireEvent.change(page.getByRole('combobox'), { target: { value: '1' } });
+  fireEvent.change(page.getByRole('combobox', { name: 'Game' }), { target: { value: 'second' } });
   expect(page.queryByRole('article')).toBeNull();
   deliver(snapshot('second', 0));
   expect(await page.findByText('second frame 0')).toBeTruthy();
+});
+
+it('[CUP-AC-007] explains an empty recording and keeps transport inactive', async () => {
+  vi.stubGlobal('fetch', async () => Response.json({ games: [], officialResult: null }));
+  const page = render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/t/e/r/p']}>
+    <Routes><Route path="/t/:id/r/:pairingId" element={<TournamentReplay/>}/></Routes>
+  </MemoryRouter></QueryClientProvider>);
+  expect(await page.findByText(/replay is unavailable/i)).toBeTruthy();
+  for (const name of ['Previous frame', 'Play', 'Next frame']) {
+    expect((page.getByRole('button', { name }) as HTMLButtonElement).disabled).toBe(true);
+  }
+  expect((page.getByRole('slider') as HTMLInputElement).disabled).toBe(true);
+  expect(page.getByText('0 / 0')).toBeTruthy();
 });

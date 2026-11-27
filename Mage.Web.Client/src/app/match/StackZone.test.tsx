@@ -89,3 +89,19 @@ test('[CUP-AC-006] shows two distinct abilities from the same source in resoluti
   }
   expect(rows[2].getAttribute('aria-label')).toBe('Reckless Rage');
 });
+
+test('[CUP-AC-006] presents a readable spectator effect and an explicit fallback without interaction', () => {
+  const source = { name: 'Formidable Speaker', kind: 'card' } as const;
+  const effect = 'When this creature enters, you may discard a card. If you do, search your library for a creature card, reveal it, put it into your hand, then shuffle.';
+  render(<StackZone presentation="broadcast" items={[
+    { id: 'first', isAbility: true, stackAbility: { kind: 'triggered', source, effect } },
+    { id: 'second', isAbility: true, stackAbility: { kind: 'triggered', source }, rules: ['Hidden archive hint'] },
+  ]} clickable={new Set()} selected={new Set()} sleeveOf={() => ''} onClick={() => undefined} originOf={() => undefined} />);
+  const [first, second] = screen.getAllByRole('listitem');
+  expect(first.getAttribute('aria-label')).toContain('resolves next');
+  expect(first.textContent).toContain(effect);
+  expect(first.textContent).toContain(source.name);
+  expect(second.textContent).toContain('Effect text unavailable');
+  expect(second.getAttribute('aria-label')).toContain('Effect text unavailable');
+  expect(screen.queryByText('Hidden archive hint')).toBeNull();
+});

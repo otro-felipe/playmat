@@ -1,6 +1,4 @@
-import { existsSync } from 'node:fs'
-import { inflateRawSync } from 'node:zlib'
-import { createRequire } from 'node:module'
+import { cardViewDictionary, catalogCardView, openPrebuiltCardCatalog } from './public-card-catalog.mjs'
 import {
   archetypesFor,
   canonicalArchetype,
@@ -72,7 +70,7 @@ export function loadCatalogColors(db) {
     .iterate()) {
     merge(key(row.name), row.colors)
   }
-  const dictionary = db.prepare("SELECT value FROM meta WHERE key='viewDictionary'").get()?.value
+  const dictionary = cardViewDictionary(db)
   for (const row of db
     .prepare(
       `SELECT c.name,c.colors,p.view FROM cards c LEFT JOIN printings p ON p.id=c.printing
@@ -83,7 +81,7 @@ export function loadCatalogColors(db) {
     let backName
     if (dictionary && row.view) {
       try {
-        const view = JSON.parse(inflateRawSync(row.view, { dictionary, maxOutputLength: 1024 * 1024 }))
+        const view = catalogCardView(row.view,dictionary)
         const back = view.secondCardFace
         if (key(view.name) === key(row.name) && key(back?.name) && faceMask(view.color) === row.colors) {
           backName = key(back.name)
@@ -108,10 +106,8 @@ function faceMask(color) {
 
 function catalogMask(name) {
   if (!catalog) {
-    const file = '/opt/xmage/cards-prebuilt/catalog.sqlite'
-    if (existsSync(file)) {
-      const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite')
-      const db = new DatabaseSync(file, { readOnly: true })
+    const db = openPrebuiltCardCatalog()
+    if (db) {
       try {
         catalog = loadCatalogColors(db)
       } finally {

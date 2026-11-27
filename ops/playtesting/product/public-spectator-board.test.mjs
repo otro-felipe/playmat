@@ -125,6 +125,49 @@ test('[CUP-AC-006] masks concealed sources and derives only corroborated names f
   assert.doesNotMatch(JSON.stringify(stack), new RegExp(privateText+'|'+hidden.id+'|'+masked))
 })
 
+test('[CUP-AC-006] recovers only exact printed effects from the two legacy replay cases', () => {
+  const f=frame(), [speakerId,challengerId,sourceLeftId,unknownSource,etb,prowess,valiant,unmatched,unproven,spoofed,rage]=Array.from({length:11},randomUUID)
+  const speaker={id:speakerId,name:'Formidable Speaker',expansionSetCode:'ECL',cardNumber:'176'}
+  const challenger={id:challengerId,name:'Emberheart Challenger',expansionSetCode:'BLB',cardNumber:'133'}
+  const speakerRule='When Formidable Speaker enters, you may discard a card. If you do, search your library for a creature card, reveal it, put it into your hand, then shuffle.'
+  const valiantRule='Whenever Emberheart Challenger becomes the target of a spell or ability you control for the first time each turn, exile the top card of your library. Until end of turn, you may play that card.'
+  const prowessRule='(Whenever you cast a noncreature spell, this creature gets +1/+1 until end of turn.)'
+  f.view.players[0].battlefield={[speakerId]:speaker,[challengerId]:challenger,[unknownSource]:{id:unknownSource,name:'Unverified card face'}}
+  function trigger(id, sourceCard, rule) {
+    return {id,isAbility:true,sourceCard,abilityType:'TRIGGERED_NONMANA',rules:[rule,`<i>Related objects: ${privateText}</i>`]}
+  }
+  f.view.stack={
+    [etb]:trigger(etb,speaker,speakerRule),
+    [valiant]:trigger(valiant,challenger,`<i>Valiant</i> &mdash; ${valiantRule}`),
+    [prowess]:trigger(prowess,challenger,`Prowess <i>${prowessRule}</i>`),
+    [rage]:{id:rage,name:'Reckless Rage'},
+    [unmatched]:trigger(unmatched,speaker,`${speakerRule} ${privateText}`),
+    [unproven]:trigger(unproven,{...speaker,id:sourceLeftId},speakerRule),
+    [spoofed]:trigger(spoofed,{id:unknownSource,name:speaker.name},speakerRule),
+  }
+  const {stack}=publicSpectatorBoard(f).view
+  assert.deepEqual(Object.keys(stack),[etb,valiant,prowess,rage,unmatched,unproven,spoofed])
+  assert.equal(stack[etb].stackAbility.effect,speakerRule.replace('Formidable Speaker','this creature'))
+  assert.equal(stack[valiant].stackAbility.effect,`Valiant — ${valiantRule}`)
+  assert.equal(stack[prowess].stackAbility.effect,`Prowess ${prowessRule}`)
+  assert.equal(stack[unmatched].stackAbility.effect,undefined)
+  assert.equal(stack[unproven].stackAbility.effect,undefined)
+  assert.equal(stack[spoofed].stackAbility.effect,undefined)
+  assert.doesNotMatch(JSON.stringify(stack),new RegExp(privateText+'|Related objects|&mdash;'))
+})
+
+test('[CUP-AC-006] projects only explicitly chosen and visible stack targets', () => {
+  const f=frame(), [spellId,abilityId,unavailable]=Array.from({length:3},randomUUID)
+  f.view.stack={
+    [spellId]:{id:spellId,name:'Reckless Rage',chosenTargetIds:[visible.id,hidden.id,visible.id,playerId,unavailable],targets:[unavailable]},
+    [abilityId]:{id:abilityId,sourceCard:visible,abilityType:'TRIGGERED_NONMANA',rules:['Something'],targets:[visible.id]},
+  }
+  const {stack}=publicSpectatorBoard(f).view
+  assert.deepEqual(stack[spellId].targets,[visible.id,playerId])
+  assert.equal(stack[abilityId].targets,undefined)
+  assert.doesNotMatch(JSON.stringify(stack),new RegExp(hidden.id+'|'+unavailable))
+})
+
 test('numeric counters survive while input-only arbitrary counter labels and embedded text are withheld',()=>{
   const f=frame(),p=f.view.players[0]
   p.counters=[{name:'poison',count:2,caption:privateText},{name:privateText,count:1}]
