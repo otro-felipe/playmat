@@ -657,12 +657,15 @@ Read `status`, `reason`, `appliedDecisions` and any error alongside the returned
 
 `status` describes the command. `appliedDecisions` counts acknowledged engine decisions for that command, including automatic priority passes. `completedSteps` counts plan steps; one step can submit multiple decisions. A successful MCP response can carry a rejected or interrupted command.
 
+An accepted target or payment may leave the effect on the stack. Confirm the resulting board or replay frame before describing the effect as resolved. For equipment, check that it actually attached to the chosen creature. If that creature leaves before resolution, a target accepted earlier does not prove an attachment.
+
 | Observed receipt | Example and next call |
 | --- | --- |
 | `completed`, `appliedDecisions:0` | A pass to the end step starts in that end step. The destination is satisfied. Read the current choice from the returned state. |
 | `bad_sequence` | A line contains `pass_priority` before another action. Remove the misplaced pass, keep at most one terminal pass, and use the current cursor with a new command ID. |
 | `invalid_line_arguments` | A target guard specifies only role zero. Read the failing action and field in `issues`; correct the guard using the observed source and target, or the exact instruction. |
 | `reevaluation_required` | A discard prompt is open after the spell was already cast. Recover the previous command if needed, compare its `requestedCursor` with the returned `state.cursor`, then answer only the current discard with a fresh command ID, its `decisionId` and legal `choiceId`. Replan the tail after the resulting change. |
+| `game_changed` | The old game ID no longer refers to the current game. Read `get_game_state` on the same seat without the old game ID. Verify the table and use the returned game ID, cursor and decision. |
 | Native failure without a classified reason | If an RPC fails while a decision is being sent, recover the same command using `wait_for_decision({gameId,commandId})`. Inspect its acknowledged count and current seat state. An absent acknowledgement leaves application uncertain. |
 
 `requestedCursor` identifies the submitted line revision. `lastSubmission.cursor` identifies the revision used for the most recently attempted decision. The current projection, when present, has its own `state.cursor`; `progressCursor` can preserve an older execution revision. A schema rejection without a state projection cannot establish the current board revision.

@@ -20,7 +20,7 @@ Re-read this guide after losing conversation context. Use `tools/list` for exact
 5. If `planOwnsExecution:true`, call `wait_for_decision({"gameId":"…","commandId":"…","view":"compact"})` with no cursor filters. A lost receipt is recovered the same way; never resend a partly applied line.
 6. Answer every pending legal choice promptly. Polling, chat and analysis do not extend the inactivity deadline.
 
-When an effect reveals information and its non-priority prompt is already open, send only the selected `playLineAction` as a one-action line. Replan after the receipt, including when the next intended action is a pass.
+When an effect reveals information and its non-priority prompt is already open, send one `choose` with the exact IDs and any required `value`. Copy the selected option's `playLineAction` when present. Replan after the receipt, including when the next intended action is a pass.
 
 If there is no decision or pending rollback, wait for the same game using `wait_for_decision({"gameId":"…","timeoutMs":25000,"view":"compact"})`. Immediately after the game opens, `priority:"none"` and no decision can also mean the engine is waiting for a game slot. Read the state returned by each wait. If the game, cursor and decision are unchanged, keep waiting without reloading the guide or requesting another copy of the board.
 
