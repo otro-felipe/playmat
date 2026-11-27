@@ -21,6 +21,10 @@ const guides = [
     description: 'Look up cards, validate decks, and estimate responses from public information.',
   },
   {
+    name: 'matchup-strategy', title: 'Shared matchup strategy',
+    description: 'Assign roles, compare attack and block alternatives, and evaluate tradeoffs using public evidence.',
+  },
+  {
     name: 'turn-planning', title: 'Play a line',
     description: 'Copy complete play_line examples for casting, costs, triggers, combat and command recovery.',
   },
@@ -39,7 +43,7 @@ const guides = [
 ].map(({ name, ...metadata }) => ({
   name, ...metadata, mimeType,
   uri: `playmat://guides/${name}`,
-  text: [readGuide(name === 'player-dispatch' ? 'player-dispatch/SKILL' : name), ...(['getting-started', 'replay-analysis'].includes(name) ? [glossary] : []),
+  text: [name === 'matchup-strategy' ? matchupStrategy : readGuide(name === 'player-dispatch' ? 'player-dispatch/SKILL' : name), ...(['getting-started', 'replay-analysis'].includes(name) ? [glossary] : []),
     ...(usesMatchupStrategy.has(name) ? [matchupStrategy] : [])].join('\n\n') + '\n',
 }));
 const GuideId = z.enum(guides.map(({ name }) => name));

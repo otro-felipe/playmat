@@ -312,6 +312,137 @@ test('[PM-REVIEW-API-11] an account reviewer classifies its completed archived g
   assert.equal((await save(gameId, judge, true)).status, 409)
 })
 
+test('[PM-REVIEW-API-13] quality reasons follow verified replay anchors, ending causes and retained reviewer permissions', { skip: !databaseUrl }, async t => {
+  const objects = new Map()
+  const f = await fixture(t, objects)
+  const owner = await signIn(f, 'QualityReasonOwner')
+  const other = await signIn(f, 'QualityReasonOther')
+  await f.product.provisionAgent('QualityReasonOwner', 'QualityReasonPilot', ['play'])
+  const judge = { Authorization: 'Bearer ' + await f.product.provisionAgent('QualityReasonOwner', 'QualityReasonJudge', ['history']) }
+  const names = ['QualityReasonOwner', 'QualityReasonPilot']
+  const own = await historyMatch(f, names, Date.now())
+  const shared = await historyMatch(f, [names[0], 'QualityReasonOther'], Date.now())
+  const ended = await historyMatch(f, names, Date.now())
+  const [gameId] = own.games
+  const [sharedGameId] = shared.games
+  const [endedGameId] = ended.games
+  const frame = turn => ({ view: { turn, players: names.map(name => ({ name })) } })
+  await addReplay(f, own.id, gameId, names, [
+    frame(1), frame(2), { kind: 'rollback', turn: 2 }, frame(2),
+    { t: 100, log: { messageType: 'TALK', message: 'Private fixture chat' } },
+  ])
+  await addReplay(f, ended.id, endedGameId, names, [
+    frame(1), { kind: 'spectatorEnd', terminal: true, cause: 'round_clock' },
+  ])
+  await f.product.archiveGames()
+  const gamePath = id => '/api/playtesting/review/games/' + id
+  const archivePath = id => gamePath(id) + '?archiveOnly=true'
+  const read = async (path, headers = judge) => (await (await f.path(path, { headers })).json())
+  const initial = await read(archivePath(gameId))
+  assert.equal(initial.goodQuality, false)
+  assert.equal(initial.qualityReason, undefined)
+  assert.equal(initial.qualityAnchor, undefined)
+  const { archiveRevision } = initial
+  const low = { archiveRevision, goodQuality: false, qualityReason: 'The reviewer lacks native traces for the closing turns.',
+    qualityAnchor: { kind: 'insufficient_evidence' } }
+  const accepted = { archiveRevision, goodQuality: true,
+    qualityReason: 'The replay shows both pilots continuing after the rewind.\n\n- The board returned to a stable turn.',
+    qualityAnchor: { kind: 'review_cursor', cursor: 3 } }
+  const save = (value, headers = judge, id = gameId) => f.path(gamePath(id) + '/quality', json('PUT', headers, value))
+  for (const invalid of [
+    { ...accepted, qualityReason: '   ' },
+    { ...accepted, qualityReason: 'x'.repeat(1201) },
+    { ...accepted, qualityReason: 'x\u0000y' },
+    { ...accepted, qualityReason: 'x\ud800y' },
+    { ...accepted, qualityAnchor: undefined },
+    { ...accepted, qualityReason: undefined },
+    { ...accepted, qualityAnchor: { kind: 'review_cursor', cursor: -1 } },
+    { ...accepted, qualityAnchor: { kind: 'insufficient_evidence' } },
+    { ...accepted, qualityAnchor: { kind: 'interruption' } },
+  ]) assert.equal((await save(invalid)).status, 400)
+  for (const qualityAnchor of [
+    { kind: 'review_cursor', cursor: 1 },
+    { kind: 'review_cursor', cursor: 4 },
+    { kind: 'spectator_frame', cursor: 30 },
+    { kind: 'interruption' },
+  ]) assert.equal((await save({ ...low, qualityAnchor })).status, 409)
+  assert.equal((await save(accepted, {})).status, 401)
+  assert.equal((await save(accepted, other)).status, 404)
+  const sharedRevision = (await read(archivePath(sharedGameId), owner)).archiveRevision
+  assert.equal((await save({ ...accepted, archiveRevision: sharedRevision }, owner, sharedGameId)).status, 403)
+  assert.equal((await save({ ...accepted, archiveRevision: '0'.repeat(64) })).status, 409)
+  for (const response of await Promise.all([save(accepted), save(accepted)])) {
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), { gameId, ...accepted })
+  }
+  const matchPath = '/api/playtesting/review/matches/' + own.id
+  for (const manifest of [await read(gamePath(gameId)), await read(archivePath(gameId)),
+    (await read(matchPath)).games[0], (await read(matchPath + '?archiveOnly=true')).games[0]]) {
+    assert.deepEqual([manifest.goodQuality, manifest.qualityReason, manifest.qualityAnchor],
+      [true, accepted.qualityReason, accepted.qualityAnchor])
+  }
+  assert.equal((await (await save({ archiveRevision, goodQuality: true })).json()).qualityReason, accepted.qualityReason)
+  const statistics = await read('/api/playtesting/statistics?goodQuality=true', {})
+  assert.equal(statistics.games, 1)
+  assert.doesNotMatch(JSON.stringify(statistics), /"quality(?:Reason|Anchor)":/)
+  const unavailableObject = objects.get
+  objects.get = () => null
+  try {
+    assert.equal((await save({ ...accepted, qualityReason: 'Replacement' })).status, 503)
+    const unchanged = await read(archivePath(gameId))
+    assert.deepEqual([unchanged.goodQuality, unchanged.qualityReason, unchanged.qualityAnchor],
+      [true, accepted.qualityReason, accepted.qualityAnchor])
+  } finally {
+    objects.get = unavailableObject
+  }
+  await withTestDatabase(f, db => db.query(`
+    CREATE FUNCTION fail_quality_fixture() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN RAISE EXCEPTION 'Synthetic failure while saving quality'; END;
+    $$;
+    CREATE TRIGGER fail_quality_fixture AFTER UPDATE OF quality_reason ON games
+    FOR EACH ROW WHEN (NEW.quality_reason='Interrupted write fixture') EXECUTE FUNCTION fail_quality_fixture();
+  `))
+  assert.equal((await save({ ...low, qualityReason: 'Interrupted write fixture' })).status, 500)
+  const afterFailedWrite = await read(archivePath(gameId))
+  assert.deepEqual([afterFailedWrite.goodQuality, afterFailedWrite.qualityReason, afterFailedWrite.qualityAnchor],
+    [true, accepted.qualityReason, accepted.qualityAnchor])
+  await withTestDatabase(f, db => db.query(`UPDATE games SET good_quality=true,quality_reason=$2,
+    quality_anchor_kind='review_cursor',quality_anchor_cursor=0,quality_archive_revision=$3 WHERE id=$1`,
+  [sharedGameId, accepted.qualityReason, sharedRevision]))
+  for (const headers of [owner, other]) {
+    for (const path of [gamePath(sharedGameId), archivePath(sharedGameId)]) {
+      const manifest = await read(path, headers)
+      assert.equal(manifest.goodQuality, true)
+      assert.equal(manifest.qualityReason, undefined)
+      assert.equal(manifest.qualityAnchor, undefined)
+    }
+  }
+  const spectator = { ...accepted, goodQuality: false, qualityReason: '- A visible play was missed.',
+    qualityAnchor: { kind: 'spectator_frame', cursor: 2 } }
+  assert.deepEqual(await (await save(spectator)).json(), { gameId, ...spectator })
+  assert.equal((await (await save(low)).json()).qualityReason, low.qualityReason)
+  assert.equal((await (await save({ archiveRevision, goodQuality: true })).json()).qualityReason, undefined)
+  await withTestDatabase(f, db => db.query("UPDATE games SET end_cause='round_clock' WHERE id=$1", [gameId]))
+  assert.equal((await save(accepted)).status, 409)
+  const interrupted = { ...low, qualityReason: 'The recorded round clock ended the game.', qualityAnchor: { kind: 'interruption' } }
+  assert.deepEqual(await (await save(interrupted)).json(), { gameId, ...interrupted })
+  await withTestDatabase(f, db => db.query('UPDATE games SET end_cause=NULL,end_cause_checked=false WHERE id=$1', [endedGameId]))
+  const endedRevision = (await read(archivePath(endedGameId))).archiveRevision
+  const terminalMarker = { ...interrupted, archiveRevision: endedRevision }
+  const markerResponse = await save(terminalMarker, judge, endedGameId)
+  assert.equal(markerResponse.status, 200)
+  assert.deepEqual(await markerResponse.json(), { gameId: endedGameId, ...terminalMarker })
+  assert.equal((await save({ ...accepted, archiveRevision: endedRevision, qualityAnchor: { kind: 'review_cursor', cursor: 0 } },
+    judge, endedGameId)).status, 409)
+  const before = await read(archivePath(gameId))
+  await withTestDatabase(f, db => db.query("UPDATE games SET checksum=repeat('0',64) WHERE id=$1", [gameId]))
+  assert.equal((await save(interrupted)).status, 409)
+  const after = await read(archivePath(gameId))
+  assert.notEqual(after.archiveRevision, before.archiveRevision)
+  assert.equal(after.qualityReason, undefined)
+  assert.equal(after.qualityAnchor, undefined)
+})
+
 test('[PM-REVIEW-API-12] archive-only review reads retained revisions without opening replay objects', { skip: !databaseUrl }, async t => {
   const objects = new Map()
   const f = await fixture(t, objects)

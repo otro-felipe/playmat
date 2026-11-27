@@ -334,6 +334,9 @@ public interface Game extends MageItem, Serializable, Copyable<Game> {
 
     MageObject getLastKnownInformation(UUID objectId, Zone zone, int zoneChangeCounter);
 
+    /** Battlefield information for this exact incarnation, when it is still retained. */
+    default MageObject getLastKnownBattlefieldInformation(UUID objectId, int zoneChangeCounter) { return null; }
+
     /**
      * For checking if an object was in a zone during the resolution of an effect
      */

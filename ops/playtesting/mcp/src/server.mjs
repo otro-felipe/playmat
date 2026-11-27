@@ -151,7 +151,7 @@ const TurnBlockShape = z.object({ kind: z.literal('block'),
 }).strict();
 const TurnBlock = TurnBlockShape.refine(({ assignments }) => new Set(assignments.map(({ blockerId }) => blockerId)).size === assignments.length,
   'Name each blocker once. Use the live engine decision for a creature that can block multiple attackers.');
-const PublicExplanation = z.string().trim().min(1).max(publicExplanationLimit).optional().describe('Publish a spectator explanation when the first action is submitted. Describe the play, its purpose, possible replies and relevant alternatives from public information. Keep hidden cards, credentials and private deliberation out of this audience text. Use send_chat for table conversation.');
+const PublicExplanation = z.string().trim().min(1).max(publicExplanationLimit).optional().describe('Publish a spectator explanation when the first action is submitted. For a material play, describe your intent, one or two relevant alternatives and the deciding tradeoff from public information. Describe a resolution only after the receipt and public board support it. Keep hidden cards, credentials and private deliberation out of this audience text. Use send_chat for table conversation.');
 const Turn = { explanation: PublicExplanation, gameId: Uuid, cursor: Cursor, actions: z.array(z.union([TurnPlay, TurnActivation, TurnChoose, TurnAttack, TurnBlock, Pace])).max(32),
   expectedStackIds: z.array(StringId).max(16).optional(), finish: z.enum(['next_turn', 'end_step', 'none']).default('next_turn') };
 const LinePassUntilShape = z.object({
@@ -722,7 +722,7 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
     reviewAnnotationsInput, 'history', (args) => fromProduct('list_review_annotations', args), true);
   tool('save_review_annotations', 'Persist qualitative annotations on recorded decisions or witnessed inferred omissions. Send the archive revision and the annotation revision when editing. Include a confirmed comparator for an inferred omission or when reconstructing a decision from supporting evidence.',
     saveReviewAnnotationsInput, 'history', (args) => fromProduct('save_review_annotations', args));
-  tool('save_game_quality', 'Save a game-wide quality verdict after reviewing both seats. The account must own both seats. Use the game ID and archive revision from get_match_review. Only representative games without major interruptions, confusion or misplays qualify for true.',
+  tool('save_game_quality', 'Save a game-wide quality verdict with an optional Markdown reason and evidence anchor. The account must own both seats. Use the game ID and archive revision from get_match_review. Only representative games without major interruptions, confusion or misplays qualify for true.',
     saveGameQualityInput, 'history', (args) => fromProduct('save_game_quality', args));
   registerTheorycraftTools(tool, fromProduct);
   tool('export_matches', 'Request an authorized download handle for selected games.', {

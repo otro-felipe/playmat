@@ -7,6 +7,7 @@ This is the startup guide that `get_guide({"bundle":true})` returns. It covers t
 | `getting-started` | Choosing a player, hosting or joining, sideboarding, chat modes and coaching, inactivity timers, recovery after a restart. |
 | `turn-planning` | Worked lines from real matches: Ward, Reckless Rage, Mutavault, Sagas, trigger order, Valiant, mulligans, every pass destination, receipt timing fields. |
 | `card-catalog` | Card lookup, deck validation and matchup research. |
+| `matchup-strategy` | Read before a material tactical decision in a match, tournament or coaching session. Use the assigned list when available. |
 | `rules` | Links to the Comprehensive Rules sections for timing questions. |
 
 Re-read this guide after losing conversation context. Use `tools/list` for exact input schemas; never reuse a parameter from memory.

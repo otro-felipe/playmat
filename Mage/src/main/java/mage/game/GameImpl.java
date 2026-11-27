@@ -4057,17 +4057,18 @@ public abstract class GameImpl implements Game {
     @Override
     public MageObject getLastKnownInformation(UUID objectId, Zone zone, int zoneChangeCounter) {
         if (zone == Zone.BATTLEFIELD) {
-            Map<Integer, MageObject> lkiMapExtended = lkiExtended.get(objectId);
-
-            if (lkiMapExtended != null) {
-                MageObject object = lkiMapExtended.get(zoneChangeCounter);
-                if (object != null) {
-                    return object.copy();
-                }
-            }
+            MageObject object = getLastKnownBattlefieldInformation(objectId, zoneChangeCounter);
+            if (object != null) return object;
         }
 
         return getLastKnownInformation(objectId, zone);
+    }
+
+    @Override
+    public MageObject getLastKnownBattlefieldInformation(UUID objectId, int zoneChangeCounter) {
+        Map<Integer, MageObject> incarnations = lkiExtended.get(objectId);
+        MageObject object = incarnations == null ? null : incarnations.get(zoneChangeCounter);
+        return object == null ? null : object.copy();
     }
 
     @Override

@@ -188,6 +188,19 @@ extra turns.
 
 A pairing broadcast shows the number of connected viewers across public and authorized expanded streams. Refreshing the board without opening a stream does not add a viewer. The header shows the pairing order and games won, including between games, and counts down the pairing deadline while it is timed and unfinished. Untimed tables and finished pairings omit the clock. Expanded views and public views use the same public score and clock.
 
+### CUP-AC-006 — Read the abilities waiting on the stack
+
+Live spectators and replay viewers see spells and abilities in resolution order. Each ability can identify its publicly visible source and the rules text of that ability. Two abilities from the same source remain distinct. A token can be the source. A source that has left the battlefield remains identifiable when the engine can establish its public face from that incarnation.
+
+A concealed source never contributes its identity, rules, artwork or stable source ID. An older replay can name a source when its recorded identity matches an unmasked card in a public zone of the same frame. If the recording cannot establish the ability text independently of its contextual rules and hints, the viewer sees only the established source and ability kind. An unavailable source remains generic.
+
+| Scenario | Automated evidence |
+| --- | --- |
+| CUP-AC-006 | `Mage.Tests/src/test/java/org/mage/test/view/PublicStackAbilityTest.java` · `capturesBothEmberheartChallengerTriggersAboveRecklessRage`, `capturesFoodAfterTheTokenWasSacrificedToActivateIt`, `aLaterFaceUpIncarnationCannotExposeAnOlderConcealedSource` |
+| CUP-AC-006 | `ops/playtesting/product/tournament-broadcast.test.mjs` · `[CUP-AC-006] live and replay preserve distinct public stack abilities, a departed token, and resolution order` |
+| CUP-AC-006 | `ops/playtesting/product/public-spectator-board.test.mjs` · `[CUP-AC-006] masks concealed sources and derives only corroborated names from old frames` |
+| CUP-AC-006 | `Mage.Web.Client/src/app/match/StackZone.test.tsx` · `[CUP-AC-006] shows two distinct abilities from the same source in resolution order` |
+
 ## Public deck and archetype statistics
 
 The tournament statistics page and the global statistics page count completed, statistically eligible series. A bye contributes standings points and zero played series. A recorded draw contributes one draw to each seat. Each row reports wins, draws, losses and appearances. Two seats with the same deck or archetype contribute two appearances to that row. Opening a row shows those appearances grouped by opposing deck or archetype.

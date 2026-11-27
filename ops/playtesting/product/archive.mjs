@@ -549,6 +549,7 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
 
   const reviewMetadata = `
     SELECT g.id,g.match_id,g.game_number,g.status,g.archive_state,g.object_key,g.checksum,g.review_version,g.review_incomplete,g.truncated,g.good_quality,
+      g.quality_reason,g.quality_anchor_kind,g.quality_anchor_cursor,g.quality_archive_revision,g.end_cause,
       m.status AS match_status,m.format,m.engine_format,
       (SELECT json_agg(json_build_object('name',p.engine_name,'seatId',p.engine_key,'playerId',p.player_id,'human',p.human)
                        ORDER BY p.engine_key)
@@ -556,9 +557,9 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
     FROM games g JOIN matches m ON m.id=g.match_id`
 
   // Internal lookup only. The review service checks exact match ownership before reading the archive.
-  async function reviewGame(id) {
+  async function reviewGame(id, db = pool) {
     if (!isUuid(id)) throw new ProductError(404, 'Replay not found')
-    const { rows: [game] } = await pool.query(reviewMetadata + ' WHERE g.id=$1', [id])
+    const { rows: [game] } = await db.query(reviewMetadata + ' WHERE g.id=$1', [id])
     if (!game) throw new ProductError(404, 'Replay not found')
     return game
   }
@@ -694,5 +695,6 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
   }
 
   return { archiveGames, recordEndCauses, matchList, replayPage, evaluation, exportReplays, authorizeExport, statistics, performance,
-    reviewGame, reviewGames, reviewOwnDeckPair, streamTournamentRecords: game => streamReplayRecords(store, game), readReviewArchive: game => rawEvents(store, game) }
+    reviewGame, reviewGames, reviewOwnDeckPair, streamTournamentRecords: game => streamReplayRecords(store, game),
+    streamReviewArchive: game => streamReplayRecords(store, game), readReviewArchive: game => rawEvents(store, game) }
 }

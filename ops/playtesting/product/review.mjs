@@ -1,12 +1,13 @@
 import { lineText, publicLineId } from './line-explanations.mjs'
 import { canonicalRows, legacyKeptHand, plainReplayText as plainText } from './replay-opening.mjs'
 import { createHash } from 'node:crypto'
-import { matchEndingCauses, projectReplayEvent } from './archive.mjs'
+import { projectReplayEvent } from './archive.mjs'
 import { isUuid, normalize, ProductError, transaction } from './decks.mjs'
 import { categories, createReviewAnnotations } from './review-annotations.mjs'
 import { indexReplayPresentation, publicDiscardLinks, publicSourceCard } from './review-presentation.mjs'
 import { genericChoiceKinds, indexCommittedDecisions, structuredChoice } from './review-decisions.mjs'
 import { submittedSideboardDelta } from './sideboard-delta.mjs'
+import { ownsGameQuality, qualityDetails, qualityInput, storeGameQuality, verifyQualityArchiveAnchor } from './review-quality.mjs'
 
 const pageLimit = 40
 const capturedActions = new Set(['cast', 'land', 'activate', 'attack', 'block', 'mulligan', 'keep', 'sideboard', 'pass', 'pay', 'select'])
@@ -21,11 +22,13 @@ function immutableRevision(game) {
   return game.checksum ? createHash('sha256').update(JSON.stringify([game.id, game.checksum])).digest('hex') : null
 }
 
-function archiveManifest(game) {
+function archiveManifest(game, access) {
+  const archiveRevision = immutableRevision(game)
   return {
     gameId: game.id, matchId: game.match_id, gameNumber: game.game_number,
     status: game.match_status, gameStatus: game.status,
-    archiveRevision: immutableRevision(game), goodQuality: game.good_quality,
+    archiveRevision, goodQuality: game.good_quality,
+    ...(gameReady(game) && ownsGameQuality(game, access) ? qualityDetails(game, archiveRevision) : {}),
     coverage: { archive: game.archive_state, partial: true },
   }
 }
@@ -65,6 +68,15 @@ function checkArchiveRevision(expected, revision) {
 
 function requireReady(game) {
   if (!gameReady(game)) throw new ProductError(409, 'Wait for the completed match and its replay archive')
+}
+
+function requireQualityReview(game, access, revision) {
+  requireReady(game)
+  if (access.reason === 'match_not_completed') {
+    throw new ProductError(409, 'Wait for the completed match and its replay archive')
+  }
+  if (!ownsGameQuality(game, access)) throw new ProductError(403, 'The reviewer account must own both seats')
+  checkArchiveRevision(revision, immutableRevision(game))
 }
 
 function gamePerspectives(game, access, rows) {
@@ -567,7 +579,7 @@ export function createPostMatchReview(pool, archive, permissions) {
   }
 
   async function gameManifest(game, access, data, rows) {
-    const archived = archiveManifest(game)
+    const archived = archiveManifest(game, access)
     const { archiveRevision } = archived
     const eligiblePositions = data.ready ? data.positions : null
     const chooserByCursor = new Map()
@@ -617,7 +629,7 @@ export function createPostMatchReview(pool, archive, permissions) {
     async manifest(actor, id, archiveOnly = false) {
       const game = await archive.reviewGame(id)
       const access = await accessGame(actor, game)
-      if (archiveOnly) return archiveManifest(game)
+      if (archiveOnly) return archiveManifest(game, access)
       const data = await loadGame(game, access)
       return gameManifest(game, access, data, await annotations.counts([id], true))
     },
@@ -625,7 +637,7 @@ export function createPostMatchReview(pool, archive, permissions) {
       if (!isUuid(matchId)) throw new ProductError(404, 'Match not found')
       const access = await permissions.reviewAccess(actor, matchId)
       const games = (await archive.reviewGames(matchId)).filter(game => canAccessGame(game, access))
-      if (archiveOnly) return { matchId, status: access.status, games: games.map(archiveManifest) }
+      if (archiveOnly) return { matchId, status: access.status, games: games.map(game => archiveManifest(game, access)) }
       const counts = await annotations.counts(games.map(({ id }) => id), true)
       const manifests = []
       for (const game of games) {
@@ -712,30 +724,23 @@ export function createPostMatchReview(pool, archive, permissions) {
     },
     async saveQuality(actor, id, input) {
       if (actor.playerId) throw new ProductError(403, 'Review quality on the account connection')
-      const { archiveRevision, goodQuality } = input ?? {}
-      if (typeof archiveRevision !== 'string' || !/^[a-f0-9]{64}$/.test(archiveRevision) || typeof goodQuality !== 'boolean') {
-        throw new ProductError(400, 'Supply the archive revision and a boolean quality verdict')
+      const verdict = qualityInput(input)
+      const { qualityAnchor } = verdict
+      let verifiedInterruption = false
+      if (qualityAnchor && qualityAnchor.kind !== 'insufficient_evidence') {
+        const game = await archive.reviewGame(id)
+        requireQualityReview(game, await accessGame(actor, game), verdict.archiveRevision)
+        if (qualityAnchor.cursor !== undefined || game.end_cause == null) {
+          await verifyQualityArchiveAnchor(archive.streamReviewArchive(game), verdict, record => !!projectReplayEvent(record, null)
+            || game.review_version === 2 && isUuid(record.actorPlayerId)
+              && (record.kind === 'draw' || record.kind === 'action' && capturedActions.has(record.action)))
+          verifiedInterruption = qualityAnchor.kind === 'interruption'
+        }
       }
-      const game = await archive.reviewGame(id)
       return transaction(pool, async db => {
-        const access = await accessGame(actor, game, db)
-        requireReady(game)
-        if (access.reason === 'match_not_completed') {
-          throw new ProductError(409, 'Wait for the completed match and its replay archive')
-        }
-        if (game.players.length !== 2 || !game.players.every(({ seatId }) =>
-          access.perspectives.some(seat => seat.seatId === seatId && seat.owned))) {
-          throw new ProductError(403, 'The reviewer account must own both seats')
-        }
-        checkArchiveRevision(archiveRevision, immutableRevision(game))
-        const { rowCount } = await db.query(`
-          UPDATE games g SET good_quality=$2 FROM matches m
-          WHERE g.id=$1 AND g.checksum=$3 AND g.object_key IS NOT NULL
-            AND g.status='completed' AND m.id=g.match_id AND m.status='completed'
-            AND (NOT $2 OR g.end_cause IS NULL OR NOT g.end_cause=ANY($4::text[]))`,
-        [id, goodQuality, game.checksum, [...matchEndingCauses]])
-        if (!rowCount) throw new ProductError(409, 'The archived game changed or ended with an interruption')
-        return { gameId: game.id, archiveRevision, goodQuality }
+        const game = await archive.reviewGame(id, db)
+        requireQualityReview(game, await accessGame(actor, game, db), verdict.archiveRevision)
+        return storeGameQuality(db, game, verdict, verifiedInterruption)
       })
     },
     async withHistory(actor, history) {

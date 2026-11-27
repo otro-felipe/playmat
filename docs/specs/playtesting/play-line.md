@@ -18,6 +18,10 @@ A line returns state and a receipt together. Within a bounded wait, return once 
 ## PM-LINE-04 — One bootstrap
 A single guide request loads the core guide, well under client tool-output limits, and indexes the detailed guides, which load by ID. Guide loading and tool descriptions teach agents to submit the longest line justified by current information and stop to replan at a new decision. Existing tools remain available to compatible clients.
 
+### PM-LINE-STRATEGY-1 — Reach the same matchup advice
+
+A fresh match or tournament pilot discovers `matchup-strategy` in the core bundle and can read it before making material tactical decisions. Coaching and the authorized replay prompt point to or include the same source. A tournament seat's assignment includes the name, revision and known archetype of its own registered list. The assignment never publishes the opponent's deck metadata before normal publication. A missing archetype leaves the variant's strategy uncertain.
+
 ## Live playtest acceptance
 
 - **PM-LINE-FLOW-1** Casting a modal spell with a confirmed deterministic mode can retain the planned continuation. A mode that reveals previously unavailable cards returns control before a later tactical action.
@@ -82,7 +86,7 @@ Receipt recovery is process-local. A completed line can outlive the short HTTP r
 
 ### PM-LINE-REPLAY-1 · Player-authored line explanations
 
-An authorized pilot may omit commentary or supply an authored `explanation` on either `play_line` or `play_turn`. Accept 1–4,000 Unicode code points after trimming. The pilot writes for the spectators using public game facts, covering the play, objective, anticipated response and relevant alternative. A short comment suffices for a routine play. For example, “I attack with the flyer and leave the ground creature back. It can trade with the opposing attacker if we race. Sending both gains one damage but leaves us exposed to the return attack.”
+An authorized pilot may omit commentary or supply an authored `explanation` on either `play_line` or `play_turn`. Accept 1–4,000 Unicode code points after trimming. On a material play the pilot states the intended objective, one or two relevant alternatives and the tradeoff that decided it, using contemporaneous public facts. Report resolution only after the receipt and public board support it. Follow the host's chat mode and answer pending engine decisions before writing commentary. A short comment suffices for a routine play. For example, “I attack with the flyer and leave the ground creature back. It can trade with the opposing attacker if we race. Sending both gains one damage but leaves us exposed to the return attack.”
 
 The first dispatched decision records one `kind:"line"` event at the current replay frame with the authenticated player, timestamp, command ID, `audience:"public"` and `explanation`. A turn uses its sequence ID. A rejected line without a dispatch creates no entry. Receipt recovery cannot publish the line again. Changing its text under the same command ID conflicts.
 

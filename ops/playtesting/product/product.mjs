@@ -636,7 +636,7 @@ export async function createProduct({
       if (req.method === 'POST' && resource === 'annotations') return send(res, 200, await review.saveAnnotations(actor, gameId, await body(req)))
       if (resource === 'quality') {
         if (req.method !== 'PUT') throw new ProductError(405, 'Use PUT to save game quality')
-        return send(res, 200, await review.saveQuality(actor, gameId, await body(req, 'json', 1024)))
+        return send(res, 200, await review.saveQuality(actor, gameId, await body(req, 'json', 8192)))
       }
       throw new ProductError(405, 'Use GET for review evidence or POST to save annotations')
     }

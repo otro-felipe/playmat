@@ -79,6 +79,7 @@ function StackItem({ item, index, total, clickable, selected, sleeve, onClick, o
   const door = roomCastDoor(item);
   const castLabel = door ? t('match.room.casting', { name: door }) : null;
   const next = index === 0 && <span className={styles.next}>Resolving next</span>;
+  const effect = item.faceDown || item.hideInfo ? undefined : item.stackAbility?.effect;
   useFlip(ability ? item.id : (item.cardId ?? item.id), ref, { fallbackOrigin: origin });
 
   return (
@@ -102,7 +103,7 @@ function StackItem({ item, index, total, clickable, selected, sleeve, onClick, o
       onBlur={() => setStackFocus(null)}
       onClick={() => clickable && onClick(item.id!)}
       data-object-id={item.id}
-      aria-label={`${castLabel ?? publicCardName(item)}${index === 0 ? ', resolves next' : ''}${targets.length ? `, targets: ${targets.join(', ')}` : ''}`}
+      aria-label={`${castLabel ?? publicCardName(item)}${effect ? `: ${effect}` : ''}${index === 0 ? ', resolves next' : ''}${targets.length ? `, targets: ${targets.join(', ')}` : ''}`}
     >
       {ability ? <AbilityCard ability={item} sleeve={sleeve} /> : <CardFace card={face} sleeve={sleeve} size="normal" />}
       {castLabel ? <div className={styles.roomStatus}><span>{castLabel}</span>{next}</div> : next}

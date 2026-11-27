@@ -25,6 +25,15 @@ const pick = (value, keys, valid) => Object.fromEntries(keys.filter(k => valid(v
 const bools = (value, keys) => pick(value,keys,v => typeof v === 'boolean')
 const numbers = (value, keys) => pick(value,keys,Number.isSafeInteger)
 const cardEntries = zone => record(zone) ? Object.entries(zone).filter(([,v]) => record(v)) : []
+const stackKind = new Set(['triggered','activated'])
+const sourceKind = new Set(['card','token','command'])
+const effectText = value => typeof value === 'string' && value.length > 0 && value.length <= 1800 && !/[<>\u0000-\u001f\u007f]/u.test(value)
+const stackTypes = new Set(['ABILITY_STACK_FROM_CARD','ABILITY_STACK_FROM_TOKEN'])
+const abilityCard = card => card.isAbility === true || record(card.sourceCard) || record(card.stackAbility) || stackTypes.has(card.mageObjectType)
+const printing = card => ({
+  ...pick(card,['expansionSetCode'],v => typeof v==='string' && /^[A-Za-z0-9]{1,8}$/.test(v)),
+  ...pick(card,['cardNumber'],v => typeof v==='string' && /^[A-Za-z0-9★-]{1,14}$/u.test(v)),
+})
 
 // Only traverse zones shared by both seats. Attached ability/card copies can repeat the same object
 // with different visibility flags, including in combat and accumulated archive views.
@@ -100,6 +109,29 @@ function publicView(view, roster, gameId) {
   const objects = publicObjects(view)
   const {concealed,markedIds} = concealedObjects(objects)
   const publicIds = new Set(objects.flatMap(([key,c]) => [key,c.id]).filter(isUuid))
+  const publicSources = new Map(objects.filter(([key,c]) => !concealed.has(c) && !abilityCard(c) && isUuid(key) && key === c.id && label(c.name)))
+  function currentSource(card) {
+    return {id:card.id,name:card.name,kind:card.isToken === true ? 'token' : 'card',...printing(card)}
+  }
+  function publicAbility(card) {
+    const captured = record(card.stackAbility) ? card.stackAbility : null
+    const declared = captured?.source
+    const legacyType = card.abilityType === 'TRIGGERED_NONMANA' ? 'triggered'
+      : card.abilityType === 'ACTIVATED_NONMANA' ? 'activated' : undefined
+    const kind = stackKind.has(captured?.kind) ? captured.kind : legacyType
+    const sourceId = declared?.id
+    // A legacy nested source can suggest an ID but cannot attest to its visibility or supply any text.
+    const corroborated = publicSources.get(captured ? sourceId : card.sourceCard?.id)
+    if (markedIds.has(sourceId) || concealed.has(card.sourceCard)
+        || (record(declared) && (concealedCardFace(declared) || privateZones.has(declared.zone)))) return kind ? {kind} : undefined
+    const capturedSource = record(declared) && label(declared.name) && sourceKind.has(declared.kind)
+      && (sourceId === undefined || isUuid(sourceId))
+    const source = capturedSource ? {name:declared.name,kind:declared.kind,...printing(declared),
+      ...(corroborated?.name === declared.name ? {id:sourceId,...printing(corroborated)} : {})}
+      : !captured && corroborated ? currentSource(corroborated) : undefined
+    const effect = capturedSource && effectText(captured.effect) ? captured.effect : undefined
+    return kind || source ? {...(kind && {kind}),...(source && {source}),...(effect && {effect})} : undefined
+  }
   function opaque(key) {
     return 'object-' + createHmac('sha256',maskKey).update(JSON.stringify([gameId,key ?? null])).digest('hex').slice(0,24)
   }
@@ -109,12 +141,11 @@ function publicView(view, roster, gameId) {
     const id = isUuid(c.id) ? c.id : isUuid(key) ? key : opaque(key)
     const state = {id,...bools(c,['tapped','phasedIn','summoningSickness','isToken']),...numbers(c,['damage']),...counters(c),
       ...pick(c,['ownerId','controllerId'],v => roster.has(v))}
-    if (c.isAbility === true || record(c.sourceCard) || ['ABILITY_STACK_FROM_CARD','ABILITY_STACK_FROM_TOKEN'].includes(c.mageObjectType)) {
-      return {...state,isAbility:true,name:'Ability'}
+    if (abilityCard(c)) {
+      const stackAbility = publicAbility(c)
+      return {...state,isAbility:true,name:'Ability',...(stackAbility && {stackAbility})}
     }
-    return {...state,...pick(c,['name'],label),
-      ...pick(c,['expansionSetCode'],v => typeof v==='string' && /^[A-Za-z0-9]{1,8}$/.test(v)),
-      ...pick(c,['cardNumber'],v => typeof v==='string' && /^[A-Za-z0-9★-]{1,14}$/u.test(v)),
+    return {...state,...pick(c,['name'],label),...printing(c),
       ...pick(c,['power','toughness','loyalty','defense'],v => typeof v==='string' && /^[-+\d*/X]{1,8}$/.test(v)),
       ...(Array.isArray(c.cardTypes) && {cardTypes:c.cardTypes.filter(t => cardTypes.has(t))})}
   }

@@ -126,6 +126,34 @@ test.each([
   expect(api.replayPage).not.toHaveBeenCalled();
 });
 
+test('[PM-REVIEW-UI-9] private analysis displays the quality reason as safe paragraphs and lists', async () => {
+  const qualityReason = [
+    'The game ended on the round clock.',
+    '',
+    '- The closing turn has no outcome.',
+    '- The archive keeps the last resolved block.',
+    '',
+    '1. Recheck the round deadline.',
+    '',
+    '<img src="https://example.invalid/raw" onerror="alert(1)"> <script>alert(1)</script>',
+    '![tracker](https://example.invalid/tracker.png) [run](javascript:alert(1))',
+  ].join('\n');
+  const original = request.getMockImplementation()!;
+  request.mockImplementation((url, options) => url === '/api/playtesting/review/games/game'
+    ? json({ ...game, goodQuality: false, qualityReason, qualityAnchor: { kind: 'interruption' } })
+    : original(url, options));
+  openReplay();
+  fireEvent.click(await screen.findByRole('switch', { name: 'Show analysis' }));
+  const review = await screen.findByRole('region', { name: 'Game quality' });
+  expect(within(review).getByText('Below quality threshold')).toBeTruthy();
+  expect(within(review).getByText('The game ended on the round clock.').tagName).toBe('P');
+  expect(Array.from(review.querySelectorAll('ul li'), item => item.textContent)).toEqual([
+    'The closing turn has no outcome.', 'The archive keeps the last resolved block.',
+  ]);
+  expect(Array.from(review.querySelectorAll('ol li'), item => item.textContent)).toEqual(['Recheck the round deadline.']);
+  expect(review.querySelector('img, script, a')).toBeNull();
+});
+
 test('[PM-REVIEW-UI-1] jumping to a reviewed play preserves the cursor when changing hands and perspective', async () => {
   openReplay();
   const analysis = await screen.findByRole('switch', { name: 'Show analysis' });

@@ -336,6 +336,7 @@ export interface CardView extends SimpleCardView {
     rules?: string[];
     secondCardFace?: CardView;
     spellTargetGroups?: string[][];
+    stackAbility?: PublicStackAbilityView;
     startingDefense?: string;
     startingLoyalty?: string;
     subTypes?: SubType[];
@@ -1981,6 +1982,12 @@ export interface PresenceStatus {
     status?: string;
 }
 
+export interface PublicStackAbilityView extends Serializable {
+    effect?: string;
+    kind?: string;
+    source?: Source;
+}
+
 export interface Puzzle extends Serializable {
     firstTurn?: string;
     hint?: string;
@@ -2232,6 +2239,14 @@ export interface SoloTurn {
     active?: string;
     at?: number;
     turn?: number;
+}
+
+export interface Source extends Serializable {
+    cardNumber?: string;
+    expansionSetCode?: string;
+    id?: string;
+    kind?: string;
+    name?: string;
 }
 
 export interface StackAbilityView extends CardView {

@@ -9,6 +9,8 @@ import { PromptText } from './PromptText';
 import styles from './AbilityCard.module.css';
 
 function kindOf(card: CardView): MessageKey {
+  if (card.stackAbility?.kind === 'triggered') return 'ui.ability.triggered';
+  if (card.stackAbility?.kind === 'activated') return 'ui.ability.activated';
   const type = card.abilityType ?? '';
   if (type.startsWith('TRIGGERED')) return 'ui.ability.triggered';
   if (type.startsWith('ACTIVATED')) return 'ui.ability.activated';
@@ -26,12 +28,13 @@ export function AbilityCard({ ability, sleeve, style, className }: {
   className?: string;
 }) {
   const t = useT();
-  const source = (ability as StackAbilityView).sourceCard;
+  const source: CardView | undefined = ability.stackAbility ? ability.stackAbility.source : (ability as StackAbilityView).sourceCard;
   const art = useCardImage(source?.expansionSetCode ? source : null, source && showsBackFace(source) ? 'back' : 'front', 'art_crop');
   const name = source?.displayName ?? source?.name ?? t('ui.ability');
   // the server's live hints follow the rules with an icon name in front ("ICON_GOOD..."): print them as plain lines (#173)
   const { rules, hints } = splitRules(ability);
-  const text = [...rules.map(stripMarkup), ...hints.map((hint) => hint.text)].filter(Boolean);
+  const text = ability.stackAbility ? [ability.stackAbility.effect].filter((line): line is string => !!line)
+    : [...rules.map(stripMarkup), ...hints.map((hint) => hint.text)].filter(Boolean);
   return (
     <div className={[styles.sleeve, className ?? ''].join(' ')} style={{ ...(sleeve ? { '--sleeve': sleeve } : {}), ...style } as CSSProperties}>
       <div className={styles.card}>

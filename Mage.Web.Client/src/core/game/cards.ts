@@ -6,6 +6,7 @@ import type { CardView, StackAbilityView } from '../../protocol/generated/views'
  */
 export function isStackAbility(card: CardView): card is StackAbilityView {
   return !!card.isAbility
+    || !!card.stackAbility
     || !!(card as StackAbilityView).sourceCard
     || (card.mageObjectType ?? '').startsWith('ABILITY');
 }

@@ -170,7 +170,8 @@ export function createProductClient(baseUrl, publicUrl) {
         break;
       case 'save_game_quality':
         path = `${root}/review/games/${encode(args.gameId)}/quality`;
-        config = { method: 'PUT', body: { archiveRevision: args.archiveRevision, goodQuality: args.goodQuality } };
+        config = { method: 'PUT', body: { archiveRevision: args.archiveRevision, goodQuality: args.goodQuality,
+          qualityReason: args.qualityReason, qualityAnchor: args.qualityAnchor } };
         break;
       case 'run_theory_study':
         path = `${root}/theory/studies`;
@@ -215,7 +216,7 @@ export function createProductClient(baseUrl, publicUrl) {
           throw new ToolError('review_not_ready', 'Wait for the whole match and its replay archive.');
         }
         if (name === 'save_game_quality') {
-          throw new ToolError('review_conflict', 'Check the current archive revision and how the game ended before retrying the verdict.');
+          throw new ToolError('review_conflict', 'Check the current archive revision, evidence anchor and ending cause before retrying the verdict.');
         }
         throw new ToolError('review_conflict', 'Read the current archive and annotation revisions before retrying.');
       }

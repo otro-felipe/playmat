@@ -216,6 +216,17 @@ public class GameView implements Serializable {
                     // can happen if a player times out while ability is on the stack
                     LOGGER.debug("Stack Object for stack ability not found: " + stackObject.getStackAbility().getRule());
                 }
+                if (createdForPlayerId == null) {
+                    CardView watcherStackView = stack.computeIfAbsent(stackObject.getId(), id -> {
+                        CardView placeholder = new CardView();
+                        placeholder.id = id;
+                        placeholder.controllerId = stackObject.getControllerId();
+                        placeholder.name = "Ability";
+                        placeholder.isAbility = true;
+                        return placeholder;
+                    });
+                    watcherStackView.stackAbility = PublicStackAbilityView.capture(game, (StackAbility) stackObject);
+                }
             } else if (stackObject != null) {
                 throw new IllegalArgumentException("Unknown type of StackObject: " + stackObject + " - " + stackObject.getClass().toString());
             }

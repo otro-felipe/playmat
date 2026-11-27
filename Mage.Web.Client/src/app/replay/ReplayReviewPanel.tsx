@@ -7,6 +7,7 @@ import { CardMarkdown, CardPreviewName, type PreviewCard } from '../ui/CardMarkd
 import { Button, IconButton } from '../ui/Button';
 import { DecisionContext, DecisionTitle, RecordedDecision, ReviewRating } from './ReplayDecision';
 import { decisionPresentation } from './decisionPresentation';
+import { QualityReason } from './QualityReason';
 import { safePublicSource, type ReviewAnnotation, type ReviewDecisionContext, type ReviewMoment, type ReviewSummary, type SideboardDelta } from './reviewData';
 import styles from './ReplayReviewPanel.module.css';
 
@@ -14,8 +15,9 @@ registerMessages(messages);
 
 export { Switch as ReviewSwitch } from '../ui/Switch';
 
-export function ReplayReviewPanel({ analysis, sideboardDelta, moments, current, annotation, decision, decisionContexts, missingDecisionHand, showRetrospective, onMoment, onPrevious, onNext, loading, error, onRetry }: {
+export function ReplayReviewPanel({ analysis, quality, sideboardDelta, moments, current, annotation, decision, decisionContexts, missingDecisionHand, showRetrospective, onMoment, onPrevious, onNext, loading, error, onRetry }: {
   analysis?: ReviewSummary;
+  quality?: { good: boolean; reason: string };
   sideboardDelta?: SideboardDelta;
   moments: readonly ReviewMoment[];
   current?: number;
@@ -51,6 +53,7 @@ export function ReplayReviewPanel({ analysis, sideboardDelta, moments, current, 
         {t(`replay.status.${analysis.status}`)}
         {!!analysis.eligible && ` · ${t('replay.reviewed', { reviewed: analysis.reviewed, eligible: analysis.eligible })}`}
       </p>}
+      {quality && <QualityReason {...quality} />}
       {error && (
         <div className={styles.problem}>
           <p role="alert">{t('replay.reviewError')}</p>

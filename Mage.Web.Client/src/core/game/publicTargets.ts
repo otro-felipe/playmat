@@ -3,6 +3,7 @@ import type { CardView, GameView, StackAbilityView } from '../../protocol/genera
 /** A public label only: never search hands, private viewers or a previous view's card cache. */
 export function publicCardName(card: CardView): string {
   if (card.faceDown || card.hideInfo) return 'Face-down card';
+  if (card.stackAbility) return card.stackAbility.source?.name ? `Ability of ${card.stackAbility.source.name}` : 'Ability';
   const source = (card as StackAbilityView).sourceCard;
   if (source) return `Ability of ${source.faceDown || source.hideInfo ? 'Face-down card' : source.displayName || source.name || 'Card'}`;
   return card.displayName || card.name || 'Card';

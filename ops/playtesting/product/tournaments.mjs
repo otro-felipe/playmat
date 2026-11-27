@@ -177,7 +177,8 @@ export function createTournamentService(
       const {
         rows: [p],
       } = await db.query(
-        `SELECT id,state FROM tournament_entries WHERE tournament_id=$1 AND owner_id=$2
+        `SELECT id,state,deck_name,deck_revision,NULLIF(opening_archetype,'Other') AS archetype
+        FROM tournament_entries WHERE tournament_id=$1 AND owner_id=$2
         AND player_id IS NOT DISTINCT FROM $3::uuid`,
         [id, actor.accountId, actor.playerId ?? null],
       )
@@ -192,6 +193,7 @@ export function createTournamentService(
       const base = {
         tournamentId: id,
         entryId: p.id,
+        registeredDeck: { name: p.deck_name, revision: p.deck_revision, archetype: p.archetype },
         roundNumber: t.round_number,
         nextRoundAt: timestamp(t.next_round_at),
         nextSessionAt: timestamp(t.next_session_at),

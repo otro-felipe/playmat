@@ -5,6 +5,10 @@ import { join } from 'node:path'
 import { isUuid, ProductError } from './decks.mjs'
 import { lineText } from './line-explanations.mjs'
 
+export function hasTournamentReplayFrame(record) {
+  return record.view?.players?.length === 2
+}
+
 /** Index only the viewer projection, never the raw archive. An unlinked file lives
  * until its final reader closes it, including across cache evictions and process exits. */
 async function buildIndex(records, game, project) {
@@ -70,7 +74,7 @@ async function buildIndex(records, game, project) {
           )
         }
       }
-      if (record.view?.players?.length !== 2) continue
+      if (!hasTournamentReplayFrame(record)) continue
       const projection = project(record, frames.length)
       lastBoard = {frame:frames.length, status:projection.status ?? 'playing'}
       lastPublicEvent = {kind:'board', ...timing}

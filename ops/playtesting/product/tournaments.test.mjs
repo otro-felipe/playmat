@@ -225,6 +225,23 @@ async function scheduledFixture(t, count, config = {}) {
 
 const dbTest = (title, run) => test(title, { skip: !process.env.PLAYMAT_TEST_DATABASE_URL }, run)
 
+dbTest('[PM-LINE-STRATEGY-1] check-in reads only the requesting seat’s frozen registered variant', async (t) => {
+  const fixture = await scheduledFixture(t, 4, { cut: 'none' })
+  const [first, second] = fixture.actors
+  await fixture.pool.query("UPDATE tournament_entries SET opening_archetype='Mono Green' WHERE player_id=$1", [first.playerId])
+  await fixture.pool.query("UPDATE tournament_entries SET deck_name='Other pilot list', opening_archetype='Other' WHERE player_id=$1", [second.playerId])
+  fixture.deck.name = 'Later library revision'
+  fixture.deck.revision = 2
+  await fixture.open()
+  const receipt = await fixture.service.wait(fixture.id, first)
+  assert.deepEqual(receipt.registeredDeck, { name: 'Secret list', revision: 1, archetype: 'Mono Green' })
+  assert.equal(receipt.opponent?.registeredDeck, undefined)
+  assert.ok(!JSON.stringify(receipt).includes('Other pilot list'))
+  assert.deepEqual((await fixture.service.wait(fixture.id, second)).registeredDeck,
+    { name: 'Other pilot list', revision: 1, archetype: null })
+  assert.ok((await fixture.service.get(fixture.id)).standings.every(row => !('registeredDeck' in row)))
+})
+
 dbTest('[CUP-AC-003] tournament registration snapshots MCP runtime metadata independently of later profile and deck edits', async t => {
   const f = await scheduledFixture(t, 2)
   const [pilot, legacy] = f.actors

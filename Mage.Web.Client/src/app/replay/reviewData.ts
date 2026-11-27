@@ -46,6 +46,8 @@ export interface ReviewManifest {
   fullAvailable?: boolean;
   coverage?: ReviewCoverage;
   archiveRevision?: string;
+  goodQuality?: boolean;
+  qualityReason?: string;
   analysis?: ReviewSummary;
   sideboardDelta?: SideboardDelta;
   privacy?: {

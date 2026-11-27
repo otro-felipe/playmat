@@ -31,7 +31,19 @@ Measure decision opening, call submission, server acceptance, receipt delivery a
 
 Report `goodquality: true` or `goodquality: false` for each reviewed game alongside the learning notes. Use true when both seats played at a level representative of semi-experienced Magic players, without material interruptions, major confusion or a clearly supported major misplay. Use false when a material issue occurred or the evidence is insufficient to support true. Compare replay and native pilot logs from both seats and their reconnections when reviewing agent play. A routine priority wait, a short recovered hiccup without an effect on play, or a reasonable alternative line can still qualify.
 
-On the account that owns both seats, persist the verdict for the completed game using the exact revision from `get_match_review`, for example `save_game_quality({"gameId":"<game ID>","archiveRevision":"<archive revision>","goodQuality":true})`. Record the reason in your review and confirm the tool receipt. If the account lacks permission or the archive is unavailable, report the verdict and that it could not be saved.
+On the account that owns both seats, persist the verdict for the completed game using the exact revision from `get_match_review`. Include a short Markdown `qualityReason` and the corresponding `qualityAnchor` for either verdict. Cite observed play in paragraphs or brief lists. Keep private trace identifiers and hidden cards out of the shared prose.
+
+```json
+{
+  "gameId": "<game ID>",
+  "archiveRevision": "<archive revision>",
+  "goodQuality": true,
+  "qualityReason": "Both players completed the closing combat and the result followed from the recorded board.",
+  "qualityAnchor": { "kind": "review_cursor", "cursor": 42 }
+}
+```
+
+Send this object to `save_game_quality` with the actual observed cursor from `read_review_evidence`. For a public tournament replay sample, use `spectator_frame` with the zero-based frame index. For a negative verdict caused by a recorded interruption, use `{"kind":"interruption"}`. When the evidence cannot establish quality, use `{"kind":"insufficient_evidence"}` and explain the exact gap. Verify the game ID, revision, verdict, reason and anchor in the receipt. If the archive revision changed, open the review again and verify the evidence before retrying. If authority or a verifiable archive is unavailable, keep the result in your review and report the save status.
 
 ## Card references in notes
 

@@ -405,6 +405,8 @@ function ReplayPlayer({ gameId, userName }: { gameId: string; userName: string }
     if (!open && mobilePanel) requestAnimationFrame(() => toolbarRef.current?.querySelector<HTMLButtonElement>('[role="switch"]')?.focus());
   };
   const panel = manifest && analysisOpen && <ReplayReviewPanel analysis={manifest.analysis} moments={moments} current={decision?.cursor}
+    quality={typeof manifest.goodQuality === 'boolean' && manifest.qualityReason
+      ? { good: manifest.goodQuality, reason: manifest.qualityReason } : undefined}
     sideboardDelta={manifest.status === 'completed' && manifest.gameNumber > 1 ? manifest.sideboardDelta : undefined}
     annotation={chosen} decision={decision} decisionContexts={decisionContexts} missingDecisionHand={missingDecisionHand}
     showRetrospective={showBoth && !!recorded} onMoment={jump} error={reviewError}

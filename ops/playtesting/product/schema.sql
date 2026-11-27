@@ -302,3 +302,8 @@ CREATE TABLE IF NOT EXISTS external_mcp_invite_links (
 ALTER TABLE games ADD COLUMN IF NOT EXISTS end_cause text;
 ALTER TABLE games ADD COLUMN IF NOT EXISTS end_cause_checked boolean NOT NULL DEFAULT false;
 ALTER TABLE games ADD COLUMN IF NOT EXISTS good_quality boolean NOT NULL DEFAULT false;
+ALTER TABLE games
+  ADD COLUMN IF NOT EXISTS quality_reason text,
+  ADD COLUMN IF NOT EXISTS quality_anchor_kind text,
+  ADD COLUMN IF NOT EXISTS quality_anchor_cursor integer,
+  ADD COLUMN IF NOT EXISTS quality_archive_revision text;

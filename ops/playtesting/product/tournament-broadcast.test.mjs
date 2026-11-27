@@ -3,6 +3,42 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { createTournamentBroadcast } from './tournament-broadcast.mjs'
 
+test('[CUP-AC-006] live and replay preserve distinct public stack abilities, a departed token, and resolution order', async t => {
+  const [event, pair, table, game, a, b, challenger, valiant, prowess, rage, tokenTrigger] = Array.from({ length: 11 }, randomUUID)
+  const source = { id:challenger, name:'Emberheart Challenger', kind:'card', expansionSetCode:'BLB', cardNumber:'133' }
+  const abilities = [
+    { kind:'triggered', source, effect:'Exile the top card of your library. Until end of turn, you may play that card.' },
+    { kind:'triggered', source, effect:'This creature gets +1/+1 until end of turn.' },
+    { kind:'activated', source:{ name:'Food Token', kind:'token' }, effect:'You gain 3 life.' },
+  ]
+  const players = [{ name:'a', playerId:a }, { name:'b', playerId:b }]
+  const view = { players:[{...players[0],battlefield:{[challenger]:source}},players[1]], stack:{
+    [valiant]:{ id:valiant, name:'Ability', isAbility:true, stackAbility:abilities[0], rules:['PRIVATE CONTEXT'] },
+    [prowess]:{ id:prowess, name:'Ability', isAbility:true, stackAbility:abilities[1] },
+    [tokenTrigger]:{ id:tokenTrigger, name:'Ability', isAbility:true, stackAbility:abilities[2] },
+    [rage]:{ id:rage, name:'Reckless Rage' },
+  } }
+  const pairing = { id:pair, table_id:table, completed:false, name_a:'a', name_b:'b', display_a:'A', display_b:'B' }
+  const pool = { async query(sql) {
+    return { rows:sql.includes('JOIN tournament_entries') ? [pairing] : [{ id:game, checksum:'v1', object_key:'fixture' }] }
+  } }
+  const broadcast = createTournamentBroadcast(pool, { streamTournamentRecords() { return [{view}] } }, async () => ({
+    snapshot:{ tableId:table, gameId:game, status:'playing', players, view },
+  }))
+  t.after(() => broadcast.close())
+  const live = await broadcast.live(event,pair,null,false)
+  pairing.completed = true
+  const replay = await broadcast.replay(event,pair,null,new URLSearchParams({gameId:game,frame:0}))
+  for (const board of [live,replay]) {
+    assert.equal(board.status,'playing')
+    const stack = Object.values(board.view.stack)
+    assert.deepEqual(stack.map(x => x.id), [valiant,prowess,tokenTrigger,rage])
+    assert.deepEqual(stack.slice(0,3).map(x => x.stackAbility), abilities)
+    assert.equal(stack[3].name,'Reckless Rage')
+    assert.doesNotMatch(JSON.stringify(stack), /PRIVATE CONTEXT/)
+  }
+})
+
 test('replay shows only published decisions up to the selected frame, attributed to the player', async t => {
   const [event, pair, table, game, a, b] = Array.from({ length: 6 }, () => randomUUID())
   const view = { players: [{ name: 'a', playerId: a }, { name: 'b', playerId: b }] }

@@ -106,6 +106,25 @@ test('a concealed nested source also protects its unmarked public mirror and opa
   assert.ok(!JSON.stringify(result).includes(privateText))
 })
 
+test('[CUP-AC-006] masks concealed sources and derives only corroborated names from old frames', () => {
+  const f=frame(), [masked,old,unknown,invalid,maskedDeclaration]=Array.from({length:5},randomUUID)
+  const source = { id:visible.id, name:visible.name, kind:'card' }
+  f.view.stack={
+    [masked]:{id:masked,isAbility:true,sourceCard:hidden,stackAbility:{kind:'triggered',source:{id:hidden.id,name:privateText,kind:'card'},effect:privateText}},
+    [old]:{id:old,sourceCard:{id:visible.id,name:privateText},abilityType:'TRIGGERED_NONMANA',rules:[privateText]},
+    [unknown]:{id:unknown,sourceCard:{id:randomUUID(),name:privateText,zone:'HAND'},rules:[privateText]},
+    [invalid]:{id:invalid,isAbility:true,sourceCard:{id:visible.id},stackAbility:{kind:'invalid',source,effect:'<i>'+privateText+'</i>'}},
+    [maskedDeclaration]:{id:maskedDeclaration,isAbility:true,stackAbility:{kind:'activated',source:{name:privateText,kind:'card',cloaked:true},effect:privateText}},
+  }
+  const {stack}=publicSpectatorBoard(f).view
+  assert.equal(Object.values(stack)[0].faceDown,true)
+  assert.deepEqual(stack[old].stackAbility,{kind:'triggered',source:{...source,expansionSetCode:'LEA',cardNumber:'197'}})
+  assert.equal(stack[unknown],undefined)
+  assert.deepEqual(stack[invalid].stackAbility,{source:{...source,expansionSetCode:'LEA',cardNumber:'197'}})
+  assert.deepEqual(stack[maskedDeclaration].stackAbility,{kind:'activated'})
+  assert.doesNotMatch(JSON.stringify(stack), new RegExp(privateText+'|'+hidden.id+'|'+masked))
+})
+
 test('numeric counters survive while input-only arbitrary counter labels and embedded text are withheld',()=>{
   const f=frame(),p=f.view.players[0]
   p.counters=[{name:'poison',count:2,caption:privateText},{name:privateText,count:1}]

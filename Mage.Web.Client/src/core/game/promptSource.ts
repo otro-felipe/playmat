@@ -19,5 +19,6 @@ export function promptSourceId(prompt: Prompt | null | undefined): string | null
 
 /** The permanent an ability on the stack comes from (its source's id), or null for a spell. */
 export function stackSourceId(item: CardView): string | null {
+  if (item.stackAbility) return item.stackAbility.source?.id ?? null;
   return isStackAbility(item) ? item.sourceCard?.id ?? null : null;
 }

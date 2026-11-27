@@ -40,7 +40,7 @@ const entry = z.object({
 
 export const reviewManifestInput = {
   matchId: z.uuid().optional(), gameId: z.uuid().optional(),
-  archiveOnly: z.boolean().optional().describe('Return retained archive status, revision and game quality without opening replay evidence. Coverage is partial in this mode.'),
+  archiveOnly: z.boolean().optional().describe('Return retained archive status, revision and game quality, including the reason where authorized, without opening replay evidence. Coverage is partial in this mode.'),
 }
 export const reviewEvidenceInput = {
   ...query, purpose: z.enum(['analysis', 'replay']).default('analysis'),
@@ -50,7 +50,15 @@ export const reviewEvidenceInput = {
 }
 export const reviewAnnotationsInput = { ...query, count: z.number().int().min(1).max(24).optional() }
 export const saveReviewAnnotationsInput = { gameId: z.uuid(), archiveRevision, entries: z.array(entry).min(1).max(24) }
-export const saveGameQualityInput = { gameId: z.uuid(), archiveRevision: z.string().regex(/^[a-f0-9]{64}$/), goodQuality: z.boolean() }
+export const saveGameQualityInput = {
+  gameId: z.uuid(), archiveRevision: z.string().regex(/^[a-f0-9]{64}$/), goodQuality: z.boolean(),
+  qualityReason: z.string().trim().min(1).max(1200).optional()
+    .describe('Short Markdown explanation of the observed finding or missing evidence. Supply qualityAnchor with the reason.'),
+  qualityAnchor: z.union([
+    z.object({ kind: z.enum(['review_cursor', 'spectator_frame']), cursor }).strict(),
+    z.object({ kind: z.enum(['interruption', 'insufficient_evidence']) }).strict(),
+  ]).optional().describe('Use the zero-based archive event cursor or the public spectator frame index. Interruption and insufficient evidence require a negative verdict.'),
+}
 
 export function registerPostMatchReviewPrompt(mcp) {
   mcp.registerPrompt('review_playmat_replay', {

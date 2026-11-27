@@ -95,6 +95,7 @@ public class CardView extends SimpleCardView {
 
     protected boolean isAbility;
     protected AbilityType abilityType;
+    protected PublicStackAbilityView stackAbility;
     protected boolean isToken;
 
     protected CardView ability;
@@ -231,6 +232,7 @@ public class CardView extends SimpleCardView {
 
         this.mageObjectType = cardView.mageObjectType;
         this.isAbility = cardView.isAbility;
+        this.stackAbility = cardView.stackAbility;
         this.abilityType = cardView.abilityType;
         this.isToken = cardView.isToken;
         this.ability = cardView.ability; // reference, not copy

@@ -116,6 +116,7 @@ test('an invited agent can discover Thoughtseize and read its guides before join
     [gettingStarted, /join_game[\s\S]*wait_for_decision[\s\S]*send_chat/],
     [cardCatalog, /search_cards[\s\S]*find_possible_responses/],
     [turnPlanning, /play_sequence[\s\S]*expectCast/],
+    ['playmat://guides/matchup-strategy', /Decide what the last attacker adds/],
     ['playmat://guides/replay-analysis', /earlier games[\s\S]*Wrenn.s Resolve[\s\S]*Thoughtseize/],
     ['playmat://guides/player-dispatch', /list_joinable_games[\s\S]*availableOnly[\s\S]*create_player_slot[\s\S]*join_game/],
     [rules, /magic\.wizards\.com\/en\/rules[\s\S]*media\.wizards\.com\/\d{4}\/downloads\/MagicCompRules.*\.txt[\s\S]*117/],
@@ -166,8 +167,8 @@ test('[PM-AC-08] a tools-only connector can discover and read the same guides as
   }
   const { error, value: { guides } } = await call(client, 'get_guide');
   assert.equal(error, false);
-  assert.deepEqual(new Set(guides.map(({ name }) => name)), new Set(['core', ...ids, 'replay-analysis', 'player-dispatch']));
-  assert.equal(guides.length, ids.length + 3);
+  assert.deepEqual(new Set(guides.map(({ name }) => name)), new Set(['core', ...ids, 'replay-analysis', 'player-dispatch', 'matchup-strategy']));
+  assert.equal(guides.length, ids.length + 4);
 
   const { resources } = await client.listResources();
   for (const guide of guides) {
@@ -203,7 +204,7 @@ test('[PM-REVIEW-API-8] replay prompt includes matchup research, omissions and a
   assert.match(coachGuide, /same matchup strategy in.*card-catalog/i);
 });
 
-test('[PM-LINE-04] one bootstrap returns the core guide and the detailed-guide index without opening a seat', async (t) => {
+test('[PM-LINE-04, PM-LINE-STRATEGY-1] a fresh seat discovers the shared combat criterion without opening a seat', async (t) => {
   const { url, fixtures } = await start(t);
   const client = await connect(t, url, 'fixture-other');
   const bundle = await call(client, 'get_guide', { bundle: true });
@@ -213,11 +214,14 @@ test('[PM-LINE-04] one bootstrap returns the core guide and the detailed-guide i
   assert.deepEqual(bundle.value.guides.map(({ name }) => name), ['core']);
   assert.ok(JSON.stringify(bundle.value).length < 16_384, 'The bundle stays well under client tool-output limits');
   assert.deepEqual(new Set(bundle.value.detailedGuides.map(({ name }) => name)),
-    new Set(['getting-started', 'card-catalog', 'turn-planning', 'rules', 'player-dispatch', 'replay-analysis']));
-  for (const guideId of ['getting-started', 'turn-planning', 'card-catalog', 'rules']) {
+    new Set(['getting-started', 'card-catalog', 'turn-planning', 'rules', 'player-dispatch', 'replay-analysis', 'matchup-strategy']));
+  for (const guideId of ['getting-started', 'turn-planning', 'card-catalog', 'rules', 'matchup-strategy']) {
     assert.match(bundle.value.guides[0].text, new RegExp('`' + guideId + '`'), `The core guide points to ${guideId}`);
   }
   const onboarding = (await call(client, 'get_guide', { guideId: 'getting-started' })).value;
+  const strategy = (await call(client, 'get_guide', { guideId: 'matchup-strategy' })).value;
+  assert.match(strategy.text, /Decide what the last attacker adds[\s\S]*best legal blocks/i);
+  assert.ok((await call(client, 'get_guide', { guideId: 'replay-analysis' })).value.text.endsWith(strategy.text));
   for (const term of ['Partida', 'Juego', 'Jugador Humano', 'Jugador MCP', 'Agente', 'Oponente', 'Biblioteca', 'Historial']) {
     assert.ok(onboarding.text.includes('**' + term), term);
   }

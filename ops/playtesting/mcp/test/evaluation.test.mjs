@@ -160,6 +160,27 @@ test('[PM-REVIEW-API-11] native MCP forwards the explicit boolean quality verdic
   }]);
 });
 
+test('[PM-REVIEW-API-13] native MCP forwards bounded Markdown and an explicit quality anchor', async t => {
+  const { mcp, requests } = await start(t);
+  const judge = await connect(t, mcp, 'owner');
+  const name = 'save_game_quality';
+  const archiveRevision = 'a'.repeat(64);
+  const reason = { gameId: GAME, archiveRevision, goodQuality: false,
+    qualityReason: 'The closing turn lacks evidence.\n\n- The request has no confirmed resolution.',
+    qualityAnchor: { kind: 'spectator_frame', cursor: 7 } };
+  for (const invalid of [
+    { ...reason, qualityReason: 'x'.repeat(1201) },
+    { ...reason, qualityAnchor: { kind: 'spectator_frame', cursor: -1 } },
+    { ...reason, qualityAnchor: { kind: 'native_trace', cursor: 7 } },
+  ]) assert.equal((await judge.callTool({ name, arguments: invalid })).isError, true);
+  assert.equal(requests.length, 0);
+  assert.equal((await call(judge, name, reason)).error, false);
+  const { gameId, ...body } = reason;
+  assert.deepEqual(requests, [{
+    actor: 'owner', method: 'PUT', path: `/api/playtesting/review/games/${gameId}/quality`, body,
+  }]);
+});
+
 test('[PM-AC-15] the review prompt teaches the connected model to compare plausible counterfactuals', async (t) => {
   const { mcp, requests } = await start(t);
   const owner = await connect(t, mcp, 'owner');

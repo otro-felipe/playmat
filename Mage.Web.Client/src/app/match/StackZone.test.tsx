@@ -71,3 +71,21 @@ describe('[READ-AC-001] stack target announcements', () => {
     expect(useMatchUi.getState().stackFocus).toBeNull();
   });
 });
+
+test('[CUP-AC-006] shows two distinct abilities from the same source in resolution order', () => {
+  const source = { name: 'Emberheart Challenger', kind: 'card' } as const;
+  const effects = ['Exile the top card of your library.', 'This creature gets +1/+1 until end of turn.'];
+  const items: StackAbilityView[] = effects.map((effect, index) => ({
+    id: `ability-${index}`, isAbility: true, name: 'Ability', stackAbility: { kind: 'triggered', source, effect },
+  }));
+  render(<StackZone items={[...items, { id: 'rage', name: 'Reckless Rage' }]} clickable={new Set()} selected={new Set()}
+    sleeveOf={() => ''} onClick={() => undefined} originOf={() => undefined} />);
+  const rows = screen.getAllByRole('listitem');
+  expect(rows[0].getAttribute('aria-label')).toContain('resolves next');
+  for (const [index, effect] of effects.entries()) {
+    expect(rows[index].textContent).toContain(source.name);
+    expect(rows[index].textContent).toContain(effect);
+    expect(rows[index].getAttribute('aria-label')).toContain(effect);
+  }
+  expect(rows[2].getAttribute('aria-label')).toBe('Reckless Rage');
+});
