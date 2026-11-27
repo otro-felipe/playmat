@@ -263,8 +263,10 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
       || ['list_recoverable_matches', 'get_recovery_status', 'recover_match'].includes(name));
     if (gameTool || ['create_game','join_game'].includes(name)) inputSchema = { ...inputSchema,
       humanTableId: Uuid.optional().describe('Supply the opted-in table ID on every call for the Human Player. Omit to use the MCP Player.') };
-    inputSchema = name === 'create_tournament' ? z.strictObject(inputSchema) : { ...inputSchema, playerId: Uuid.optional().describe('Persistent Thoughtseize player ID from list_players. Supply it on each seat call when your connection controls named players. A profile-bound grant keeps its own player when omitted. Use game object IDs for targets inside actions.') };
-    mcp.registerTool(name, { description, inputSchema, annotations: { readOnlyHint, ...(name === 'create_tournament' && { idempotentHint: true }) },
+    const tournamentManagement = scope === 'tournaments:manage';
+    const idempotent = ['create_tournament', 'release_stale_tournament_reservation'].includes(name);
+    inputSchema = tournamentManagement ? z.strictObject(inputSchema) : { ...inputSchema, playerId: Uuid.optional().describe('Persistent Thoughtseize player ID from list_players. Supply it on each seat call when your connection controls named players. A profile-bound grant keeps its own player when omitted. Use game object IDs for targets inside actions.') };
+    mcp.registerTool(name, { description, inputSchema, annotations: { readOnlyHint, ...(idempotent && { idempotentHint: true }) },
       _meta: { securitySchemes: scopes.map(value => ({ type: 'oauth2', scopes: [value] })) },
     }, async (args, extra) => {
       try {
@@ -274,8 +276,8 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
         if (scope === 'history' && actor.playerId) {
           throw new ToolError('history_account_only', 'Review and history tools read the account archive. Use the account connection; a player-bound connection cannot read history. There, playerId optionally chooses an owned player\'s perspective.');
         }
-        if (!actor.scopes.includes(scope)) {
-          throw new ToolError('forbidden', name === 'create_tournament'
+        if (!actor.scopes.includes(scope) || (tournamentManagement && (!actor.accountAgent || !actor.connectionId || actor.playerId))) {
+          throw new ToolError('forbidden', tournamentManagement
             ? 'An administrator must authorize the account connection with the optional tournaments:manage permission.'
             : 'This credential lacks the required scope.');
         }
@@ -467,13 +469,19 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
     breakMinutes: z.number().int().min(0).max(1440).optional().describe('Minutes between rounds. Defaults to 5.'),
     coaching: z.boolean().optional().describe('Allow coaching for a casual tournament. Defaults to false.'),
   }, 'tournaments:manage', args => {
-    const { actor } = current();
-    if (!actor.accountAgent || !actor.connectionId || actor.playerId) {
-      throw new ToolError('forbidden', 'Authorize tournament creation on the administrator account connection.');
-    }
     const worlds = args.template === 'worlds';
     return fromProduct('create_tournament', { ...args, cut: args.cut ?? (worlds ? 'auto' : 'none'), capacity: args.capacity ?? (worlds ? 128 : 8) });
   });
+  tool('inspect_tournament_reservations', 'Inspect reservation availability for your own agent entrants in a tournament you organize. A stale row includes exact arguments for a separate release call. Uses your administrator account connection with tournaments:manage.', {
+    tournamentId: Uuid,
+  }, 'tournaments:manage', args => fromProduct('inspect_tournament_reservations', args), true);
+  tool('release_stale_tournament_reservation', 'Release one verified stale reservation left by a finished tournament you organized. Pass the exact release object from inspect_tournament_reservations. Repeating after a successful release is safe; if a newer reservation exists, inspect again.', {
+    tournamentId: Uuid.describe('Finished tournament ID from the release object.'),
+    pairingId: Uuid,
+    participantId: Uuid.describe('Your player ID from the release object.'),
+    tableId: Uuid,
+    expectedReservationId: Uuid,
+  }, 'tournaments:manage', args => fromProduct('release_stale_tournament_reservation', args));
   tool('get_tournament', 'Read public standings, pairings for a round or a published deck. Entry IDs come from standings.', {
     tournamentId: Uuid,
     section: z.enum(['standings', 'pairings', 'deck']).default('standings'),

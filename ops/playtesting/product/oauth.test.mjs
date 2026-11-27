@@ -1853,3 +1853,163 @@ test('an opted-in organizer creates one public, unopened tournament over the MCP
   const list = await (await f.request('/api/playtesting/tournaments')).json()
   assert.deepEqual(list.tournaments.map(row => row.id), [receipt.id])
 })
+
+test('[CUP-AC-004] an opted-in organizer can inspect and release only an exact closed tournament reservation over MCP', {
+  skip: !databaseUrl || process.env.PLAYMAT_OAUTH_SDK_TEST !== '1',
+}, async t => {
+  const f = await fixture(t)
+  const owner = await f.login('ReservationOrganizer')
+  const visitor = await f.login('OtherOrganizer')
+  const account = async session => (await (await f.request('/api/playtesting/me', session)).json()).accountId
+  const ownerId = await account(owner), visitorId = await account(visitor)
+  await f.product.setTournamentAdmins([ownerId, visitorId])
+  const management = await authorizePilot(f, owner, 'tournaments:manage', undefined, false, true)
+  assert.match(await (await f.request(authPath({ scope: 'tournaments:manage' }), owner)).text(), /liberar reservas obsoletas/)
+  const noConsent = await authorizePilot(f, owner, 'play')
+  const outsider = await authorizePilot(f, visitor, 'tournaments:manage', undefined, false, true)
+  const post = (path, headers, input) => f.request(path, { ...headers, 'Content-Type': 'application/json' }, input)
+  const addPlayer = async (session, displayName) => {
+    const response = await post('/api/playtesting/players', session, { displayName, mcpEnabled: true })
+    assert.equal(response.status, 201)
+    return response.json()
+  }
+  const pilot = await addPlayer(owner, 'Stale Pilot')
+  const peer = await addPlayer(owner, 'Other Pilot')
+  const foreign = await addPlayer(visitor, 'Foreign Pilot')
+  const seat = await authorizePilot(f, owner, 'play', pilot.playerId)
+  const verify = await f.request('/internal/verify', management)
+  const { connectionId } = await verify.json()
+  const base = '/api/playtesting/tournaments'
+  const newTournament = async (session, name) => {
+    const response = await post(base, session, { name, format: 'Pioneer', requestId: randomUUID() })
+    assert.equal(response.status, 201)
+    return (await response.json()).id
+  }
+  const previous = await newTournament(management, 'Old Event')
+  const next = await newTournament(management, 'New Event')
+  const outsideEvent = await newTournament(outsider, 'Foreign Event')
+  const db = new pg.Client({ connectionString: databaseUrl, options: '-c search_path=' + f.schema })
+  await db.connect()
+  t.after(() => db.end())
+  const now = Date.now()
+  const addEntry = async (event, who, accountId) => (await db.query(
+    `INSERT INTO tournament_entries(tournament_id,owner_id,player_id,name,owner_name,engine_name,deck_id,deck_revision,deck_name)
+     VALUES ($1,$2,$3,$4,$4,$5,'fixture-deck',1,'Fixture') RETURNING id`,
+    [event, accountId, who.playerId, who.displayName, who.engineName],
+  )).rows[0].id
+  const a = await addEntry(previous, pilot, ownerId), b = await addEntry(previous, peer, ownerId)
+  await addEntry(next, pilot, ownerId)
+  await addEntry(next, peer, ownerId)
+  await addEntry(next, foreign, visitorId)
+  const tableId = randomUUID(), pairingId = randomUUID(), matchId = randomUUID(), gameId = randomUUID()
+  const restoredTable = randomUUID(), liveMatch = randomUUID(), liveGame = randomUUID()
+  const expectedReservationId = randomUUID()
+  await db.query("UPDATE tournaments SET status='finished',round_number=3 WHERE id=$1", [previous])
+  await db.query(
+    `INSERT INTO tournament_pairings(id,tournament_id,round_number,stage,number,best_of,entry_a,entry_b,table_id,match_id,
+      opened_at,wins_a,completed,result_reason)
+      VALUES ($1,$2,3,'swiss',1,3,$3,$4,$5,$6,$7,2,true,'played')`,
+    [pairingId, previous, a, b, tableId, matchId, now - 10_000],
+  )
+  await db.query(
+    "INSERT INTO matches(id,table_id,started_at,ended_at,status) VALUES($1,$2,$3,$4,'completed')",
+    [matchId, tableId, now - 10_000, now - 5_000],
+  )
+  await db.query(
+    "INSERT INTO games(id,match_id,game_number,started_at,ended_at,status,archive_state) VALUES($1,$2,1,$3,$4,'completed','ready')",
+    [gameId, matchId, now - 10_000, now - 5_000],
+  )
+  const lease = async (id, table) => db.query(
+    `INSERT INTO player_table_reservations(player_id,reservation_id,connection_id,table_id,original_table_id,started)
+     VALUES($1,$2,$3,$4,$4,true)`, [pilot.playerId, id, connectionId, table],
+  )
+  await lease(expectedReservationId, tableId)
+
+  const { createMcpServer } = await import('../mcp/src/server.mjs')
+  const { createProductClient } = await import('../mcp/src/product.mjs')
+  const requireMcp = createRequire(new URL('../mcp/package.json', import.meta.url))
+  const { Client } = requireMcp('@modelcontextprotocol/sdk/client/index.js')
+  const { StreamableHTTPClientTransport } = requireMcp('@modelcontextprotocol/sdk/client/streamableHttp.js')
+  const product = createProductClient(f.endpoint, issuer)
+  const server = createMcpServer({ authorize: product.authorize, product: product.operation })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const clients = []
+  t.after(async () => {
+    await Promise.all(clients.map(client => client.close()))
+    server.closeAllConnections()
+    server.close()
+  })
+  async function connect(headers) {
+    const client = new Client({ name: 'tournament-reservation-test', version: '1' })
+    clients.push(client)
+    await client.connect(new StreamableHTTPClientTransport(new URL('http://127.0.0.1:' + server.address().port + '/mcp'), {
+      requestInit: { headers },
+    }))
+    return client
+  }
+  const client = await connect(management)
+  const inspect = { name: 'inspect_tournament_reservations', arguments: { tournamentId: next } }
+  const exact = { tournamentId: previous, pairingId, participantId: pilot.playerId, tableId, expectedReservationId }
+  const release = { name: 'release_stale_tournament_reservation', arguments: exact }
+  const readResult = async call => {
+    const result = await client.callTool(call)
+    assert.equal(result.isError, false)
+    return JSON.parse(result.content[0].text)
+  }
+  const denied = async (call, other = client) => assert.equal((await other.callTool(call)).isError, true)
+  const publicRow = (who, status) => ({ participantId: who.playerId, displayName: who.displayName, status })
+
+  const { tools } = await client.listTools()
+  assert.equal(tools.find(tool => tool.name === inspect.name).annotations.readOnlyHint, true)
+  assert.equal(tools.find(tool => tool.name === release.name).annotations.idempotentHint, true)
+  assert.deepEqual(await readResult(inspect), {
+    tournamentId: next,
+    participants: [publicRow(peer, 'available'), { ...publicRow(pilot, 'stale'), release: exact }],
+  })
+  for (const credential of [noConsent, outsider, seat]) {
+    const other = await connect(credential)
+    await denied(inspect, other)
+    await denied(release, other)
+  }
+  assert.equal((await f.request(base + '/' + next + '/reservations')).status, 401)
+  assert.equal((await f.request(base + '/' + next + '/reservations', owner)).status, 403)
+  await denied({ ...inspect, arguments: { tournamentId: outsideEvent } })
+  await denied({ ...inspect, arguments: { ...inspect.arguments, playerId: pilot.playerId } })
+  for (const patch of [
+    { expectedReservationId: randomUUID() }, { pairingId: randomUUID() }, { tableId: randomUUID() },
+    { tournamentId: next }, { participantId: foreign.playerId },
+  ]) {
+    await denied({ ...release, arguments: { ...exact, ...patch } })
+  }
+
+  await db.query('INSERT INTO tournament_pairing_tables(table_id,pairing_id) VALUES ($1,$2)', [restoredTable, pairingId])
+  await db.query("INSERT INTO matches(id,table_id,started_at,status) VALUES($1,$2,$3,'active')", [liveMatch, restoredTable, now])
+  assert.deepEqual((await readResult(inspect)).participants[1], publicRow(pilot, 'occupied'))
+  await denied(release)
+  await db.query("UPDATE matches SET status='completed',ended_at=$2 WHERE id=$1", [liveMatch, now])
+  await db.query(
+    "INSERT INTO games(id,match_id,game_number,started_at,status,archive_state) VALUES($1,$2,1,$3,'active','pending')",
+    [liveGame, liveMatch, now],
+  )
+  await denied(release)
+  await db.query("UPDATE games SET status='completed',ended_at=$2 WHERE id=$1", [liveGame, now])
+  const parallel = await Promise.all([readResult(release), readResult(release)])
+  assert.deepEqual(parallel.sort((a, b) => a.status.localeCompare(b.status)), [
+    { tournamentId: previous, pairingId, participantId: pilot.playerId, tableId, status: 'already_clear' },
+    { tournamentId: previous, pairingId, participantId: pilot.playerId, tableId, status: 'released' },
+  ])
+  assert.equal((await readResult(release)).status, 'already_clear')
+  assert.deepEqual((await readResult(inspect)).participants[1], publicRow(pilot, 'available'))
+  assert.equal((await db.query('SELECT completed FROM tournament_pairings WHERE id=$1', [pairingId])).rows[0].completed, true)
+  assert.equal((await db.query('SELECT count(*)::int AS count FROM games')).rows[0].count, 2)
+
+  const newTable = randomUUID()
+  await lease(randomUUID(), newTable)
+  await denied(release)
+  assert.deepEqual((await readResult(inspect)).participants[1], publicRow(pilot, 'occupied'))
+  assert.equal((await db.query('SELECT table_id FROM player_table_reservations WHERE player_id=$1', [pilot.playerId])).rows[0].table_id, newTable)
+  await f.product.setTournamentAdmins([visitorId])
+  await denied(inspect)
+  await denied(release)
+})

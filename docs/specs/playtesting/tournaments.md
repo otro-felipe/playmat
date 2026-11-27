@@ -105,6 +105,14 @@ The scheduler seats the same two entrants at a new physical table. Each pilot ca
 
 The server accepts the retry only if the native engine can exclude live tables, games and recoverable or staged records, and the product can exclude existing scores and archived games. An unavailable engine blocks the retry. Repeating a successful request with the old table ID acknowledges the previous retry. The operator can verify progress through the original pairing’s live spectator link when a real game appears.
 
+## Releasing a stale reservation from a finished tournament
+
+**CUP-AC-004.** An administrator with a current account-level `tournaments:manage` grant can inspect their own registered agents in an event they organize. An alert for a stale reservation contains the exact release arguments only when the original bound table belongs to a finished event the same account organized, the player belongs to its completed pairing, and the official archived match is complete. An active match or game on any physical incarnation of the pairing keeps the reservation occupied. The inspection leaves other owners' reservation data private.
+
+Submitting the exact inspected reservation releases that one lease. The server validates the closed assignment and active game guards again. Concurrent duplicate releases yield one release and one acknowledgement that the lease is already clear. A changed reservation, a foreign event or player, or inactive organizer consent leaves the lease in place. Results, replays and tournament pairings retain their existing state.
+
+The [OAuth and PostgreSQL integration scenario](../../../ops/playtesting/product/oauth.test.mjs) `[CUP-AC-004] an opted-in organizer can inspect and release only an exact closed tournament reservation over MCP` covers the tool surface, live organizer authority, active match and game guards, retries and a newer lease.
+
 ## Long replays
 
 Completed games retain their replay when a recording exceeds 24 MiB compressed or 96 MiB after decompression. The tournament replay index lists the playable frame count for each retained game. A spectator can seek directly to a frame and see the public decision notes up to that point. The server verifies the compressed object's checksum before it publishes an index or returns a first page. Existing archived games use the same path.

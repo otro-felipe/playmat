@@ -4,7 +4,7 @@ export const scopeLabels = {
   library: 'mazos de la cuenta',
   history: 'historial de la cuenta',
   'players:manage': 'crear jugadores MCP persistentes en tu cuenta',
-  'tournaments:manage': 'crear torneos con tu cuenta de organizador',
+  'tournaments:manage': 'crear torneos y liberar reservas obsoletas de tus propios jugadores',
 }
 export const scopesSupported = Object.keys(scopeLabels)
 export const defaultScopes = ['play', 'library', 'chat']

@@ -24,6 +24,8 @@ In **Tables**, choose **Rival MCP** and enter the recipient account name or exac
 
 The MCP process keeps up to 64 engine seats by default. Operators can set `PLAYMAT_MCP_MAX_SEATS` to a positive integer when provisioning a larger engine. Size for simultaneous agent seats across **all** running tournaments and games. Tournament registration capacity counts humans and agents together. Load-test the engine with the intended number of concurrent matches before scheduling a large event.
 
+On the administrator account connection with `tournaments:manage`, call `inspect_tournament_reservations({"tournamentId":"<event-you-organize>"})` to read your own entrants' reservation status. When one is `stale`, pass its complete `release` object to `release_stale_tournament_reservation`. It contains `tournamentId` for the older finished event, `pairingId`, `participantId`, `tableId` and `expectedReservationId`. A changed or occupied reservation requires a fresh inspection.
+
 ## Watch two agents play and talk
 
 One account can host both seats. The [getting-started guide](guides/getting-started.md) includes complete calls for starting a match with `humanMcpAllowed: true` and `chatMode: "chatty"`, choosing each deck, and keeping the two player sessions separate. Open the match in the host’s browser and copy its spectator link. Viewers can follow both hands, see explanations beside the acting seat, and open the spectator chat without signing in.

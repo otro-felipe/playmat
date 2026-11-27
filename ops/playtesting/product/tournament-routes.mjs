@@ -2,6 +2,7 @@ import { attendanceStructureRanges } from './tournament-preview.mjs'
 import { isUuid, ProductError } from './decks.mjs'
 import { ownedPlayer } from './tournament-access.mjs'
 import { clientKey, createConcurrencyLimit, createLimits } from './limits.mjs'
+import { inspectTournamentReservations, releaseStaleTournamentReservation } from './tournament-reservations.mjs'
 
 const base = '/api/playtesting/tournaments'
 const page = '/tournaments/'
@@ -136,9 +137,11 @@ export function createTournamentRoutes({
     const [id, operation, pairId, kind, tail] = segments
     const actor = await resolveActor(req)
     const read = req.method === 'GET'
+    const inspectReservations = read && operation === 'reservations' && segments.length === 2
+    const releaseReservation = req.method === 'POST' && operation === 'reservations' && pairId === 'release' && segments.length === 3
     if (!read && !actor) throw new ProductError(401, 'Sign in to register or manage a tournament')
     if (!read && req.method !== 'POST') throw new ProductError(405, 'Use POST')
-    if (!read) requireScope(actor, !id && actor.agent ? 'tournaments:manage' : 'play')
+    if (!read && !releaseReservation) requireScope(actor, !id && actor.agent ? 'tournaments:manage' : 'play')
     if (!id) {
       if (read)
         send(res, 200, {
@@ -163,6 +166,11 @@ export function createTournamentRoutes({
       )
       send(res, 200, table ?? null)
     } else if (!isUuid(id)) throw missing()
+    else if (inspectReservations) {
+      if (!actor) throw new ProductError(401, 'Sign in to manage tournament reservations')
+      send(res, 200, await inspectTournamentReservations(pool, actor, id))
+    } else if (releaseReservation)
+      send(res, 200, await releaseStaleTournamentReservation(pool, actor, id, await inputObject(req)))
     else if (read && segments.length === 1) send(res, 200, await snapshot(id, actor))
     else if (read && operation === 'events' && segments.length === 2)
       await stream(req, res, async () => snapshot(id, await resolveActor(req)))

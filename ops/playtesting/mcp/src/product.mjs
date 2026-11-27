@@ -53,6 +53,15 @@ export function createProductClient(baseUrl, publicUrl) {
       case 'get_tournament':
         path = root + '/tournaments/' + encode(args.tournamentId);
         break;
+      case 'inspect_tournament_reservations':
+        path = root + '/tournaments/' + encode(args.tournamentId) + '/reservations';
+        break;
+      case 'release_stale_tournament_reservation': {
+        const { tournamentId, ...expected } = args;
+        path = root + '/tournaments/' + encode(tournamentId) + '/reservations/release';
+        config = { method: 'POST', body: expected };
+        break;
+      }
       case 'join_tournament':
       case 'wait_for_next_round':
         path = root + '/tournaments/' + encode(args.tournamentId) + (name === 'join_tournament' ? '/join' : '/wait');
@@ -177,6 +186,9 @@ export function createProductClient(baseUrl, publicUrl) {
     const response = await request(token, path, { ...config, playerId, perspective,
       ...(['list_joinable_games','inspect_game_invite','get_game_invite'].includes(name) && {inviteToken:args.inviteToken}) });
     if (!response.ok) {
+      if (name === 'release_stale_tournament_reservation' && response.status === 409) {
+        throw new ToolError('reservation_conflict', 'This reservation could not be verified for release. Inspect the tournament reservations again.');
+      }
       if (name === 'create_tournament' && response.status === 409) {
         throw new ToolError('request_conflict', 'This requestId was already used with different tournament settings. Reuse the original settings to recover its links, or choose a new requestId for a different event.');
       }

@@ -19,7 +19,11 @@ export async function tournamentActor(pool, actor) {
 
 export async function authorizeTournamentCreator(db, actor) {
   if (actor?.accountId && !actor.agent && actor.isAdmin) return
-  const denied = () => new ProductError(403, 'Tournament creation requires consent from an administrator account')
+  return authorizeTournamentManagement(db, actor)
+}
+
+export async function authorizeTournamentManagement(db, actor) {
+  const denied = () => new ProductError(403, 'Tournament management requires an administrator account connection with consent')
   if (!actor?.canCreateTournament || actor.playerId || !canonicalAccountScope(actor, 'tournaments:manage')) throw denied()
   // Serialize this write with role changes, connection revocation and grant changes.
   const {rowCount} = await db.query(`SELECT 1 FROM oauth_connections c
