@@ -115,6 +115,28 @@ it('navigates between format-scoped archetypes and their matchups with a shareab
   expect(page.getByRole('link', { name: 'Archetypes' }).getAttribute('href')).toContain('format=Pioneer');
 });
 
+it('[PM-STATS-QUALITY-1] shows game rates and a data summary when no full series qualifies', async () => {
+  const row = { ...izzet, n: 0, wins: 0, draws: 0, losses: 0, games: 2, gameWins: 1 };
+  const { page } = show('/statistics?goodQuality=true', (request) => ({
+    formats: ['Pioneer'],
+    format: 'Pioneer',
+    matches: 0,
+    games: 2,
+    rows: [row],
+    selected: request.searchParams.has('selected') ? { ...row, matchups: [row] } : null,
+  }));
+  expect(await page.findByText('Pioneer · 0 matches · 2 games')).toBeTruthy();
+  expect((page.getByRole('combobox', { name: 'Format' }) as HTMLSelectElement).value).toBe('Pioneer');
+  const summary = page.getByRole('region', { name: 'Format summary' });
+  expect(within(summary).getByRole('heading', { name: 'Data' })).toBeTruthy();
+  expect(within(summary).queryByRole('heading', { name: 'Strongest archetype' })).toBeNull();
+  expect(within(summary).queryByRole('heading', { name: 'Most played archetype' })).toBeNull();
+  const ranking = await table(page);
+  expect(within(ranking).getByText('50%')).toBeTruthy();
+  await userEvent.click(within(ranking).getByRole('link', { name: 'Izzet Phoenix' }));
+  expect(within(await table(page, 'Opponent')).getByText('50%')).toBeTruthy();
+});
+
 it('answers which archetype is strongest, by which metric and with how much data', async () => {
   const lucky = { ...izzet, id: 'lucky', name: 'Lucky Streak', n: 2, wins: 2, draws: 0, losses: 0 };
   const solid = { ...izzet, id: 'solid', name: 'Solid Deck', n: 40, wins: 26, draws: 2, losses: 12 };

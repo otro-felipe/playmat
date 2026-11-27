@@ -5,6 +5,10 @@ import { isUuid, ProductError, transaction } from './decks.mjs'
 import { historyFormatFilter } from './performance.mjs'
 import { archetypeColors, statisticsFormat } from './public-deck-identity.mjs'
 
+const qualifyingGame = (qualityParam, causesParam) => `
+  g.status='completed' AND (NOT $${qualityParam}::boolean OR
+    g.good_quality AND NOT COALESCE(g.end_cause=ANY($${causesParam}::text[]),false))`
+
 // Keep the archive as the eligibility authority even for a completed tournament pairing.
 // Project only opening identities and anonymous counts. Reading these never requires a replay,
 // a private deck name, a composition signature or a player's current library revision.
@@ -45,31 +49,34 @@ const eligibleMatches = `
       ea.opening_archetype AS aa,eb.opening_archetype AS ab,
       array_to_string(ea.opening_colors,'') AS palette_a,array_to_string(eb.opening_colors,'') AS palette_b,
       CASE a.winner_entry WHEN a.entry_a THEN 1 WHEN a.entry_b THEN -1 ELSE 0 END AS outcome,
+      a.result_reason='played' AS played_out,
       count(*) OVER (PARTITION BY a.pairing_id) AS candidates
     FROM attributed a JOIN tournaments t ON t.id=a.tournament_id
     JOIN tournament_entries ea ON ea.id=a.entry_a JOIN tournament_entries eb ON eb.id=a.entry_b
     JOIN published_tournament_entries pa ON pa.entry_id=ea.id JOIN published_tournament_entries pb ON pb.entry_id=eb.id
     WHERE a.completed AND a.result_reason IN ('played','afk') AND ($1::uuid IS NULL OR t.id=$1)
-      AND (NOT $2::boolean OR a.result_reason='played')
       AND (a.official_match IS NULL OR a.official_match=a.id)
       AND a.names @> ARRAY[lower(ea.engine_name),lower(eb.engine_name)]
       AND (a.winner_entry IS NULL OR a.winner_entry IN (ea.id,eb.id))
   ), eligible_series AS (
-    SELECT id,ka,kb,format,ca,cb,aa,ab,palette_a,palette_b,outcome FROM tournament_results WHERE included AND candidates=1
+    SELECT id,ka,kb,format,ca,cb,aa,ab,palette_a,palette_b,outcome,played_out FROM tournament_results WHERE included AND candidates=1
     UNION ALL
     SELECT id,names[1],names[2],format,compositions[1],compositions[2],archetypes[1],archetypes[2],palettes[1],palettes[2],
-      CASE winner WHEN names[1] THEN 1 WHEN names[2] THEN -1 ELSE 0 END
+      CASE winner WHEN names[1] THEN 1 WHEN names[2] THEN -1 ELSE 0 END,true
     FROM attributed WHERE included AND $1 IS NULL AND pairing_id IS NULL AND physical_id IS NULL
       AND (winner IS NULL OR winner=ANY(names))
+  ), eligible_games AS (
+    SELECT g.id,g.match_id,g.winner,g.started_at,g.ended_at FROM games g
+    WHERE g.match_id IN (SELECT id FROM eligible_series) AND ${qualifyingGame(2, 3)}
   ), eligible AS (
-    SELECT e.* FROM eligible_series e WHERE NOT $2::boolean OR NOT EXISTS (
-      SELECT FROM games gq WHERE gq.match_id=e.id
-        AND (gq.status<>'completed' OR NOT gq.good_quality OR gq.end_cause=ANY($3::text[]))
-    )
+    SELECT e.*, (NOT $2::boolean OR e.played_out AND NOT EXISTS (
+      SELECT FROM games g WHERE g.match_id=e.id AND NOT (${qualifyingGame(2, 3)})
+    )) AS series_counted
+    FROM eligible_series e WHERE NOT $2::boolean OR EXISTS (SELECT FROM eligible_games g WHERE g.match_id=e.id)
   )`
 
 const results = eligibleMatches + `, side_stats AS (
-    -- Every completed game of an eligible match, from one seat: opening hands and length.
+    -- Game metrics have their own sample, even when the official series is excluded.
     SELECT g.match_id AS id,p.engine_key AS k,count(*)::int AS games,
       count(p.mulligans)::int AS mull_known,coalesce(sum(p.mulligans),0)::int AS mulligans,
       count(*) FILTER (WHERE lower(btrim(g.winner))=p.engine_key)::int AS game_wins,
@@ -79,11 +86,10 @@ const results = eligibleMatches + `, side_stats AS (
       count(*) FILTER (WHERE p.mulligans>0 AND lower(btrim(g.winner))=p.engine_key)::int AS mull_wins,
       count(*) FILTER (WHERE g.ended_at>=g.started_at)::int AS timed,
       coalesce(sum(g.ended_at-g.started_at) FILTER (WHERE g.ended_at>=g.started_at),0)::bigint AS duration
-    FROM games g JOIN game_players p ON p.game_id=g.id
-    WHERE g.status='completed' AND g.match_id IN (SELECT id FROM eligible)
+    FROM eligible_games g JOIN game_players p ON p.game_id=g.id
     GROUP BY g.match_id,p.engine_key
   ), counts AS (
-    SELECT e.format,ca,cb,aa,ab,palette_a,palette_b,outcome,count(*)::int AS n,
+    SELECT e.format,ca,cb,aa,ab,palette_a,palette_b,outcome,count(*) FILTER (WHERE e.series_counted)::int AS n,
       coalesce(sum(sa.games),0)::int AS games_a,coalesce(sum(sb.games),0)::int AS games_b,
       coalesce(sum(sa.game_wins),0)::int AS game_wins_a,coalesce(sum(sb.game_wins),0)::int AS game_wins_b,
       coalesce(sum(sa.mull_known),0)::int AS mull_known_a,coalesce(sum(sb.mull_known),0)::int AS mull_known_b,
@@ -166,7 +172,7 @@ function add(map, category, outcome, count, stats = {}) {
   }
   if (category.colors) {
     const key = category.colors.join('')
-    row.palettes.votes.set(key, (row.palettes.votes.get(key) ?? 0) + count)
+    row.palettes.votes.set(key, (row.palettes.votes.get(key) ?? 0) + (count || stats.games || 0))
   }
   row.n += count
   for (const m of metrics) row[m] += stats[m] ?? 0
@@ -189,6 +195,7 @@ function settleColors(row) {
 function order(a, b) {
   return (
     b.n - a.n ||
+    (!a.n && !b.n ? b.games - a.games : 0) ||
     a.format.localeCompare(b.format) ||
     (a.name ?? '').localeCompare(b.name ?? '') ||
     a.id.localeCompare(b.id)
@@ -241,16 +248,16 @@ async function compositionLists(pool, compositions) {
 
 // Results by number of mulligans, and cards seen in a kept opening hand with how those games
 // ended. Hands come from the seat's own replay evidence, never from an opponent's hidden zone.
-async function openingHands(pool, seats) {
+async function openingHands(pool, seats, goodQuality, endingCauses) {
   const { rows } = await pool.query(
     `SELECT p.mulligans,lower(btrim(g.winner))=s.engine_key AS won,COALESCE(e.kept_hand_known,false) AS known,
       ARRAY(SELECT c.card_name FROM game_performance_cards c
         WHERE (c.game_id,c.engine_key)=(g.id,s.engine_key) AND c.evidence='keep') AS cards
     FROM unnest($1::uuid[],$2::text[]) AS s(match_id,engine_key)
-    JOIN games g ON g.match_id=s.match_id AND g.status='completed'
+    JOIN games g ON g.match_id=s.match_id AND ${qualifyingGame(3, 4)}
     JOIN game_players p ON p.game_id=g.id AND p.engine_key=s.engine_key
     LEFT JOIN game_performance_evidence e ON (e.game_id,e.engine_key)=(g.id,s.engine_key)`,
-    [seats.map((seat) => seat[0]), seats.map((seat) => seat[1])],
+    [seats.map((seat) => seat[0]), seats.map((seat) => seat[1]), goodQuality, endingCauses],
   )
   const cards = new Map()
   const mulligans = new Map()
@@ -329,7 +336,7 @@ async function selectedDetails(pool, eligibility, { group, filter, selected }) {
         .slice(0, 75)
     list = { kind: 'archetype', lists: lists.size, main: zone(zones.main), sideboard: zone(zones.sideboard) }
   }
-  return { list, hands: seats.length ? await openingHands(pool, seats) : { games: 0, wins: 0, mulligans: [], cards: [] } }
+  return { list, hands: seats.length ? await openingHands(pool, seats, ...eligibility.slice(1)) : { games: 0, wins: 0, mulligans: [], cards: [] } }
 }
 
 export function publicDeckStatistics(pool, options = {}) {
@@ -368,7 +375,7 @@ async function readStatistics(
   const played = new Map()
   for (const row of counts) {
     const format = statisticsFormat(row.format)
-    played.set(format, (played.get(format) ?? 0) + row.n)
+    played.set(format, (played.get(format) ?? 0) + (goodQuality ? row.games_a : row.n))
   }
   // Win rates from different formats are not comparable. Without a choice, show the busiest one.
   if (!filter && tournamentId === null && played.size)

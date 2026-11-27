@@ -238,6 +238,7 @@ export default {
   "stats.unavailable": "This selection is unavailable.",
   "stats.empty": "No public match results for these filters.",
   "stats.goodQuality": "Only good-quality games",
+  "stats.qualitySampleNote": "Each good game counts. A match result counts when the full series was played and all its games qualify.",
   "stats.emptyOpponents": "No public matchups for this selection.",
   "stats.loadError": "Statistics could not be loaded.",
   "stats.paletteDeck": "Initial deck palette ({colors})",

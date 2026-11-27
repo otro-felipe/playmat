@@ -244,6 +244,7 @@ const es: Catalog = {
   "stats.unavailable": "Esta selección no está disponible.",
   "stats.empty": "No hay resultados públicos con estos filtros.",
   "stats.goodQuality": "Solo partidas de buena calidad",
+  "stats.qualitySampleNote": "Cada juego de buena calidad cuenta. El resultado de la serie cuenta cuando se jugó completa y todos sus juegos califican.",
   "stats.emptyOpponents": "No hay cruces públicos para esta selección.",
   "stats.loadError": "No se pudieron cargar las estadísticas.",
   "stats.paletteDeck": "Paleta de la lista inicial ({colors})",

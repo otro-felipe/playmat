@@ -400,14 +400,14 @@ function Highlights({
   const t = useT();
   const { counts, whole } = useFormats();
   const rows = data.rows ?? [];
+  if (!rows.length) return null;
   const best = strongest(rows);
   const popular = rows.reduce<Row | null>((top, row) => (!top || row.n > top.n ? row : top), null);
-  if (!best || !popular) return null;
-  const interval = wilson(best.wins, best.n)!;
+  const interval = best ? wilson(best.wins, best.n) : null;
   const seats = 2 * data.matches;
   return (
     <section className={styles.highlights} aria-label={t('stats.highlights')}>
-      <article className={styles.highlight}>
+      {best && interval && <article className={styles.highlight}>
         <h3>{t(group === 'deck' ? 'stats.strongestDeck' : 'stats.strongestArchetype')}</h3>
         <div className={styles.highlightName}>
           <Link to={destination(best.id)}>{names.get(best.id)}</Link>
@@ -426,8 +426,8 @@ function Highlights({
             n: counts.format(best.n),
           })}
         </p>
-      </article>
-      <article className={styles.highlight}>
+      </article>}
+      {popular && popular.n > 0 && <article className={styles.highlight}>
         <h3>{t(group === 'deck' ? 'stats.popularDeck' : 'stats.popularArchetype')}</h3>
         <div className={styles.highlightName}>
           <Link to={destination(popular.id)}>{names.get(popular.id)}</Link>
@@ -437,7 +437,7 @@ function Highlights({
           <strong>{seats ? whole.format(popular.n / seats) : '—'}</strong> {t('stats.metaShare')}
         </p>
         <p className={styles.highlightNote}>{t('stats.popularBasis', { n: counts.format(popular.n) })}</p>
-      </article>
+      </article>}
       <article className={styles.highlight}>
         <h3>{t('stats.dataTitle')}</h3>
         <p className={styles.highlightValue}>
@@ -867,6 +867,7 @@ export function StatisticsPanel({
             </p>
           )
         )}
+        {goodQuality && data && <p className={styles.note}>{t('stats.qualitySampleNote')}</p>}
       </header>
       {stats.isPending ? (
         <p role="status" className={styles.state}>
