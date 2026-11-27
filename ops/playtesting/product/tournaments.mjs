@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { authorizeTournamentCreator, requireTournamentAdmin } from './tournament-access.mjs'
+import { authorizeTournamentCreator, authorizeTournamentManagement, requireTournamentAdmin } from './tournament-access.mjs'
 import { ProductError, getDeck, isUuid, normalizeFormat, transaction } from './decks.mjs'
 import { tournamentStructure } from './tournament-rules.mjs'
 import { declaredRuntime, readPlayerRuntime } from './player-runtime.mjs'
@@ -234,6 +234,60 @@ export function createTournamentService(
       }
     })
   }
+  async function startWithAttendance(db, t, now, expectedPlayers) {
+    const players = await entrants(db, t.id)
+    const present = players.filter((p) => p.lastSeen != null && now - p.lastSeen <= onlineMs)
+    if (expectedPlayers !== undefined && present.length !== expectedPlayers)
+      throw new ProductError(409, 'The connected player count changed')
+    if (present.length < 2 || (t.template === 'worlds' && present.length <= 8))
+      throw new ProductError(409, 'Too few connected players for this structure')
+    const { swissRounds, cutSize } = tournamentStructure(
+      { template: t.template, cut: t.cut, swissRounds: t.requested_rounds },
+      present.length,
+    )
+    await db.query("UPDATE tournament_entries SET state='absent' WHERE tournament_id=$1", [t.id])
+    await db.query(
+      `UPDATE tournament_entries e SET state='active',seed=s.ord FROM
+        unnest($2::uuid[]) WITH ORDINALITY s(id,ord) WHERE e.tournament_id=$1 AND e.id=s.id`,
+      [t.id, present.map((p) => p.id)],
+    )
+    const {
+      rows: [next],
+    } = await db.query('UPDATE tournaments SET rounds_total=$2,cut_size=$3 WHERE id=$1 RETURNING *', [
+      t.id,
+      swissRounds,
+      cutSize,
+    ])
+    await startRound(db, next, now)
+  }
+  async function start(id, actor, input) {
+    validId(id)
+    if (typeof input.requestId !== 'string' || !uuidV4.test(input.requestId)
+      || Object.keys(input).some(key => key !== 'requestId' && key !== 'expectedPlayers')) {
+      throw new ProductError(400, 'Provide a UUID version 4 start request ID and the expected number of connected players')
+    }
+    const requestId = input.requestId.toLowerCase()
+    const playerCount = integral(input.expectedPlayers, 2, 512, 'expected connected player count')
+    return transaction(pool, async (db) => {
+      await authorizeTournamentManagement(db, actor)
+      const t = await tournamentRow(db, id, 'FOR UPDATE')
+      if (t.organizer_id !== actor.accountId) throw new ProductError(404, 'Tournament not found')
+      // Registration, check-ins and start all lock the tournament row. A concurrent
+      // browser start or attendance change is reconciled before creating any pairings.
+      let startedAt
+      if (t.start_request_id === requestId && t.start_player_count === playerCount) {
+        startedAt = timestamp(t.start_requested_at)
+      } else {
+        if (t.status !== 'registration') throw new ProductError(409, 'This tournament has already left registration')
+        startedAt = clock()
+        await startWithAttendance(db, t, startedAt, playerCount)
+        await db.query('UPDATE tournaments SET start_request_id=$2,start_player_count=$3,start_requested_at=$4 WHERE id=$1', [
+          t.id, requestId, playerCount, startedAt,
+        ])
+      }
+      return { tournamentId: t.id, requestId, started: true, playerCount, roundNumber: 1, startedAt }
+    })
+  }
   async function action(id, actor, input) {
     validId(id)
     requireTournamentAdmin(actor)
@@ -241,28 +295,7 @@ export function createTournamentService(
       let t = await tournamentRow(db, id, 'FOR UPDATE')
       const now = clock()
       if (input.action === 'start' && t.status === 'registration') {
-        const players = await entrants(db, id)
-        const present = players.filter((p) => p.lastSeen != null && now - p.lastSeen <= onlineMs)
-        if (present.length < 2 || (t.template === 'worlds' && present.length <= 8))
-          throw new ProductError(409, 'Too few connected players for this structure')
-        const { swissRounds, cutSize } = tournamentStructure(
-          { template: t.template, cut: t.cut, swissRounds: t.requested_rounds },
-          present.length,
-        )
-        await db.query("UPDATE tournament_entries SET state='absent' WHERE tournament_id=$1", [id])
-        await db.query(
-          `UPDATE tournament_entries e SET state='active',seed=s.ord FROM
-          unnest($2::uuid[]) WITH ORDINALITY s(id,ord) WHERE e.tournament_id=$1 AND e.id=s.id`,
-          [id, present.map((p) => p.id)],
-        )
-        const {
-          rows: [next],
-        } = await db.query('UPDATE tournaments SET rounds_total=$2,cut_size=$3 WHERE id=$1 RETURNING *', [
-          id,
-          swissRounds,
-          cutSize,
-        ])
-        await startRound(db, next, now)
+        await startWithAttendance(db, t, now)
       } else if (input.action === 'structure' && t.status === 'registration') {
         const { template, cut, rounds } = structureSettings(input, t.format)
         const changingTemplate = template !== t.template
@@ -565,6 +598,7 @@ export function createTournamentService(
     create,
     join,
     wait,
+    start,
     action,
     bindTable,
     acceptTable,

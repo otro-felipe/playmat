@@ -1935,6 +1935,103 @@ test('an opted-in organizer creates one public, unopened tournament over the MCP
   assert.deepEqual(list.tournaments.map(row => row.id), [receipt.id])
 })
 
+test('[CUP-AC-005] an organizer can start exactly the expected connected players once over MCP', {
+  skip: !databaseUrl || process.env.PLAYMAT_OAUTH_SDK_TEST !== '1',
+}, async t => {
+  const f = await fixture(t)
+  const owner = await f.login('StartOrganizer')
+  const visitor = await f.login('OtherStartOrganizer')
+  const account = async session => (await (await f.request('/api/playtesting/me', session)).json()).accountId
+  const ownerId = await account(owner), visitorId = await account(visitor)
+  await f.product.setTournamentAdmins([ownerId, visitorId])
+  const management = await authorizePilot(f, owner, 'tournaments:manage', undefined, false, true)
+  const noConsent = await authorizePilot(f, owner, 'play')
+  const outsider = await authorizePilot(f, visitor, 'tournaments:manage', undefined, false, true)
+  const post = (path, headers, input) => f.request(path, { ...headers, 'Content-Type': 'application/json' }, input)
+  const root = '/api/playtesting/tournaments'
+  const created = await post(root, management, { name: 'Saturday Swiss', format: 'Pioneer', cut: 'none', capacity: 8, swissRounds: 3, requestId: randomUUID() })
+  assert.equal(created.status, 201)
+  const { id: tournamentId } = await created.json()
+  const db = new pg.Client({ connectionString: databaseUrl, options: '-c search_path=' + f.schema })
+  await db.connect()
+  t.after(() => db.end())
+  const players = []
+  for (let i = 0; i < 8; i++) {
+    const name = 'Start Pilot ' + i
+    const profile = await post('/api/playtesting/players', owner, { displayName: name, mcpEnabled: true })
+    assert.equal(profile.status, 201)
+    const { playerId, engineName } = await profile.json()
+    players.push(playerId)
+    await db.query(`INSERT INTO tournament_entries(tournament_id,owner_id,player_id,name,owner_name,engine_name,deck_id,deck_revision,deck_name,last_seen)
+      VALUES ($1,$2,$3,$4,'StartOrganizer',$5,'fixture-deck',1,'Fixture',$6)`,
+    [tournamentId, ownerId, playerId, name, engineName, i === 7 ? Date.now() - 120_000 : Date.now()])
+  }
+  const profileGrant = await authorizePilot(f, owner, 'play', players[0])
+  const { createMcpServer } = await import('../mcp/src/server.mjs')
+  const { createProductClient } = await import('../mcp/src/product.mjs')
+  const requireMcp = createRequire(new URL('../mcp/package.json', import.meta.url))
+  const { Client } = requireMcp('@modelcontextprotocol/sdk/client/index.js')
+  const { StreamableHTTPClientTransport } = requireMcp('@modelcontextprotocol/sdk/client/streamableHttp.js')
+  const product = createProductClient(f.endpoint, issuer)
+  const server = createMcpServer({ authorize: product.authorize, product: product.operation })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const clients = []
+  t.after(async () => {
+    await Promise.all(clients.map(client => client.close()))
+    server.closeAllConnections()
+    server.close()
+  })
+  async function connect(headers) {
+    const client = new Client({ name: 'scheduled-tournament-test', version: '1' })
+    clients.push(client)
+    await client.connect(new StreamableHTTPClientTransport(new URL('http://127.0.0.1:' + server.address().port + '/mcp'), {
+      requestInit: { headers },
+    }))
+    return client
+  }
+  const ownerClient = await connect(management)
+  const requestId = randomUUID()
+  const args = { tournamentId, requestId, expectedPlayers: 8 }
+  const start = (client, arguments_ = args) => client.callTool({ name: 'start_tournament', arguments: arguments_ })
+  const data = result => JSON.parse(result.content[0].text)
+  const denied = async (client, code, arguments_) => {
+    const result = await start(client, arguments_)
+    assert.equal(result.isError, true)
+    assert.equal(data(result).code, code)
+  }
+  const tool = (await ownerClient.listTools()).tools.find(tool => tool.name === 'start_tournament')
+  assert.equal(tool?.annotations?.idempotentHint, true)
+  assert.deepEqual(tool._meta.securitySchemes, [{ type: 'oauth2', scopes: ['tournaments:manage'] }])
+  assert.equal((await start(ownerClient, { ...args, playerId: players[0] })).isError, true)
+  assert.equal((await post(root + '/' + tournamentId + '/start', owner, args)).status, 403)
+  await denied(await connect(noConsent), 'forbidden')
+  await denied(await connect(profileGrant), 'forbidden')
+  await denied(await connect(outsider), 'not_found')
+  await denied(ownerClient, 'attendance_changed')
+  let board = await (await f.request(root + '/' + tournamentId)).json()
+  assert.equal(board.status, 'registration')
+  assert.deepEqual(board.pairings, [])
+  await db.query('UPDATE tournament_entries SET last_seen=$2 WHERE tournament_id=$1', [tournamentId, Date.now()])
+  const first = await Promise.all([start(ownerClient), start(ownerClient)])
+  for (const result of first) assert.equal(result.isError, false)
+  const receipt = data(first[0])
+  assert.deepEqual(data(first[1]), receipt)
+  assert.deepEqual(receipt, { tournamentId, requestId, started: true, playerCount: 8, roundNumber: 1, startedAt: receipt.startedAt })
+  assert.ok(Number.isSafeInteger(receipt.startedAt) && receipt.startedAt > 0)
+  await denied(ownerClient, 'start_conflict', { ...args, requestId: randomUUID() })
+  await denied(ownerClient, 'start_conflict', { ...args, expectedPlayers: 7 })
+  board = await (await f.request(root + '/' + tournamentId)).json()
+  assert.equal(board.status, 'playing')
+  assert.equal(board.roundNumber, 1)
+  assert.equal(board.pairings.length, 4)
+  assert.equal(board.participants.filter(entry => entry.state === 'active').length, 8)
+  await db.query("UPDATE tournaments SET status='break' WHERE id=$1", [tournamentId])
+  assert.deepEqual(data(await start(ownerClient)), receipt)
+  await f.product.setTournamentAdmins([visitorId])
+  await denied(ownerClient, 'forbidden')
+})
+
 test('[CUP-AC-004] an opted-in organizer can inspect and release only an exact closed tournament reservation over MCP', {
   skip: !databaseUrl || process.env.PLAYMAT_OAUTH_SDK_TEST !== '1',
 }, async t => {

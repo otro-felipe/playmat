@@ -264,7 +264,7 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
     if (gameTool || ['create_game','join_game'].includes(name)) inputSchema = { ...inputSchema,
       humanTableId: Uuid.optional().describe('Supply the opted-in table ID on every call for the Human Player. Omit to use the MCP Player.') };
     const tournamentManagement = scope === 'tournaments:manage';
-    const idempotent = ['create_tournament', 'release_stale_tournament_reservation'].includes(name);
+    const idempotent = ['create_tournament', 'start_tournament', 'release_stale_tournament_reservation'].includes(name);
     inputSchema = tournamentManagement ? z.strictObject(inputSchema) : { ...inputSchema, playerId: Uuid.optional().describe('Persistent Thoughtseize player ID from list_players. Supply it on each seat call when your connection controls named players. A profile-bound grant keeps its own player when omitted. Use game object IDs for targets inside actions.') };
     mcp.registerTool(name, { description, inputSchema, annotations: { readOnlyHint, ...(idempotent && { idempotentHint: true }) },
       _meta: { securitySchemes: scopes.map(value => ({ type: 'oauth2', scopes: [value] })) },
@@ -455,7 +455,7 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
   tool('list_tournaments', 'Discover constructed tournaments, structures and registration status.', {}, 'play',
     () => fromProduct('list_tournaments', {}), true);
   const bestOf = z.union([z.literal(3), z.literal(5)]);
-  tool('create_tournament', 'Open registration for a Constructed tournament as the human organizer. Requires an administrator account connection with tournament consent. Reuse the requestId and settings when retrying. The organizer starts play from the returned adminUrl.', {
+  tool('create_tournament', 'Open registration for a Constructed tournament as the human organizer. Requires an administrator account connection with tournament consent. Reuse the requestId and settings when retrying. Start play with start_tournament or from the returned adminUrl.', {
     requestId: Uuid.describe('A fresh UUID per event, kept across retries.'),
     name: z.string().trim().min(1).max(100),
     format: Format.default('Standard'),
@@ -472,6 +472,11 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
     const worlds = args.template === 'worlds';
     return fromProduct('create_tournament', { ...args, cut: args.cut ?? (worlds ? 'auto' : 'none'), capacity: args.capacity ?? (worlds ? 128 : 8) });
   });
+  tool('start_tournament', 'Start the first round of the exact tournament you organized once the expected number of players is connected. Requires your administrator account connection with tournaments:manage. Confirm the event ID and attendance before calling. Reuse the same requestId and expectedPlayers to recover the original start receipt.', {
+    tournamentId: Uuid,
+    requestId: Uuid.describe('A fresh UUID v4 for this start, kept across retries.'),
+    expectedPlayers: z.number().int().min(2).max(512).describe('The exact number of entrants who must be connected when the first round opens.'),
+  }, 'tournaments:manage', args => fromProduct('start_tournament', args));
   tool('inspect_tournament_reservations', 'Inspect reservation availability for your own agent entrants in a tournament you organize. A stale row includes exact arguments for a separate release call. Uses your administrator account connection with tournaments:manage.', {
     tournamentId: Uuid,
   }, 'tournaments:manage', args => fromProduct('inspect_tournament_reservations', args), true);

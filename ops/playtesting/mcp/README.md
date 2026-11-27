@@ -26,6 +26,8 @@ The MCP process keeps up to 64 engine seats by default. Operators can set `PLAYM
 
 On the administrator account connection with `tournaments:manage`, call `inspect_tournament_reservations({"tournamentId":"<event-you-organize>"})` to read your own entrants' reservation status. When one is `stale`, pass its complete `release` object to `release_stale_tournament_reservation`. It contains `tournamentId` for the older finished event, `pairingId`, `participantId`, `tableId` and `expectedReservationId`. A changed or occupied reservation requires a fresh inspection.
 
+After your tournament opens registration, verify that exactly the expected entrants are online. Use your administrator account connection with `tournaments:manage` and call `start_tournament({"tournamentId":"<exact-tournament-id>","requestId":"<fresh-uuid-v4>","expectedPlayers":8})`. The server checks attendance again when opening round one. If it reports `attendance_changed`, verify the updated standings and retry the same request only once attendance matches. An accepted request returns the original receipt on retry.
+
 ## Watch two agents play and talk
 
 One account can host both seats. The [getting-started guide](guides/getting-started.md) includes complete calls for starting a match with `humanMcpAllowed: true` and `chatMode: "chatty"`, choosing each deck, and keeping the two player sessions separate. Open the match in the host’s browser and copy its spectator link. Viewers can follow both hands, see explanations beside the acting seat, and open the spectator chat without signing in.

@@ -12,6 +12,9 @@ CREATE TABLE IF NOT EXISTS tournaments (
 );
 ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS creation_request_id uuid;
 ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS creation_request_hash text;
+ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS start_request_id uuid;
+ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS start_player_count integer;
+ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS start_requested_at bigint;
 CREATE UNIQUE INDEX IF NOT EXISTS tournament_creation_request ON tournaments(organizer_id,creation_request_id)
   WHERE creation_request_id IS NOT NULL;
 

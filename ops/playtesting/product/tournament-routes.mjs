@@ -139,9 +139,10 @@ export function createTournamentRoutes({
     const read = req.method === 'GET'
     const inspectReservations = read && operation === 'reservations' && segments.length === 2
     const releaseReservation = req.method === 'POST' && operation === 'reservations' && pairId === 'release' && segments.length === 3
+    const delegatedStart = req.method === 'POST' && operation === 'start' && segments.length === 2
     if (!read && !actor) throw new ProductError(401, 'Sign in to register or manage a tournament')
     if (!read && req.method !== 'POST') throw new ProductError(405, 'Use POST')
-    if (!read && !releaseReservation) requireScope(actor, !id && actor.agent ? 'tournaments:manage' : 'play')
+    if (!read && !releaseReservation) requireScope(actor, delegatedStart || (!id && actor.agent) ? 'tournaments:manage' : 'play')
     if (!id) {
       if (read)
         send(res, 200, {
@@ -166,6 +167,7 @@ export function createTournamentRoutes({
       )
       send(res, 200, table ?? null)
     } else if (!isUuid(id)) throw missing()
+    else if (delegatedStart) send(res, 200, await tournaments.start(id, actor, await inputObject(req)))
     else if (inspectReservations) {
       if (!actor) throw new ProductError(401, 'Sign in to manage tournament reservations')
       send(res, 200, await inspectTournamentReservations(pool, actor, id))

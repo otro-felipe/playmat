@@ -53,6 +53,12 @@ export function createProductClient(baseUrl, publicUrl) {
       case 'get_tournament':
         path = root + '/tournaments/' + encode(args.tournamentId);
         break;
+      case 'start_tournament': {
+        const { tournamentId, ...expected } = args;
+        path = root + '/tournaments/' + encode(tournamentId) + '/start';
+        config = { method: 'POST', body: expected };
+        break;
+      }
       case 'inspect_tournament_reservations':
         path = root + '/tournaments/' + encode(args.tournamentId) + '/reservations';
         break;
@@ -186,6 +192,13 @@ export function createProductClient(baseUrl, publicUrl) {
     const response = await request(token, path, { ...config, playerId, perspective,
       ...(['list_joinable_games','inspect_game_invite','get_game_invite'].includes(name) && {inviteToken:args.inviteToken}) });
     if (!response.ok) {
+      if (name === 'start_tournament' && response.status === 409) {
+        const result = await response.json().catch(() => null);
+        if (result?.error === 'The connected player count changed') {
+          throw new ToolError('attendance_changed', 'The connected player count did not match expectedPlayers. Read the current tournament standings before retrying.');
+        }
+        throw new ToolError('start_conflict', 'The start could not be applied. Read the tournament status and reuse the original requestId and expectedPlayers to recover its receipt.');
+      }
       if (name === 'release_stale_tournament_reservation' && response.status === 409) {
         throw new ToolError('reservation_conflict', 'This reservation could not be verified for release. Inspect the tournament reservations again.');
       }

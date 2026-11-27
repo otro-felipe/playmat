@@ -113,6 +113,10 @@ Submitting the exact inspected reservation releases that one lease. The server v
 
 The [OAuth and PostgreSQL integration scenario](../../../ops/playtesting/product/oauth.test.mjs) `[CUP-AC-004] an opted-in organizer can inspect and release only an exact closed tournament reservation over MCP` covers the tool surface, live organizer authority, active match and game guards, retries and a newer lease.
 
+**CUP-AC-005.** An organizer with a current account-level `tournaments:manage` grant can start their own tournament through MCP. The tournament must be in registration with the exact expected number of connected players when the service locks it and starts the first round. Authorization and the count are checked inside the transaction. A count mismatch leaves registration open. A retry with the same start request ID and count returns the original receipt, even after the event progresses. A different request cannot start an event that already left registration. Browser administration retains its existing start flow.
+
+The [OAuth and PostgreSQL integration scenario](../../../ops/playtesting/product/oauth.test.mjs) `[CUP-AC-005] an organizer can start exactly the expected connected players once over MCP` covers live consent, ownership, attendance, concurrent retry and round creation.
+
 ## Long replays
 
 Completed games retain their replay when a recording exceeds 24 MiB compressed or 96 MiB after decompression. The tournament replay index lists the playable frame count for each retained game. A spectator can seek directly to a frame and see the public decision notes up to that point. The server verifies the compressed object's checksum before it publishes an index or returns a first page. Existing archived games use the same path.
