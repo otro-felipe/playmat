@@ -272,11 +272,12 @@ function gameView(row) {
     events: row.events, archiveState: row.archive_state, status: row.status,
     truncated: row.truncated, players: row.players, replayAvailable: Boolean(row.object_key && row.viewer),
     ownMulligans: row.own_mulligans, viewerName: row.viewer, endCause: row.end_cause ?? null,
+    goodQuality: row.good_quality,
   }
 }
 
 // XMage ends the whole match when a seat times out (inactivity or player clock) or leaves, not only the game.
-const matchEndingCauses = new Set(['inactivity', 'player_clock', 'round_clock', 'disconnect'])
+export const matchEndingCauses = new Set(['inactivity', 'player_clock', 'round_clock', 'disconnect'])
 export const replayEndCauses = new Set([...matchEndingCauses, 'concession'])
 
 // The last game's non-played ending explains a completed match that stopped early.
@@ -547,7 +548,7 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
   }
 
   const reviewMetadata = `
-    SELECT g.id,g.match_id,g.game_number,g.status,g.archive_state,g.object_key,g.checksum,g.review_version,g.review_incomplete,g.truncated,
+    SELECT g.id,g.match_id,g.game_number,g.status,g.archive_state,g.object_key,g.checksum,g.review_version,g.review_incomplete,g.truncated,g.good_quality,
       m.status AS match_status,m.format,m.engine_format,
       (SELECT json_agg(json_build_object('name',p.engine_name,'seatId',p.engine_key,'playerId',p.player_id,'human',p.human)
                        ORDER BY p.engine_key)

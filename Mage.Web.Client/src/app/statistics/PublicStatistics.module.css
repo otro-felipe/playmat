@@ -89,6 +89,12 @@
   border-bottom: 1px solid var(--ink-ghost);
   background: var(--mat-900);
 }
+.filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
 .tabs {
   gap: 4px;
 }
@@ -566,9 +572,13 @@ th[aria-sort] .sort {
   .kpis dd {
     font-size: 1.5rem;
   }
+  .filters {
+    width: 100%;
+    justify-content: space-between;
+  }
   .format {
     justify-content: space-between;
-    width: 100%;
+    flex-grow: 1;
   }
   .table thead th {
     font-size: 0.76rem;

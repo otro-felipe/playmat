@@ -47,6 +47,7 @@ export const reviewEvidenceInput = {
 }
 export const reviewAnnotationsInput = { ...query, count: z.number().int().min(1).max(24).optional() }
 export const saveReviewAnnotationsInput = { gameId: z.uuid(), archiveRevision, entries: z.array(entry).min(1).max(24) }
+export const saveGameQualityInput = { gameId: z.uuid(), archiveRevision: z.string().regex(/^[a-f0-9]{64}$/), goodQuality: z.boolean() }
 
 export function registerPostMatchReviewPrompt(mcp) {
   mcp.registerPrompt('review_playmat_replay', {

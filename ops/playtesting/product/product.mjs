@@ -302,12 +302,14 @@ export async function createProduct({
       const group = url.searchParams.get('group') ?? 'archetype'
       const format = url.searchParams.get('format')
       const selected = url.searchParams.get('selected')
-      if (!['archetype', 'deck'].includes(group) || (format && format.length > 120) || (selected && selected.length > 512))
+      const quality = url.searchParams.get('goodQuality')
+      if (!['archetype', 'deck'].includes(group) || (format && format.length > 120) || (selected && selected.length > 512)
+          || quality !== null && !['true', 'false'].includes(quality))
         throw new ProductError(400, 'Invalid statistics filter')
       const release = heavyWork(clientKey(req))
       if (!release) throttleRequest(res, 2)
       releases.push(release)
-      return send(res, 200, await publicDeckStatistics(pool, { tournamentId, group, format, selected }))
+      return send(res, 200, await publicDeckStatistics(pool, { tournamentId, group, format, selected, goodQuality: quality === 'true' }))
     }
     if (await tournamentRoutes.route(req,res,url)) return
     if (await spectatorRoute(req,res,path,id.resolve,spectators,send,body)) return
@@ -617,7 +619,7 @@ export async function createProduct({
       requireScope(actor, 'history')
       return send(res, 200, await review.match(actor, matchReview[1]))
     }
-    const gameReview = /^review\/games\/([^/]+)(?:\/(evidence|annotations))?$/.exec(endpoint)
+    const gameReview = /^review\/games\/([^/]+)(?:\/(evidence|annotations|quality))?$/.exec(endpoint)
     if (gameReview) {
       requireScope(actor, 'history')
       const [, gameId, resource] = gameReview
@@ -626,6 +628,10 @@ export async function createProduct({
       if (req.method === 'GET' && resource === 'evidence') return send(res, 200, await review.evidence(actor, gameId, query))
       if (req.method === 'GET' && resource === 'annotations') return send(res, 200, await theory.attachAnnotationLinks(actor, await review.listAnnotations(actor, gameId, query)))
       if (req.method === 'POST' && resource === 'annotations') return send(res, 200, await review.saveAnnotations(actor, gameId, await body(req)))
+      if (resource === 'quality') {
+        if (req.method !== 'PUT') throw new ProductError(405, 'Use PUT to save game quality')
+        return send(res, 200, await review.saveQuality(actor, gameId, await body(req, 'json', 1024)))
+      }
       throw new ProductError(405, 'Use GET for review evidence or POST to save annotations')
     }
     if (endpoint.startsWith('replays/') && req.method === 'GET') {

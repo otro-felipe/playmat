@@ -27,6 +27,12 @@ Use the command ID and the submitting seat's game ID and cursor to reconcile a l
 
 Measure decision opening, call submission, server acceptance, receipt delivery and the pilot's next submission separately when their timestamps exist. For an interval between calls, compare both seats' timestamped observations of game ID, priority, pending prompts and sideboard submissions. Report the minimum time a state is known to have held and mark unobserved boundaries or tool availability as unknown. For example, an opponent acting in a new game establishes that the series had advanced by that timestamp even if the other pilot's last receipt still showed sideboarding.
 
+## Classify game quality
+
+Report `goodquality: true` or `goodquality: false` for each reviewed game alongside the learning notes. Use true when both seats played at a level representative of semi-experienced Magic players, without material interruptions, major confusion or a clearly supported major misplay. Use false when a material issue occurred or the evidence is insufficient to support true. Compare replay and native pilot logs from both seats and their reconnections when reviewing agent play. A routine priority wait, a short recovered hiccup without an effect on play, or a reasonable alternative line can still qualify.
+
+On the account that owns both seats, persist the verdict for the completed game using the exact revision from `get_match_review`, for example `save_game_quality({"gameId":"<game ID>","archiveRevision":"<archive revision>","goodQuality":true})`. Record the reason in your review and confirm the tool receipt. If the account lacks permission or the archive is unavailable, report the verdict and that it could not be saved.
+
 ## Card references in notes
 
 Write card mentions in human-facing assessment fields (rationale, benefits, risks, lines, conditions, responses and retrospective notes) as `[visible label](card://Exact%20English%20Name)`. For a double-faced card append `:back` or `:front` to the target, for example `[Bala Ged Sanctuary](card://Bala%20Ged%20Recovery:back)`. Use the front name as the lookup target. URL-encode the name, including punctuation such as parentheses. Write the visible label in the language of the analysis. Cite external sources in the dedicated sources field.

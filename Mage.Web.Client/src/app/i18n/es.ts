@@ -243,6 +243,7 @@ const es: Catalog = {
   "stats.sampleNote": "Una partida es un match completo. Un espejo suma dos en su fila. El rango bajo cada % es su intervalo de confianza del 95 %. No se cuentan mazos de práctica ni formatos casuales (Freeform, Commander).",
   "stats.unavailable": "Esta selección no está disponible.",
   "stats.empty": "No hay resultados públicos con estos filtros.",
+  "stats.goodQuality": "Solo partidas de buena calidad",
   "stats.emptyOpponents": "No hay cruces públicos para esta selección.",
   "stats.loadError": "No se pudieron cargar las estadísticas.",
   "stats.paletteDeck": "Paleta de la lista inicial ({colors})",

@@ -74,6 +74,38 @@ async function fixture(t) {
   return { db, owner, match, composition, exclude }
 }
 const record = (row) => [row.n, row.wins, row.draws, row.losses]
+
+test('[PM-STATS-QUALITY-1] filtered rankings, matchup totals and hands share the all-good series sample', { skip: !url }, async t => {
+  const { db, composition, match, exclude } = await fixture(t)
+  const red = await composition(null, ['R'])
+  const blue = await composition(null, ['U'])
+  const sides = [[red, 'Red Deck Wins'], [blue, 'UR Aggro']]
+  const good = await match(sides)
+  const mixed = await match(sides, { winner: 'Bob' })
+  const excluded = await match(sides)
+  await exclude(excluded.id)
+  await match(sides)
+  await db.query("UPDATE games SET good_quality=true,winner='Alice',ended_at=60000 WHERE id=ANY($1)", [
+    [good.game, mixed.game, excluded.game],
+  ])
+  const addGame = async (series, quality) => {
+    const game = randomUUID()
+    await db.query("INSERT INTO games(id,match_id,game_number,started_at,ended_at,winner,status,archive_state,good_quality) VALUES($1,$2,2,0,30000,'Alice','completed','ready',$3)",
+      [game, series.id, quality])
+    await db.query("INSERT INTO game_players(game_id,engine_key,engine_name,human,mulligans) VALUES($1,'alice','Alice',true,1),($1,'bob','Bob',true,0)", [game])
+    await db.query("INSERT INTO game_performance_evidence(game_id,engine_key,kept_hand_known,opponent_view_known) VALUES($1,'alice',true,false)", [game])
+  }
+  await addGame(good, true)
+  await addGame(mixed, false)
+  const baseline = await publicDeckStatistics(db, { group: 'deck', selected: red })
+  assert.deepEqual([baseline.matches, baseline.games], [3, 5])
+  const filtered = await publicDeckStatistics(db, { group: 'deck', selected: red, goodQuality: true })
+  assert.deepEqual([filtered.matches, filtered.games], [1, 2])
+  assert.deepEqual(record(filtered.selected), [1, 1, 0, 0])
+  assert.deepEqual(record(filtered.selected.matchups[0]), [1, 1, 0, 0])
+  assert.deepEqual([filtered.selected.games, filtered.selected.gameWins, filtered.selected.durationMs], [2, 2, 90000])
+  assert.deepEqual(filtered.selected.hands, { games: 1, wins: 1, mulligans: [{ count: 1, games: 1, wins: 1 }], cards: [] })
+})
 test(
   'public deck and archetype matchups count only eligible duels from their opening snapshots, once per seat',
   { skip: !url },
@@ -134,7 +166,7 @@ test(
   },
 )
 test(
-  'public matches follow tournament publication, eligible archive and restored table attribution',
+  '[PM-STATS-QUALITY-1] public matches follow tournament publication, eligible archive and restored table attribution',
   { skip: !url },
   async (t) => {
     const { db, owner, composition, match, exclude } = await fixture(t)
@@ -238,6 +270,10 @@ test(
     const pub = await check(2)
     assert.deepEqual(record(pub.rows[0]), [4, 2, 0, 2])
     await db.query("UPDATE tournaments SET status='finished' WHERE id=$1", [cup])
+    await db.query('UPDATE games SET good_quality=true WHERE id=ANY($1::uuid[])', [[first.game, afk.game, ambiguous.game]])
+    const qualityCup = await publicDeckStatistics(db, { tournamentId: cup, goodQuality: true })
+    assert.deepEqual([qualityCup.matches, qualityCup.games, record(qualityCup.rows[0])], [1, 1, [2, 1, 0, 1]])
+    assert.equal((await publicDeckStatistics(db, { goodQuality: true })).matches, 1)
     const cupDecks = await publicDeckStatistics(db, { group: 'deck', tournamentId: cup, selected: comp })
     assert.deepEqual(
       cupDecks.rows.map((r) => r.name),

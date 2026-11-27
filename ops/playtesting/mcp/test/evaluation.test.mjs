@@ -127,6 +127,23 @@ test('[PM-REVIEW-API-5] native MCP discovers and forwards scoped review and anno
   assert.deepEqual(requests[3].body, { archiveRevision: 'fixture-revision', entries: [entry] });
 });
 
+test('[PM-REVIEW-API-11] native MCP forwards the explicit boolean quality verdict and archive revision', async t => {
+  const { mcp, requests } = await start(t);
+  const [owner, rival] = await Promise.all(['owner', 'rival'].map(actor => connect(t, mcp, actor)));
+  const name = 'save_game_quality';
+  const { tools } = await owner.listTools();
+  assert.equal(tools.find(tool => tool.name === name)?.annotations?.readOnlyHint, false);
+  const args = { gameId: GAME, archiveRevision: 'a'.repeat(64), goodQuality: false };
+  assert.equal((await call(rival, name, args)).data.code, 'forbidden');
+  assert.equal((await owner.callTool({ name, arguments: { ...args, goodQuality: 'false' } })).isError, true);
+  assert.equal(requests.length, 0);
+  assert.equal((await call(owner, name, args)).error, false);
+  assert.deepEqual(requests, [{
+    actor: 'owner', method: 'PUT', path: `/api/playtesting/review/games/${GAME}/quality`,
+    body: { archiveRevision: args.archiveRevision, goodQuality: false },
+  }]);
+});
+
 test('[PM-AC-15] the review prompt teaches the connected model to compare plausible counterfactuals', async (t) => {
   const { mcp, requests } = await start(t);
   const owner = await connect(t, mcp, 'owner');

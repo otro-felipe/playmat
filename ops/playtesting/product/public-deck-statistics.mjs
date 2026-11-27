@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
+import { matchEndingCauses } from './archive.mjs'
 import { archetypesFor, archetypeSourceUrl, canonicalArchetype } from './deck-performance-identity.mjs'
-import { isUuid, ProductError } from './decks.mjs'
+import { isUuid, ProductError, transaction } from './decks.mjs'
 import { historyFormatFilter } from './performance.mjs'
 import { archetypeColors, statisticsFormat } from './public-deck-identity.mjs'
 
@@ -49,16 +50,22 @@ const eligibleMatches = `
     JOIN tournament_entries ea ON ea.id=a.entry_a JOIN tournament_entries eb ON eb.id=a.entry_b
     JOIN published_tournament_entries pa ON pa.entry_id=ea.id JOIN published_tournament_entries pb ON pb.entry_id=eb.id
     WHERE a.completed AND a.result_reason IN ('played','afk') AND ($1::uuid IS NULL OR t.id=$1)
+      AND (NOT $2::boolean OR a.result_reason='played')
       AND (a.official_match IS NULL OR a.official_match=a.id)
       AND a.names @> ARRAY[lower(ea.engine_name),lower(eb.engine_name)]
       AND (a.winner_entry IS NULL OR a.winner_entry IN (ea.id,eb.id))
-  ), eligible AS (
+  ), eligible_series AS (
     SELECT id,ka,kb,format,ca,cb,aa,ab,palette_a,palette_b,outcome FROM tournament_results WHERE included AND candidates=1
     UNION ALL
     SELECT id,names[1],names[2],format,compositions[1],compositions[2],archetypes[1],archetypes[2],palettes[1],palettes[2],
       CASE winner WHEN names[1] THEN 1 WHEN names[2] THEN -1 ELSE 0 END
     FROM attributed WHERE included AND $1 IS NULL AND pairing_id IS NULL AND physical_id IS NULL
       AND (winner IS NULL OR winner=ANY(names))
+  ), eligible AS (
+    SELECT e.* FROM eligible_series e WHERE NOT $2::boolean OR NOT EXISTS (
+      SELECT FROM games gq WHERE gq.match_id=e.id
+        AND (gq.status<>'completed' OR NOT gq.good_quality OR gq.end_cause=ANY($3::text[]))
+    )
   )`
 
 const results = eligibleMatches + `, side_stats AS (
@@ -275,8 +282,8 @@ async function openingHands(pool, seats) {
   }
 }
 
-async function selectedDetails(pool, { tournamentId, group, filter, selected }) {
-  const { rows } = await pool.query(eligibleMatches + ' SELECT id,ka,kb,format,ca,cb,aa,ab FROM eligible', [tournamentId])
+async function selectedDetails(pool, eligibility, { group, filter, selected }) {
+  const { rows } = await pool.query(eligibleMatches + ' SELECT id,ka,kb,format,ca,cb,aa,ab FROM eligible', eligibility)
   const seats = []
   const compositions = new Map()
   for (const row of rows) {
@@ -325,9 +332,18 @@ async function selectedDetails(pool, { tournamentId, group, filter, selected }) 
   return { list, hands: seats.length ? await openingHands(pool, seats) : { games: 0, wins: 0, mulligans: [], cards: [] } }
 }
 
-export async function publicDeckStatistics(
+export function publicDeckStatistics(pool, options = {}) {
+  if (!options.selected) return readStatistics(pool, options)
+  return transaction(pool, async db => {
+    // Rankings and the selected row's opening hands must use the same quality verdicts.
+    await db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
+    return readStatistics(db, options)
+  })
+}
+
+async function readStatistics(
   pool,
-  { tournamentId = null, group = 'archetype', format, selected = null } = {},
+  { tournamentId = null, group = 'archetype', format, selected = null, goodQuality = false },
 ) {
   if (!['archetype', 'deck'].includes(group)) throw new ProductError(400, 'Unsupported statistics group')
   if (format != null && typeof format !== 'string') throw new ProductError(400, 'Unsupported format')
@@ -343,7 +359,8 @@ export async function publicDeckStatistics(
     tournamentName = cup.name
   }
 
-  const { rows: allCounts } = await pool.query(results, [tournamentId])
+  const eligibility = [tournamentId, goodQuality, [...matchEndingCauses]]
+  const { rows: allCounts } = await pool.query(results, eligibility)
   const counts = allCounts.filter((row) => {
     const format = statisticsFormat(row.format)
     return !casualFormat.test(format) && !isPractice(format, row.aa) && !isPractice(format, row.ab)
@@ -394,7 +411,7 @@ export async function publicDeckStatistics(
       ? {
           ...detail,
           matchups: [...opponents.values()].sort(order),
-          ...(await selectedDetails(pool, { tournamentId, group, filter, selected })),
+          ...(await selectedDetails(pool, eligibility, { group, filter, selected })),
         }
       : null,
   }

@@ -1,8 +1,8 @@
 import { lineText, publicLineId } from './line-explanations.mjs'
 import { canonicalRows, legacyKeptHand, plainReplayText as plainText } from './replay-opening.mjs'
 import { createHash } from 'node:crypto'
-import { projectReplayEvent } from './archive.mjs'
-import { isUuid, normalize, ProductError } from './decks.mjs'
+import { matchEndingCauses, projectReplayEvent } from './archive.mjs'
+import { isUuid, normalize, ProductError, transaction } from './decks.mjs'
 import { categories, createReviewAnnotations } from './review-annotations.mjs'
 import { indexReplayPresentation, publicDiscardLinks, publicSourceCard } from './review-presentation.mjs'
 import { genericChoiceKinds, indexCommittedDecisions, structuredChoice } from './review-decisions.mjs'
@@ -523,8 +523,8 @@ function noteWithChooser(note, positions, presentation) {
 export function createPostMatchReview(pool, archive, permissions) {
   const annotations = createReviewAnnotations(pool)
 
-  async function accessGame(actor, game) {
-    const access = await permissions.reviewAccess(actor, game.match_id)
+  async function accessGame(actor, game, db) {
+    const access = await permissions.reviewAccess(actor, game.match_id, db)
     if (!(game.players ?? []).some(({ seatId }) => access.perspectives.some(perspective => perspective.seatId === seatId && perspective.owned)
       || access.viewerSeatId === seatId)) throw new ProductError(404, 'Replay not found')
     return access
@@ -585,7 +585,7 @@ export function createPostMatchReview(pool, archive, permissions) {
       reason,
       privacy: { fullAvailable: data.fullAvailable,
         viewerSeatId: access.viewerSeatId, perspectives: data.perspectives, reason },
-      archiveRevision,
+      archiveRevision, goodQuality: game.good_quality,
       sideboardDelta,
       coverage: {
         archive: archiveStatus, version: data.typed ? 2 : 1, partial: archiveStatus !== 'ready' || !data.typed || game.review_incomplete,
@@ -696,6 +696,34 @@ export function createPostMatchReview(pool, archive, permissions) {
       })
       return { gameId: id, archiveRevision, ...result,
         annotations: result.annotations.map(note => noteWithChooser(note, positionMap, displayed)) }
+    },
+    async saveQuality(actor, id, input) {
+      if (actor.playerId) throw new ProductError(403, 'Review quality on the account connection')
+      const { archiveRevision, goodQuality } = input ?? {}
+      if (typeof archiveRevision !== 'string' || !/^[a-f0-9]{64}$/.test(archiveRevision) || typeof goodQuality !== 'boolean') {
+        throw new ProductError(400, 'Supply the archive revision and a boolean quality verdict')
+      }
+      const game = await archive.reviewGame(id)
+      return transaction(pool, async db => {
+        const access = await accessGame(actor, game, db)
+        requireReady(game)
+        if (access.reason === 'match_not_completed') {
+          throw new ProductError(409, 'Wait for the completed match and its replay archive')
+        }
+        if (game.players.length !== 2 || !game.players.every(({ seatId }) =>
+          access.perspectives.some(seat => seat.seatId === seatId && seat.owned))) {
+          throw new ProductError(403, 'The reviewer account must own both seats')
+        }
+        checkArchiveRevision(archiveRevision, immutableRevision(game))
+        const { rowCount } = await db.query(`
+          UPDATE games g SET good_quality=$2 FROM matches m
+          WHERE g.id=$1 AND g.checksum=$3 AND g.object_key IS NOT NULL
+            AND g.status='completed' AND m.id=g.match_id AND m.status='completed'
+            AND (NOT $2 OR g.end_cause IS NULL OR NOT g.end_cause=ANY($4::text[]))`,
+        [id, goodQuality, game.checksum, [...matchEndingCauses]])
+        if (!rowCount) throw new ProductError(409, 'The archived game changed or ended with an interruption')
+        return { gameId: game.id, archiveRevision, goodQuality }
+      })
     },
     async withHistory(actor, history) {
       const nowArchived = history.matches.filter(match => match.status === 'completed')

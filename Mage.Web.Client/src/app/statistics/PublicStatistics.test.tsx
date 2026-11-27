@@ -53,6 +53,40 @@ function show(url: string, response: (request: URL) => unknown) {
 
 const table = (page: ReturnType<typeof render>, name = 'Archetype') => page.findByRole('table', { name });
 
+it('[PM-STATS-QUALITY-1] toggles the tournament statistics sample and keeps the quality filter in detail and group links', async () => {
+  const { page, fetch } = show('/tournaments/cup?tab=stats&format=Pioneer', (request) => {
+    const quality = request.searchParams.get('goodQuality') === 'true';
+    return {
+      tournamentName: 'Quality fixture',
+      formats: ['Pioneer'],
+      format: 'Pioneer',
+      matches: quality ? 2 : 6,
+      games: quality ? 4 : 14,
+      rows: [izzet],
+      selected: request.searchParams.has('selected') ? { ...izzet, matchups: [mirror] } : null,
+    };
+  });
+  const control = page.getByRole('switch', { name: 'Only good-quality games' });
+  expect(control.getAttribute('aria-checked')).toBe('false');
+  expect(await page.findByText('Pioneer · 6 matches · 14 games')).toBeTruthy();
+  expect(fetch.mock.calls.at(-1)?.[0]).not.toContain('goodQuality');
+  control.focus();
+  await userEvent.keyboard('[Space]');
+  expect(control.getAttribute('aria-checked')).toBe('true');
+  expect(await page.findByText('Pioneer · 2 matches · 4 games')).toBeTruthy();
+  expect(fetch.mock.calls.at(-1)?.[0]).toContain('goodQuality=true');
+  expect(page.getByLabelText('location').textContent).toContain('tab=stats');
+  expect(page.getByRole('link', { name: 'Decks' }).getAttribute('href')).toContain('goodQuality=true');
+  const detail = within(await table(page)).getByRole('link', { name: 'Izzet Phoenix' });
+  expect(detail.getAttribute('href')).toContain('goodQuality=true');
+  await userEvent.click(detail);
+  expect(await page.findByRole('heading', { name: 'Matchups' })).toBeTruthy();
+  await userEvent.click(control);
+  expect(control.getAttribute('aria-checked')).toBe('false');
+  await waitFor(() => expect(fetch.mock.calls.at(-1)?.[0]).not.toContain('goodQuality'));
+  expect(fetch.mock.calls.at(-1)?.[0]).toContain('selected=izzet');
+});
+
 it('navigates between format-scoped archetypes and their matchups with a shareable URL', async () => {
   const { page, fetch } = show('/statistics', (request) => ({
     formats: ['Pioneer', 'Modern'],

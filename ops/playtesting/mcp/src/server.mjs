@@ -13,7 +13,7 @@ import { monitorSeatDecisions, registerEvents } from './events.mjs';
 import { listArchetypes, possibleResponses, searchCards } from './catalog.mjs';
 import { guideBootstrap, guideInstructions, registerGuides, sequenceInstructions } from './guides.mjs';
 import { registerMatchReviewPrompt, scoredPositions } from './match-review.mjs';
-import { registerPostMatchReviewPrompt, reviewManifestInput, reviewEvidenceInput, reviewAnnotationsInput, saveReviewAnnotationsInput } from './postmatch-review.mjs';
+import { registerPostMatchReviewPrompt, reviewManifestInput, reviewEvidenceInput, reviewAnnotationsInput, saveReviewAnnotationsInput, saveGameQualityInput } from './postmatch-review.mjs';
 import { closedPlayerReceipts, playLine, waitForLine } from './line-runtime.mjs';
 import { registerTheorycraftTools } from './theorycraft.mjs';
 import { compactGameState, createViewMemory, formatGameReceipt, resetViewMemory } from './state-view.mjs';
@@ -698,7 +698,7 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
   tool('score_match_evaluation', 'Calculate game accuracy and coverage from reviewed positions. Low-confidence positions are excluded from the score.', {
     gameId: Uuid, positions: scoredPositions,
   }, 'history', (args) => fromProduct('score_match_evaluation', args), true);
-  tool('get_match_review', 'Read the match or game review manifest, available perspectives, coverage and saved counts. Supply one matchId or gameId. For qualitative review, read get_guide with guideId replay-analysis or start the review_playmat_replay prompt.',
+  tool('get_match_review', 'Read the match or game review manifest, available perspectives, coverage, saved counts and game quality. Supply one matchId or gameId. For qualitative review, read get_guide with guideId replay-analysis or start the review_playmat_replay prompt.',
     reviewManifestInput, 'history', (args) => {
       if (Boolean(args.matchId) === Boolean(args.gameId)) throw new ToolError('invalid_input', 'Supply one matchId or gameId.');
       return fromProduct('get_match_review', args);
@@ -709,6 +709,8 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
     reviewAnnotationsInput, 'history', (args) => fromProduct('list_review_annotations', args), true);
   tool('save_review_annotations', 'Persist qualitative annotations on recorded decisions or witnessed inferred omissions. Send the archive revision and the annotation revision when editing. Include a confirmed comparator for an inferred omission or when reconstructing a decision from supporting evidence.',
     saveReviewAnnotationsInput, 'history', (args) => fromProduct('save_review_annotations', args));
+  tool('save_game_quality', 'Save a game-wide quality verdict after reviewing both seats. The account must own both seats. Use the game ID and archive revision from get_match_review. Only representative games without major interruptions, confusion or misplays qualify for true.',
+    saveGameQualityInput, 'history', (args) => fromProduct('save_game_quality', args));
   registerTheorycraftTools(tool, fromProduct);
   tool('export_matches', 'Request an authorized download handle for selected games.', {
     gameIds: z.array(Uuid).min(1).max(10),

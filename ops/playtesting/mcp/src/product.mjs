@@ -152,6 +152,10 @@ export function createProductClient(baseUrl, publicUrl) {
         path = `${root}/review/games/${encode(args.gameId)}/annotations`;
         config = { method: 'POST', body: { archiveRevision: args.archiveRevision, entries: args.entries } };
         break;
+      case 'save_game_quality':
+        path = `${root}/review/games/${encode(args.gameId)}/quality`;
+        config = { method: 'PUT', body: { archiveRevision: args.archiveRevision, goodQuality: args.goodQuality } };
+        break;
       case 'run_theory_study':
         path = `${root}/theory/studies`;
         config = { method: 'POST', body: args };
@@ -183,6 +187,9 @@ export function createProductClient(baseUrl, publicUrl) {
         const result = await response.json().catch(() => null);
         if (result?.error === 'Wait for the completed match and its replay archive' || result?.error === 'Replay is not ready for review') {
           throw new ToolError('review_not_ready', 'Wait for the whole match and its replay archive.');
+        }
+        if (name === 'save_game_quality') {
+          throw new ToolError('review_conflict', 'Check the current archive revision and how the game ended before retrying the verdict.');
         }
         throw new ToolError('review_conflict', 'Read the current archive and annotation revisions before retrying.');
       }

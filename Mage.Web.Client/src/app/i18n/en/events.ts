@@ -237,6 +237,7 @@ export default {
   "stats.sampleNote": "A match is a complete match. A mirror counts twice in its row. The range under each % is its 95% confidence interval. Practice decks and casual formats (Freeform, Commander) are not counted.",
   "stats.unavailable": "This selection is unavailable.",
   "stats.empty": "No public match results for these filters.",
+  "stats.goodQuality": "Only good-quality games",
   "stats.emptyOpponents": "No public matchups for this selection.",
   "stats.loadError": "Statistics could not be loaded.",
   "stats.paletteDeck": "Initial deck palette ({colors})",

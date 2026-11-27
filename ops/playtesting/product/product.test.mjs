@@ -246,6 +246,7 @@ test('public statistics are readable without a session and accept only read oper
   assert.equal(report.selected, null)
   assert.equal((await f.path(path + '?group=deck&format=Pioneer')).status, 200)
   assert.equal((await f.path(path + '?group=player')).status, 400)
+  assert.equal((await f.path(path + '?goodQuality=unknown')).status, 400)
   assert.equal((await f.path(path, { method: 'POST' })).status, 405)
   assert.equal((await f.path('/api/playtesting/tournaments/' + randomUUID() + '/statistics')).status, 404)
   assert.equal((await f.path('/api/playtesting/tournaments/not-a-tournament/statistics')).status, 404)
@@ -264,6 +265,51 @@ test('public statistics are readable without a session and accept only read oper
     db.query('INSERT INTO match_statistics_exclusions(match_id,reason,author) VALUES ($1,$2,$3)',
       [match.id, 'Fixture exhibition', 'fixture-operator']))
   assert.equal((await (await f.path(path)).json()).matches, 0)
+})
+
+test('[PM-REVIEW-API-11] an account reviewer classifies its completed archived games and history reflects retries and revisions', { skip: !databaseUrl }, async t => {
+  const f = await fixture(t)
+  const owner = await signIn(f, 'QualityOwner')
+  const opponent = await signIn(f, 'QualityOpponent')
+  await f.product.provisionAgent('QualityOwner', 'QualityPilot', ['play'])
+  const judge = { Authorization: 'Bearer ' + await f.product.provisionAgent('QualityOwner', 'QualityJudge', ['history']) }
+  const noHistory = { Authorization: 'Bearer ' + await f.product.provisionAgent('QualityOwner', 'QualityNoHistory', ['play']) }
+  const own = await historyMatch(f, ['QualityOwner', 'QualityPilot'], Date.now())
+  const shared = await historyMatch(f, ['QualityOwner', 'QualityOpponent'], Date.now())
+  const ongoing = await historyMatch(f, ['QualityOwner', 'QualityPilot'], Date.now(), { active: true })
+  await f.product.archiveGames()
+  // Simulate a database with completed history from before the quality column was deployed.
+  await withTestDatabase(f, db => db.query('ALTER TABLE games DROP COLUMN good_quality'))
+  const { createProduct } = await import('./product.mjs')
+  const migrated = await createProduct({ databaseUrl, schema: f.schema, replayDirectory: f.replayDirectory, store: new Map() })
+  await migrated.close()
+  const root = '/api/playtesting/review/games/'
+  const [gameId] = own.games
+  const report = async id => (await (await f.path(root + id, { headers: judge })).json())
+  const initial = await report(gameId)
+  assert.equal(initial.goodQuality, false)
+  assert.match(initial.archiveRevision, /^[a-f0-9]{64}$/)
+  const save = (id, headers, goodQuality, archiveRevision = initial.archiveRevision) =>
+    f.path(root + id + '/quality', json('PUT', headers, { archiveRevision, goodQuality }))
+  assert.equal((await save(gameId, {}, true)).status, 401)
+  assert.equal((await save(gameId, noHistory, true)).status, 403)
+  assert.equal((await save(gameId, opponent, true)).status, 404)
+  assert.equal((await save(shared.games[0], judge, true, (await report(shared.games[0])).archiveRevision)).status, 403)
+  assert.equal((await save(ongoing.games[0], owner, true, initial.archiveRevision)).status, 409)
+  assert.equal((await save(gameId, judge, 'true')).status, 400)
+  assert.equal((await save(gameId, judge, true, '0'.repeat(64))).status, 409)
+  for (const flag of [true, true, false]) {
+    const response = await save(gameId, judge, flag)
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), { gameId, archiveRevision: initial.archiveRevision, goodQuality: flag })
+    assert.equal((await report(gameId)).goodQuality, flag)
+    const history = await (await f.path('/api/playtesting/matches/' + own.id, { headers: owner })).json()
+    assert.equal(history.games[0].goodQuality, flag)
+    const statistics = await (await f.path('/api/playtesting/statistics?goodQuality=true')).json()
+    assert.equal(statistics.matches, Number(flag))
+  }
+  await withTestDatabase(f, db => db.query("UPDATE games SET end_cause='inactivity' WHERE id=$1", [gameId]))
+  assert.equal((await save(gameId, judge, true)).status, 409)
 })
 
 test('limits public socket upgrades by visitor and leaves authenticated pages available', { skip: !databaseUrl }, async t => {

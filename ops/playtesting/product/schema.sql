@@ -301,3 +301,4 @@ CREATE TABLE IF NOT EXISTS external_mcp_invite_links (
 -- Read from the replay's terminal spectatorEnd marker; end_cause_checked records that the archive was read.
 ALTER TABLE games ADD COLUMN IF NOT EXISTS end_cause text;
 ALTER TABLE games ADD COLUMN IF NOT EXISTS end_cause_checked boolean NOT NULL DEFAULT false;
+ALTER TABLE games ADD COLUMN IF NOT EXISTS good_quality boolean NOT NULL DEFAULT false;

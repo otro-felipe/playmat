@@ -6,6 +6,7 @@ import { registerMessages, useI18n, useT, type Translate } from '../i18n';
 import messages from '../i18n/en/events';
 import { request, tournamentApi, tournamentPath } from '../tournaments/tournamentApi';
 import { Button } from '../ui/Button';
+import { Switch } from '../ui/Switch';
 import { CardPreviewName } from '../ui/CardMarkdown';
 import { Percentage } from '../history/Percentage';
 import styles from './PublicStatistics.module.css';
@@ -744,6 +745,7 @@ export function StatisticsPanel({
   const [search, setSearch] = useSearchParams();
   const group: Group = search.get('group') === 'deck' ? 'deck' : 'archetype';
   const format = search.get('format') || '';
+  const goodQuality = search.get('goodQuality') === 'true';
   const selection = search.get('selected') || '';
   const requested = search.get('sort') as SortKey;
   const sort: SortKey = sortKeys.includes(requested) ? requested : 'n';
@@ -755,6 +757,7 @@ export function StatisticsPanel({
     const query = new URLSearchParams({ ...scope, group: nextGroup });
     if (nextFormat) query.set('format', nextFormat);
     if (selected) query.set('selected', selected);
+    if (goodQuality) query.set('goodQuality', 'true');
     if (order[0] !== 'n' || !order[1]) {
       query.set('sort', order[0]);
       query.set('dir', order[1] ? 'desc' : 'asc');
@@ -764,6 +767,7 @@ export function StatisticsPanel({
   const api = new URLSearchParams({ group });
   if (format) api.set('format', format);
   if (selection) api.set('selected', selection);
+  if (goodQuality) api.set('goodQuality', 'true');
   const query = api.toString();
   const stats = useQuery({
     queryKey: [endpoint, query],
@@ -780,14 +784,18 @@ export function StatisticsPanel({
   const tableRows = sortRows(detail ? detail.matchups : (data?.rows ?? []), sort, descending, names);
   const label = detail ? t('stats.opponent') : t(group === 'deck' ? 'stats.deck' : 'stats.archetype');
   const unavailable = !!selection && !!data && !detail;
-  const viewScope = endpoint + '?' + new URLSearchParams({ group, ...(format ? { format } : {}) });
+  const viewScope = endpoint + '?' + new URLSearchParams({
+    group, ...(format ? { format } : {}), ...(goodQuality ? { goodQuality: 'true' } : {}),
+  });
   useEffect(() => {
     // The target may arrive asynchronously. Focus once per navigation, never on a background refetch.
     const previous = lastView.current;
     if (!data || previous?.key === location.key) return;
     const returning = previous?.scope === viewScope && !!previous.selection;
     const origin = returning ? previous.origin : selection;
-    if (selection) heading.current?.focus();
+    if (selection) {
+      if (previous?.selection !== selection) heading.current?.focus();
+    }
     else if (returning) document.getElementById('stats-row-' + origin)?.focus();
     lastView.current = { key: location.key, scope: viewScope, selection, origin };
   }, [data, location.key, viewScope, selection]);
@@ -804,15 +812,27 @@ export function StatisticsPanel({
             </Link>
           ))}
         </nav>
-        <label className={styles.format}>
-          <span>{t('stats.format')}</span>
-          <select value={shownFormat} onChange={(e) => setSearch(params(group, e.target.value))}>
-            {(tournamentId || !formats.length) && <option value="">{t('stats.allFormats')}</option>}
-            {formats.map((f) => (
-              <option key={f}>{f}</option>
-            ))}
-          </select>
-        </label>
+        <div className={styles.filters}>
+          <Switch
+            checked={goodQuality}
+            label={t('stats.goodQuality')}
+            onCheckedChange={(checked) => {
+              const next = new URLSearchParams(search);
+              if (checked) next.set('goodQuality', 'true');
+              else next.delete('goodQuality');
+              setSearch(next, { preventScrollReset: true });
+            }}
+          />
+          <label className={styles.format}>
+            <span>{t('stats.format')}</span>
+            <select value={shownFormat} onChange={(e) => setSearch(params(group, e.target.value))}>
+              {(tournamentId || !formats.length) && <option value="">{t('stats.allFormats')}</option>}
+              {formats.map((f) => (
+                <option key={f}>{f}</option>
+              ))}
+            </select>
+          </label>
+        </div>
       </div>
       <header className={[styles.hero, headingLevel === 2 ? styles.compact : ''].join(' ')}>
         {(detail || unavailable) && (
