@@ -1097,7 +1097,7 @@ for (const optionalCosts of ['decline', 'pay', undefined]) {
 }
 
 test('[PM-AC-09-RESPONSES] a Liliana discard rejects the tail and teaches the exact observed-choice recovery', async (t) => {
-  const ownCard = { id: 'own-land', name: 'Mountain', types: ['LAND'] };
+  const ownCard = { id: 'own-land', name: 'Castle Embereth', types: ['LAND'], rules: ['{T}: Add {R}.'] };
   const stackObject = { id: 'loyalty-stack', controllerId: 'rival', abilityType: 'ACTIVATED_NONMANA',
     abilityText: '+1: Each player discards a card.' };
   const first = { id: 'discard', kind: 'target', instruction: 'Select a card to discard', targetZone: 'HAND',
@@ -1106,11 +1106,19 @@ test('[PM-AC-09-RESPONSES] a Liliana discard rejects the tail and teaches the ex
     onResponse: (_answer, update, state) => update({ stack: [], ownHand: [], decision: readyToPass('after'),
       players: state.players.map(player => player.yourSeat ? player : { ...player, graveyard: [{ id: 'shown', name: 'Forest' }] }) }) });
   const choose = { kind: 'choose', decisionId: first.id, choiceId: first.choices[0].id };
-  const { result } = await f.call('play_line', { ...f.request, expectedStackIds: [stackObject.id], actions: [choose, { kind: 'pass_priority' }] });
+  const { result: initial } = await f.call('get_game_state', { gameId, view: 'compact' });
+  assert.deepEqual(initial.ownHand[0].rules, ownCard.rules);
+  const request = { ...f.request, expectedStackIds: [stackObject.id], actions: [choose, { kind: 'pass_priority' }] };
+  const { result } = await f.call('play_line', { ...request, view: 'compact' });
   assert.equal(result.code, 'reevaluation_required');
   assert.equal(result.stage, 'preflight');
   assert.equal(result.appliedDecisions, 0);
   assert.deepEqual(f.applied, []);
+  assert.equal(result.state.ownHand[0].rules, undefined);
+  assert.equal(result.state.decision.choices[0].cardRef, ownCard.id);
+  assert.deepEqual(result.state.decision.choices[0].playLineAction, choose);
+  const { result: full } = await f.call('play_line', { ...request, view: 'full' });
+  assert.deepEqual(full.state.ownHand[0].rules, ownCard.rules);
   assert.match(result.message, /only.*decisionId.*choiceId.*inspect/i);
   const observed = result.state.decision;
   const { result: recovered } = await f.call('play_line', { gameId, cursor: result.state.cursor, commandId: 'discard-only',

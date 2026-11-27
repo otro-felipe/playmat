@@ -20,6 +20,10 @@ Re-read this guide after losing conversation context. Use `tools/list` for exact
 5. If `planOwnsExecution:true`, call `wait_for_decision({"gameId":"…","commandId":"…","view":"compact"})` with no cursor filters. A lost receipt is recovered the same way; never resend a partly applied line.
 6. Answer every pending legal choice promptly. Polling, chat and analysis do not extend the inactivity deadline.
 
+When an effect reveals information and its non-priority prompt is already open, send only the selected `playLineAction` as a one-action line. Replan after the receipt, including when the next intended action is a pass.
+
+If there is no decision or pending rollback, wait for the same game using `wait_for_decision({"gameId":"…","timeoutMs":25000,"view":"compact"})`. Immediately after the game opens, `priority:"none"` and no decision can also mean the engine is waiting for a game slot. Read the state returned by each wait. If the game, cursor and decision are unchanged, keep waiting without reloading the guide or requesting another copy of the board.
+
 ## Compact view
 
 - `view:"compact"` keeps every ID, legal choice, public number and prompt field. The executor always validates against the full engine state.
@@ -105,13 +109,14 @@ During an automatic pass, a rival triggered ability from a source that was alrea
 | `before_draw_trigger` | This upkeep is your last window to act before a public draw trigger. | Act, or send a fresh pass from this upkeep. |
 | `destination_skipped` | The engine skipped the requested window. | Read `lastDestination` and the current decision. |
 | `land_play_unavailable` | No legal land drop in this window. | Drop the land action and continue. |
-| `reevaluation_required` | The line continued past information it cannot know. | End the line at that action; send the rest after it resolves. |
-| `invalid_line_arguments` | Schema rejection; nothing applied. | Read `issues[].path` and fix that action. |
+| `reevaluation_required` | The line crossed a pending choice or can reveal new information. | If `state.decision` is an open panel or another non-priority prompt, send only its exact `choose`. Otherwise end at the information-changing action and replan from its receipt. |
+| `invalid_line_arguments` | Schema rejection; nothing applied. | Fix the action at `issues[].path`. For an already visible choice, use its `playLineAction` or exact IDs. |
+| `bad_sequence` | A pass before another action must name the current-turn window. | Use `current_turn` with an explicit step or phase and `priority:"self"` for an intermediate pass. Put the terminal pass last. |
 | `stale_decision` | The decision ID is no longer current. | Use the decision in the returned state. |
 | `timeout` | The bounded wait ended; the line may still run. | `wait_for_decision` with the same `gameId` and `commandId`. |
 | `chat_closed` | The game ended and XMage closed its chat. | Send the message in the next game, or before conceding. |
 
-The `turn-planning` guide has a worked example for every stop.
+Use the returned `state` and `cursor` to replan after a preflight rejection. Read `get_game_state` when the receipt has no state or you lost track of the current game. The `turn-planning` guide has worked examples.
 
 ## Chat
 

@@ -183,6 +183,8 @@ For partial changes, clone the freshly read deck and edit the amounts in both zo
 
 If the submission receipt was lost, call `get_game_state` with the same seat selector. If it reports a new game, continue with its returned game ID. During sideboarding read `get_sideboard_state` for that seat. The window reports `open`, `sending`, `accepted` or `uncertain`. Only an open window accepts a new submission. An explicit deck refusal reopens the window for correction.
 
+After a transport error such as `upstream_unavailable`, submit again only when the same sideboard window is `open` with `submitted:false`. Rebuild the request from its current `decisionId` and deck. If the window reports `submitted:true`, wait for the next game.
+
 For a sending, accepted or uncertain window, copy the latest state cursor into an ordinary wait:
 
 ```json

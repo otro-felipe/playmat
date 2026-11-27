@@ -221,12 +221,12 @@ function decisionReceipt(seat, receipt, view) {
   return formatGameReceipt(receipt, view, viewMemory(seat));
 }
 
-function rejectedLine({ gameId, cursor, commandId, view }, rejection) {
+function rejectedLine({ gameId, cursor, commandId, view }, rejection, memory) {
   return formatGameReceipt({
     status: 'rejected', gameId, cursor, requestedCursor: cursor, commandId,
     actionIndex: null, appliedDecisions: 0, planOwnsExecution: false, ...rejection,
     ...(rejection.state && rejection.state.cursor !== cursor ? { cursor: rejection.state.cursor } : {}),
-  }, view);
+  }, view, memory);
 }
 
 function lineArgumentRejection(args, error) {
@@ -426,7 +426,7 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
         actionIndex: error.actionIndex ?? null,
         ...(error.field ? { issues: [{ path: ['actions', error.actionIndex, error.field, ...(error.paymentIndex !== undefined ? [error.paymentIndex] : [])], code: error.code, message: error.message }] } : {}),
         ...(error.state ? { state: seat.withChoiceActions(error.state) } : {}),
-      });
+      }, viewMemory(seat));
     }
   });
   tool('play_turn', 'Plan a complete turn with significant plays, public targets, chosen mana sources, guarded costs/choices and attacks. The executor makes legal ordinary passes between intentions; do not enumerate passes or predict priority windows. Own declared spells/triggers and the initial own stack may resolve; real rival actions, new information, unknown mandatory choices and chosen stops interrupt. finish next_turn advances only while no useful legal action remains, never because mana is zero.', Turn, 'play', (args) => getSeat().startTurn(args, current().reauthorize));
