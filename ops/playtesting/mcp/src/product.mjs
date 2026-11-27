@@ -154,6 +154,7 @@ export function createProductClient(baseUrl, publicUrl) {
         break;
       case 'get_match_review':
         path = args.matchId ? `${root}/review/matches/${encode(args.matchId)}` : `${root}/review/games/${encode(args.gameId)}`;
+        if (args.archiveOnly) path += '?archiveOnly=true';
         break;
       case 'read_review_evidence':
       case 'list_review_annotations': {

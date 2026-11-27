@@ -312,6 +312,38 @@ test('[PM-REVIEW-API-11] an account reviewer classifies its completed archived g
   assert.equal((await save(gameId, judge, true)).status, 409)
 })
 
+test('[PM-REVIEW-API-12] archive-only review reads retained revisions without opening replay objects', { skip: !databaseUrl }, async t => {
+  const objects = new Map()
+  const f = await fixture(t, objects)
+  const owner = await signIn(f, 'ManifestOwner')
+  const outsider = await signIn(f, 'ManifestOutsider')
+  await f.product.provisionHuman('ManifestRival', password)
+  const match = await historyMatch(f, ['ManifestOwner', 'ManifestRival'], Date.now(), { gameCount: 2 })
+  await f.product.archiveGames()
+  const matchPath = '/api/playtesting/review/matches/' + match.id
+  const gamePath = '/api/playtesting/review/games/' + match.games[0]
+  const get = (path, headers = owner) => f.path(path, { headers })
+  const detailed = await (await get(matchPath)).json()
+  assert.equal(detailed.games.length, 2)
+  const expected = detailed.games.map(({ gameId, matchId, gameNumber, status, gameStatus, archiveRevision, goodQuality, coverage }) => ({
+    gameId, matchId, gameNumber, status, gameStatus, archiveRevision, goodQuality, coverage: { archive: coverage.archive, partial: true },
+  }))
+  let reads = 0
+  objects.get = () => { reads++; throw new Error('Synthetic replay projection failure') }
+  assert.equal((await get(matchPath)).status, 500)
+  assert.equal(reads, 1)
+  const brief = await get(matchPath + '?archiveOnly=true')
+  assert.equal(brief.status, 200)
+  assert.deepEqual(await brief.json(), { matchId: match.id, status: 'completed', games: expected })
+  const individual = await get(gamePath + '?archiveOnly=true')
+  assert.equal(individual.status, 200)
+  assert.deepEqual(await individual.json(), expected.find(game => game.gameId === match.games[0]))
+  assert.equal((await get(matchPath + '?archiveOnly=true', outsider)).status, 404)
+  assert.equal((await get(gamePath + '?archiveOnly=true', outsider)).status, 404)
+  assert.equal((await get(gamePath + '?archiveOnly=other')).status, 400)
+  assert.equal(reads, 1, 'archive-only requests leave replay objects unopened')
+})
+
 test('limits public socket upgrades by visitor and leaves authenticated pages available', { skip: !databaseUrl }, async t => {
   const f = await fixture(t, new Map(), { publicUrl: 'https://playmat.example' })
   const owner = await signIn(f, 'SocketBudget')

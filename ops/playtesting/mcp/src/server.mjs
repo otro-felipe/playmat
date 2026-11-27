@@ -711,7 +711,7 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
   tool('score_match_evaluation', 'Calculate game accuracy and coverage from reviewed positions. Low-confidence positions are excluded from the score.', {
     gameId: Uuid, positions: scoredPositions,
   }, 'history', (args) => fromProduct('score_match_evaluation', args), true);
-  tool('get_match_review', 'Read the match or game review manifest, available perspectives, coverage, saved counts and game quality. Supply one matchId or gameId. For qualitative review, read get_guide with guideId replay-analysis or start the review_playmat_replay prompt.',
+  tool('get_match_review', 'Read the match or game review manifest, available perspectives, coverage, saved counts and game quality. Supply one matchId or gameId. Set archiveOnly to true for revision, quality and archive status without loading replay evidence. For qualitative review, read get_guide with guideId replay-analysis or start the review_playmat_replay prompt.',
     reviewManifestInput, 'history', (args) => {
       if (Boolean(args.matchId) === Boolean(args.gameId)) throw new ToolError('invalid_input', 'Supply one matchId or gameId.');
       return fromProduct('get_match_review', args);

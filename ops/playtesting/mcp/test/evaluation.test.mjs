@@ -102,6 +102,22 @@ test('[PM-AC-15] MCP forwards only authorized evidence pages and bounded scoring
   assert.equal(requests.length, requestCount);
 });
 
+test('[PM-REVIEW-API-12] native MCP forwards archive-only review for either identifier', async (t) => {
+  const { mcp, requests } = await start(t);
+  const owner = await connect(t, mcp, 'owner');
+  const { tools } = await owner.listTools();
+  const { inputSchema } = tools.find(tool => tool.name === 'get_match_review');
+  assert.equal(inputSchema.properties.archiveOnly.type, 'boolean');
+  assert.equal((await call(owner, 'get_match_review', { matchId: MATCH, archiveOnly: true })).error, false);
+  assert.equal((await call(owner, 'get_match_review', { gameId: GAME, archiveOnly: true })).error, false);
+  assert.equal((await call(owner, 'get_match_review', { gameId: GAME, archiveOnly: false })).error, false);
+  assert.deepEqual(requests.map(({ path }) => path), [
+    `/api/playtesting/review/matches/${MATCH}?archiveOnly=true`,
+    `/api/playtesting/review/games/${GAME}?archiveOnly=true`,
+    `/api/playtesting/review/games/${GAME}`,
+  ]);
+});
+
 test('[PM-REVIEW-API-5] native MCP discovers and forwards scoped review and annotation tools', async (t) => {
   const { mcp, requests } = await start(t);
   const [owner, rival] = await Promise.all(['owner', 'rival'].map(actor => connect(t, mcp, actor)));

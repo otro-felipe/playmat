@@ -54,6 +54,12 @@ function requireScope(actor, capability) {
   if (!actor.scopes.includes(capability)) throw new ProductError(403, 'This credential cannot use that capability')
 }
 
+function reviewArchiveOnly(query) {
+  const value = query.get('archiveOnly')
+  if (value !== null && !['true', 'false'].includes(value)) throw new ProductError(400, 'Use true or false for archiveOnly')
+  return value === 'true'
+}
+
 function safeNext(value) {
   if (!value || !value.startsWith('/') || value.startsWith('//') || value.includes('\\') || /[\u0000-\u0020]/.test(value)) return '/'
   const target = new URL(value, 'https://playmat.local')
@@ -617,14 +623,14 @@ export async function createProduct({
     const matchReview = /^review\/matches\/([^/]+)$/.exec(endpoint)
     if (matchReview && req.method === 'GET') {
       requireScope(actor, 'history')
-      return send(res, 200, await review.match(actor, matchReview[1]))
+      return send(res, 200, await review.match(actor, matchReview[1], reviewArchiveOnly(url.searchParams)))
     }
     const gameReview = /^review\/games\/([^/]+)(?:\/(evidence|annotations|quality))?$/.exec(endpoint)
     if (gameReview) {
       requireScope(actor, 'history')
       const [, gameId, resource] = gameReview
       const query = Object.fromEntries(url.searchParams)
-      if (req.method === 'GET' && !resource) return send(res, 200, await review.manifest(actor, gameId))
+      if (req.method === 'GET' && !resource) return send(res, 200, await review.manifest(actor, gameId, reviewArchiveOnly(url.searchParams)))
       if (req.method === 'GET' && resource === 'evidence') return send(res, 200, await review.evidence(actor, gameId, query))
       if (req.method === 'GET' && resource === 'annotations') return send(res, 200, await theory.attachAnnotationLinks(actor, await review.listAnnotations(actor, gameId, query)))
       if (req.method === 'POST' && resource === 'annotations') return send(res, 200, await review.saveAnnotations(actor, gameId, await body(req)))

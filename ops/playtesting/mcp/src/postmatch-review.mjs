@@ -38,7 +38,10 @@ const entry = z.object({
   sources: z.array(source).max(4).optional(), retrospective: line.optional(),
 }).strict()
 
-export const reviewManifestInput = { matchId: z.uuid().optional(), gameId: z.uuid().optional() }
+export const reviewManifestInput = {
+  matchId: z.uuid().optional(), gameId: z.uuid().optional(),
+  archiveOnly: z.boolean().optional().describe('Return retained archive status, revision and game quality without opening replay evidence. Coverage is partial in this mode.'),
+}
 export const reviewEvidenceInput = {
   ...query, purpose: z.enum(['analysis', 'replay']).default('analysis'),
   scope: z.enum(['seat', 'public', 'full']).default('seat'),

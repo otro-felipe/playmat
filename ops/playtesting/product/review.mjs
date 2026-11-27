@@ -21,6 +21,20 @@ function immutableRevision(game) {
   return game.checksum ? createHash('sha256').update(JSON.stringify([game.id, game.checksum])).digest('hex') : null
 }
 
+function archiveManifest(game) {
+  return {
+    gameId: game.id, matchId: game.match_id, gameNumber: game.game_number,
+    status: game.match_status, gameStatus: game.status,
+    archiveRevision: immutableRevision(game), goodQuality: game.good_quality,
+    coverage: { archive: game.archive_state, partial: true },
+  }
+}
+
+function canAccessGame(game, access) {
+  return (game.players ?? []).some(({ seatId }) => access.viewerSeatId === seatId
+    || access.perspectives.some(perspective => perspective.seatId === seatId && perspective.owned))
+}
+
 function gameReady(game) {
   return game.match_status === 'completed' && game.status === 'completed' && !!game.object_key && !!game.checksum
 }
@@ -525,8 +539,7 @@ export function createPostMatchReview(pool, archive, permissions) {
 
   async function accessGame(actor, game, db) {
     const access = await permissions.reviewAccess(actor, game.match_id, db)
-    if (!(game.players ?? []).some(({ seatId }) => access.perspectives.some(perspective => perspective.seatId === seatId && perspective.owned)
-      || access.viewerSeatId === seatId)) throw new ProductError(404, 'Replay not found')
+    if (!canAccessGame(game, access)) throw new ProductError(404, 'Replay not found')
     return access
   }
 
@@ -554,7 +567,8 @@ export function createPostMatchReview(pool, archive, permissions) {
   }
 
   async function gameManifest(game, access, data, rows) {
-    const archiveRevision = immutableRevision(game)
+    const archived = archiveManifest(game)
+    const { archiveRevision } = archived
     const eligiblePositions = data.ready ? data.positions : null
     const chooserByCursor = new Map()
     const discards = data.positions.filter(position => position.actual.kind === 'discard' && position.evidence.basis === 'engine_log')
@@ -578,14 +592,13 @@ export function createPostMatchReview(pool, archive, permissions) {
         : submittedSideboardDelta(await archive.reviewOwnDeckPair(game.id, access.viewerSeatId))
     }
     return {
-      gameId: game.id, matchId: game.match_id, gameNumber: game.game_number, status: game.match_status, gameStatus: game.status,
+      ...archived,
       format: game.format ?? game.engine_format, viewerSeatId: access.viewerSeatId,
       perspectives: data.perspectives, availablePerspectives: data.perspectives.map(seat => ({ ...seat, allowed: seat.owned || data.fullAvailable })),
       fullAvailable: data.fullAvailable,
       reason,
       privacy: { fullAvailable: data.fullAvailable,
         viewerSeatId: access.viewerSeatId, perspectives: data.perspectives, reason },
-      archiveRevision, goodQuality: game.good_quality,
       sideboardDelta,
       coverage: {
         archive: archiveStatus, version: data.typed ? 2 : 1, partial: archiveStatus !== 'ready' || !data.typed || game.review_incomplete,
@@ -601,21 +614,21 @@ export function createPostMatchReview(pool, archive, permissions) {
   }
 
   return {
-    async manifest(actor, id) {
+    async manifest(actor, id, archiveOnly = false) {
       const game = await archive.reviewGame(id)
       const access = await accessGame(actor, game)
+      if (archiveOnly) return archiveManifest(game)
       const data = await loadGame(game, access)
       return gameManifest(game, access, data, await annotations.counts([id], true))
     },
-    async match(actor, matchId) {
+    async match(actor, matchId, archiveOnly = false) {
       if (!isUuid(matchId)) throw new ProductError(404, 'Match not found')
       const access = await permissions.reviewAccess(actor, matchId)
-      const games = await archive.reviewGames(matchId)
+      const games = (await archive.reviewGames(matchId)).filter(game => canAccessGame(game, access))
+      if (archiveOnly) return { matchId, status: access.status, games: games.map(archiveManifest) }
       const counts = await annotations.counts(games.map(({ id }) => id), true)
       const manifests = []
       for (const game of games) {
-        if (!(game.players ?? []).some(({ seatId }) => access.perspectives.some(perspective => perspective.seatId === seatId && perspective.owned)
-          || access.viewerSeatId === seatId)) continue
         const data = await loadGame(game, access)
         manifests.push(await gameManifest(game, access, data, counts.filter(row => row.game_id === game.id)))
       }
