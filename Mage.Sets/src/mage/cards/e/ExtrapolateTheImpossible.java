@@ -76,7 +76,7 @@ class ExtrapolateTheImpossibleEffect extends OneShotEffect {
             return true;
         }
 
-        TargetCard first = new TargetCard(Zone.OUTSIDE, StaticFilters.FILTER_CARD)
+        TargetCard first = new TargetCard(Zone.ALL, StaticFilters.FILTER_CARD)
                 .withNotTarget(true);
         first.withChooseHint("first card to reveal");
         if (!controller.choose(outcome, possibleFirstCards, first, source, game)) {
@@ -85,7 +85,7 @@ class ExtrapolateTheImpossibleEffect extends OneShotEffect {
         Card firstCard = game.getCard(first.getFirstTarget());
         sideboard.removeIf(card -> CardUtil.haveSameNames(card, firstCard.getName(), game));
 
-        TargetCard second = new TargetCard(Zone.OUTSIDE, StaticFilters.FILTER_CARD)
+        TargetCard second = new TargetCard(Zone.ALL, StaticFilters.FILTER_CARD)
                 .withNotTarget(true);
         second.withChooseHint("card with a different name to reveal");
         if (!controller.choose(outcome, new CardsImpl(sideboard), second, source, game)) {
@@ -108,7 +108,7 @@ class ExtrapolateTheImpossibleEffect extends OneShotEffect {
             return false;
         }
 
-        TargetCard selected = new TargetCard(Zone.OUTSIDE, StaticFilters.FILTER_CARD)
+        TargetCard selected = new TargetCard(Zone.ALL, StaticFilters.FILTER_CARD)
                 .withNotTarget(true);
         selected.withChooseHint("card to put into the spell controller's hand");
         return opponent.choose(Outcome.Detriment, revealed, selected, source, game)
