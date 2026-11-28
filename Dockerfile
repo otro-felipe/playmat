@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 FROM maven:3.9-eclipse-temurin-17 AS engine
 WORKDIR /source
-ENV MAVEN_OPTS="-Xmx1500m -XX:+UseSerialGC"
+ENV MAVEN_OPTS="-Xmx2200m -XX:+UseSerialGC"
 COPY . .
 RUN mvn -B -pl Mage.Server -am install -DskipTests \
     && mvn -B -f Mage.Server/pom.xml package assembly:single -DskipTests \
