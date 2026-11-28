@@ -46,11 +46,11 @@ for (const width of [1440,390]) test(`[PM-LINE-REPLAY-2] seat chat and a keyboar
   await expect(list.getByRole('listitem')).toHaveCount(4);
   const row=list.getByRole('listitem').nth(2);
   expect(await row.getByText(/Último tramo/).textContent()).toBe(message);
-  const event=list.getByRole('button',{name:'El agente envió una línea de juego'});
+  const event=list.getByRole('button',{name:'Comentario del piloto'});
   await expect(event.locator('svg')).toHaveCount(1);
   await expect(list.getByText(/Línea evaluada/)).toHaveCount(0);
   await event.focus(); await page.keyboard.press('Enter');
-  const dialog=page.getByRole('dialog',{name:'El agente envió una línea de juego'});
+  const dialog=page.getByRole('dialog',{name:'Comentario del piloto'});
   await expect(dialog.getByRole('heading',{name:'Línea evaluada'})).toBeVisible();
   await expect(dialog.locator('strong').filter({hasText:'Elegida:'})).toHaveText('Elegida:');
   await expect(dialog.getByRole('list').getByRole('listitem')).toHaveText([
