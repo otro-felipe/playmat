@@ -97,7 +97,7 @@ public class SeasonedCryomancerTest extends CardTestPlayerBase {
 
         castCryomancer();
         addTarget(playerA, BEARS + "^" + LION);
-        castSpell(1, PhaseStep.PRECOMBAT_MAIN, playerB, "Unsummon", BEARS, "When you discard one or more nonland cards this way");
+        castSpell(1, PhaseStep.PRECOMBAT_MAIN, playerB, "Unsummon", BEARS, "Tap up to that many target creatures");
         finishTurn();
 
         assertGraveyardCount(playerA, "Opt", 2);

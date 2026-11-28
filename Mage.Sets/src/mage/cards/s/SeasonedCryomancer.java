@@ -56,12 +56,12 @@ public final class SeasonedCryomancer extends CardImpl {
 
 class SeasonedCryomancerDiscardEffect extends OneShotEffect {
 
-    private static final String REFLEXIVE_TEXT = "When you discard one or more nonland cards this way, "
-            + "tap up to that many target creatures and put a stun counter on each of them";
+    private static final String REFLEXIVE_TEXT = "tap up to that many target creatures and put a stun counter on each of them";
 
     SeasonedCryomancerDiscardEffect() {
         super(Outcome.Benefit);
-        staticText = "draw two cards, then discard two cards. " + REFLEXIVE_TEXT;
+        staticText = "draw two cards, then discard two cards. When you discard one or more nonland cards this way, "
+                + REFLEXIVE_TEXT;
     }
 
     private SeasonedCryomancerDiscardEffect(final SeasonedCryomancerDiscardEffect effect) {
