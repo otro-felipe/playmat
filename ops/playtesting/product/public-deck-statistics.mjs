@@ -137,17 +137,12 @@ function archetypeName(format, archetype) {
 function category(group, format, composition, publicName, archetype, colors) {
   if (group === 'deck') {
     // An unnamed list is shown by its archetype, so its row says what kind of deck it is.
-    if (composition) {
-      // A list is drawn in its archetype's colors, not in the colors its cards happen to carry.
-      const named = archetypeName(format, archetype)
-      return { id: composition, name: publicName, archetype: named, format, colors, canonicalColors: archetypeColors(named) }
-    }
+    if (composition) return { id: composition, name: publicName, archetype: archetypeName(format, archetype), format, colors }
     return { id: categoryId(group, format, null), name: null, unidentified: true, format, colors: null }
   }
   const name = archetypeName(format, archetype)
   return {
     id: categoryId(group, format, name), name, format, colors: colors ?? archetypeColors(name),
-    canonicalColors: archetypeColors(name),
     source: name ? archetypeSourceUrl(format, name) : null,
   }
 }
@@ -167,14 +162,12 @@ function side(row, s) {
 function add(map, category, outcome, count, stats = {}) {
   let row = map.get(category.id)
   if (!row) {
-    const { colors, canonicalColors, ...rest } = category
+    const { colors, ...rest } = category
     row = { ...rest, n: 0, wins: 0, draws: 0, losses: 0, ...Object.fromEntries(metrics.map((m) => [m, 0])) }
-    Object.defineProperty(row, 'palettes', { value: { votes: new Map(), canonical: canonicalColors?.join('') ?? null } })
+    Object.defineProperty(row, 'palettes', { value: { votes: new Map(), archetypes: new Set() } })
     map.set(row.id, row)
-  } else if (row.archetype !== undefined && row.archetype !== category.archetype) {
-    row.archetype = row.archetype ?? category.archetype
-    if (category.archetype && row.archetype !== category.archetype) row.archetype = null
   }
+  if (category.archetype) row.palettes.archetypes.add(category.archetype)
   if (category.colors) {
     const key = category.colors.join('')
     row.palettes.votes.set(key, (row.palettes.votes.get(key) ?? 0) + (count || stats.games || 0))
@@ -188,13 +181,14 @@ function add(map, category, outcome, count, stats = {}) {
 
 // The archetype's own palette, or else the palette most records agree on (a tie is unknown).
 function settleColors(row) {
-  const { votes, canonical } = row.palettes
-  const top = Math.max(0, ...votes.values())
-  // A named archetype always has its own palette. Lists vote only when the name carries none.
+  const { votes, archetypes } = row.palettes
+  if (row.archetype !== undefined) row.archetype = archetypes.size === 1 ? [...archetypes][0] : null
+  const canonical = archetypeColors(row.archetype === undefined ? row.name : row.archetype)
   if (canonical != null) {
-    row.colors = [...canonical]
+    row.colors = canonical
     return row
   }
+  const top = Math.max(0, ...votes.values())
   const tied = [...votes].filter(([, count]) => count === top).map(([key]) => key)
   const key = tied.length === 1 ? tied[0] : null
   row.colors = key == null ? null : [...key]

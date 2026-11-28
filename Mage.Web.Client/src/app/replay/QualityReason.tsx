@@ -10,13 +10,19 @@ export function QualityReason({ good, reason }: { good: boolean; reason: string 
     <section className={styles.detail} aria-labelledby={heading}>
       <h3 id={heading}>{t('replay.quality.heading')}</h3>
       <p className={styles.muted}>{t(good ? 'replay.quality.good' : 'replay.quality.poor')}</p>
-      <div className={styles.qualityReason}>
-        {markdownBlocks(reason).map(({ kind, lines, start }, index) => {
-          if (kind === 'p') return <p key={index}>{lines.join(' ')}</p>;
-          const List = kind;
-          return <List key={index} start={start}>{lines.map((line, item) => <li key={item}>{line}</li>)}</List>;
-        })}
-      </div>
+      <QualityReasonText reason={reason} />
     </section>
+  );
+}
+
+export function QualityReasonText({ reason }: { reason: string }) {
+  return (
+    <div className={styles.qualityReason}>
+      {markdownBlocks(reason).map(({ kind, lines, start }, index) => {
+        if (kind === 'p') return <p key={index}>{lines.join(' ')}</p>;
+        const List = kind;
+        return <List key={index} start={start}>{lines.map((line, item) => <li key={item}>{line}</li>)}</List>;
+      })}
+    </div>
   );
 }

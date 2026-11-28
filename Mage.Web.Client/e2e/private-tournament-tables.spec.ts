@@ -42,11 +42,16 @@ for (const width of [1440, 390]) {
     await expect(replays.first()).toHaveAttribute('href', live.replayUrl);
     await expect(replays.last()).toHaveAttribute('href', finished.replayUrl);
     // PM-MCP-PLAYER-VIEW-MODEL: all published marks load alongside their model in the table card.
-    const tables = page.getByRole('heading', { name: 'Round tables' }).locator('../..');
-    for (const [provider, model] of [['OpenAI', 'gpt-6.2-sol'], ['Claude', 'claude-opus-5-5'], ['Gemini', 'gemini-pro']]) {
-      const badge = tables.getByRole('img', { name: provider });
+    const tables = page.getByRole('region', { name: 'Round tables' });
+    for (const [table, provider, model] of [
+      ['Table 1', 'OpenAI', 'gpt-6.2-sol'],
+      ['Table 1', 'Claude', 'claude-opus-5-5'],
+      ['Table 2', 'Gemini', 'gemini-pro'],
+    ]) {
+      const card = tables.getByRole('listitem', { name: table });
+      const badge = card.getByRole('img', { name: provider });
       await expect(badge).toBeVisible();
-      await expect(tables.getByText(model, { exact: true })).toBeVisible();
+      await expect(card.getByText(model, { exact: true })).toBeVisible();
       await expect.poll(() => badge.evaluate(image => image instanceof HTMLImageElement ? image.naturalWidth : 0)).toBeGreaterThan(0);
     }
     await expect(tables.getByRole('img')).toHaveCount(3);
@@ -56,18 +61,23 @@ for (const width of [1440, 390]) {
     expect(replayBox).not.toBeNull();
     expect(liveBox!.height).toBeGreaterThanOrEqual(44);
     expect(replayBox!.height).toBeGreaterThanOrEqual(44);
-    expect(Math.max(replayBox!.x - liveBox!.x - liveBox!.width, replayBox!.y - liveBox!.y - liveBox!.height))
+    expect(Math.max(liveBox!.x - replayBox!.x - replayBox!.width, liveBox!.y - replayBox!.y - replayBox!.height))
       .toBeGreaterThanOrEqual(8);
     expect(await watch.evaluate(link => getComputedStyle(link).textDecorationLine)).toBe('none');
-    await watch.focus();
+    await replays.first().focus();
     await page.keyboard.press('Tab');
+    await expect(watch).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
     await expect(replays.first()).toBeFocused();
-    await expect(page.getByText('2 – 1', { exact: true })).toBeVisible();
+    await expect(tables.getByRole('listitem', { name: 'Table 2' }).getByText('2 – 1', { exact: true })).toBeVisible();
     expect(await page.locator('main').evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
     if (width === 390) {
-      const rosterTab = await page.getByRole('button', { name: 'Participants', exact: true }).boundingBox();
-      const panel = await page.getByRole('heading', { name: 'Round tables' }).locator('../..').boundingBox();
-      expect(panel!.y - rosterTab!.y - rosterTab!.height).toBeLessThanOrEqual(20);
+      const panelGap = await tables.evaluate(section => {
+        const previous = section.previousElementSibling!.getBoundingClientRect();
+        return section.getBoundingClientRect().top - previous.bottom;
+      });
+      expect(panelGap).toBeGreaterThanOrEqual(0);
+      expect(panelGap).toBeLessThanOrEqual(20);
     }
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL(new RegExp(live.replayUrl + '$'));

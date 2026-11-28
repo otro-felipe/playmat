@@ -6,8 +6,9 @@ import { ArchetypeLabel, QualityMark } from '../ui/Archetype';
 import { archetypeIdentity, archetypeStyle } from '../ui/archetypeIdentity';
 import { Button, ButtonLink } from '../ui/Button';
 import { Countdown } from './Countdown';
+import { TournamentGameQualityReason } from './TournamentGameQualityReason';
 import { EntryName } from './TournamentStandings';
-import { entryArchetype, sharedOwner } from './tournamentEntries';
+import { entryArchetype, pairingQualityOwner, sharedOwner } from './tournamentEntries';
 import { tournamentPath, type Entry, type Pairing, type TableGame, type Tournament } from './tournamentApi';
 import styles from './TournamentScreen.module.css';
 import board from './TournamentBoard.module.css';
@@ -32,7 +33,7 @@ function Side({ cup, entry, side, won, lost }: { cup: Tournament; entry: Entry; 
   );
 }
 
-function GameRow({ pair, game, a, b }: { pair: Pairing; game: TableGame; a?: Entry; b?: Entry }) {
+function GameRow({ pair, game, a, b, qualityOwner }: { pair: Pairing; game: TableGame; a?: Entry; b?: Entry; qualityOwner?: string }) {
   const t = useT();
   const winner = game.winner === 'a' ? a : game.winner === 'b' ? b : undefined;
   const replay = gameReplayUrl(pair, game);
@@ -47,7 +48,12 @@ function GameRow({ pair, game, a, b }: { pair: Pairing; game: TableGame; a?: Ent
           : t('cup.gameUnknown')}
         {game.endCause && isCause(game.endCause) && <span className={board.cause}>{t(`cup.replayCause.${game.endCause}`)}</span>}
       </span>
-      {!playing && <QualityMark good={game.goodQuality} reason={game.qualityReason} pending={game.status !== 'completed'} />}
+      {!playing && (
+        <QualityMark good={game.goodQuality} pending={game.status !== 'completed'}>
+          {qualityOwner && game.status === 'completed'
+            ? <TournamentGameQualityReason gameId={game.id} owner={qualityOwner} good={game.goodQuality} /> : undefined}
+        </QualityMark>
+      )}
       {replay ? (
         <Link to={replay} className={board.gameReplay} aria-label={t('cup.gameReplay', { n: game.number })}>
           <Play size={14} aria-hidden="true" />
@@ -72,6 +78,7 @@ function PairingRow({ pair, entries, cup }: { pair: Pairing; entries: Map<string
   const left = a ? archetypeIdentity(entryArchetype(cup, a).name, entryArchetype(cup, a).colors).colors : null;
   const right = b ? archetypeIdentity(entryArchetype(cup, b).name, entryArchetype(cup, b).colors).colors : null;
   const games = pair.games ?? [];
+  const qualityOwner = pairingQualityOwner(cup.viewer, pair);
   const status = stopped ? t('cup.tableCancelled') : t(pair.tableId ? 'cup.active' : 'cup.pending');
   return (
     <li className={board.tableCard} aria-labelledby={labelId} style={archetypeStyle(left, pair.b ? right : undefined)}>
@@ -92,7 +99,7 @@ function PairingRow({ pair, entries, cup }: { pair: Pairing; entries: Map<string
         <div className={board.detail}>
           {games.length > 0 ? (
             <ol className={board.games} aria-label={t('cup.tableGames', { n: pair.number })}>
-              {games.map((game) => <GameRow key={game.id} pair={pair} game={game} a={a} b={b} />)}
+              {games.map((game) => <GameRow key={game.id} pair={pair} game={game} a={a} b={b} qualityOwner={qualityOwner} />)}
             </ol>
           ) : pair.replayUrl && (
             <Link to={pair.replayUrl} className={board.fullReplay}>

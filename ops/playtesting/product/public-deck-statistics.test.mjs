@@ -537,3 +537,23 @@ test('an archetype and its lists are drawn in the archetype palette, never in th
   const detail = await publicDeckStatistics(db, { format: 'Pioneer', selected: report.rows[0].id })
   assert.ok(detail.selected.matchups.every((row) => row.colors?.length === (row.name === 'Devotion to Green' ? 1 : 2)))
 })
+
+test('[PM-STATS-QUALITY-1] a composition palette follows the resolved label across recordings', { skip: !url }, async t => {
+  const { db, composition, match } = await fixture(t)
+  const classified = await composition('One known archetype', ['U', 'G'])
+  const disputed = await composition('Conflicting archetypes', ['U', 'G'])
+  const rival = await composition('Rival', ['R'])
+  const red = [rival, 'Red Deck Wins']
+  await match([[classified, null], red])
+  await match([[classified, 'Devotion to Green'], red])
+  await match([[disputed, 'Devotion to Green'], red])
+  await match([[disputed, 'The Rock (Golgari Control)'], red])
+
+  const { rows } = await publicDeckStatistics(db, { group: 'deck', format: 'Pioneer' })
+  const resolved = rows.find(row => row.id === classified)
+  const conflicting = rows.find(row => row.id === disputed)
+  assert.equal(resolved.archetype, 'Devotion to Green')
+  assert.deepEqual(resolved.colors, ['G'])
+  assert.equal(conflicting.archetype, null)
+  assert.deepEqual(conflicting.colors, ['U', 'G'])
+})

@@ -48,8 +48,8 @@ export function ArchetypeLabel({ name, colors, size = 'md', title, fallback, ali
   );
 }
 
-/** The judge's verdict on one game: a filled star for good quality, an empty one otherwise, its reason on hover. */
-export function QualityMark({ good, reason, pending }: { good: boolean; reason?: string | null; pending?: boolean }) {
+/** The judge's verdict on one game, with optional details mounted only when its tooltip opens. */
+export function QualityMark({ good, pending, children }: { good: boolean; pending?: boolean; children?: ReactNode }) {
   const t = useT();
   const verdict = pending ? t('quality.pending') : t(good ? 'quality.good' : 'quality.poor');
   return (
@@ -57,14 +57,14 @@ export function QualityMark({ good, reason, pending }: { good: boolean; reason?:
       <Tooltip.Root>
         <Tooltip.Trigger asChild>
           <button type="button" className={styles.quality} data-good={good || undefined} data-pending={pending || undefined}
-            aria-label={reason ? `${verdict}. ${reason}` : verdict}>
+            aria-label={verdict}>
             <Star size={16} aria-hidden="true" fill={good ? 'currentColor' : 'none'} />
           </button>
         </Tooltip.Trigger>
         <Tooltip.Portal>
           <Tooltip.Content className={styles.tip} side="top" sideOffset={6} collisionPadding={12}>
             <strong>{verdict}</strong>
-            {reason ? <span>{reason}</span> : !pending && !good && <span>{t('quality.poorHint')}</span>}
+            {children ?? (!pending && !good && <span>{t('quality.poorHint')}</span>)}
           </Tooltip.Content>
         </Tooltip.Portal>
       </Tooltip.Root>

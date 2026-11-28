@@ -10,7 +10,7 @@ import { PublicBroadcast } from '../ui/usePlayerIdentity';
 import { Button, ButtonLink, IconButton } from '../ui/Button';
 import { Dialog } from '../ui/Dialog';
 import { request, tournamentApi, tournamentPath, useTournament, type Entry, type Tournament } from './tournamentApi';
-import { entryArchetype } from './tournamentEntries';
+import { entryArchetype, pairingQualityOwner } from './tournamentEntries';
 import { ArchetypeLabel, ArchetypeMark } from '../ui/Archetype';
 import { archetypeIdentity, archetypeStyle } from '../ui/archetypeIdentity';
 import { DeckListView } from '../ui/DeckListView';
@@ -18,6 +18,7 @@ import { SeatAccents } from '../match/seatAccents';
 import styles from './TournamentScreen.module.css';
 import replayStyles from './TournamentReplay.module.css';
 import { TournamentFrameEvidence } from './TournamentFrameEvidence';
+import { TournamentGameQualityReason } from './TournamentGameQualityReason';
 import type { PhaseStep } from '../../protocol/generated/views';
 
 registerMessages(messages);
@@ -62,7 +63,7 @@ type Capture = {
   outcome: 'a' | 'b' | 'draw' | null;
   lastBoard: { frame: number; status: string; turn?: number; step?: PhaseStep } | null;
 };
-type ReplayGame = { gameId: string; gameNumber: number; frameCount: number; capture: Capture; goodQuality?: boolean; qualityReason?: string };
+type ReplayGame = { gameId: string; gameNumber: number; frameCount: number; capture: Capture; goodQuality?: boolean };
 type ReplayIndex = { officialResult: OfficialResult | null; games: ReplayGame[] };
 const playbackSpeeds = [0.5, 1, 2, 4];
 const frameDelayMs = 1100;
@@ -90,11 +91,12 @@ function SeatHeader({ cup, entry, name, side, won }: { cup?: Tournament; entry?:
 }
 
 /** The table's result, each game's outcome and the judge's verdict, and the recording's state in one line. */
-function ReplayInfo({ official, games, current, cup, choose }: {
+function ReplayInfo({ official, games, current, cup, qualityOwner, choose }: {
   official?: OfficialResult | null;
   games: ReplayGame[];
   current?: ReplayGame;
   cup?: Tournament;
+  qualityOwner?: string;
   choose(gameId: string): void;
 }) {
   const t = useT();
@@ -156,7 +158,9 @@ function ReplayInfo({ official, games, current, cup, choose }: {
                 <div className={replayStyles.verdict} data-good={game.goodQuality || undefined}>
                   <strong><Star size={14} aria-hidden="true" fill={game.goodQuality ? 'currentColor' : 'none'} />
                     {t(game.goodQuality ? 'quality.good' : 'quality.poor')}</strong>
-                  {game.qualityReason ? <p>{game.qualityReason}</p> : !game.goodQuality && <p>{t('quality.poorHint')}</p>}
+                  {qualityOwner && game.gameId === current?.gameId
+                    ? <TournamentGameQualityReason gameId={game.gameId} owner={qualityOwner} good={game.goodQuality} />
+                    : !game.goodQuality && <p>{t('quality.poorHint')}</p>}
                 </div>
               )}
             </li>
@@ -201,9 +205,11 @@ export function TournamentReplay() {
   const { id = '', pairingId = '' } = useParams();
   const cup = useTournament(id);
   const endpoint = pairingPath(id, pairingId) + '/replay';
-  return <Replay key={endpoint} endpoint={endpoint} back={tournamentPath(id)} cup={cup.data} />;
+  const pair = cup.data?.pairings?.find(candidate => candidate.id === pairingId);
+  const qualityOwner = pairingQualityOwner(cup.data?.viewer, pair);
+  return <Replay key={endpoint} endpoint={endpoint} back={tournamentPath(id)} cup={cup.data} qualityOwner={qualityOwner} />;
 }
-function Replay({ endpoint, back, cup }: { endpoint: string; back: string; cup?: Tournament }) {
+function Replay({ endpoint, back, cup, qualityOwner }: { endpoint: string; back: string; cup?: Tournament; qualityOwner?: string }) {
   const t = useT();
   const [search] = useSearchParams();
   const [selectedGame, setGame] = useState<string>();
@@ -334,7 +340,8 @@ function Replay({ endpoint, back, cup }: { endpoint: string; back: string; cup?:
         )}
       </SpectatorFrame>
       <Dialog open={infoOpen} onOpenChange={setInfoOpen} title={t('cup.replayClosing')} returnFocusRef={infoButton} width="lg">
-        <ReplayInfo official={official} games={games} current={game} cup={cup} choose={(gameId) => { setGame(gameId); seekTo(0); setInfoOpen(false); }} />
+        <ReplayInfo official={official} games={games} current={game} cup={cup} qualityOwner={infoOpen ? qualityOwner : undefined}
+          choose={(gameId) => { setGame(gameId); seekTo(0); setInfoOpen(false); }} />
         {current?.view && <TournamentFrameEvidence facts={current.facts} />}
       </Dialog>
       <Dialog open={decksOpen} onOpenChange={setDecksOpen} title={t('cup.replayDecks')} returnFocusRef={decksButton} width="xl">

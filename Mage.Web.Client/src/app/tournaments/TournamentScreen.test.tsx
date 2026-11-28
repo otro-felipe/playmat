@@ -28,10 +28,11 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
-function mount(path: string, body: Record<string, unknown>) {
+function mount(path: string, body: Record<string, unknown>, review?: Record<string, unknown>) {
   const fetcher = vi.fn(async (input: string, init?: RequestInit) => {
     const path = String(input);
     let result: unknown = body;
+    if (path.startsWith('/api/playtesting/review/games/')) return Response.json(review ?? {}, { status: review ? 200 : 404 });
     if (path === '/api/playtesting/players') result = { players: [] };
     if (path.startsWith('/api/playtesting/decks?')) result = { decks: [] };
     if (path === root && init?.method === 'POST') result = { ...cup, id: 'created' };
@@ -351,8 +352,8 @@ test('a finished tournament opens on its standings, then shows statistics and li
   expect(list.getByText('Mountain')).toBeTruthy();
 });
 
-test('each table lists its games with the winner, the judge verdict and a replay opened on that game', async () => {
-  const { view } = mount('/tournaments/cup', {
+test('[PM-REVIEW-API-13] public table games show result and quality without reading an embedded reason', async () => {
+  const { view, fetcher } = mount('/tournaments/cup', {
     ...cup,
     viewer: null,
     status: 'finished',
@@ -371,7 +372,35 @@ test('each table lists its games with the winner, the judge verdict and a replay
   expect(games.getAllByRole('listitem')).toHaveLength(2);
   expect(games.getByText('Luna wins')).toBeTruthy();
   expect(games.getByText('Inactivity')).toBeTruthy();
-  expect(games.getByRole('button', { name: 'Good quality. Both pilots played it out.' })).toBeTruthy();
+  const star = games.getByRole('button', { name: 'Good quality' });
   expect(games.getByRole('button', { name: "Doesn't qualify" })).toBeTruthy();
   expect(games.getByRole('link', { name: 'Replay of game 2' }).getAttribute('href')).toBe('/replay?game=2');
+  fireEvent.focus(star);
+  await view.findByRole('tooltip');
+  expect(view.queryByText('Both pilots played it out.')).toBeNull();
+  expect(fetcher.mock.calls.some(([url]) => url.startsWith('/api/playtesting/review/'))).toBe(false);
+});
+
+test('[PM-REVIEW-API-13] the owner of both entries loads just the focused verdict from the archive manifest', async () => {
+  const reason = 'Both pilots played it out.';
+  const { view, fetcher } = mount('/tournaments/cup', {
+    ...cup,
+    viewer: { accountName: 'Felipe', entryIds: ['e1', 'e2'], isAdmin: false },
+    status: 'finished',
+    participants: [entrant, { ...entrant, id: 'e2', name: 'Sol' }],
+    pairings: [{
+      id: 'pair1', tableId: 'table1', matchId: 'match1', roundNumber: 1, stage: 'swiss', number: 1, a: 'e1', b: 'e2',
+      winsA: 1, winsB: 1, draws: 0, completed: true, winner: 'e1',
+      games: [
+        { id: 'g1', number: 1, status: 'completed', winner: 'a', endCause: null, goodQuality: true },
+        { id: 'g2', number: 2, status: 'completed', winner: 'b', endCause: null, goodQuality: false },
+      ],
+    }],
+  }, { gameId: 'g1', goodQuality: true, qualityReason: '- ' + reason });
+  const reviewCalls = () => fetcher.mock.calls.map(([url]) => url).filter(url => url.startsWith('/api/playtesting/review/'));
+  const star = await view.findByRole('button', { name: 'Good quality' });
+  expect(reviewCalls()).toEqual([]);
+  fireEvent.focus(star);
+  expect((await view.findAllByText(reason)).some(element => element.tagName === 'LI')).toBe(true);
+  expect(reviewCalls()).toEqual(['/api/playtesting/review/games/g1?archiveOnly=true']);
 });

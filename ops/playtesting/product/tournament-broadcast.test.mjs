@@ -3,6 +3,28 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { createTournamentBroadcast } from './tournament-broadcast.mjs'
 
+test('the tournament replay index exposes only the boolean verdict for every viewer', async t => {
+  const [event, pair, table, game, owner, outsider] = Array.from({ length: 6 }, randomUUID)
+  const match = { id: pair, table_id: table, completed: true, owner_id_a: owner, owner_id_b: owner }
+  const reason = '**Private judge note.**\n\n- Retained review only.'
+  const gameRow = { id: game, game_number: 1, status: 'completed', good_quality: true, end_cause: null,
+    quality_reason: reason, quality_archive_revision: 'private-revision' }
+  const pool = { async query(sql) {
+    assert.doesNotMatch(sql, /quality_reason|quality_archive_revision/)
+    return { rows: [sql.includes('JOIN tournament_entries') ? match : gameRow] }
+  } }
+  const broadcast = createTournamentBroadcast(pool, {})
+  t.after(() => broadcast.close())
+  for (const actor of [null, { accountId: owner }, { accountId: owner, isAdmin: true }, { accountId: outsider, isAdmin: true }]) {
+    const { games } = await broadcast.replay(event, pair, actor, new URLSearchParams())
+    assert.equal(games[0].goodQuality, true)
+    assert.doesNotMatch(JSON.stringify(games), /qualityReason|qualityAnchor|Private judge note/)
+  }
+  gameRow.end_cause = 'inactivity'
+  const { games } = await broadcast.replay(event, pair, null, new URLSearchParams())
+  assert.equal(games[0].goodQuality, false)
+})
+
 test('[CUP-AC-006] live and replay preserve distinct public stack abilities, a departed token, and resolution order', async t => {
   const [event, pair, table, game, a, b, challenger, valiant, prowess, rage, tokenTrigger] = Array.from({ length: 11 }, randomUUID)
   const source = { id:challenger, name:'Emberheart Challenger', kind:'card', expansionSetCode:'BLB', cardNumber:'133' }

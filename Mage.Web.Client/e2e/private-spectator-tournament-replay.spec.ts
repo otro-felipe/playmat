@@ -52,9 +52,17 @@ for (const width of [1440, 1024, 768, 390, 320]) {
       const info = header.getByRole('button', { name: 'Replay information' });
       await info.focus();
       await info.press('Enter');
-      const dialog = page.getByRole('dialog', { name: 'Replay and match result' });
-      await expect(dialog.getByText(/Disqualification for inactivity/)).toBeVisible();
+      const dialog = page.getByRole('dialog', { name: 'Table result' });
+      const result = dialog.getByRole('region', { name: 'Official match result' });
+      await expect(result.getByText('Disqualification for inactivity')).toBeVisible();
       await expect(dialog.getByRole('button', { name: 'Close' })).toBeFocused();
+      const game = dialog.getByRole('list', { name: 'Games of the table' }).getByRole('listitem').filter({
+        has: page.getByRole('button', { name: 'Game 1', exact: true }),
+      });
+      const recordedEnding = game.getByText(/Game-ending event recorded/);
+      await expect(recordedEnding).toBeHidden();
+      await game.getByText('Full recording', { exact: true }).click();
+      await expect(recordedEnding).toBeVisible();
       await page.keyboard.press('Escape');
       await expect(dialog).toHaveCount(0);
       await expect(info).toBeFocused();

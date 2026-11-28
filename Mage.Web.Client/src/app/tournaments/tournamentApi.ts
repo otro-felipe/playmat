@@ -39,8 +39,6 @@ export interface TableGame {
   winner: 'a' | 'b' | 'draw' | null;
   endCause: string | null;
   goodQuality: boolean;
-  /** the judge's written reason, for administrators and the owner of both seats */
-  qualityReason?: string;
 }
 export interface Pairing {
   id: string;

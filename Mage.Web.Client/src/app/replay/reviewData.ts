@@ -193,8 +193,8 @@ export function loadPrivateReplayPage(gameId: string, start: number, count: numb
   return request<ReplayPage>(`/api/playtesting/replays/${encodeURIComponent(gameId)}?start=${start}&count=${count}`, signal, true);
 }
 
-export function loadReviewManifest(gameId: string, signal: AbortSignal) {
-  return request<ReviewManifest>(reviewPath(gameId), signal, true);
+export function loadReviewManifest(gameId: string, signal: AbortSignal, archiveOnly = false) {
+  return request<ReviewManifest>(reviewPath(gameId) + (archiveOnly ? '?archiveOnly=true' : ''), signal, true);
 }
 
 export function loadReviewEvents(gameId: string, cursor: number, scope: 'public' | 'seat' | 'full', count: number, signal: AbortSignal, seatId?: string) {
