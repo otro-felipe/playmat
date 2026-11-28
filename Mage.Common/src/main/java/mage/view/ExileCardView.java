@@ -4,7 +4,6 @@ import mage.abilities.Ability;
 import mage.abilities.SpellAbility;
 import mage.abilities.effects.ContinuousEffects;
 import mage.cards.Card;
-import mage.cards.CardWithSpellOption;
 import mage.constants.AsThoughEffectType;
 import mage.constants.SpellAbilityType;
 import mage.constants.Zone;
@@ -97,26 +96,20 @@ public final class ExileCardView implements Serializable {
             return Collections.emptyList();
         }
         List<Ability> playAbilities = card.getAbilities(game).stream()
-                .filter(ability -> isPlayAbility(card, ability, game)).collect(Collectors.toList());
+                .filter(ExileCardView::isPlayAbility).collect(Collectors.toList());
         return game.getState().getPlayers().values().stream().filter(player -> !player.hasLeft())
                 .map(Player::getId)
                 .filter(player -> playAbilities.stream().anyMatch(ability -> hasPermission(ability, player, game)))
                 .sorted().collect(Collectors.toList());
     }
 
-    private static boolean isPlayAbility(Card card, Ability ability, Game game) {
+    private static boolean isPlayAbility(Ability ability) {
         if (!ability.getAbilityType().isPlayCardAbility() || !ability.getZone().match(Zone.HAND)) {
             return false;
         }
-        if (card instanceof CardWithSpellOption) {
-            CardWithSpellOption options = (CardWithSpellOption) card;
-            if (ability.getSourceId().equals(options.getSpellCard().getId())) {
-                return options.isSpellCardCastOptionAvailable(game);
-            }
-            return options.isMainCardCastOptionAvailable(game);
-        }
         if (ability instanceof SpellAbility) {
             switch (((SpellAbility) ability).getSpellAbilityType()) {
+                case PREPARE_SPELL:
                 case SPLIT:
                 case SPLIT_AFTERMATH:
                 case SPLIT_FUSED:
