@@ -361,8 +361,11 @@ try {
   console.log(JSON.stringify({ phase: 'PM-LINE-MCP-2 real native discovery', version: client.getServerVersion()?.version,
     lineSchemaSha256: createHash('sha256').update(lineTools).digest('hex') }))
   const guideBundle = await call('get_guide', { bundle: true })
-  assert.equal(guideBundle.guides.length, 4)
-  assert.ok(guideBundle.guides.every(guide => guide.text?.length > 0))
+  assert.deepEqual(guideBundle.guides.map(guide => guide.name), ['core'])
+  assert.ok(guideBundle.guides[0].text?.length > 0)
+  for (const guideId of ['getting-started', 'turn-planning', 'card-catalog', 'rules']) {
+    assert.ok(guideBundle.detailedGuides.some(guide => guide.name === guideId), `Missing detailed guide ${guideId}`)
+  }
   assert.ok(JSON.stringify(discovered.tools.find(tool => tool.name === 'play_sequence').inputSchema).includes('allowPlannedResolutions'))
   await warmDeckValidation()
   const fixture = { startFixture, ownPlayer, rivalPlayer, answer, waitNextOwn,
