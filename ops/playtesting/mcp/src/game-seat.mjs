@@ -285,6 +285,14 @@ export class GameSeat {
 
   snapshot(gameId) { return gameState(this.engine, gameId); }
 
+  lineControl(gameId, decisionId) {
+    return {
+      sequenceId: this.#current?.gameId === gameId ? this.#current.id : null,
+      pending: this.#inFlight,
+      uncertain: Boolean(decisionId && this.#uncertain === decisionId),
+    };
+  }
+
   // A payment that names a renewed granted mana ability resolves to its
   // current ID; anything unproven keeps the declared ID and stays illegal.
   #resolveManaStep(step, decision) {
@@ -300,11 +308,14 @@ export class GameSeat {
       ...(step.select?.abilityId ? { select: { ...step.select, abilityId } } : {}) };
   }
 
+  canAnswerDecision(id) {
+    return Boolean(id && !this.#current && !this.#inFlight && this.#uncertain !== id);
+  }
+
   withChoiceActions(state) {
     this.#manaAbilities.observe(state);
     const decision = state?.decision;
-    if (state?.status !== 'active' || state.rollbackRequest || this.#current || this.#inFlight
-      || !decision?.id || this.#uncertain === decision.id || !decision.choices?.length) return state;
+    if (state?.status !== 'active' || state.rollbackRequest || !this.canAnswerDecision(decision?.id) || !decision.choices?.length) return state;
     const pay = decision.kind === 'payMana';
     const ordinary = DISCRETE_PROMPTS.has(decision.kind);
     const priority = decision.kind === 'priority' && state.priority === 'self';
@@ -391,7 +402,7 @@ export class GameSeat {
     this.#inFlight = true;
     const outcome = (async () => {
       try {
-        return await this.engine.respond(decisionId, choiceId, value, line, submission);
+        return await this.engine.respond(decisionId, choiceId, value, line, submission, Boolean(sequenceId));
       } catch (error) {
         if (error.code !== 'illegal_choice') this.#uncertain = decisionId;
         throw error;

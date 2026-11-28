@@ -14,7 +14,8 @@ import { listArchetypes, possibleResponses, searchCards } from './catalog.mjs';
 import { guideBootstrap, guideInstructions, registerGuides, sequenceInstructions } from './guides.mjs';
 import { registerMatchReviewPrompt, scoredPositions } from './match-review.mjs';
 import { registerPostMatchReviewPrompt, reviewManifestInput, reviewEvidenceInput, reviewAnnotationsInput, saveReviewAnnotationsInput, saveGameQualityInput } from './postmatch-review.mjs';
-import { closedPlayerReceipts, playLine, waitForLine } from './line-runtime.mjs';
+import { closedPlayerReceipts, playLine, waitForLine, withLineRecovery } from './line-runtime.mjs';
+import { scopeLineAction, unverifiedLineAction } from './line-recovery.mjs';
 import { registerTheorycraftTools } from './theorycraft.mjs';
 import { compactGameState, createViewMemory, formatGameReceipt, resetViewMemory } from './state-view.mjs';
 import { cancelPlayerReservation, checkPlayerSelection, inspectPlayerReservation, playerLease, requirePlayerControl, resolvePlayerActor, samePlayerControl } from './player-seats.mjs';
@@ -166,11 +167,17 @@ const LinePassUntil = LinePassUntilShape.refine((value) => (value.destination ==
 const LinePassPriority = z.object({ kind: z.literal('pass_priority') }).strict()
   .describe('Deliberately pass once and return at the next actionable boundary.');
 const LineActions = z.array(z.discriminatedUnion('kind', [TurnPlay, TurnActivation, TurnChoose, TurnAttack, TurnBlock, Pace, LinePassUntil, LinePassPriority])).min(1).max(32);
+// Publish the exact action contract. Validate each received action in the authorized
+// handler so a malformed field can return a seat-scoped recovery receipt.
+const { $schema: _lineDraft, ...publishedLineAction } = z.toJSONSchema(z.union([TurnPlayShape, TurnActivation, TurnChooseShape, TurnAttackShape, TurnBlockShape, Pace, LinePassUntilShape, LinePassPriority]),
+  { target: 'draft-7', io: 'input' });
+const receivedLineAction = z.unknown().refine(action => action !== null && typeof action === 'object' && !Array.isArray(action))
+  .meta(publishedLineAction);
 const Line = {
   gameId: Uuid, cursor: Cursor, commandId: StringId.describe('Choose a unique ID for this line. For an uncertain result, reuse this ID with the same game, cursor and actions.'),
   explanation: PublicExplanation,
   reasoning: z.string().trim().min(1).max(600).optional().describe('Legacy Markdown decision summary for delegated broadcasts and previously authorized replay perspectives. Supply this or explanation. Use explanation for tournament spectator commentary.'),
-  actions: z.array(z.union([TurnPlayShape, TurnActivation, TurnChooseShape, TurnAttackShape, TurnBlockShape, Pace, LinePassUntilShape, LinePassPriority])).min(1).max(32)
+  actions: z.array(receivedLineAction).min(1).max(32)
     .describe('Plan as far as current information justifies. Use exact choices for visible engine prompts. A current_turn step or phase with priority:self may precede a planned action in that window. Before attack or block, request BEGIN_COMBAT or its exact declaration step. Use at most one terminal pass (pass_priority or pass_until) and put it last.'),
   declineExiledCard: z.object({ sourceId: StringId, abilityText: z.string().min(1).max(2000), stackId: StringId.optional() }).strict().optional()
     .describe('Forgo the single face-up card from this own Valiant trigger for this command, including free plays. Supply stackId if already on the stack. Only exact attackers and an end-step pass may follow.'),
@@ -216,23 +223,30 @@ function viewMemory(seat) {
 }
 
 function decisionReceipt(seat, receipt, view) {
+  if (receipt.commandId && receipt.stage) receipt = withLineRecovery(seat, receipt);
   const state = receipt.state;
   if (state && !receipt.planOwnsExecution) return formatGameReceipt({ ...receipt, state: seat.withChoiceActions(state) }, view, viewMemory(seat));
   return formatGameReceipt(receipt, view, viewMemory(seat));
 }
 
-function rejectedLine({ gameId, cursor, commandId, view }, rejection, memory) {
-  return formatGameReceipt({
+function rejectedLine(seat, { gameId, cursor, commandId, view }, rejection) {
+  return decisionReceipt(seat, {
     status: 'rejected', gameId, cursor, requestedCursor: cursor, commandId,
     actionIndex: null, appliedDecisions: 0, planOwnsExecution: false, ...rejection,
     ...(rejection.state && rejection.state.cursor !== cursor ? { cursor: rejection.state.cursor } : {}),
-  }, view, memory);
+  }, view);
 }
 
-function lineArgumentRejection(args, error) {
-  const issues = error.issues.map(({ path, code, message }) => ({ path: ['actions', ...path], code, message }));
+function lineArgumentRejection(seat, args, error) {
+  const issues = error.issues.flatMap(({ path, code, message, keys }) => {
+    const base = ['actions', ...path];
+    return code === 'unrecognized_keys' ? keys.map(key => ({ path: [...base, key], code, message })) : [{ path: base, code, message }];
+  });
   const issue = issues[0];
-  return rejectedLine(args, {
+  const snapshot = seat.snapshot();
+  const state = snapshot?.gameId === args.gameId ? snapshot : null;
+  return rejectedLine(seat, args, {
+    ...(state && { state }),
     stage: 'schema', code: 'invalid_line_arguments', message: issue.message, issues,
     actionIndex: Number.isInteger(issue.path[1]) ? issue.path[1] : null, recovery: 'correct_arguments',
   });
@@ -250,7 +264,7 @@ function readToken(req) {
 // Each validated call captures its own actor, including work continued by its line executor.
 const toolContext = new AsyncLocalStorage();
 
-function registerTools(mcp, { contextFor, invitationOrigin }) {
+function registerTools(mcp, { contextFor, invitationOrigin, onResponseWritten }) {
   const current = () => toolContext.getStore();
   const getSeat = (...args) => current().getSeat(...args);
   function tool(name, description, inputSchema, scope, run, readOnlyHint = false) {
@@ -261,6 +275,11 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
     const scopes = scope === 'catalog' ? ['play', 'library'] : [scope === 'decks' ? 'library' : scope];
     const gameTool = ['play', 'chat'].includes(scope) && (Object.hasOwn(inputSchema, 'gameId')
       || ['list_recoverable_matches', 'get_recovery_status', 'recover_match'].includes(name));
+    const timingTool = ['get_game_state', 'wait_for_decision', 'wait_until', 'submit_decision', 'play_line',
+      'play_sequence', 'submit_sequence', 'get_sequence_status', 'play_turn', 'pass_until', 'advance_to_own_turn'].includes(name);
+    if (timingTool) inputSchema = { ...inputSchema, receivedDecision: z.object({
+      decisionId: Uuid, cursor: Cursor, receivedAtEpochMs: z.number().int().nonnegative(),
+    }).strict().optional().describe('Optional client instrumentation. Echo a decision ID and cursor from a receipt with the epoch milliseconds when your adapter actually received it. Omit if unavailable.') };
     if (gameTool || ['create_game','join_game'].includes(name)) inputSchema = { ...inputSchema,
       humanTableId: Uuid.optional().describe('Supply the opted-in table ID on every call for the Human Player. Omit to use the MCP Player.') };
     const tournamentManagement = scope === 'tournaments:manage';
@@ -271,6 +290,18 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
       ...(['stop_tournament', 'void_tournament'].includes(name) && { destructiveHint: true }) },
       _meta: { securitySchemes: scopes.map(value => ({ type: 'oauth2', scopes: [value] })) },
     }, async (args, extra) => {
+      let timingSeat;
+      function formattedResult(value, isError = false) {
+        const response = textResult(value, isError);
+        const state = value?.state ?? value;
+        const delivery = timingSeat?.engine.decisionDelivery;
+        if (delivery && !value?.planOwnsExecution && !state?.rollbackRequest
+            && state?.decision?.choices?.length && timingSeat.canAnswerDecision(state.decision.id)) {
+          const { gameId, cursor, decision: { id } } = state;
+          onResponseWritten(() => delivery.written(gameId, id, cursor));
+        }
+        return response;
+      }
       try {
         // History stays on the account. Its playerId names the owned player whose seat views the archive.
         const selectedContext = await contextFor(scope === 'history' ? undefined : args.playerId);
@@ -292,7 +323,7 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
           throw new ToolError('player_required', 'Choose a playerId from list_players and supply it on every seat call.');
         }
         const { playerId, ...selected } = args;
-        const { humanTableId, ...input } = selected;
+        const { humanTableId, receivedDecision, ...input } = selected;
         if (scope === 'history' && playerId !== undefined) selected.perspective = playerId;
         const execute = async () => {
           if (actor.playerId && name === 'wait_for_decision' && input.gameId && input.commandId
@@ -308,6 +339,16 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
                 : 'This connection has no reservation for that table.');
             }
             await selectedContext.getSeat().engine.open();
+          }
+          timingSeat = timingTool ? selectedContext.getSeat() : null;
+          const delivery = timingSeat?.engine.decisionDelivery;
+          if (delivery && input.gameId) {
+            if (receivedDecision) delivery.confirm(input.gameId, receivedDecision.decisionId, receivedDecision);
+            // Only IDs actually sent by this client count. A planned executor
+            // can observe and answer private native prompts without a client read.
+            const echoed = [input.decisionId, input.afterDecisionId,
+              ...(input.actions ?? []).map(action => action.decisionId)];
+            for (const id of echoed) if (id) delivery.confirm(input.gameId, id);
           }
           const result = await toolContext.run(selectedContext, () => run(gameTool ? input : selected, extra.signal));
           if (actor.playerId && ['play_line', 'wait_for_decision', 'wait_until', 'wait_for_chat'].includes(name)
@@ -325,20 +366,23 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
           return result;
         };
         const result = humanTableId && gameTool ? await human.select(humanTableId, execute) : await execute();
-        const response = textResult(result);
+        const scoped = scopeLineAction(result, args);
+        const response = formattedResult(scoped);
         // Rejected gameplay commands are application receipts. They carry a code,
         // stage and recovery instructions even through clients that normalize MCP errors.
         if (result?.status === 'rejected' && ['play_line', 'wait_for_decision'].includes(name)) {
-          response.structuredContent = result;
+          response.structuredContent = scoped;
         }
         return response;
       } catch (error) {
-        if (error instanceof ToolError) {
-          const receipt = { code: error.code, message: error.message, ...(error.state ? { state: error.state } : {}) };
-          return textResult(formatGameReceipt(receipt, args.view), true);
+        const failure = error instanceof ToolError ? error : extra.signal.aborted
+          ? new ToolError('cancelled', 'The request was cancelled.')
+          : new ToolError('operation_failed', 'Thoughtseize could not verify completion. Read the latest state before retrying.');
+        const receipt = { code: failure.code, message: failure.message, ...(failure.state && { state: failure.state }) };
+        if (name === 'play_line' || (name === 'wait_for_decision' && args.commandId)) {
+          receipt.nextAction = unverifiedLineAction(failure.code, args, name === 'play_line');
         }
-        if (extra.signal.aborted) return textResult({ code: 'cancelled', message: 'The request was cancelled.' }, true);
-        return textResult({ code: 'operation_failed', message: 'Thoughtseize could not verify completion. Read the latest state before retrying.' }, true);
+        return textResult(scopeLineAction(formatGameReceipt(receipt, args.view), args), true);
       }
     });
   }
@@ -419,18 +463,18 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
   tool('play_line', 'Submit the longest justified line of plays, activations, choices, attacks and passes from the current cursor, on either turn. Ordinary handoffs are automatic. The line stops on new information, rival actions or a required choice it cannot answer. Returns applied progress and seat-visible game state. Check status, code and recovery when a line is rejected. Copy ordered payWith entries from the chosen sources’ payWithOptions. At a payment prompt or other discrete choice, an option’s playLineAction contains its exact current decisionId and choiceId. Read the turn-planning guide for complete JSON examples, including two targets, Ward, activation, combat and command recovery.', Line, 'play', async (args, signal) => {
     if (args.explanation && args.reasoning) throw new ToolError('invalid_input', 'Supply either explanation or legacy reasoning.');
     const actions = LineActions.safeParse(args.actions);
-    if (!actions.success) return lineArgumentRejection(args, actions.error);
     const seat = getSeat();
+    if (!actions.success) return lineArgumentRejection(seat, args, actions.error);
     try {
       return decisionReceipt(seat, await playLine(seat, { ...args, actions: actions.data }, current().reauthorize, signal), args.view);
     } catch (error) {
       if (!(error instanceof ToolError) || !error.lineRejection) throw error;
-      return rejectedLine(args, {
+      return rejectedLine(seat, args, {
         stage: 'preflight', code: error.code, message: error.message, recovery: error.lineRejection,
         actionIndex: error.actionIndex ?? null,
         ...(error.field ? { issues: [{ path: ['actions', error.actionIndex, error.field, ...(error.paymentIndex !== undefined ? [error.paymentIndex] : [])], code: error.code, message: error.message }] } : {}),
-        ...(error.state ? { state: seat.withChoiceActions(error.state) } : {}),
-      }, viewMemory(seat));
+        ...(error.state ? { state: error.state } : {}),
+      });
     }
   });
   tool('play_turn', 'Plan a complete turn with significant plays, public targets, chosen mana sources, guarded costs/choices and attacks. The executor makes legal ordinary passes between intentions; do not enumerate passes or predict priority windows. Own declared spells/triggers and the initial own stack may resolve; real rival actions, new information, unknown mandatory choices and chosen stops interrupt. finish next_turn advances only while no useful legal action remains, never because mana is zero.', Turn, 'play', (args) => getSeat().startTurn(args, current().reauthorize));
@@ -933,7 +977,9 @@ export function createMcpServer({
       registerMatchReviewPrompt(mcp);
       registerPostMatchReviewPrompt(mcp);
     }
-    registerTools(mcp, { contextFor, invitationOrigin });
+    registerTools(mcp, { contextFor, invitationOrigin, onResponseWritten: record => {
+      res.once('finish', () => { if (!res.destroyed && res.statusCode === 200) record(); });
+    } });
     res.once('close', () => { void mcp.close(); });
     try {
       await mcp.connect(transport);

@@ -1523,6 +1523,7 @@ export interface GameView extends Serializable {
     opponentHands?: { [index: string]: { [index: string]: SimpleCardView } };
     phase?: TurnPhase;
     players?: PlayerView[];
+    priorityAssignedAtEpochMs?: number;
     priorityPlayerName?: string;
     priorityTime?: number;
     rangeOfInfluence?: RangeOfInfluence;

@@ -72,6 +72,7 @@ public class GameView implements Serializable {
     private final UUID activePlayerId;
     private String activePlayerName = "";
     private final String priorityPlayerName;
+    private final long priorityAssignedAtEpochMs;
     private final int turn;
     private boolean special = false;
     private final boolean rollbackTurnsAllowed;
@@ -260,6 +261,8 @@ public class GameView implements Serializable {
         } else {
             this.activePlayerName = "";
         }
+        this.priorityAssignedAtEpochMs = liveView && watcherUserId == null && createdForPlayerId != null
+                && createdForPlayerId.equals(state.getPriorityPlayerId()) ? state.getPriorityAssignedAtEpochMs() : 0L;
         Player priorityPlayer = null;
         if (state.getPriorityPlayerId() != null) {
             priorityPlayer = state.getPlayer(state.getPriorityPlayerId());
@@ -380,6 +383,10 @@ public class GameView implements Serializable {
 
     public String getActivePlayerName() {
         return activePlayerName;
+    }
+
+    public long getPriorityAssignedAtEpochMs() {
+        return priorityAssignedAtEpochMs;
     }
 
     public String getPriorityPlayerName() {

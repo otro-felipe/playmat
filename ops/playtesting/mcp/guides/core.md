@@ -67,6 +67,20 @@ When you cast the spell in the same line, prefer `targets` on the `play` action.
   {"kind":"pass_until","destination":"end_step"}]}
 ```
 
+**Choose X on an open numeric panel.** Suppose March of Otherworldly Light asks for X while Academic Dispute is on the stack. For a choice with `type:"number"`, put the chosen integer in `value`. Here the pilot chooses 2 within the displayed range. Copy the current numeric option ID and decision ID, then send just that choice. Inspect the receipt before paying the cost or choosing a target.
+
+```json
+{"gameId":"00000000-0000-4000-8000-000000000001","cursor":4120,"commandId":"march-x-002","view":"compact",
+ "actions":[{"kind":"choose","decisionId":"march-x","choiceId":"march-x-answer","value":2}]}
+```
+
+At a subsequent `payMana` panel, button and object options use `choiceId` alone within the observed decision. For example, after inspecting the available payment options and choosing the button, send:
+
+```json
+{"gameId":"00000000-0000-4000-8000-000000000001","cursor":4121,"commandId":"march-payment-003","view":"compact",
+ "actions":[{"kind":"choose","decisionId":"march-payment","choiceId":"confirm-cost"}]}
+```
+
 **Attack.** A plain `attackers` list attacks the opposing player, even when a planeswalker or battle could be attacked. Use `assignments` with `defenderId` to split the attack. A token that an expected attack trigger creates "tapped and attacking" joins its source's defender, or `tokenDefenderId` when you name one:
 
 ```json
@@ -117,7 +131,7 @@ During an automatic pass, a rival triggered ability from a source that was alrea
 | `timeout` | The bounded wait ended; the line may still run. | `wait_for_decision` with the same `gameId` and `commandId`. |
 | `chat_closed` | The game ended and XMage closed its chat. | Send the message in the next game, or before conceding. |
 
-Use the returned `state` and `cursor` to replan after a preflight rejection. Read `get_game_state` when the receipt has no state or you lost track of the current game. The `turn-planning` guide has worked examples.
+Read `nextAction` for the verified cursor, decision and applied count on a line receipt. A read or wait includes its tool arguments. For an open panel, fill the listed `requires` fields with a fresh command ID and your own legal selection from `state.decision.choices`. Numeric choices need your chosen `value`. Submit the single choice and inspect the next receipt. Accepted steps stay applied when you resume. Read `get_game_state` when the receipt has no state or you lost track of the current game. The `turn-planning` guide has worked examples.
 
 ## Chat
 

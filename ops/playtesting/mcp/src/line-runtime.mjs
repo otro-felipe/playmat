@@ -1,3 +1,4 @@
+import { nextLineAction } from './line-recovery.mjs';
 import { createHash } from 'node:crypto';
 import { ToolError, sideboardNeedsSubmission } from './game-seat.mjs';
 
@@ -12,6 +13,17 @@ function commandIndex(seat) {
 function currentGameState(seat, gameId) {
   const state = seat.snapshot();
   return state.gameId === gameId ? state : null;
+}
+
+export function withLineRecovery(seat, receipt) {
+  const { gameId } = receipt;
+  // A retained receipt may outlive a game, its cursor, or the seat's authorization.
+  const current = receipt.reason === 'authorization_expired' ? null : currentGameState(seat, gameId);
+  const state = current && receipt.state?.cursor === current.cursor ? receipt.state : null;
+  const control = seat.lineControl(gameId, state?.decision?.id);
+  const owner = control.sequenceId && ([...commandIndex(seat).values()].find(command => command.sequenceId === control.sequenceId)
+    ?? { sequenceId: control.sequenceId });
+  return { ...receipt, nextAction: nextLineAction(receipt, { state, owner, ...control }) };
 }
 
 function requiresDecision(state) {
@@ -63,6 +75,7 @@ export function playLine(seat, { gameId, cursor, commandId, actions, expectedSta
   const known = commands.get(commandId);
   if (known) {
     if (known.fingerprint !== fingerprint) {
+      if (known.gameId !== gameId) throw new ToolError('forbidden_game', 'This command does not belong to the requested game.');
       const error = new ToolError('key_conflict', 'That commandId belongs to a different line. Recover it with the original request before making a new plan.');
       error.lineRejection = 'recover_original_command';
       throw error;
@@ -117,6 +130,7 @@ export function closedPlayerReceipts(seat) {
       appliedDecisions: line.appliedDecisions, completedSteps: line.completedSteps, cursor: state.cursor,
       ...(line.cursor !== state.cursor ? { progressCursor: line.cursor } : {}),
       planOwnsExecution: false, needsAgent: false,
+      nextAction: { kind: 'match_finished', appliedDecisions: line.appliedDecisions, cursor: state.cursor },
       state: { gameId: state.gameId, tableId: state.tableId, status: state.status, cursor: state.cursor, score: state.score } });
   }
   return results;

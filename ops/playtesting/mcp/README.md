@@ -154,3 +154,15 @@ land-drop availability, library setup and opponent replies are model assumptions
 A linked study without `position` is an illustrative hypothesis. The service
 stores aggregate results, with no replay snapshots, submitted study definition
 or individual samples.
+
+## Priority and receipt timing
+
+Railway MCP logs contain structured `mcp_decision_timing` events. Join them by `tableId`, `gameId`, native `seatId`, `openingCursor` and `decisionId`. `priority_assigned` precedes a decision and identifies the assignment by seat, game and `priorityAssignedAtEpochMs`. XMage timestamps the change of priority owner. A prompt issued while another player holds priority has a null assignment timestamp. The private pilot view includes the same opening cursor, assignment time and actionable time under `decision.delivery`.
+
+- `actionable` records the first time the connected MCP seat projected legal choices. It starts with `deliveryStatus: "unconfirmed"`, including when the pilot has no active call.
+- `response_written` timestamps the HTTP response finishing at the server with that seat's actionable decision. A disconnected wait or an expired decision does not count. This supplies a lower bound for the client's receipt time.
+- `delivery_confirmed` timestamps a later authorized request from the same seat echoing the published decision ID. The server time supplies the upper bound. Adapters that timestamp incoming receipts can optionally attach `receivedDecision: {decisionId, cursor, receivedAtEpochMs}` to the next gameplay call. Use the actual received response's cursor and the adapter's observed epoch milliseconds. A timestamp outside the server bounds stays unknown. Ordinary reads and plays need no additional call.
+- `operation_accepted` records the first successful native response RPC acknowledgement for the decision, the submitted cursor, and whether the response came from the pilot or the line executor. A rejected operation or replayed idempotency key cannot create another acceptance.
+- `decision_closed` records when the projected decision ceases to be actionable. A late acknowledgement can follow this event. Each event includes the known evidence at that point. An unconfirmed write alone leaves the pilot receive time unknown.
+
+With an admissible client-reported timestamp, `engineToClientMs` measures assignment to client receipt and `clientToFirstAcceptedMs` measures that receipt to the first native acknowledgement. These include transport time and the latter also includes processing. When those values are null, use the server bounds or correlate the matching native pilot JSONL receive event offline. Automated line choices can be accepted without issuing the intermediate prompt to a pilot. The timing stream contains only identifiers, timestamps, source and status. It observes the existing clocks independently of game rules.

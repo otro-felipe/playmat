@@ -26,6 +26,7 @@ const server = createMcpServer({
   createEngine: ({ engineName, canonicalAgent, accountId, recoverySeatId, connectionId, humanTableId, playerId, activeTableId, flag, rateExempt }) => new PlaymatEngineSeat({
     engineUrl, engineName, canonicalAgent, accountId, recoverySeatId, connectionId, humanTableId, rateExempt: rateExempt === true,
     playerId, activeTableId, flag, trustedHeader, managedPriorityStops: true,
+    recordDecisionTiming: event => console.info(JSON.stringify({ event: 'mcp_decision_timing', ...event })),
   }),
   invitationOrigin, allowedOrigins,
 });

@@ -82,6 +82,8 @@ public class GameState implements Serializable, Copyable<GameState> {
     private TurnMods turnMods; // one time turn modifications (turn, phase or step)
     private UUID activePlayerId; // player which turn it is
     private UUID priorityPlayerId; // player that has currently priority (setup before any choose)
+    // Wall clock for the current continuous priority assignment. Zero in legacy snapshots.
+    private long priorityAssignedAtEpochMs;
     private UUID playerByOrderId; // player that has currently priority
     private UUID monarchId; // player that is the monarch
     private UUID initiativeId; // player that has the initiative
@@ -161,6 +163,7 @@ public class GameState implements Serializable, Copyable<GameState> {
 
         this.activePlayerId = state.activePlayerId;
         this.priorityPlayerId = state.priorityPlayerId;
+        this.priorityAssignedAtEpochMs = state.priorityAssignedAtEpochMs;
         this.playerByOrderId = state.playerByOrderId;
         this.monarchId = state.monarchId;
         this.initiativeId = state.initiativeId;
@@ -273,6 +276,7 @@ public class GameState implements Serializable, Copyable<GameState> {
         this.playerList.setCurrent(state.activePlayerId);
         this.playerByOrderId = state.playerByOrderId;
         this.priorityPlayerId = state.priorityPlayerId;
+        this.priorityAssignedAtEpochMs = state.priorityAssignedAtEpochMs;
         this.monarchId = state.monarchId;
         this.initiativeId = state.initiativeId;
         if (!keepStack) {
@@ -528,7 +532,14 @@ public class GameState implements Serializable, Copyable<GameState> {
         return priorityPlayerId;
     }
 
+    public long getPriorityAssignedAtEpochMs() {
+        return priorityAssignedAtEpochMs;
+    }
+
     public void setPriorityPlayerId(UUID priorityPlayerId) {
+        if (!Objects.equals(this.priorityPlayerId, priorityPlayerId)) {
+            this.priorityAssignedAtEpochMs = priorityPlayerId == null ? 0L : System.currentTimeMillis();
+        }
         this.priorityPlayerId = priorityPlayerId;
     }
 

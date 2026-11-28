@@ -5,6 +5,7 @@ import { createApi, RpcClient, EventBus, GameSession, PROMPT_EVENTS, stripMarkup
 import { cardCatalogEntry, formatTag } from './catalog.mjs';
 import { ToolError, sideboardNeedsSubmission, waitFor } from './game-seat.mjs';
 import { mainDeckChanges } from '../../product/sideboard-delta.mjs';
+import { DecisionDelivery } from './decision-delivery.mjs';
 import { TableConversation } from './table-conversation.mjs';
 
 // Associate native response dispatch with its own call, including asynchronous RPC completion.
@@ -98,6 +99,7 @@ export class PlaymatEngineSeat {
   #answerPromptMessageId = null;
   #answerLine = null;
   #cursor = 0;
+  #choiceProjection = null;
   #epoch = randomUUID();
   #restoreToken = null;
   #connected = false;
@@ -115,7 +117,8 @@ export class PlaymatEngineSeat {
   #chat = new TableConversation();
   #invitePresentation = null;
 
-  constructor({ engineUrl, engineName, trustedHeader, accountId, recoverySeatId, connectionId, canonicalAgent = false, rateExempt = false, authenticationHeaders = {}, guardedPrompts = true, managedPriorityStops = false, humanTableId = null, playerId, activeTableId, flag }) {
+  constructor({ engineUrl, engineName, trustedHeader, accountId, recoverySeatId, connectionId, canonicalAgent = false, rateExempt = false, authenticationHeaders = {}, guardedPrompts = true, managedPriorityStops = false, humanTableId = null, playerId, activeTableId, flag, recordDecisionTiming }) {
+    this.decisionDelivery = recordDecisionTiming ? new DecisionDelivery(recordDecisionTiming) : null;
     this.engineUrl = engineUrl;
     this.managedPriorityStops = managedPriorityStops;
     this.engineName = engineName;
@@ -162,6 +165,7 @@ export class PlaymatEngineSeat {
         if (delivery?.submission) delivery.submission.dispatchedAtEpochMs = Date.now();
         const result = rejectOnFalse(await dispatch(...args), 'engine_rejected', 'The engine did not accept that action.');
         if (delivery) {
+          if (!delivery.acknowledged) this.decisionDelivery?.accepted(delivery.decisionId, delivery.cursor, delivery.acceptedBy);
           delivery.acknowledged = true;
           if (delivery.submission) delivery.submission.acknowledgedAtEpochMs = Date.now();
         }
@@ -250,11 +254,20 @@ export class PlaymatEngineSeat {
 
   #publish() {
     this.#cursor++;
+    if (this.decisionDelivery) {
+      const state = this.#session?.getState();
+      const active = this.#connected && state && !state.gameOver && !this.#sideboard && !this.#vote;
+      const ownsPriority = active && state.view?.priorityPlayerName === this.engineName;
+      this.decisionDelivery.observe({ gameId: state?.gameId, tableId: this.#gameTableId, seatId: state?.playerId,
+        cursor: this.#cursor, assignedAt: ownsPriority ? state.view.priorityAssignedAtEpochMs : null,
+        decision: active ? this.#decision(state) : null });
+    }
     for (const listener of this.#signal) listener();
   }
 
   #invalidate() {
     this.#epoch = randomUUID();
+    this.#choiceProjection = null;
     this.#promptIds = new WeakMap();
     this.#publish();
   }
@@ -355,7 +368,12 @@ export class PlaymatEngineSeat {
       id = randomUUID();
       this.#promptIds.set(state.prompt, id);
     }
-    return projectedChoices(state, id);
+    // A GameSession store notification and a pending HTTP wait can read the same
+    // immutable state. Project legal choices once for that state and prompt ID.
+    if (this.#choiceProjection?.state !== state || this.#choiceProjection.id !== id) {
+      this.#choiceProjection = { state, id, decision: projectedChoices(state, id) };
+    }
+    return this.#choiceProjection.decision;
   }
 
   snapshot() {
@@ -387,11 +405,13 @@ export class PlaymatEngineSeat {
       rollbackRequest: this.#pendingRollback(),
       sideboard: this.#sideboard ? { decisionId: this.#sideboard.decisionId, submitted: this.#sideboard.submitted, submissionStatus: this.#sideboard.submissionStatus } : null,
       decision: decision ? { ...describeAgentDecision(decision), openedAtEpochMs: null,
-        firstObservedAtEpochMs: this.#promptObservedAt.get(state.prompt) ?? null } : null,
+        firstObservedAtEpochMs: this.#promptObservedAt.get(state.prompt) ?? null,
+        ...(this.decisionDelivery && { delivery: this.decisionDelivery.reference(decision.id) }) } : null,
     };
   }
 
-  async respond(decisionId, choiceId, value, line, submission) {
+  async respond(decisionId, choiceId, value, line, submission, planned = false) {
+    const cursor = this.#cursor;
     const state = this.#session?.getState();
     const decision = this.#decision(state);
     if (!decision || decision.id !== decisionId) throw new ToolError('stale_decision', 'Read the current engine decision again.');
@@ -402,7 +422,7 @@ export class PlaymatEngineSeat {
     this.#answerPromptMessageId = this.#enginePromptMessageId;
     this.#answerLine = line;
     try {
-      const delivery = { submission, acknowledged: false };
+      const delivery = { submission, decisionId, cursor, acceptedBy: planned ? 'line_executor' : 'pilot', acknowledged: false };
       await answerDelivery.run(delivery, () => this.#session.respond(command));
       if (!delivery.acknowledged) throw new ToolError('not_actionable', 'The engine did not dispatch this decision. Read the current state.');
     } catch (error) {

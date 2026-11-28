@@ -13,7 +13,7 @@ const choice = (id, kind = 'amount', instruction = 'Choose an amount') => ({
   id, kind, instruction, choices: [{ id: `${id}-answer`, type: 'number', label: `Answer for ${id}` }],
 });
 
-async function fixture(t, { first = choice('first'), onResponse = () => {}, evidence = true, initial = {}, authorized = () => true } = {}) {
+async function fixture(t, { first = choice('first'), onResponse = () => {}, evidence = true, initial = {}, authorized = () => true, actor = {}, chatCursor } = {}) {
   const listeners = new Set();
   const applied = [];
   const players = [
@@ -35,6 +35,7 @@ async function fixture(t, { first = choice('first'), onResponse = () => {}, evid
     for (const listener of listeners) listener();
   };
   const engine = {
+    chatCursor,
     snapshot: () => state,
     subscribe: (handler) => { listeners.add(handler); return () => listeners.delete(handler); },
     async respond(decisionId, choiceId, value, line) {
@@ -45,7 +46,7 @@ async function fixture(t, { first = choice('first'), onResponse = () => {}, evid
     },
   };
   const server = createMcpServer({
-    authorize: async (token) => token === 'fixture' && authorized() ? { accountId: 'fixture', engineName: 'pilot', scopes: ['play'] } : null,
+    authorize: async (token) => token === 'fixture' && authorized() ? { accountId: 'fixture', engineName: 'pilot', scopes: ['play'], ...actor } : null,
     createEngine: () => engine,
   });
   server.listen(0, '127.0.0.1');
@@ -2002,7 +2003,182 @@ test('[PM-LINE-04] every core guide example passes the published play_line schem
   assert.equal(result.code, 'invalid_line_arguments', 'The guide names this unguarded keep as rejected');
   for (const misplaced of [{ kind: 'pass_until', destination: 'my_upkeep', expectedStackIds: ['stack-id'] }]) {
     const reply = await f.rawCall('play_line', { ...f.request, actions: [misplaced] });
-    assert.equal(reply.isError, true, 'expectedStackIds inside an action is a schema error');
+    assert.equal(reply.structuredContent?.code, 'invalid_line_arguments', 'expectedStackIds inside an action is a schema rejection');
     assert.match(reply.content[0].text, /expectedStackIds/);
   }
+});
+
+test('[PM-LINE-RECOVERY] March X preflight exposes one open choice, then a partial payment resumes once', async t => {
+  const amount = { ...choice('march-x', 'panel', 'Choose the value of X'), amount: { min: 0, max: 4 } };
+  const paymentPanel = { id: 'march-payment', kind: 'payMana', choices: [
+    { id: 'confirm-cost', type: 'button' }, { id: 'optional-source', type: 'object' },
+  ] };
+  const firstPayment = { id: 'source-payment', kind: 'payMana', choices: [
+    { id: 'tap-land', type: 'manaAbility', objectId: 'untapped-land' },
+  ] };
+  const target = { id: 'dispute-target', kind: 'target', choices: [
+    { id: 'first-creature', type: 'object' }, { id: 'other-creature', type: 'object' },
+  ] };
+  const f = await fixture(t, { first: amount, initial: { stack: [
+    { id: 'dispute', name: 'Academic Dispute', controllerId: 'rival', types: ['INSTANT'], rules: ['Learn.'] }
+  ] }, onResponse: ({ decisionId }, update) => {
+    if (decisionId === amount.id) update({ decision: paymentPanel });
+    else if (decisionId === paymentPanel.id) update({ decision: firstPayment, stack: [] });
+    else update({ decision: decisionId === firstPayment.id ? target : readyToPass('next') });
+  } });
+  const inventory = await f.listTools();
+  const actionsSchema = inventory.tools.find(tool => tool.name === 'play_line').inputSchema.properties.actions;
+  const chooseSchema = actionsSchema.items.anyOf.find(action => action.properties.kind.const === 'choose');
+  assert.equal(chooseSchema.additionalProperties, false);
+  assert.ok(chooseSchema.properties.value);
+  assert.equal(chooseSchema.properties.x, undefined);
+  const badField = await f.rawCall('play_line', { ...f.request, actions: [
+    { kind: 'choose', decisionId: amount.id, choiceId: amount.choices[0].id, x: 2 },
+  ] });
+  assert.equal(badField.structuredContent?.code, 'invalid_line_arguments');
+  assert.deepEqual(badField.structuredContent.issues[0].path, ['actions', 0, 'x']);
+  assert.equal(badField.structuredContent.nextAction.appliedDecisions, 0);
+  assert.ok(badField.structuredContent.nextAction.requires.includes('actions[0].value'));
+  const invalid = await f.call('play_line', { ...f.request, expectedStackIds: ['dispute'], actions: [...f.request.actions, { kind: 'pass_priority' }], view: 'compact' });
+  assert.equal(invalid.result.code, 'reevaluation_required');
+  const x = invalid.structured.nextAction;
+  assert.equal(x.kind, 'answer_prompt');
+  assert.equal(x.appliedDecisions, 0);
+  assert.equal(x.cursor, invalid.result.state.cursor);
+  assert.equal(x.decisionId, amount.id);
+  assert.deepEqual(x.arguments.actions, [{ kind: 'choose', decisionId: amount.id }]);
+  assert.deepEqual(x.requires, ['commandId', 'actions[0].choiceId', 'actions[0].value']);
+  assert.deepEqual(f.applied, []);
+
+  const example = (await readFile(new URL('../guides/core.md', import.meta.url), 'utf8'))
+    .match(/\*\*Choose X[^\n]*\n[\s\S]*?```json\n([^\x60]+)\n```/);
+  assert.ok(example, 'the startup guide provides a callable numeric example');
+  const xArgs = JSON.parse(example[1]);
+  Object.assign(xArgs, { gameId, cursor: x.cursor });
+  Object.assign(xArgs.actions[0], { decisionId: x.decisionId, choiceId: amount.choices[0].id });
+  const paidX = (await f.call(x.tool, xArgs)).result;
+  assert.equal(paidX.appliedDecisions, 1);
+  assert.deepEqual(f.applied.map(a => [a.choiceId, a.value]), [['march-x-answer', 2]]);
+
+  // The tournament recovery occurred on the later payMana panel, not on the numeric X choice.
+  const confirmed = (await f.call('play_line', { ...f.request, cursor: paidX.cursor, commandId: 'overplanned-payment',
+    expectedStackIds: ['dispute'], actions: [
+      { kind: 'choose', decisionId: paymentPanel.id, choiceId: 'confirm-cost' }, { kind: 'pass_priority' },
+    ] })).result;
+  assert.equal(confirmed.code, 'reevaluation_required');
+  assert.equal(confirmed.appliedDecisions, 0);
+  assert.deepEqual(confirmed.nextAction.requires, ['commandId', 'actions[0].choiceId']);
+  const paymentArgs = confirmed.nextAction.arguments;
+  assert.deepEqual(paymentArgs.actions, [{ kind: 'choose', decisionId: paymentPanel.id }]);
+  paymentArgs.actions[0].choiceId = 'confirm-cost';
+  const fresh = (await f.call('play_line', { ...paymentArgs, commandId: 'confirm-payment-only' })).result;
+  assert.equal(fresh.appliedDecisions, 1);
+  const paid = { ...f.request, commandId: 'pay-at-source', cursor: fresh.cursor, actions: [
+    { kind: 'choose', decisionId: firstPayment.id, choiceId: 'tap-land' },
+    { kind: 'choose', guard: { kind: 'question', instruction: 'Pay another cost?' }, select: { answer: false } }
+  ], view: 'compact' };
+  const partial = (await f.call('play_line', paid)).result;
+  assert.equal(partial.status, 'interrupted');
+  assert.equal(partial.nextAction.appliedDecisions, 1);
+  assert.equal(partial.nextAction.decisionId, target.id);
+  assert.deepEqual(partial.nextAction.arguments.actions, [{ kind: 'choose', decisionId: target.id }]);
+  assert.equal((await f.call('play_line', paid)).result.sequenceId, partial.sequenceId);
+  const resume = partial.nextAction.arguments;
+  resume.actions[0].choiceId = 'other-creature';
+  await f.call(partial.nextAction.tool, { ...resume, commandId: 'resume-from-target' });
+  assert.deepEqual(f.applied.map(a => a.choiceId), ['march-x-answer', 'confirm-cost', 'tap-land', 'other-creature']);
+});
+
+test('[PM-LINE-RECOVERY] a competing or malformed plan recovers the owning command even from a stale cursor', async t => {
+  const sent = Promise.withResolvers();
+  const f = await fixture(t, { onResponse: (_, update) => {
+    update({ priority: 'opponent', decision: null }); sent.resolve();
+  } });
+  const first = (await f.call('play_line', { ...f.request, waitMs: 0 })).result;
+  await sent.promise;
+  const wait = { gameId, commandId: f.request.commandId, view: 'compact' };
+  assert.equal(first.nextAction.kind, 'wait_for_command');
+  assert.deepEqual(first.nextAction.arguments, wait);
+  for (const actions of [f.request.actions, [{ kind: 'choose' }]]) {
+    const rejected = (await f.call('play_line', { ...f.request, commandId: 'competing', actions })).result;
+    assert.deepEqual(rejected.nextAction.arguments, wait);
+    assert.equal(rejected.nextAction.appliedDecisions, 0);
+  }
+  f.update({ priority: 'self', decision: choice('second') });
+  const recovered = (await f.call(first.nextAction.tool, wait)).result;
+  assert.equal(recovered.nextAction.decisionId, 'second');
+  assert.equal(recovered.appliedDecisions, 1);
+  assert.equal(f.applied.length, 1);
+});
+
+test('[PM-LINE-RECOVERY] no assigned player or authorized game returns no foreign state, decisions or cursor', async t => {
+  const canonical = await fixture(t, { actor: { playerSelectionEnabled: true, connectionId: 'own-connection' } });
+  const denied = (await canonical.call('play_line', { ...canonical.request, gameId: otherGame })).result;
+  assert.equal(denied.code, 'player_required');
+  assert.deepEqual(denied.nextAction, { kind: 'select_player', appliedDecisions: 0, tool: 'list_players', arguments: {} });
+  assert.equal(denied.state, undefined);
+  const playerId = '00000000-0000-4000-8000-000000000005';
+  const unassigned = await fixture(t, { actor: { playerId, connectionId: 'own-connection', ownsReservation: true } });
+  const closed = (await unassigned.call('play_line', { ...unassigned.request, gameId: otherGame, playerId })).result;
+  assert.equal(closed.code, 'player_table_required');
+  assert.deepEqual(closed.nextAction, { kind: 'inspect_reservation', appliedDecisions: 0,
+    tool: 'get_player_reservation', arguments: { playerId } });
+  const legacy = await fixture(t);
+  const wrong = (await legacy.call('play_line', { ...legacy.request, gameId: otherGame })).result;
+  assert.equal(wrong.code, 'forbidden_game');
+  assert.deepEqual(wrong.nextAction, { kind: 'game_unavailable', appliedDecisions: 0 });
+  assert.equal(wrong.state, undefined);
+  assert.equal(canonical.applied.length + unassigned.applied.length + legacy.applied.length, 0);
+});
+
+test('[PM-LINE-RECOVERY] acknowledgement loss and terminal states cannot invite another submission', async t => {
+  const f = await fixture(t, { onResponse: () => { throw Error('fixture lost acknowledgement'); } });
+  const result = (await f.call('play_line', f.request)).result;
+  assert.equal(result.nextAction.kind, 'resync');
+  assert.equal(result.nextAction.tool, 'resync_game');
+  assert.equal(result.nextAction.decisionId, undefined);
+  const malformed = (await f.call('play_line', { ...f.request, actions: [{ kind: 'choose' }] })).result;
+  assert.equal(malformed.nextAction.tool, 'resync_game');
+  assert.equal(f.applied.length, 1);
+  f.update({ status: 'match_over', decision: null });
+  const end = (await f.call('wait_for_decision', { gameId, commandId: f.request.commandId })).result;
+  assert.equal(end.nextAction.kind, 'match_finished');
+  assert.equal(end.nextAction.tool, undefined);
+  assert.equal(end.nextAction.decisionId, undefined);
+});
+
+test('[PM-LINE-RECOVERY] a stopped plan with no prompt waits for the seat; a disconnected projection refreshes', async t => {
+  const f = await fixture(t);
+  for (const [status, kind, tool] of [['active','wait_for_decision','wait_for_decision'], ['disconnected','refresh_state','get_game_state']]) {
+    f.update({ status, decision: null, priority: 'opponent' });
+    const result = (await f.call('play_line', f.request)).result;
+    assert.equal(result.nextAction.kind, kind);
+    assert.equal(result.nextAction.tool, tool);
+    assert.equal(result.nextAction.decisionId, undefined);
+    assert.equal(result.nextAction.cursor, status === 'active' ? result.state.cursor : undefined);
+  }
+  assert.equal(f.applied.length, 0);
+});
+
+
+test('[PM-LINE-RECOVERY] receipt assembly failure after dispatch recovers only the original command', async t => {
+  let fail = true;
+  const f = await fixture(t, { actor: { scopes: ['play', 'chat'] },
+    onResponse: (_, update) => update({ decision: choice('next') }),
+    chatCursor: () => {
+      if (fail) {
+        fail = false;
+        throw Error('fixture response unavailable after engine acceptance');
+      }
+      return null;
+    },
+  });
+  const lost = await f.call('play_line', f.request);
+  assert.equal(lost.result.code, 'operation_failed');
+  assert.deepEqual(lost.result.nextAction, { kind: 'recover_receipt', appliedDecisions: null,
+    tool: 'wait_for_decision', arguments: { gameId, commandId: f.request.commandId, view: 'compact' } });
+  const recovered = await f.call(lost.result.nextAction.tool, lost.result.nextAction.arguments);
+  assert.equal(recovered.result.status, 'completed');
+  assert.equal(recovered.result.appliedDecisions, 1);
+  assert.equal(f.applied.length, 1);
 });
