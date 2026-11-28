@@ -2,6 +2,7 @@ package mage.game.combat;
 
 import mage.MageObjectReference;
 import mage.abilities.Ability;
+import mage.abilities.common.CombatDamageByAbsolutePowerAbility;
 import mage.abilities.common.ControllerAssignCombatDamageToBlockersAbility;
 import mage.abilities.common.ControllerDivideCombatDamageAbility;
 import mage.abilities.common.DamageAsThoughNotBlockedAbility;
@@ -725,21 +726,16 @@ public class CombatGroup implements Serializable, Copyable<CombatGroup> {
         return blockWasLegal;
     }
 
-    /**
-     * There are effects that let creatures assigns combat damage equal to its
-     * toughness rather than its power. So this method takes this into account
-     * to get the value of damage a creature will assign
-     *
-     * @param permanent
-     * @param game
-     * @return
-     */
     private int getDamageValueFromPermanent(Permanent permanent, Game game) {
         if (game.getCombat().useToughnessForDamage(permanent, game)) {
             return Math.max(0, permanent.getToughness().getValue());
-        } else {
-            return Math.max(0, permanent.getPower().getValue());
         }
+
+        int power = permanent.getPower().getValue();
+        if (power < 0 && permanent.hasAbility(CombatDamageByAbsolutePowerAbility.getInstance(), game)) {
+            return -power;
+        }
+        return Math.max(0, power);
     }
 
     public void setBlocked(boolean blocked, Game game) {
