@@ -17,9 +17,14 @@ class VerifyPackagedCardCatalog {
                      "SELECT p.name FROM exact e JOIN printings p ON p.id = e.printing"
                      + " JOIN format_sets f ON f.set_code = p.set_code"
                      + " WHERE lower(f.format) = 'constructed - pioneer' AND e.set_code = 'fra' AND e.card_number = ?")) {
-            verify(printing, "223", "Way of the Cryomancer");
-            verify(printing, "159", "Uldaros Theorix");
+            verify(printing, "32", "Jace's Machinations");
             verify(printing, "38", "Seasoned Cryomancer");
+            verify(printing, "55", "Extrapolate the Impossible");
+            verify(printing, "64", "Sanctum Lurker");
+            verify(printing, "142", "Null Summoner");
+            verify(printing, "159", "Uldaros Theorix");
+            verify(printing, "223", "Way of the Cryomancer");
+            verify(printing, "232", "Loot, the Anomaly");
         }
     }
 
