@@ -26,7 +26,6 @@ import mage.game.Game;
 import mage.players.ManaPoolItem;
 import mage.players.Player;
 import mage.target.TargetCard;
-import mage.target.common.TargetCardInHand;
 import mage.target.common.TargetOpponent;
 import mage.util.CardUtil;
 
@@ -93,7 +92,7 @@ class NullSummonerExileEffect extends OneShotEffect {
             return true;
         }
 
-        TargetCard handChoice = new TargetCardInHand(StaticFilters.FILTER_CARD_NON_LAND).withNotTarget(true);
+        TargetCard handChoice = new TargetCard(Zone.HAND, StaticFilters.FILTER_CARD_NON_LAND).withNotTarget(true);
         if (!controller.choose(outcome, opponent.getHand(), handChoice, source, game)) {
             return false;
         }
