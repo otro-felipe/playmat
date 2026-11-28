@@ -98,6 +98,7 @@ The existing `play_line.reasoning` accepts 1–600 characters as before. Callers
 
 - `Mage.Web.Client/src/app/match/SpectatorCommentary.test.tsx` covers `[PM-LINE-REPLAY-2] opens formatted commentary with an accessible card preview`.
 - `Mage.Web.Client/src/app/replay/ReplayLineReasoning.test.tsx` covers `[PM-LINE-REPLAY-2] renders archived Markdown without activating untrusted content`.
+- `Mage.Web.Client/e2e/private-spectator-commentary.spec.ts` covers `[PM-LINE-REPLAY-2] seat chat and a keyboard-accessible Markdown dialog` on desktop and mobile widths.
 
 
 ### PM-LINE-WAIT-1 · Command delivery and destination
