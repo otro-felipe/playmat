@@ -45,6 +45,13 @@ function assertPassOnly(state) {
   assert.deepEqual(state.decision.choices.map(choice => choice.type), ['pass']);
 }
 
+function passReceiptContext(receipt) {
+  const { reason, error, appliedDecisions, state } = receipt;
+  const { turn, step, priority, decision } = state ?? {};
+  return JSON.stringify({ reason, errorCode: error?.code, appliedDecisions, turn, step, priority,
+    decision: decision?.kind, choices: decision?.choices?.map(({ type, plainMana, intent }) => ({ type, plainMana, intent })) });
+}
+
 export async function verifyTerminalPass({
   startFixture, ownPlayer, rivalPlayer, answer, waitNextOwn, playLineWithPeer, call, gameClock, setRivalSetup,
 }) {
@@ -53,6 +60,7 @@ export async function verifyTerminalPass({
     setRivalSetup(state => {
       const decision = state.decision;
       const peer = ownPlayer(state);
+      if (decision.kind === 'startingPlayer') return decision.choices.find(choice => choice.label === 'Draw first');
       if (decision.kind === 'payMana') return manaChoice(decision, untappedMountain(peer));
       if (decision.kind === 'declareAttackers' && driveRivalActions) {
         const attacking = state.combat?.some(group => group.attackers.length);
@@ -71,25 +79,23 @@ export async function verifyTerminalPass({
     });
     try {
       let state = await startFixture('Isolated terminal-pass acceptance', pilotDeck, 77, peerDeck);
-      let didTapLand = false;
       while (gameClock.hasTime()) {
         const decision = state.decision;
         const pilot = ownPlayer(state);
         const ownPriority = state.priority === 'self' && state.activePlayerId === pilot.id && decision.kind === 'priority';
-        if (ownPriority && state.step === 'END_TURN' && didTapLand) break;
-        const playLand = ownPriority && state.step === 'PRECOMBAT_MAIN' && !pilot.battlefield.length && landChoice(decision);
-        const tapLand = ownPriority && state.step === 'END_TURN' && manaChoice(decision, untappedMountain(pilot));
-        const choice = playLand || tapLand || passChoice(decision)
-          || decision.choices.find(choice => /^Keep\b|^Play first\b/.test(choice.label));
+        if (ownPriority && state.step === 'END_TURN') break;
+        const choice = passChoice(decision) || decision.choices.find(choice => /^(Keep|Play first)$/.test(choice.label));
         assert.ok(choice, 'Unplanned terminal-pass setup prompt ' + decision.kind);
-        if (tapLand) didTapLand = true;
         await answer(state, choice);
         state = await waitNextOwn(decision.id);
       }
+      assert.equal(state.turn, 1);
       assert.equal(state.step, 'END_TURN');
       assertPassOnly(state);
       const pilotId = ownPlayer(state).id;
       const rivalId = rivalPlayer(state).id;
+      assert.equal(ownPlayer(state).battlefield.length, 0);
+      assert.equal(state.ownHand.length, 7);
       assert.equal(rivalPlayer(state).battlefield.length, 0);
       assert.equal(countEvent(state, 'spellCasts', rivalId), 0);
       assert.equal(countEvent(state, 'attackerDeclarations', rivalId), 0);
@@ -104,8 +110,8 @@ export async function verifyTerminalPass({
       driveRivalActions = true;
       if (filtered) {
         const spell = await toDraw(state, ['new_spell']);
-        assert.equal(spell.status, 'interrupted', spell.reason);
-        assert.equal(spell.reason, 'new_spell');
+        assert.equal(spell.status, 'interrupted', passReceiptContext(spell));
+        assert.equal(spell.reason, 'new_spell', passReceiptContext(spell));
         assertPassOnly(spell.state);
         assert.equal(countEvent(spell.state, 'spellCasts', rivalId), 1);
         assert.equal(countEvent(spell.state, 'attackerDeclarations', rivalId), 0);
@@ -113,8 +119,8 @@ export async function verifyTerminalPass({
         assert.ok(spell.state.stack.some(card => hasteCreatures.has(card.name)), 'The cast is still awaiting a response');
 
         const attack = await toDraw(spell.state, ['attackers_declared']);
-        assert.equal(attack.status, 'interrupted', attack.reason);
-        assert.equal(attack.reason, 'attackers_declared');
+        assert.equal(attack.status, 'interrupted', passReceiptContext(attack));
+        assert.equal(attack.reason, 'attackers_declared', passReceiptContext(attack));
         assert.equal(attack.state.step, 'DECLARE_ATTACKERS');
         assertPassOnly(attack.state);
         assert.equal(countEvent(attack.state, 'attackerDeclarations', rivalId), 1);
@@ -123,7 +129,7 @@ export async function verifyTerminalPass({
       }
 
       const draw = await toDraw(state);
-      assert.equal(draw.status, 'completed', draw.reason);
+      assert.equal(draw.status, 'completed', passReceiptContext(draw));
       assert.equal(draw.lastDestination.step, 'DRAW');
       assert.equal(draw.state.activePlayerId, pilotId);
       assert.equal(draw.state.priority, 'self');
