@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto'
 import { matchEndingCauses } from './archive.mjs'
-import { archetypesFor, archetypeSourceUrl, canonicalArchetype } from './deck-performance-identity.mjs'
+import { archetypeColors, archetypesFor, archetypeSourceUrl, canonicalArchetype } from './deck-performance-identity.mjs'
 import { isUuid, ProductError, transaction } from './decks.mjs'
 import { historyFormatFilter } from './performance.mjs'
-import { archetypeColors, statisticsFormat } from './public-deck-identity.mjs'
+import { statisticsFormat } from './public-deck-identity.mjs'
 
 const qualifyingGame = (qualityParam, causesParam) => `
   g.status='completed' AND (NOT $${qualityParam}::boolean OR
@@ -137,7 +137,11 @@ function archetypeName(format, archetype) {
 function category(group, format, composition, publicName, archetype, colors) {
   if (group === 'deck') {
     // An unnamed list is shown by its archetype, so its row says what kind of deck it is.
-    if (composition) return { id: composition, name: publicName, archetype: archetypeName(format, archetype), format, colors }
+    if (composition) {
+      // A list is drawn in its archetype's colors, not in the colors its cards happen to carry.
+      const named = archetypeName(format, archetype)
+      return { id: composition, name: publicName, archetype: named, format, colors, canonicalColors: archetypeColors(named) }
+    }
     return { id: categoryId(group, format, null), name: null, unidentified: true, format, colors: null }
   }
   const name = archetypeName(format, archetype)
@@ -182,13 +186,17 @@ function add(map, category, outcome, count, stats = {}) {
   else row.draws += count
 }
 
-// The palette most records agree on. A tie keeps the archetype's own palette when it is
-// one of the tied candidates, and is otherwise unknown.
+// The archetype's own palette, or else the palette most records agree on (a tie is unknown).
 function settleColors(row) {
   const { votes, canonical } = row.palettes
   const top = Math.max(0, ...votes.values())
+  // A named archetype always has its own palette. Lists vote only when the name carries none.
+  if (canonical != null) {
+    row.colors = [...canonical]
+    return row
+  }
   const tied = [...votes].filter(([, count]) => count === top).map(([key]) => key)
-  const key = tied.length === 1 ? tied[0] : tied.includes(canonical) ? canonical : votes.size ? null : canonical
+  const key = tied.length === 1 ? tied[0] : null
   row.colors = key == null ? null : [...key]
   return row
 }

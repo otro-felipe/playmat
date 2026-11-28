@@ -520,3 +520,20 @@ test(
     assert.equal(excluded.n, 7)
   },
 )
+
+test('an archetype and its lists are drawn in the archetype palette, never in the colors their cards carry', { skip: !url }, async (t) => {
+  const { db, composition, match } = await fixture(t)
+  // Devotion lists often run an off-color land or double-faced card; the archetype stays mono-green.
+  const devotion = await composition('Splash Devotion', ['U', 'G'])
+  const rock = await composition(null, ['B', 'G', 'W'])
+  await match([[devotion, 'Devotion to Green'], [rock, 'The Rock (Golgari Control)']])
+  await match([[devotion, 'Devotion to Green'], [rock, 'The Rock (Golgari Control)']], { winner: 'Bob' })
+  const report = await publicDeckStatistics(db, { format: 'Pioneer' })
+  assert.deepEqual(report.rows.find((row) => row.name === 'Devotion to Green').colors, ['G'])
+  assert.deepEqual(report.rows.find((row) => row.name === 'The Rock (Golgari Control)').colors, ['B', 'G'])
+  const decks = await publicDeckStatistics(db, { group: 'deck', format: 'Pioneer' })
+  assert.deepEqual(decks.rows.find((row) => row.id === devotion).colors, ['G'])
+  assert.deepEqual(decks.rows.find((row) => row.id === rock).colors, ['B', 'G'])
+  const detail = await publicDeckStatistics(db, { format: 'Pioneer', selected: report.rows[0].id })
+  assert.ok(detail.selected.matchups.every((row) => row.colors?.length === (row.name === 'Devotion to Green' ? 1 : 2)))
+})

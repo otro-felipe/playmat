@@ -1,0 +1,51 @@
+.list { display: grid; gap: var(--space-3); min-width: 0; }
+.summary { margin: 0; color: var(--ink-dim); font-size: var(--text-sm); }
+.summary strong { color: var(--ink-strong); font-variant-numeric: tabular-nums; }
+.columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: var(--space-3) var(--space-6);
+  align-items: start;
+}
+.column { display: grid; gap: var(--space-4); min-width: 0; }
+.group h4 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-1);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--ink-ghost);
+  color: var(--ink-strong);
+  font-family: var(--font-print);
+  font-size: var(--text-lg);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.group h4 i { color: var(--ink-dim); font-size: 0.95em; }
+.group h4 b { margin-left: auto; color: var(--ink-dim); font-weight: 600; font-variant-numeric: tabular-nums; }
+.group ul { display: grid; margin: 0; padding: 0; list-style: none; }
+.group li {
+  display: grid;
+  grid-template-columns: 2.4ch minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 32px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  transition: background-color 140ms ease;
+}
+.group li:hover { background: rgb(var(--ink-rgb) / 0.06); }
+.amount { color: var(--ink-dim); font-weight: 700; font-variant-numeric: tabular-nums; text-align: end; }
+.name {
+  display: block;
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-decoration: none;
+}
+.group li button { min-width: 0; max-width: 100%; text-align: start; text-decoration: none; }
+.group li button:hover .name { color: var(--ink-strong); text-decoration: underline; text-underline-offset: 0.18em; }
+.cost { display: inline-flex; gap: 2px; font-size: 0.8rem; white-space: nowrap; }
+.note { min-width: 3.5ch; color: var(--ink-dim); font-size: var(--text-sm); font-variant-numeric: tabular-nums; text-align: end; white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .group li { transition: none; } }

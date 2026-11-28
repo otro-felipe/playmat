@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto'
+import { matchEndingCauses } from './archive.mjs'
+import { archetypeColors } from './deck-performance-identity.mjs'
 import { registeredDecklists } from './tournament-decklists.mjs'
 import { ProductError } from './decks.mjs'
 import { declaredRuntime } from './player-runtime.mjs'
@@ -116,6 +119,19 @@ export async function view(db, t, actor, now, onlineMs) {
   const publishedSet = new Set(publishedIds.map((p) => p.entry_id))
   const published = players.filter((p) => publishedSet.has(p.id))
   const deckLists = await registeredDecklists(db, published.map(p => p.id))
+  const archetypes = new Map(deckLists.filter((d) => d.archetype).map((d) => [d.entryId, d.archetype]))
+  for (const entry of standings) {
+    const archetype = archetypes.get(entry.id)
+    if (archetype) Object.assign(entry, { archetype, colors: archetypeColors(archetype) })
+  }
+  const owners = new Map(players.map((p) => [p.id, p.ownerId]))
+  const ownsSeat = (id) => id != null && !!actor?.accountId && !actor.agent && owners.get(id) === actor.accountId
+  const byPairing = new Map(matches.map((m) => [m.id, m]))
+  const sides = new Map(players.map((p) => [p.id, String(p.engineName ?? '').trim().toLowerCase()]))
+  const games = await pairingGames(db, t.id, (id) => {
+    const m = byPairing.get(id)
+    return (actor?.isAdmin === true && !actor.agent) || (!!m && ownsSeat(m.a) && ownsSeat(m.b))
+  })
   return {
     ...summary(t),
     viewer: {
@@ -133,8 +149,13 @@ export async function view(db, t, actor, now, onlineMs) {
     pairings: matches.map(({ ackA, ackB, attendanceObserved, attendanceElapsed, ...m }) => {
       const observed = attendanceObserved !== null && now - attendanceObserved <= attendanceSampleWindowMs
       const attendanceClock = observed && m.tableId && !m.completed && !m.launched && (!ackA || !ackB)
+      const side = (winner) => {
+        const name = String(winner ?? '').trim().toLowerCase()
+        return !name ? null : name === sides.get(m.a) ? 'a' : name === sides.get(m.b) ? 'b' : null
+      }
       return {
         ...m,
+        games: (games.get(m.id) ?? []).map(({ winner, draw, ...game }) => ({ ...game, winner: draw ? 'draw' : side(winner) })),
         attendanceDeadlineAt: attendanceClock ? attendanceObserved + 10 * minute - attendanceElapsed : null,
         absentWarningIds:
           attendanceClock && attendanceElapsed >= 3 * minute
@@ -143,6 +164,41 @@ export async function view(db, t, actor, now, onlineMs) {
       }
     }),
   }
+}
+
+// The judge's written reason follows the review rule: only someone who owns both seats (or an
+// administrator) reads it. Everyone sees the verdict, since it already shapes public statistics.
+const reviewRevision = (game) => createHash('sha256').update(JSON.stringify([game.id, game.checksum])).digest('hex')
+export async function pairingGames(db, tournamentId, readsReason) {
+  const { rows } = await db.query(
+    `SELECT p.id AS pairing,g.id,g.game_number AS number,g.status,g.winner,g.result,g.checksum,g.end_cause AS "endCause",
+      g.good_quality AND NOT COALESCE(g.end_cause=ANY($2::text[]),false) AS quality,
+      g.quality_reason AS reason,g.quality_archive_revision AS revision
+    FROM tournament_pairings p JOIN matches m ON m.id=p.match_id OR (p.match_id IS NULL
+      AND m.table_id IN (SELECT table_id FROM tournament_pairing_tables WHERE pairing_id=p.id))
+    JOIN games g ON g.match_id=m.id
+    WHERE p.tournament_id=$1 AND g.status<>'abandoned'
+    ORDER BY p.id,g.game_number,g.started_at,g.id`,
+    [tournamentId, [...matchEndingCauses]],
+  )
+  const games = new Map()
+  for (const row of rows) {
+    const list = games.get(row.pairing) ?? []
+    list.push({
+      id: row.id,
+      number: row.number,
+      status: row.status,
+      winner: row.winner,
+      draw: row.result === 'Game is a draw',
+      endCause: row.endCause ?? null,
+      goodQuality: row.status === 'completed' && row.quality,
+      ...(readsReason(row.pairing) && row.reason && row.checksum && row.revision === reviewRevision(row)
+        ? { qualityReason: row.reason }
+        : {}),
+    })
+    games.set(row.pairing, list)
+  }
+  return games
 }
 
 // Both this transition and result recording run under the tournament row lock.

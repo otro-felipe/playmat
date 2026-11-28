@@ -78,6 +78,14 @@
   --mana-g: #6fbb7c;
   --mana-c: #c4bfb3;
 
+  /* Archetype identity: an archetype is drawn in its own colors (never its cards'). Tuned to read on the mat. */
+  --arch-w: #eadbb0;
+  --arch-u: #4f97e6;
+  --arch-b: #8d8079;
+  --arch-r: #e8603f;
+  --arch-g: #4fb36a;
+  --arch-c: #a9a49b;
+
   /* type */
   --font-ui: 'Barlow', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-print: 'Barlow Condensed', 'Barlow', ui-sans-serif, system-ui, sans-serif;

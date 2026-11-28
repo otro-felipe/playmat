@@ -6,3 +6,4 @@ export function tournamentArchetype(format: string | null | undefined, cards: re
 export function isCreaturePracticeMain(cards: readonly DeckCard[]): boolean;
 export function canonicalArchetype(format: string | null | undefined, label: string): string;
 export function archetypeSourceUrl(format: string | null | undefined, label: string): string | null;
+export function archetypeColors(archetype?: string | null): ('W' | 'U' | 'B' | 'R' | 'G')[] | null;

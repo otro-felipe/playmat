@@ -23,9 +23,14 @@ test('only the last real message appears beside its seat and a deduplicated line
   fireEvent.click(page.getByRole('button', { name: 'Chat' }));
   const rows = within(page.getByRole('list')).getAllByRole('listitem');
   expect(rows).toHaveLength(2);
-  expect(rows[0].textContent).toMatch(/Table chat.*Agente.*Buen ataque/);
+  expect(rows[0].textContent).toMatch(/Agente.*Table chat.*Buen ataque/);
+  // The first seat speaks on the left of the timeline, the second on the right.
+  expect(rows[0].getAttribute('data-side')).toBe('left');
+  expect(rows[1].getAttribute('data-side')).toBe('right');
+  expect(rows[1].querySelector('time')).toBeTruthy();
   expect(rows[1].textContent).toContain('Agente2');
-  expect(rows[1].textContent).not.toContain('Guardo');
+  // A pilot's line shows a short preview; the full explanation opens in its own dialog.
+  expect(rows[1].textContent).toContain('Pilot commentary');
   fireEvent.click(within(rows[1]).getByRole('button', { name: 'Pilot commentary' }));
   expect(within(page.getByRole('dialog')).getByText(/Guardo/)).toBeTruthy();
   fireEvent.click(within(page.getByRole('dialog')).getByRole('button', {name:'Close'}));

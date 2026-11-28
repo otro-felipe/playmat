@@ -586,6 +586,19 @@ dbTest(
     )
     await f.service.report(f.id, pair.pairingId, { tableId: secondRecovery, matchId, winsA: 2, winsB: 0 })
     assert.equal((await permissions.reviewAccess(actors[0], matchId)).fullAvailable, true)
+    // Each table lists its games with the winning side and the judge's verdict. The written
+    // reason follows the review rule: an administrator or the owner of both seats reads it.
+    const { createHash } = await import('node:crypto')
+    await f.pool.query(
+      "UPDATE games SET checksum='c1',good_quality=true,winner=$2,quality_reason='Both pilots played it out.',quality_archive_revision=$3 WHERE id=$1",
+      [gameId, actors[0].engineName, createHash('sha256').update(JSON.stringify([gameId, 'c1'])).digest('hex')],
+    )
+    const tableGames = async (actor) => (await f.service.get(f.id, actor)).pairings.find((p) => p.id === pair.pairingId).games
+    assert.deepEqual((await tableGames()).map((g) => [g.number, g.winner, g.goodQuality, g.qualityReason]), [[1, 'a', true, undefined]])
+    assert.equal((await tableGames({ isAdmin: true, accountId: randomUUID() }))[0].qualityReason, 'Both pilots played it out.')
+    await f.pool.query("UPDATE games SET end_cause='inactivity' WHERE id=$1", [gameId])
+    assert.equal((await tableGames())[0].goodQuality, false, 'a game ended by inactivity never counts as good quality')
+    await f.pool.query('UPDATE games SET end_cause=NULL WHERE id=$1', [gameId])
     const hidden = await archive.matchList(actors[0])
     assert.ok(JSON.stringify(hidden).includes('MyDeck'))
     assert.ok(!JSON.stringify(hidden).includes('HiddenAggro'))

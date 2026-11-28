@@ -46,7 +46,10 @@ it('switches between a recorded ending and the third game of an officially drawn
   fireEvent.click(first.getByRole('button', { name: 'Close' }));
   fireEvent.change(screen.getByRole('combobox', { name: 'Game' }),{target:{value:'three'}});
   fireEvent.click(screen.getByRole('button', { name: 'Replay information' }));
-  const third = within(await screen.findByRole('dialog'));
+  // Every game of the table is listed; the one on screen is marked as current.
+  const dialog = within(await screen.findByRole('dialog'));
+  expect(dialog.getByText(/Concession/)).toBeTruthy();
+  const third = within(dialog.getByRole('button', { name: 'Game 3', current: true }).closest('li')!);
   expect(third.getByText(/Game drawn/i)).toBeTruthy();
   expect(third.getByText(/turn 15/i)).toBeTruthy();
   expect(third.getByText(/Cleanup/)).toBeTruthy();

@@ -22,7 +22,7 @@ export interface SpectatorChatMessage {
   at: number;
 }
 export type SpectatorFeedEvent = { gameId: string; key: string; at: number; playerName: string; text: string } & (
-  { kind: 'line'; playerId: string } | { kind: 'chat' }
+  { kind: 'line'; playerId: string; turn?: number } | { kind: 'chat' }
 );
 
 /** Reconnect snapshots can repeat events. Command IDs are unique within an acting seat. */
@@ -32,7 +32,8 @@ export function spectatorFeed(gameId: string, lines: readonly SpectatorLine[] = 
     const text = audienceText(line, !visibility);
     if (!line.lineId || !line.playerId || !text?.trim() || !Number.isFinite(line.at)) continue;
     const key = JSON.stringify([gameId, 'line', line.playerId, line.lineId]);
-    rows.set(key, { key, gameId, kind: 'line', playerId: line.playerId, playerName: line.playerName, text, at: line.at });
+    rows.set(key, { key, gameId, kind: 'line', playerId: line.playerId, playerName: line.playerName, text, at: line.at,
+      ...(Number.isSafeInteger(line.turn) ? { turn: line.turn } : {}) });
   }
   for (const item of chat) {
     if (!item.messageId || !item.message?.trim() || !Number.isFinite(item.at)) continue;

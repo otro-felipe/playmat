@@ -84,8 +84,8 @@ test('the public scoreboard names an agent and owner and offers only published i
   expect(view.getByRole('link', { name: 'Felipe' }).getAttribute('href')).toContain('/tournaments/owners/Felipe');
   expect(view.queryByRole('link', { name: /administration/i })).toBeNull();
   expect(view.queryByText(/sideboard/i)).toBeNull();
-  // A tournament in progress opens on its bracket; statistics wait for the end.
-  expect(view.getByRole('tab', { name: 'Bracket' }).getAttribute('aria-selected')).toBe('true');
+  // A tournament opens on its standings and tables; statistics wait for the end.
+  expect(view.getByRole('tab', { name: 'Standings' }).getAttribute('aria-selected')).toBe('true');
   fireEvent.click(view.getByRole('tab', { name: 'Statistics' }));
   expect(view.getByText('Statistics are published when the tournament ends.')).toBeTruthy();
 });
@@ -98,12 +98,13 @@ test('[PM-MCP-PLAYER-VIEW-MODEL] shows provider and model for configured agents 
     ...cup,
     viewer: null,
     participants: [configured, human, legacy],
-    standings: [{ ...configured, rank: 1, wins: 1, losses: 0, ties: 0, points: 3, omw: 0, gw: 1, ogw: 0 }],
+    standings: [configured, human, legacy].map((e, i) => ({ ...e, rank: i + 1, wins: 1, losses: 0, ties: 0, points: 3, omw: 0, gw: 1, ogw: 0 })),
     pairings: [{ id: 'a', roundNumber: 1, stage: 'swiss', number: 1, a: 'e1', b: 'e2' }],
   });
-  expect((await view.findAllByRole('img', { name: 'Claude' })).length).toBeGreaterThanOrEqual(3);
-  expect(view.getAllByText('claude-opus-5-5').length).toBeGreaterThanOrEqual(3);
-  const item = view.getByText('Legacy').closest('li')!;
+  // The standings and the round's table both name the configured model.
+  expect((await view.findAllByRole('img', { name: 'Claude' })).length).toBeGreaterThanOrEqual(2);
+  expect(view.getAllByText('claude-opus-5-5').length).toBeGreaterThanOrEqual(2);
+  const item = view.getByText('Legacy').closest('tr')!;
   expect(within(item).queryByRole('img')).toBeNull();
 });
 
@@ -172,7 +173,9 @@ test('a public visitor receives updated standings and deck disclosure when the p
   });
   await view.findByRole('heading', { name: 'Playoff bracket' });
   fireEvent.click(view.getByRole('tab', { name: 'Decklists' }));
-  await view.findByText('60 × Forest');
+  const list = within(await view.findByRole('article', { name: 'Decklist of Luna' }));
+  expect(list.getByText('Forest')).toBeTruthy();
+  expect(list.getByText('60', { selector: 'span' })).toBeTruthy();
 });
 
 test('an enrolled human can open the game before a table exists, while the administration stays in its own tab', async () => {
@@ -283,7 +286,7 @@ test.each(['playing', 'finished', 'cancelled'])('[CUP-AC-002] administration hid
   });
   await view.findByRole('heading', { name: cup.name });
   expect(view.queryByRole('heading', { name: 'Tournament administration' })).toBeNull();
-  if (status === 'finished') fireEvent.click(view.getByRole('tab', { name: 'Bracket' }));
+  expect(view.getByRole('tab', { name: 'Standings' }).getAttribute('aria-selected')).toBe('true');
   expect(view.getByRole('heading', { name: 'Round tables' })).toBeTruthy();
 });
 
@@ -324,21 +327,51 @@ test('[PM-TOUR-VOID-AC-001] a finished tournament owner confirms annulment from 
   });
 });
 
-test('a finished tournament opens on its result and statistics, then lists its decks with their archetypes', async () => {
+test('a finished tournament opens on its standings, then shows statistics and lists its decks with their archetypes', async () => {
   const { view, fetcher } = mount('/tournaments/cup', {
     ...cup,
     viewer: null,
     status: 'finished',
     championId: entrant.id,
-    standings: [{ ...entrant, rank: 1, wins: 3, losses: 0, ties: 0, points: 9 }],
+    standings: [{ ...entrant, rank: 1, wins: 3, losses: 0, ties: 0, points: 9, omw: 0.5, gw: 1, ogw: 0.5 }],
     deckLists: [{ entryId: entrant.id, name: 'Luna list', archetype: 'Red Deck Wins', cards: [{ amount: 60, cardName: 'Mountain' }], sideboard: [] }],
   });
   await view.findByRole('heading', { name: cup.name });
-  expect(view.getByRole('tab', { name: 'Statistics' }).getAttribute('aria-selected')).toBe('true');
-  expect(view.getByRole('heading', { name: 'Standings' })).toBeTruthy();
+  expect(view.getByRole('tab', { name: 'Standings' }).getAttribute('aria-selected')).toBe('true');
+  const standings = within(view.getByRole('heading', { name: 'Standings' }).closest('section')!);
+  // Each participant is shown with its archetype, record, points, win rates and tiebreakers in one row.
+  expect(standings.getByText('Red Deck Wins')).toBeTruthy();
+  expect(standings.getByText('9')).toBeTruthy();
+  fireEvent.click(view.getByRole('tab', { name: 'Statistics' }));
   await view.findByRole('heading', { name: 'Tournament statistics' });
   await waitFor(() => expect(fetcher.mock.calls.some(([url]) => String(url).startsWith(root + '/cup/statistics?'))).toBe(true));
   fireEvent.click(view.getByRole('tab', { name: 'Decklists' }));
-  expect(view.getByText('Red Deck Wins')).toBeTruthy();
-  expect(view.getByText('60 × Mountain')).toBeTruthy();
+  const list = within(view.getByRole('article', { name: 'Decklist of Luna' }));
+  expect(list.getByText('Red Deck Wins')).toBeTruthy();
+  expect(list.getByText('Mountain')).toBeTruthy();
+});
+
+test('each table lists its games with the winner, the judge verdict and a replay opened on that game', async () => {
+  const { view } = mount('/tournaments/cup', {
+    ...cup,
+    viewer: null,
+    status: 'finished',
+    participants: [entrant, { ...entrant, id: 'e2', name: 'Sol' }],
+    standings: [],
+    pairings: [{
+      id: 'pair1', tableId: 'table1', matchId: 'match1', roundNumber: 1, stage: 'swiss', number: 1, a: 'e1', b: 'e2',
+      winsA: 1, winsB: 1, draws: 0, completed: true, winner: 'e1', replayUrl: '/replay',
+      games: [
+        { id: 'g1', number: 1, status: 'completed', winner: 'a', endCause: null, goodQuality: true, qualityReason: 'Both pilots played it out.' },
+        { id: 'g2', number: 2, status: 'completed', winner: 'b', endCause: 'inactivity', goodQuality: false },
+      ],
+    }],
+  });
+  const games = within(await view.findByRole('list', { name: 'Games at table 1' }));
+  expect(games.getAllByRole('listitem')).toHaveLength(2);
+  expect(games.getByText('Luna wins')).toBeTruthy();
+  expect(games.getByText('Inactivity')).toBeTruthy();
+  expect(games.getByRole('button', { name: 'Good quality. Both pilots played it out.' })).toBeTruthy();
+  expect(games.getByRole('button', { name: "Doesn't qualify" })).toBeTruthy();
+  expect(games.getByRole('link', { name: 'Replay of game 2' }).getAttribute('href')).toBe('/replay?game=2');
 });

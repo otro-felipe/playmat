@@ -8,37 +8,12 @@ import {
   tournamentArchetype,
   isCreaturePracticeMain,
   basicLandNames,
+  archetypeColors,
 } from './deck-performance-identity.mjs'
 
+export { archetypeColors }
+
 const letters = [...'WUBRG']
-const palettes = {
-  azorius: 'WU',
-  dimir: 'UB',
-  rakdos: 'BR',
-  gruul: 'RG',
-  selesnya: 'WG',
-  orzhov: 'WB',
-  izzet: 'UR',
-  golgari: 'BG',
-  boros: 'WR',
-  simic: 'UG',
-  esper: 'WUB',
-  grixis: 'UBR',
-  jund: 'BRG',
-  naya: 'WRG',
-  bant: 'WUG',
-  abzan: 'WBG',
-  jeskai: 'WUR',
-  mardu: 'WBR',
-  sultai: 'UBG',
-  temur: 'URG',
-  white: 'W',
-  blue: 'U',
-  black: 'B',
-  red: 'R',
-  green: 'G',
-  colorless: '',
-}
 const basics = new Map(
   ['plains', 'island', 'swamp', 'mountain', 'forest'].flatMap((name, i) => [
     [name, 1 << i],
@@ -135,22 +110,6 @@ export function mainColors(cards, lookup = catalogMask) {
   return letters.filter((_, i) => mask & (1 << i))
 }
 
-// MTGTop8 names that do not start with a guild, shard or mono color.
-const namedPalettes = {
-  'ur aggro': 'UR', 'uw control': 'WU', 'weenie white': 'W', 'devotion to green': 'G', 'green ramp': 'G',
-  'the rock (golgari control)': 'BG', 'arclight phoenix': 'UR', 'red deck wins': 'R', '5c legends aggro': 'WUBRG',
-  'niv-mizzet reborn': 'WUBRG', 'lotus field': 'G', 'greasefang parhelion': 'WB',
-}
-
-export function archetypeColors(archetype) {
-  const named = namedPalettes[String(archetype || '').toLowerCase()]
-  if (named) return letters.filter((color) => named.includes(color))
-  const prefix = String(archetype || '')
-    .toLowerCase()
-    .match(/^(?:mono[- ](white|blue|black|red|green)|([a-z]+))\b/)
-  const palette = prefix && palettes[prefix[1] || prefix[2]]
-  return typeof palette === 'string' ? letters.filter((color) => palette.includes(color)) : null
-}
 export function normalizedDeckColors(colors) {
   if (colors && !Array.isArray(colors) && typeof colors === 'object') {
     const keys = ['white', 'blue', 'black', 'red', 'green']

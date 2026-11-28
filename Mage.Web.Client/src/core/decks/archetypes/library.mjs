@@ -46,6 +46,58 @@ export function canonicalArchetype(format, label) {
   return label
 }
 
+
+// Every archetype's own colors: a guild, shard, wedge or mono prefix, or a named palette.
+// Statistics and tournament pages draw an archetype in these colors, never in its list's cards.
+const letters = [...'WUBRG']
+const palettes = {
+  azorius: 'WU',
+  dimir: 'UB',
+  rakdos: 'BR',
+  gruul: 'RG',
+  selesnya: 'WG',
+  orzhov: 'WB',
+  izzet: 'UR',
+  golgari: 'BG',
+  boros: 'WR',
+  simic: 'UG',
+  esper: 'WUB',
+  grixis: 'UBR',
+  jund: 'BRG',
+  naya: 'WRG',
+  bant: 'WUG',
+  abzan: 'WBG',
+  jeskai: 'WUR',
+  mardu: 'WBR',
+  sultai: 'UBG',
+  temur: 'URG',
+  white: 'W',
+  blue: 'U',
+  black: 'B',
+  red: 'R',
+  green: 'G',
+  colorless: '',
+}
+
+// MTGTop8 names that do not start with a guild, shard or mono color.
+const namedPalettes = {
+  'ur aggro': 'UR', 'uw control': 'WU', 'weenie white': 'W', 'devotion to green': 'G', 'green ramp': 'G',
+  'the rock (golgari control)': 'BG', 'arclight phoenix': 'UR', 'red deck wins': 'R', '5c legends aggro': 'WUBRG',
+  'niv-mizzet reborn': 'WUBRG', 'lotus field': 'G', 'greasefang parhelion': 'WB', winota: 'WR',
+  'zur, eternal schemer': 'WUB',
+}
+
+/** The archetype's colors in WUBRG order, or null when its name carries none. */
+export function archetypeColors(archetype) {
+  const named = namedPalettes[String(archetype || '').toLowerCase()]
+  if (named) return letters.filter((color) => named.includes(color))
+  const prefix = String(archetype || '')
+    .toLowerCase()
+    .match(/^(?:mono[- ](white|blue|black|red|green)|([a-z]+))\b/)
+  const palette = prefix && palettes[prefix[1] || prefix[2]]
+  return typeof palette === 'string' ? letters.filter((color) => palette.includes(color)) : null
+}
+
 /** MTGTop8's archetype page for a canonical label, when the format has one. */
 export function archetypeSourceUrl(format, label) {
   const family = catalogFormat(format)

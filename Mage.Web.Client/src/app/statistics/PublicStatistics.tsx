@@ -1,12 +1,14 @@
 import { useQuery } from '@tanstack/react-query';
-import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpRight, ChevronRight, ExternalLink } from 'lucide-react';
-import { useEffect, useId, useRef, type ReactNode } from 'react';
+import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpRight, ChevronRight, ExternalLink, Layers, ListChecks, Star, Swords } from 'lucide-react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { Link, Navigate, useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { registerMessages, useI18n, useT, type Translate } from '../i18n';
 import messages from '../i18n/en/events';
 import { request, tournamentApi, tournamentPath } from '../tournaments/tournamentApi';
 import { Button } from '../ui/Button';
-import { Switch } from '../ui/Switch';
+import { ArchetypeMark } from '../ui/Archetype';
+import { archetypeIdentity, archetypeStyle } from '../ui/archetypeIdentity';
+import { DeckListView } from '../ui/DeckListView';
 import { CardPreviewName } from '../ui/CardMarkdown';
 import { Percentage } from '../history/Percentage';
 import styles from './PublicStatistics.module.css';
@@ -67,9 +69,10 @@ type Statistics = {
   rows: Row[];
   selected: (Row & { matchups: Row[]; list?: DeckList | CommonCards | null; hands?: Hands }) | null;
 };
-type SortKey = 'name' | 'n' | 'winrate' | 'gamerate' | 'mulligan' | 'duration';
-const sortKeys: SortKey[] = ['name', 'n', 'winrate', 'gamerate', 'mulligan', 'duration'];
-const colors: Color[] = ['W', 'U', 'B', 'R', 'G'];
+type SortKey = 'name' | 'n' | 'games' | 'winrate' | 'gamerate' | 'mulligan' | 'duration';
+const sortKeys: SortKey[] = ['name', 'n', 'games', 'winrate', 'gamerate', 'mulligan', 'duration'];
+type View = 'matchups' | 'hands' | 'list';
+const views: View[] = ['matchups', 'hands', 'list'];
 
 const ratio = (part: number | undefined, whole: number | undefined) => (whole ? (part ?? 0) / whole : null);
 const mulliganRate = (row: Row) => ratio(row.mulliganGames, row.mulliganKnown);
@@ -101,41 +104,18 @@ function strongest(rows: Row[]): Row | null {
   return best;
 }
 
-function PaletteSymbols({ value, group, descriptionId }: { value: Row['colors']; group: Group; descriptionId: string }) {
+/** The archetype a row is drawn as: its own name, or a deck's archetype. */
+function RowMark({ row, group, size = 'sm', decorative }: { row: Row; group: Group; size?: 'sm' | 'md' | 'lg' | 'xl'; decorative?: boolean }) {
   const t = useT();
-  const ordered = colors.filter((c) => value?.includes(c));
-  const symbols = !value ? [] : ordered.length ? ordered : ['C'];
-  const names = !value
-    ? t('stats.unknownColors')
-    : ordered.length
-      ? ordered.map((c) => t(`stats.color.${c}`)).join(', ')
-      : t('stats.colorless');
-  const label = t(group === 'deck' ? 'stats.paletteDeck' : 'stats.paletteArchetype', { colors: names });
-  return (
-    <span className={styles.colors} role="img" aria-label={label} aria-describedby={descriptionId} title={label}>
-      {symbols.length ? (
-        symbols.map((c) => <i key={c} aria-hidden="true" className={`ms ms-cost ms-${c.toLowerCase()}`} />)
-      ) : (
-        <span aria-hidden="true" className={styles.unknown}>
-          ?
-        </span>
-      )}
-    </span>
-  );
+  const label = (palette: Color[] | null) => {
+    const names = !palette ? t('stats.unknownColors') : palette.length ? palette.map((c) => t(`stats.color.${c}`)).join(', ') : t('stats.colorless');
+    return t(group === 'deck' ? 'stats.paletteDeck' : 'stats.paletteArchetype', { colors: names });
+  };
+  return <ArchetypeMark name={group === 'deck' ? row.archetype : row.name} colors={row.colors} size={size}
+    label={decorative ? undefined : label} />;
 }
 
-function PaletteLegend({ group, descriptionId }: { group: Group; descriptionId: string }) {
-  const t = useT();
-  return (
-    <details className={styles.paletteLegend}>
-      <summary>{t(group === 'deck' ? 'stats.legendDeck' : 'stats.legendArchetype')}</summary>
-      <div id={descriptionId}>
-        <p>{t('stats.legendSources')}</p>
-        <p>{t(group === 'deck' ? 'stats.legendDeckAgreement' : 'stats.legendArchetypeAgreement')}</p>
-      </div>
-    </details>
-  );
-}
+const rowColors = (row: Row, group: Group) => archetypeIdentity(group === 'deck' ? row.archetype : row.name, row.colors).colors;
 
 function displayNames(rows: Row[], group: Group, t: Translate): Map<string, string> {
   const labels = new Map<string, string>();
@@ -202,6 +182,8 @@ function sortValue(row: Row, key: SortKey, names: Map<string, string>): number |
       return names.get(row.id) ?? '';
     case 'n':
       return row.n;
+    case 'games':
+      return row.games ?? null;
     case 'winrate':
       return ratio(row.wins, row.n);
     case 'gamerate':
@@ -284,9 +266,8 @@ function ResultTable({
   names,
   heading,
   destination,
-  selectedId,
+  selected,
   group,
-  descriptionId,
   sort,
   descending,
   sortHref,
@@ -295,9 +276,9 @@ function ResultTable({
   names: Map<string, string>;
   heading: string;
   destination: (id: string) => string;
-  selectedId?: string;
+  /** the row whose matchups these are: each row then reads "vs {opponent}" */
+  selected?: Row;
   group: Group;
-  descriptionId: string;
   sort: SortKey;
   descending: boolean;
   sortHref: (column: SortKey, descending: boolean) => string;
@@ -305,19 +286,15 @@ function ResultTable({
   const t = useT();
   const { counts, rates } = useFormats();
   const header = { sort, descending, href: sortHref };
+  const mine = selected ? rowColors(selected, group) : null;
   return (
     <div className={styles.tableScroll}>
       <table className={styles.table} aria-label={heading}>
         <thead>
           <tr>
             <SortHeader column="name" label={heading} long={heading} {...header} />
-            <SortHeader
-              column="n"
-              className={styles.numeric}
-              label={<abbr title={t('stats.matchesLong')}>{t('stats.matchesShort')}</abbr>}
-              long={t('stats.matchesLong')}
-              {...header}
-            />
+            <SortHeader column="n" className={styles.numeric} label={t('stats.matchesShort')} long={t('stats.matchesLong')} {...header} />
+            <SortHeader column="games" className={styles.numeric} label={t('stats.gamesShort')} long={t('stats.gamesLong')} {...header} />
             <th scope="col" className={styles.record}>
               <abbr title={t('stats.recordLong')}>{t('stats.record')}</abbr>
             </th>
@@ -331,32 +308,32 @@ function ResultTable({
           {rows.map((row) => {
             const mulligan = mulliganRate(row);
             const games = gameRate(row);
+            const mirror = row.id === selected?.id;
+            const name = names.get(row.id);
             return (
-              <tr key={row.id}>
+              <tr key={row.id} style={archetypeStyle(mine ?? rowColors(row, group), selected ? rowColors(row, group) : undefined)}
+                data-matchup={selected ? '' : undefined}>
                 <th scope="row">
-                  {row.id === selectedId ? (
-                    <span className={styles.mirror}>{t('stats.mirror')}</span>
-                  ) : (
-                    <Link id={'stats-row-' + row.id} className={styles.rowLink} to={destination(row.id)}>
-                      <span>{names.get(row.id)}</span>
-                      <ChevronRight size={14} aria-hidden="true" />
-                    </Link>
-                  )}
-                  <div className={styles.meta}>
-                    <PaletteSymbols value={row.colors} group={group} descriptionId={descriptionId} />
-                  </div>
+                  <span className={styles.rowName}>
+                    <RowMark row={row} group={group} />
+                    {mirror ? (
+                      <span className={styles.mirror}>{t('stats.versus', { name: name ?? '' })} · {t('stats.mirror')}</span>
+                    ) : (
+                      <Link id={'stats-row-' + row.id} className={styles.rowLink} to={destination(row.id)}>
+                        <span>{selected ? t('stats.versus', { name: name ?? '' }) : name}</span>
+                        <ChevronRight size={14} aria-hidden="true" />
+                      </Link>
+                    )}
+                  </span>
                 </th>
                 <td className={styles.numeric}>{counts.format(row.n)}</td>
+                <td className={styles.numeric}>{row.games == null ? '—' : counts.format(row.games)}</td>
                 <td className={styles.record}>
-                  <span
-                    className={styles.recordText}
-                    role="img"
-                    aria-label={t('stats.results', { w: row.wins, d: row.draws, l: row.losses })}
-                  >
+                  <span className={styles.recordText} role="img" aria-label={t('stats.results', { w: row.wins, d: row.draws, l: row.losses })}>
                     <b>{counts.format(row.wins)}</b>
-                    <span> / </span>
+                    <span>–</span>
                     <b>{counts.format(row.draws)}</b>
-                    <span> / </span>
+                    <span>–</span>
                     <b>{counts.format(row.losses)}</b>
                   </span>
                   <SplitBar row={row} />
@@ -364,13 +341,10 @@ function ResultTable({
                 <td className={styles.rate}>
                   <WinRate row={row} />
                 </td>
-                <td className={styles.numeric} title={row.games ? t('stats.gameCount', { count: row.games }) : undefined}>
+                <td className={styles.numeric}>
                   {games == null ? '—' : <Percentage count={row.gameWins ?? 0} total={row.games ?? 0} />}
                 </td>
-                <td
-                  className={styles.numeric}
-                  title={row.mulliganKnown ? t('stats.handSample', { count: row.mulliganKnown }) : undefined}
-                >
+                <td className={styles.numeric} title={row.mulliganKnown ? t('stats.handSample', { count: row.mulliganKnown }) : undefined}>
                   {mulligan == null ? '—' : rates.format(mulligan)}
                 </td>
                 <td className={styles.numeric}>{formatDuration(averageGameMs(row))}</td>
@@ -383,74 +357,58 @@ function ResultTable({
   );
 }
 
-/** Answers on top of the ranking: which row is strongest, which is most played, and how much data there is. */
+/** Answers on top of the ranking: which row is strongest, and how much data there is. Popularity is not shown: agents pick their decks. */
 function Highlights({
   data,
   names,
   group,
   destination,
-  descriptionId,
+  goodQuality,
 }: {
   data: Statistics;
   names: Map<string, string>;
   group: Group;
   destination: (id: string) => string;
-  descriptionId: string;
+  goodQuality: boolean;
 }) {
   const t = useT();
   const { counts, whole } = useFormats();
   const rows = data.rows ?? [];
   if (!rows.length) return null;
   const best = strongest(rows);
-  const popular = rows.reduce<Row | null>((top, row) => (!top || row.n > top.n ? row : top), null);
   const interval = best ? wilson(best.wins, best.n) : null;
-  const seats = 2 * data.matches;
   return (
     <section className={styles.highlights} aria-label={t('stats.highlights')}>
-      {best && interval && <article className={styles.highlight}>
-        <h3>{t(group === 'deck' ? 'stats.strongestDeck' : 'stats.strongestArchetype')}</h3>
-        <div className={styles.highlightName}>
-          <Link to={destination(best.id)}>{names.get(best.id)}</Link>
-          <PaletteSymbols value={best.colors} group={group} descriptionId={descriptionId} />
-        </div>
-        <p className={styles.highlightValue}>
-          <strong>
-            <Percentage count={best.wins} total={best.n} />
-          </strong>{' '}
-          {t('stats.matchWins')}
-        </p>
-        <p className={styles.highlightNote}>
-          {t('stats.strongestBasis', {
-            low: whole.format(interval[0]),
-            high: whole.format(interval[1]),
-            n: counts.format(best.n),
-          })}
-        </p>
-      </article>}
-      {popular && popular.n > 0 && <article className={styles.highlight}>
-        <h3>{t(group === 'deck' ? 'stats.popularDeck' : 'stats.popularArchetype')}</h3>
-        <div className={styles.highlightName}>
-          <Link to={destination(popular.id)}>{names.get(popular.id)}</Link>
-          <PaletteSymbols value={popular.colors} group={group} descriptionId={descriptionId} />
-        </div>
-        <p className={styles.highlightValue}>
-          <strong>{seats ? whole.format(popular.n / seats) : '—'}</strong> {t('stats.metaShare')}
-        </p>
-        <p className={styles.highlightNote}>{t('stats.popularBasis', { n: counts.format(popular.n) })}</p>
-      </article>}
+      {best && interval && (
+        <article className={`${styles.highlight} ${styles.best}`} style={archetypeStyle(rowColors(best, group))}>
+          <h3>{t(group === 'deck' ? 'stats.strongestDeck' : 'stats.strongestArchetype')}</h3>
+          <Link to={destination(best.id)} className={styles.highlightName}>
+            <RowMark row={best} group={group} size="lg" decorative />
+            <span>{names.get(best.id)}</span>
+          </Link>
+          <p className={styles.highlightValue}>
+            <strong>
+              <Percentage count={best.wins} total={best.n} />
+            </strong>{' '}
+            {t('stats.matchWins')}
+          </p>
+          <p className={styles.highlightNote}>
+            {t('stats.strongestBasis', { low: whole.format(interval[0]), high: whole.format(interval[1]), n: counts.format(best.n) })}
+          </p>
+        </article>
+      )}
       <article className={styles.highlight}>
         <h3>{t('stats.dataTitle')}</h3>
-        <p className={styles.highlightValue}>
-          <strong>{counts.format(data.matches)}</strong> {t('stats.matchesUnit', { count: data.matches })}
-        </p>
+        <dl className={styles.sample}>
+          <div><dt>{t('stats.matchesUnit', { count: data.matches })}</dt><dd>{counts.format(data.matches)}</dd></div>
+          <div><dt>{t('stats.gamesUnit', { count: data.games ?? 0 })}</dt><dd>{counts.format(data.games ?? 0)}</dd></div>
+          <div><dt>{t(group === 'deck' ? 'stats.decks' : 'stats.archetypes')}</dt><dd>{counts.format(rows.length)}</dd></div>
+        </dl>
         <p className={styles.highlightNote}>
-          {t('stats.dataBasis', {
-            games: counts.format(data.games ?? 0),
-            rows: counts.format(rows.length),
-            group: t(group === 'deck' ? 'stats.decks' : 'stats.archetypes').toLowerCase(),
-          })}
+          {goodQuality ? <><Star size={13} aria-hidden="true" fill="currentColor" className={styles.star} /> {t('stats.qualityOnlyShort')}</>
+            : t('stats.allGamesShort')}
+          {!!data.unclassified && <> · {t('stats.hiddenRows', { count: data.unclassified })}</>}
         </p>
-        {!!data.unclassified && <p className={styles.highlightNote}>{t('stats.hiddenRows', { count: data.unclassified })}</p>}
       </article>
     </section>
   );
@@ -461,16 +419,13 @@ function Summary({ row }: { row: Row }) {
   const t = useT();
   const { counts, whole } = useFormats();
   const interval = wilson(row.wins, row.n);
-  const gameCount = (count: number | undefined) => t('stats.gameCount', { count: count ?? 0 });
   return (
     <dl className={styles.kpis} aria-label={t('stats.summary')}>
       <div>
         <dt>{t('stats.winRateLong')}</dt>
         <dd>
           <Percentage count={row.wins} total={row.n} />
-          {interval && (
-            <small>{t('stats.interval', { range: `${whole.format(interval[0])}–${whole.format(interval[1])}` })}</small>
-          )}
+          {interval && <small>{t('stats.interval', { range: `${whole.format(interval[0])}–${whole.format(interval[1])}` })}</small>}
         </dd>
       </div>
       <div>
@@ -484,7 +439,7 @@ function Summary({ row }: { row: Row }) {
         <dt>{t('stats.gameRateLong')}</dt>
         <dd>
           {gameRate(row) == null ? '—' : <Percentage count={row.gameWins ?? 0} total={row.games ?? 0} />}
-          <small>{gameCount(row.games)}</small>
+          <small>{t('stats.gameCount', { count: row.games ?? 0 })}</small>
         </dd>
       </div>
       <div>
@@ -631,89 +586,26 @@ function MulliganSection({ row, hands, Section }: { row: Row; hands: Hands | und
 }
 
 /** The exact list of a deck, or the cards most lists of an archetype share. */
-function ListSection({
-  list,
-  group,
-  Section,
-}: {
-  list: DeckList | CommonCards | null | undefined;
-  group: Group;
-  Section: 'h2' | 'h3';
-}) {
+function ListSection({ list, group, Section }: { list: DeckList | CommonCards | null | undefined; group: Group; Section: 'h2' | 'h3' }) {
   const t = useT();
-  const { counts, whole, decimals } = useFormats();
-  const zones = (main: unknown[], sideboard: unknown[]) =>
-    (
-      [
-        ['main', main],
-        ['sideboard', sideboard],
-      ] as const
-    ).filter(([, cards]) => cards.length);
-  const zoneName = (zone: 'main' | 'sideboard') => t(zone === 'main' ? 'stats.mainDeck' : 'stats.sideboard');
+  const { whole, decimals } = useFormats();
+  const title = t(group === 'deck' ? 'stats.listTitle' : 'stats.commonTitle');
+  const share = (card: { lists: number; copies: number }, lists: number) => (
+    <span title={t('stats.commonCardHint', { lists: card.lists, total: lists })}>{whole.format(card.lists / lists)}</span>
+  );
   return (
-    <section id="stats-list" className={styles.section} aria-labelledby="stats-list-heading">
-      <Section id="stats-list-heading">{t(group === 'deck' ? 'stats.listTitle' : 'stats.commonTitle')}</Section>
+    <section className={styles.section} aria-labelledby="stats-list-heading">
+      <Section id="stats-list-heading" className={styles.visuallyHidden}>{title}</Section>
       {!list ? (
         <p className={styles.state}>{t('stats.noList')}</p>
       ) : list.kind === 'deck' ? (
-        <div className={styles.deckList}>
-          {zones(list.main, list.sideboard).map(([zone]) => {
-            const cards = zone === 'main' ? list.main : list.sideboard;
-            return (
-              <div key={zone} role="group" aria-label={zoneName(zone)}>
-                <h4>
-                  {zoneName(zone)} <span>{counts.format(cards.reduce((sum, card) => sum + card.amount, 0))}</span>
-                </h4>
-                <ul>
-                  {cards.map((card) => (
-                    <li key={card.name}>
-                      <b>{card.amount}</b> <CardPreviewName card={{ name: card.name }} />
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            );
-          })}
-        </div>
+        <DeckListView label={title} main={list.main} sideboard={list.sideboard} />
       ) : (
         <>
           <p className={styles.perspective}>{t('stats.commonIntro', { count: list.lists })}</p>
-          <div className={styles.deckList}>
-            {zones(list.main, list.sideboard).map(([zone]) => {
-              const cards = zone === 'main' ? list.main : list.sideboard;
-              return (
-                <div key={zone}>
-                  <h4>{zoneName(zone)}</h4>
-                  <table className={[styles.table, styles.cardTable].join(' ')} aria-label={zoneName(zone)}>
-                    <thead>
-                      <tr>
-                        <th scope="col">{t('stats.card')}</th>
-                        <th scope="col" className={styles.numeric}>
-                          {t('stats.inLists')}
-                        </th>
-                        <th scope="col" className={styles.numeric}>
-                          {t('stats.copies')}
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {cards.map((card) => (
-                        <tr key={card.name}>
-                          <th scope="row">
-                            <CardPreviewName card={{ name: card.name }} />
-                          </th>
-                          <td className={styles.numeric}>
-                            {whole.format(card.lists / list.lists)} <small>{`${card.lists}/${list.lists}`}</small>
-                          </td>
-                          <td className={styles.numeric}>{decimals.format(card.copies)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              );
-            })}
-          </div>
+          <DeckListView label={title} counted={false}
+            main={list.main.map((card) => ({ name: card.name, amount: decimals.format(card.copies), note: share(card, list.lists) }))}
+            sideboard={list.sideboard.map((card) => ({ name: card.name, amount: decimals.format(card.copies), note: share(card, list.lists) }))} />
         </>
       )}
     </section>
@@ -736,7 +628,6 @@ export function StatisticsPanel({
   scope?: Record<string, string>;
   headingLevel?: 1 | 2;
 }) {
-  const descriptionId = useId();
   const location = useLocation();
   const heading = useRef<HTMLHeadingElement>(null);
   const lastView = useRef<{ key: string; scope: string; selection: string; origin: string } | null>(null);
@@ -750,14 +641,17 @@ export function StatisticsPanel({
   const requested = search.get('sort') as SortKey;
   const sort: SortKey = sortKeys.includes(requested) ? requested : 'n';
   const descending = search.get('dir') !== 'asc';
+  const view: View = views.includes(search.get('view') as View) ? (search.get('view') as View) : 'matchups';
   const endpoint = tournamentId
     ? tournamentApi + '/' + encodeURIComponent(tournamentId) + '/statistics'
     : '/api/playtesting/statistics';
-  function params(nextGroup: Group, nextFormat: string, selected?: string, order: [SortKey, boolean] = [sort, descending]) {
+  function params(nextGroup: Group, nextFormat: string, selected?: string, order: [SortKey, boolean] = [sort, descending],
+    nextView: View = 'matchups', quality = goodQuality) {
     const query = new URLSearchParams({ ...scope, group: nextGroup });
     if (nextFormat) query.set('format', nextFormat);
     if (selected) query.set('selected', selected);
-    if (goodQuality) query.set('goodQuality', 'true');
+    if (selected && nextView !== 'matchups') query.set('view', nextView);
+    if (quality) query.set('goodQuality', 'true');
     if (order[0] !== 'n' || !order[1]) {
       query.set('sort', order[0]);
       query.set('dir', order[1] ? 'desc' : 'asc');
@@ -777,7 +671,9 @@ export function StatisticsPanel({
   const detail = data?.selected;
   const shownFormat = format || data?.format || '';
   const link = (g: Group, selected?: string) => path + '?' + params(g, format, selected);
-  const sortHref = (key: SortKey, down: boolean) => path + '?' + params(group, format, selection || undefined, [key, down]);
+  const sortHref = (key: SortKey, down: boolean) => path + '?' + params(group, format, selection || undefined, [key, down], view);
+  const viewHref = (next: View) => path + '?' + params(group, format, selection || undefined, [sort, descending], next);
+  const qualityHref = (on: boolean) => path + '?' + params(group, format, selection || undefined, [sort, descending], view, on);
   const groupName = t(group === 'deck' ? 'stats.decks' : 'stats.archetypes');
   const names = displayNames(detail ? [...(data?.rows ?? []), detail, ...detail.matchups] : (data?.rows ?? []), group, t);
   const title = detail ? names.get(detail.id) : t(tournamentId ? 'stats.tournamentTitle' : 'stats.globalTitle');
@@ -802,6 +698,8 @@ export function StatisticsPanel({
   const Title = headingLevel === 1 ? 'h1' : 'h2';
   const Section = headingLevel === 1 ? 'h2' : 'h3';
   const formats = Array.from(new Set([...(data?.formats ?? []), ...(shownFormat ? [shownFormat] : [])]));
+  const viewIcons = { matchups: Swords, hands: ListChecks, list: Layers } as const;
+  const viewLabel = (v: View) => t(v === 'matchups' ? 'stats.matchups' : v === 'hands' ? 'stats.mulliganTitle' : group === 'deck' ? 'stats.listTitle' : 'stats.commonTitle');
   return (
     <>
       <div className={styles.topBar}>
@@ -813,16 +711,16 @@ export function StatisticsPanel({
           ))}
         </nav>
         <div className={styles.filters}>
-          <Switch
-            checked={goodQuality}
-            label={t('stats.goodQuality')}
-            onCheckedChange={(checked) => {
-              const next = new URLSearchParams(search);
-              if (checked) next.set('goodQuality', 'true');
-              else next.delete('goodQuality');
-              setSearch(next, { preventScrollReset: true });
-            }}
-          />
+          <div className={styles.segmented} role="group" aria-label={t('stats.sampleFilter')}>
+            <Link to={qualityHref(false)} replace preventScrollReset aria-pressed={!goodQuality} className={styles.segment}>
+              {t('stats.allGames')}
+            </Link>
+            <Link to={qualityHref(true)} replace preventScrollReset aria-pressed={goodQuality} className={styles.segment}
+              title={t('stats.qualitySampleNote')}>
+              <Star size={14} aria-hidden="true" fill={goodQuality ? 'currentColor' : 'none'} />
+              {t('stats.goodQualityShort')}
+            </Link>
+          </div>
           <label className={styles.format}>
             <span>{t('stats.format')}</span>
             <select value={shownFormat} onChange={(e) => setSearch(params(group, e.target.value))}>
@@ -834,40 +732,47 @@ export function StatisticsPanel({
           </label>
         </div>
       </div>
-      <header className={[styles.hero, headingLevel === 2 ? styles.compact : ''].join(' ')}>
+      <header className={[styles.hero, headingLevel === 2 ? styles.compact : '', detail ? styles.detailHero : ''].join(' ')}
+        style={detail ? archetypeStyle(rowColors(detail, group)) : undefined}>
         {(detail || unavailable) && (
           <Link className={styles.parentLink} to={link(group)}>
             <ArrowLeft size={14} aria-hidden="true" />
             {t('stats.backGroups', { group: groupName })}
           </Link>
         )}
-        <Title ref={heading} tabIndex={-1}>
-          {title}
-        </Title>
         {detail ? (
-          <div className={styles.meta}>
-            <PaletteSymbols value={detail.colors} group={group} descriptionId={descriptionId} />
-            <span>{detail.format}</span>
-            {detail.source && (
-              <a className={styles.source} href={detail.source} target="_blank" rel="noopener noreferrer">
-                {t('stats.source')}
-                <ExternalLink size={12} aria-hidden="true" />
-              </a>
-            )}
+          <div className={styles.detailTitle}>
+            <RowMark row={detail} group={group} size="xl" />
+            <div>
+              <Title ref={heading} tabIndex={-1}>{title}</Title>
+              <div className={styles.meta}>
+                <span>{detail.format}</span>
+                {group === 'deck' && detail.archetype && <span>{detail.archetype}</span>}
+                {goodQuality && <span className={styles.qualityChip}><Star size={12} aria-hidden="true" fill="currentColor" />{t('stats.goodQualityShort')}</span>}
+                {detail.source && (
+                  <a className={styles.source} href={detail.source} target="_blank" rel="noopener noreferrer">
+                    {t('stats.source')}
+                    <ExternalLink size={12} aria-hidden="true" />
+                  </a>
+                )}
+              </div>
+            </div>
           </div>
         ) : (
-          data &&
-          !unavailable && (
-            <p className={styles.subtitle}>
-              {t('stats.subtitle', {
-                format: shownFormat || t('stats.allFormats'),
-                matches: counts.format(data.matches),
-                games: counts.format(data.games ?? 0),
-              })}
-            </p>
-          )
+          <>
+            <Title ref={heading} tabIndex={-1}>{title}</Title>
+            {data && !unavailable && (
+              <p className={styles.subtitle}>
+                {t('stats.subtitle', {
+                  format: shownFormat || t('stats.allFormats'),
+                  matches: counts.format(data.matches),
+                  games: counts.format(data.games ?? 0),
+                })}
+              </p>
+            )}
+          </>
         )}
-        {goodQuality && data && <p className={styles.note}>{t('stats.qualitySampleNote')}</p>}
+        {detail && <Summary row={detail} />}
       </header>
       {stats.isPending ? (
         <p role="status" className={styles.state}>
@@ -882,49 +787,43 @@ export function StatisticsPanel({
         <p className={styles.state}>{t('stats.unavailable')}</p>
       ) : detail ? (
         <>
-          <Summary row={detail} />
-          <nav className={styles.sectionNav} aria-label={t('stats.sections')}>
-            <a href="#stats-matchups">{t('stats.matchups')}</a>
-            <a href="#stats-cards">{t('stats.mulliganTitle')}</a>
-            <a href="#stats-list">{t(group === 'deck' ? 'stats.listTitle' : 'stats.commonTitle')}</a>
+          <nav className={styles.viewTabs} aria-label={t('stats.sections')}>
+            {views.map((v) => {
+              const Icon = viewIcons[v];
+              return (
+                <Link key={v} to={viewHref(v)} replace preventScrollReset aria-current={v === view ? 'page' : undefined}>
+                  <Icon size={16} aria-hidden="true" />
+                  {viewLabel(v)}
+                </Link>
+              );
+            })}
           </nav>
-          <section id="stats-matchups" className={styles.section} aria-labelledby="stats-matchups-heading">
-            <Section id="stats-matchups-heading">{t('stats.matchups')}</Section>
-            <p className={styles.perspective}>{t('stats.perspective', { name: title ?? '' })}</p>
-            {tableRows.length ? (
-              <>
+          {view === 'matchups' && (
+            <section className={styles.section} aria-label={t('stats.matchups')}>
+              <p className={styles.perspective}>{t('stats.perspective', { name: title ?? '' })}</p>
+              {tableRows.length ? (
                 <ResultTable
                   rows={tableRows}
                   names={names}
                   heading={label}
                   group={group}
-                  descriptionId={descriptionId}
-                  selectedId={detail.id}
+                  selected={detail}
                   destination={(selected) => link(group, selected)}
                   sort={sort}
                   descending={descending}
                   sortHref={sortHref}
                 />
-                <PaletteLegend group={group} descriptionId={descriptionId} />
-              </>
-            ) : (
-              <p className={styles.state}>{t('stats.emptyOpponents')}</p>
-            )}
-          </section>
-          <MulliganSection row={detail} hands={detail.hands} Section={Section} />
-          <ListSection list={detail.list} group={group} Section={Section} />
+              ) : (
+                <p className={styles.state}>{t('stats.emptyOpponents')}</p>
+              )}
+            </section>
+          )}
+          {view === 'hands' && <MulliganSection row={detail} hands={detail.hands} Section={Section} />}
+          {view === 'list' && <ListSection list={detail.list} group={group} Section={Section} />}
         </>
       ) : (
         <section className={styles.results}>
-          {data && (
-            <Highlights
-              data={data}
-              names={names}
-              group={group}
-              destination={(selected) => link(group, selected)}
-              descriptionId={descriptionId}
-            />
-          )}
+          {data && <Highlights data={data} names={names} group={group} destination={(selected) => link(group, selected)} goodQuality={goodQuality} />}
           <Section>{t('stats.ranking')}</Section>
           {tableRows.length ? (
             <>
@@ -933,13 +832,11 @@ export function StatisticsPanel({
                 names={names}
                 heading={label}
                 group={group}
-                descriptionId={descriptionId}
                 destination={(selected) => link(group, selected)}
                 sort={sort}
                 descending={descending}
                 sortHref={sortHref}
               />
-              <PaletteLegend group={group} descriptionId={descriptionId} />
               <p className={styles.note}>{t('stats.sampleNote')}</p>
             </>
           ) : (

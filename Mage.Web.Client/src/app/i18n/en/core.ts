@@ -7,6 +7,7 @@ export default {
   'chat.sendFailed': 'Could not send the message.',
   'watch.bothScope': 'Both hands visible · Spectator access',
   'spectate.lineSent': 'Pilot commentary',
+  'spectate.turnShort': 'T{n}',
   'spectate.frameFacts': 'Board facts in this frame',
   'spectate.fact.target': 'The spell {source} on the stack targets {target}.',
   'spectate.fact.abilityTarget': 'The ability of {source} on the stack targets {target}.',

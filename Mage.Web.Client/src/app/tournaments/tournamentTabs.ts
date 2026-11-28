@@ -1,9 +1,12 @@
-import type { Tournament } from './tournamentApi';
+export type Tab = 'bracket' | 'mine' | 'stats' | 'decklists';
+export const allTabs: Tab[] = ['bracket', 'mine', 'stats', 'decklists'];
 
-export type Tab = 'bracket' | 'stats' | 'decklists';
-export const tabs: Tab[] = ['bracket', 'stats', 'decklists'];
+/** The tabs a viewer sees: "Mine" only for someone with participants in the tournament. */
+export function visibleTabs(mine: boolean): Tab[] {
+  return mine ? allTabs : allTabs.filter((tab) => tab !== 'mine');
+}
 
-/** A finished tournament opens on its statistics and result; one in progress on its bracket. */
-export function tournamentTab(requested: string | null, status: Tournament['status']): Tab {
-  return tabs.includes(requested as Tab) ? (requested as Tab) : status === 'finished' ? 'stats' : 'bracket';
+/** A tournament always opens on its standings and tables. */
+export function tournamentTab(requested: string | null, mine = false): Tab {
+  return visibleTabs(mine).includes(requested as Tab) ? (requested as Tab) : 'bracket';
 }

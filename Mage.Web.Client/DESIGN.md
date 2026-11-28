@@ -214,6 +214,9 @@ A monochrome graphite-and-ivory world with a single hot accent and two quiet sem
 - **Sage** (`sage`): positive outcomes only (legal deck, victory scores).
 - **Brass and Copper** (`brass`, `brass-ink`, `copper`, `copper-ink`): Career's reward metals, nowhere else. Brass is what you earned (coins, XP, rares, achievements, a won verdict); copper is the rarest (mythics, level rewards). Never on a button, never for focus or selection.
 
+### Archetype identity
+- **Archetype tones** (`arch-w`, `arch-u`, `arch-b`, `arch-r`, `arch-g`, `arch-c`): a deck archetype on tournament, statistics and replay screens is drawn in **the archetype's own colors**, read from its name (Boros, Mono-Red, Devotion to Green; `archetypeColors` in the shared archetype library), never from the colors its list's cards happen to carry. Its emblem is the guild, clan or mana watermark on a disc in those tones (`ui/Archetype`). Two facing archetypes tint a surface as a gradient from one side to the other (a table, a matchup row, the replay's result), so the colors say who played against whom. These tones are identity, not state: selection, focus and decisions keep the rules below.
+
 ### Neutral
 - **Neoprene** (`mat-950` to `mat-600`): the ground. `mat-800` is the app body, `mat-700` the dialog stock, `mat-600` toasts and card-back weave, `mat-900`/`mat-950` the match frame vignette and dark wells. `mat-400` is text selection.
 - **Ivory Ink** (`ink-strong` for selected and focused, `ink` for body and active, `ink-soft` for secondary copy, `ink-dim` for labels and idle controls, `ink-faint` for zone outlines, `ink-ghost` for hairlines and disabled outlines).
@@ -384,5 +387,5 @@ Arrow keys move a visible ink focus between anything marked `data-nav`, Enter ta
 - **Don't** fade a disabled button; draw it as an empty ink outline.
 - **Don't** make glass panels, backdrop blur, or navy-and-gold fantasy chrome.
 - **Don't** outline zones, buttons or selected items with layout-shifting borders; use the inset outline weights above.
-- **Don't** use mana colors for UI state.
+- **Don't** use mana colors for UI state. Archetype tones mark identity only, and come from the archetype, never from its cards.
 - **Don't** use brass or copper outside Career's rewards, or put either on a button.

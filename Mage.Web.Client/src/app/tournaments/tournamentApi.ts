@@ -27,6 +27,20 @@ export interface Entry extends AgentModel {
   omw: number;
   gw: number;
   ogw: number;
+  /** the published list's archetype and its own colors, once decklists are public */
+  archetype?: string | null;
+  colors?: ('W' | 'U' | 'B' | 'R' | 'G')[] | null;
+}
+/** One game of a table, with the judge's verdict. */
+export interface TableGame {
+  id: string;
+  number: number;
+  status: string;
+  winner: 'a' | 'b' | 'draw' | null;
+  endCause: string | null;
+  goodQuality: boolean;
+  /** the judge's written reason, for administrators and the owner of both seats */
+  qualityReason?: string;
 }
 export interface Pairing {
   id: string;
@@ -49,6 +63,7 @@ export interface Pairing {
   attendanceDeadlineAt?: number;
   absentWarningIds?: string[];
   winner?: string | null;
+  games?: TableGame[];
 }
 type Card = { amount: number; cardName: string };
 export interface RegisteredDeck {

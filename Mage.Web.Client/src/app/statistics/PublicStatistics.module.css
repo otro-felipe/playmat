@@ -621,3 +621,114 @@ th[aria-sort] .sort {
     transition: none;
   }
 }
+
+/* Archetype identity, sample filter and detail tabs */
+.rowName { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.table tbody tr[data-matchup] {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--tint) 14%, transparent), transparent 28%, transparent 72%,
+    color-mix(in srgb, var(--rival) 16%, transparent));
+}
+.visuallyHidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.segmented {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: var(--radius-control);
+  background: rgb(var(--mat-rgb) / 0.6);
+  box-shadow: inset 0 0 0 1px var(--ink-ghost);
+}
+.segment {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 0 14px;
+  border-radius: 6px;
+  color: var(--ink-dim);
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+.segment:hover { color: var(--ink-strong); }
+.segment[aria-pressed='true'] { background: rgb(var(--ink-rgb) / 0.12); color: var(--ink-strong); box-shadow: inset 0 0 0 1.5px var(--ink-faint); }
+.segment[aria-pressed='true'] svg { color: var(--sage); }
+.segment:focus-visible { outline: 2px solid var(--ink-strong); outline-offset: 1px; }
+.star { color: var(--sage); vertical-align: -2px; }
+.qualityChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: var(--radius-chip);
+  box-shadow: inset 0 0 0 1px var(--ink-ghost);
+  color: var(--sage);
+}
+.best {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--tint) 30%, transparent), color-mix(in srgb, var(--tint-end) 10%, transparent) 55%, transparent),
+    var(--mat-800);
+}
+a.highlightName {
+  width: fit-content;
+  color: var(--ink-strong);
+  font-family: var(--font-print);
+  font-size: var(--text-xl);
+  text-decoration: none;
+  transition: transform 140ms ease;
+}
+a.highlightName:hover { transform: translateX(2px); }
+a.highlightName:hover span { text-decoration: underline; text-underline-offset: 0.18em; }
+.sample { display: flex; flex-wrap: wrap; gap: var(--space-5); margin: 4px 0; }
+.sample div { display: grid; }
+.sample dt { order: 2; color: var(--ink-dim); font-size: var(--text-sm); }
+.sample dd { margin: 0; color: var(--ink-strong); font: 700 2rem/1 var(--font-print); font-variant-numeric: tabular-nums; }
+.detailHero {
+  margin-inline: calc(var(--space-5) * -1);
+  padding-inline: var(--space-5);
+  border-radius: 0 0 var(--radius-zone) var(--radius-zone);
+  background: linear-gradient(170deg, color-mix(in srgb, var(--tint) 26%, transparent), color-mix(in srgb, var(--tint-end) 10%, transparent) 40%, transparent 75%);
+}
+.detailTitle { display: flex; align-items: center; gap: var(--space-4); min-width: 0; }
+.detailTitle > div { display: grid; gap: 6px; min-width: 0; }
+.detailTitle .meta { gap: var(--space-3); color: var(--ink-soft); flex-wrap: wrap; }
+.detailHero .kpis { margin: var(--space-3) 0 0; }
+.detailHero .kpis > div { background: rgb(var(--mat-rgb) / 0.75); }
+.viewTabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--ink-ghost);
+}
+.viewTabs a {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 0 16px;
+  margin-bottom: -1px;
+  border-bottom: 3px solid transparent;
+  color: var(--ink-soft);
+  font: 700 1rem/1 var(--font-print);
+  letter-spacing: var(--tracking-print);
+  text-decoration: none;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.viewTabs a:hover { color: var(--ink-strong); }
+.viewTabs a[aria-current] { color: var(--ink-strong); border-bottom-color: var(--decision); }
+.viewTabs a:focus-visible { outline: 2px solid var(--ink-strong); outline-offset: -2px; }
+@media (max-width: 720px) {
+  .detailTitle { align-items: flex-start; }
+  .detailHero { margin-inline: calc(var(--space-4) * -1); padding-inline: var(--space-4); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .segment, a.highlightName { transition: none; }
+  a.highlightName:hover { transform: none; }
+}

@@ -66,13 +66,14 @@ it('[PM-STATS-QUALITY-1] toggles the tournament statistics sample and keeps the 
       selected: request.searchParams.has('selected') ? { ...izzet, matchups: [mirror] } : null,
     };
   });
-  const control = page.getByRole('switch', { name: 'Only good-quality games' });
-  expect(control.getAttribute('aria-checked')).toBe('false');
+  // The sample filter is a two-way choice: every game, or only good-quality games.
+  const filter = within(page.getByRole('group', { name: 'Games counted' }));
+  expect(filter.getByRole('link', { name: 'All games' }).getAttribute('aria-pressed')).toBe('true');
   expect(await page.findByText('Pioneer · 6 matches · 14 games')).toBeTruthy();
   expect(fetch.mock.calls.at(-1)?.[0]).not.toContain('goodQuality');
-  control.focus();
-  await userEvent.keyboard('[Space]');
-  expect(control.getAttribute('aria-checked')).toBe('true');
+  filter.getByRole('link', { name: 'Good quality' }).focus();
+  await userEvent.keyboard('{Enter}');
+  expect(filter.getByRole('link', { name: 'Good quality' }).getAttribute('aria-pressed')).toBe('true');
   expect(await page.findByText('Pioneer · 2 matches · 4 games')).toBeTruthy();
   expect(fetch.mock.calls.at(-1)?.[0]).toContain('goodQuality=true');
   expect(page.getByLabelText('location').textContent).toContain('tab=stats');
@@ -80,9 +81,9 @@ it('[PM-STATS-QUALITY-1] toggles the tournament statistics sample and keeps the 
   const detail = within(await table(page)).getByRole('link', { name: 'Izzet Phoenix' });
   expect(detail.getAttribute('href')).toContain('goodQuality=true');
   await userEvent.click(detail);
-  expect(await page.findByRole('heading', { name: 'Matchups' })).toBeTruthy();
-  await userEvent.click(control);
-  expect(control.getAttribute('aria-checked')).toBe('false');
+  expect(await page.findByRole('region', { name: 'Matchups' })).toBeTruthy();
+  await userEvent.click(within(page.getByRole('group', { name: 'Games counted' })).getByRole('link', { name: 'All games' }));
+  expect(within(page.getByRole('group', { name: 'Games counted' })).getByRole('link', { name: 'All games' }).getAttribute('aria-pressed')).toBe('true');
   await waitFor(() => expect(fetch.mock.calls.at(-1)?.[0]).not.toContain('goodQuality'));
   expect(fetch.mock.calls.at(-1)?.[0]).toContain('selected=izzet');
 });
@@ -102,7 +103,7 @@ it('navigates between format-scoped archetypes and their matchups with a shareab
   expect(link.getAttribute('href')).toContain('selected=izzet');
   const row = link.closest('tr')!;
   expect(within(row).getByText('50%')).toBeTruthy();
-  expect(within(row).getByRole('img', { name: 'Common archetype palette (Blue, Red)' })).toBeTruthy();
+  expect(within(row).getByRole('img', { name: 'Archetype colors (Blue, Red)' })).toBeTruthy();
   // The server's default format is the selected option, and there is no mixed "all formats" view.
   const select = page.getByRole('combobox', { name: 'Format' }) as HTMLSelectElement;
   expect(select.value).toBe('Pioneer');
@@ -110,7 +111,9 @@ it('navigates between format-scoped archetypes and their matchups with a shareab
   expect(page.getByText('Pioneer · 6 matches · 14 games')).toBeTruthy();
   fireEvent.change(select, { target: { value: 'Pioneer' } });
   fireEvent.click(within(await table(page)).getByRole('link', { name: 'Izzet Phoenix' }));
-  expect(await page.findByRole('heading', { name: 'Matchups' })).toBeTruthy();
+  expect(await page.findByRole('region', { name: 'Matchups' })).toBeTruthy();
+  // A matchup row reads from the selection's side: "vs" its opponent.
+  expect(within(await table(page, 'Opponent')).getByText(/vs Izzet Phoenix/)).toBeTruthy();
   expect(fetch.mock.calls.at(-1)?.[0]).toContain('format=Pioneer');
   expect(page.getByRole('link', { name: 'Archetypes' }).getAttribute('href')).toContain('format=Pioneer');
 });
@@ -130,7 +133,7 @@ it('[PM-STATS-QUALITY-1] shows game rates and a data summary when no full series
   const summary = page.getByRole('region', { name: 'Format summary' });
   expect(within(summary).getByRole('heading', { name: 'Data' })).toBeTruthy();
   expect(within(summary).queryByRole('heading', { name: 'Strongest archetype' })).toBeNull();
-  expect(within(summary).queryByRole('heading', { name: 'Most played archetype' })).toBeNull();
+  expect(within(summary).queryByRole('heading', { name: /most played/i })).toBeNull();
   const ranking = await table(page);
   expect(within(ranking).getByText('50%')).toBeTruthy();
   await userEvent.click(within(ranking).getByRole('link', { name: 'Izzet Phoenix' }));
@@ -150,13 +153,14 @@ it('answers which archetype is strongest, by which metric and with how much data
     selected: null,
   }));
   const summary = await page.findByRole('region', { name: 'Format summary' });
-  const [strongest, popular, data] = within(summary).getAllByRole('article');
+  // Popularity is the agents' choice, not a preference: only strength and the sample size are summarised.
+  const [strongest, data] = within(summary).getAllByRole('article');
+  expect(within(summary).getAllByRole('article')).toHaveLength(2);
+  expect(summary.textContent).not.toMatch(/metagame|most played/i);
   // Two straight wins do not beat 65% over forty matches.
   expect(within(strongest).getByRole('link', { name: 'Solid Deck' })).toBeTruthy();
   expect(strongest.textContent).toMatch(/65%.*of matches won.*95% CI: .*over 40 matches/);
-  expect(within(popular).getByRole('link', { name: 'Solid Deck' })).toBeTruthy();
-  expect(popular.textContent).toMatch(/95%.*of the metagame/);
-  expect(data.textContent).toMatch(/21.*matches.*50 games · 2 archetypes.*3 unclassified participations/);
+  expect(data.textContent).toMatch(/matches21.*games50.*Archetypes2.*3 unclassified participations/);
   // Win rates use the same red-amber-green scale as a player's deck analysis.
   const rate = within(within(await table(page)).getByRole('link', { name: 'Lucky Streak' }).closest('tr')!).getByText('100%');
   expect(rate.getAttribute('style')).toContain('hsl(144');
@@ -181,13 +185,15 @@ it('opens scoped anonymous deck details with the exact list', async () => {
   // An old statistics link opens the tournament's statistics tab with the same filters.
   expect(page.getByRole('status', { name: 'location' }).textContent).toBe('?group=deck&selected=public-deadbeef&tab=stats');
   expect(page.getByRole('link', { name: /Back to Decks/i }).getAttribute('href')).toBe('/tournaments/cup?tab=stats&group=deck');
-  expect(page.getByRole('img', { name: 'Initial deck palette (Unknown colors)' })).toBeTruthy();
-  expect(page.getByRole('img', { name: 'Initial deck palette (Colorless)' })).toBeTruthy();
-  const main = page.getByRole('group', { name: 'Main deck' });
-  expect(main.textContent).toMatch(/Main deck 24/);
-  expect(main.textContent).toMatch(/4 Monastery Swiftspear/);
-  expect(page.getByRole('group', { name: 'Sideboard' }).textContent).toMatch(/2 Abrade/);
-  expect(page.getByText('No kept hands recorded for this selection yet.')).toBeTruthy();
+  expect(page.getByRole('img', { name: 'Colors of its archetype (Unknown colors)' })).toBeTruthy();
+  expect(page.getByRole('img', { name: 'Colors of its archetype (Colorless)' })).toBeTruthy();
+  await userEvent.click(page.getByRole('link', { name: 'Decklist' }));
+  const main = await page.findByRole('group', { name: 'Main deck' });
+  expect(main.textContent).toMatch(/Main deck\s*24/);
+  expect(main.textContent).toMatch(/4\s*Monastery Swiftspear/);
+  expect(page.getByRole('group', { name: 'Sideboard' }).textContent).toMatch(/2\s*Abrade/);
+  await userEvent.click(page.getByRole('link', { name: 'Opening hands' }));
+  expect(await page.findByText('No kept hands recorded for this selection yet.')).toBeTruthy();
 });
 
 it('allows recovery from an unavailable selection and reports a genuinely empty comparison', async () => {
@@ -202,7 +208,7 @@ it('allows recovery from an unavailable selection and reports a genuinely empty 
   expect(await page.findByText('No public match results for these filters.')).toBeTruthy();
 });
 
-it('leaves unclassified opponents unnamed and never guesses deck colors from a label', async () => {
+it('leaves unclassified opponents unnamed and draws a named archetype in its own colors', async () => {
   const unknown = { ...izzet, id: 'undetermined-fixture', name: null, colors: null };
   const { page } = show('/statistics?selected=izzet', () => ({
     formats: ['Pioneer'],
@@ -211,8 +217,9 @@ it('leaves unclassified opponents unnamed and never guesses deck colors from a l
     selected: { ...izzet, colors: null, matchups: [unknown] },
   }));
   const matchups = await table(page, 'Opponent');
-  expect(within(matchups).getByRole('link', { name: 'Unclassified' })).toBeTruthy();
-  expect(page.getAllByRole('img', { name: 'Common archetype palette (Unknown colors)' })).toHaveLength(2);
+  expect(within(matchups).getByRole('link', { name: 'vs Unclassified' })).toBeTruthy();
+  expect(within(matchups).getByRole('img', { name: 'Archetype colors (Unknown colors)' })).toBeTruthy();
+  expect(page.getByRole('img', { name: 'Archetype colors (Blue, Red)' })).toBeTruthy();
   expect(page.queryByText(/Anonymous deck/i)).toBeNull();
 });
 
@@ -225,7 +232,7 @@ it('separates unidentified lists pooled together from individual private composi
     selected: { ...deck, matchups: [pooled, deck] },
   }));
   const matchups = await table(page, 'Opponent');
-  expect(within(matchups).getByRole('link', { name: 'Unidentified decks' })).toBeTruthy();
+  expect(within(matchups).getByRole('link', { name: 'vs Unidentified decks' })).toBeTruthy();
   expect(page.getByRole('heading', { name: /Anonymous deck.*adbeef/i })).toBeTruthy();
 });
 
@@ -315,6 +322,7 @@ it('sorts by win rate, game win rate, mulligans and game length, and shows mulli
   expect(within(red).getByText('50%')).toBeTruthy();
   expect(within(red).getByText('15 min')).toBeTruthy();
   await user.click(within(ranking).getByRole('link', { name: 'Red Deck Wins' }));
+  await user.click(await page.findByRole('link', { name: 'Opening hands' }));
   const byMulligans = await page.findByRole('table', { name: 'Results by number of mulligans' });
   expect(within(byMulligans).getAllByRole('row').map((row) => row.textContent)).toEqual([
     'MulliganGames won',
@@ -327,29 +335,25 @@ it('sorts by win rate, game win rate, mulligans and game length, and shows mulli
   expect(within(cards).getAllByRole('rowheader').map((cell) => cell.textContent)).toEqual(['Monastery Swiftspear', 'Mountain']);
   const swiftspear = within(cards).getByRole('rowheader', { name: 'Monastery Swiftspear' }).closest('tr')!;
   expect(swiftspear.textContent).toBe('Monastery Swiftspear80% (4/5)40% (2/5)+20 pp');
-  const common = page.getByRole('table', { name: 'Main deck' });
-  expect(within(common).getByRole('rowheader', { name: 'Play with Fire' }).closest('tr')!.textContent).toBe('Play with Fire75% 3/43.33');
+  await user.click(page.getByRole('link', { name: 'Most common cards' }));
+  const common = await page.findByRole('group', { name: 'Main deck' });
+  // Average copies, the card, and the share of lists that play it.
+  expect(within(common).getByText('Play with Fire').closest('li')!.textContent).toBe('3.33Play with Fire75%');
   expect(page.getByText('Based on 4 distinct lists of the archetype.')).toBeTruthy();
   expect(page.getByRole('link', { name: /Archetype on MTGTop8/ }).getAttribute('href')).toContain('a=862');
 });
 
 it.each([
-  ['deck', 'Initial deck palette (Blue, Green)', 'How are deck colors determined?', 'Deck'],
-  ['archetype', 'Common archetype palette (Blue, Green)', 'How are archetype colors determined?', 'Archetype'],
-] as const)('explains a blue-green palette on a Mono-Green label in the %s report', async (group, label, summary, name) => {
-  const green = { ...izzet, name: 'Mono-Green Devotion', colors: ['G', 'U'] };
+  ['archetype', 'Archetype colors (Green)', 'Archetype'],
+  ['deck', 'Colors of its archetype (Green)', 'Deck'],
+] as const)('draws a Mono-Green archetype in green even when its lists carry blue cards (%s report)', async (group, label, name) => {
+  const green = { ...izzet, name: 'Mono-Green Devotion', archetype: 'Mono-Green Devotion', colors: ['G', 'U'] };
   const { page } = show('/statistics?group=' + group, () => ({
     formats: ['Pioneer'],
     matches: 2,
     rows: [green],
     selected: null,
   }));
-  const icon = await within(await table(page, name)).findByRole('img', { name: label, description: /hybrid.*basic lands/i });
-  expect(icon.getAttribute('title')).toBe(label);
-  const disclosure = page.getByText(summary).closest('details')!;
-  expect(disclosure.open).toBe(false);
-  fireEvent.click(page.getByText(summary));
-  expect(disclosure.open).toBe(true);
-  expect(disclosure.textContent).toMatch(/declared colors.*main deck.*typical archetype palette/i);
-  expect(disclosure.textContent).toMatch(group === 'archetype' ? /most records of the archetype share/i : /most records of the list share/i);
+  expect(await within(await table(page, name)).findByRole('img', { name: label })).toBeTruthy();
+  expect(page.queryByText(/How are .* colors determined/)).toBeNull();
 });

@@ -4,7 +4,7 @@ import { privateSpectatorBoard } from './private-spectator-board.mjs'
 import { publicLineExplanations } from './line-explanations.mjs'
 import { tournamentReplayIndexes } from './tournament-replay-index.mjs'
 import { readSpectatorEngine } from './spectators.mjs'
-import { timestamp } from './tournament-state.mjs'
+import { pairingGames, timestamp } from './tournament-state.mjs'
 import { declaredRuntime } from './player-runtime.mjs'
 
 const missing = () => new ProductError(404, 'This tournament broadcast is unavailable')
@@ -20,7 +20,8 @@ export function createTournamentBroadcast(pool, archive, engine = readSpectatorE
       a.engine_name AS name_a,a.name AS display_a,a.owner_name AS owner_a,a.player_id AS player_a,
       b.engine_name AS name_b,b.name AS display_b,b.owner_name AS owner_b,b.player_id AS player_b,
       a.provider AS provider_a,a.model AS model_a,a.reasoning_effort AS effort_a,
-      b.provider AS provider_b,b.model AS model_b,b.reasoning_effort AS effort_b
+      b.provider AS provider_b,b.model AS model_b,b.reasoning_effort AS effort_b,
+      a.owner_id AS owner_id_a,b.owner_id AS owner_id_b
       FROM tournament_pairings p JOIN tournament_entries a ON a.id=p.entry_a
       JOIN tournament_entries b ON b.id=p.entry_b WHERE p.tournament_id=$1 AND p.id=$2`,
       [id, pairId],
@@ -115,6 +116,10 @@ export function createTournamentBroadcast(pool, archive, engine = readSpectatorE
     )
     const gameId = query.get('gameId')
     if (!gameId) {
+      const owns = (side) => !!actor?.accountId && !actor.agent && match['owner_id_' + side] === actor.accountId
+      const verdicts = (await pairingGames(pool, id, () => (actor?.isAdmin === true && !actor.agent) || (owns('a') && owns('b'))))
+        .get(match.id) ?? []
+      const quality = new Map(verdicts.map((game) => [game.id, game]))
       const result = []
       for (const game of games) {
         const {frameCount, ...ending} = game.object_key
@@ -126,7 +131,9 @@ export function createTournamentBroadcast(pool, archive, engine = readSpectatorE
         const outcome = game.winner && normalize(game.winner) === normalize(match.name_a) ? 'a'
           : game.winner && normalize(game.winner) === normalize(match.name_b) ? 'b'
             : game.result === 'Game is a draw' ? 'draw' : null
-        result.push({gameId:game.id, gameNumber:game.game_number, frameCount, capture:{...ending, exportState, outcome}})
+        const verdict = quality.get(game.id)
+        result.push({gameId:game.id, gameNumber:game.game_number, frameCount, capture:{...ending, exportState, outcome},
+          goodQuality:verdict?.goodQuality ?? false, ...(verdict?.qualityReason && {qualityReason:verdict.qualityReason})})
       }
       const officialResult = match.completed ? {
         a:match.display_a, b:match.display_b, winsA:match.wins_a, winsB:match.wins_b, draws:match.draws,
