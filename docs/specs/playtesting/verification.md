@@ -30,8 +30,8 @@ The board tests cover the single phase label, stable action controls, live draw 
 Run these in the corresponding Docker containers. Use Node 22 for the product, MCP, and Vitest tests, and the Playwright image matching the lockfile for browser tests. Supply deployment credentials through a secret mechanism at runtime.
 
 ```sh
-# Engine root, with the pinned card jar installed from the Dockerfile
-mvn -B -q -pl 'Mage.Server,!Mage.Sets' -am \
+# Engine root, including the card classes shipped in the Dockerfile
+mvn -B -q -pl Mage.Server -am \
   -Dtest=SideboardPoolTest,RollbackVoteTest,PendingPromptTest \
   -Dsurefire.failIfNoSpecifiedTests=false test
 

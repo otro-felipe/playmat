@@ -7,7 +7,7 @@ card repository, step for step.
 
 ## Who writes it, and when
 
-- **Image builds.** `Dockerfile.server` starts the server once to build the card database, with
+- **Image builds.** `Dockerfile.server` and the root Railway Dockerfile start the server once to build the card database, with
   `-Dxmage.catalog.export=catalog.sqlite`, and ships the file in `cards-prebuilt/` next to `cards.h2.mv.db`. The
   entrypoint installs both into the `cards-db` volume when the image changes.
 - **A running server with `XMAGE_GATEWAY=on`.** The entrypoint passes `-Dxmage.catalog.export=cards-db/catalog.sqlite`.

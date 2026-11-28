@@ -1,23 +1,26 @@
 # syntax=docker/dockerfile:1
-# Reuse the published card catalog and base card classes. Recompile the callers of
-# the changed token-factory constructor against the freshly assembled engine below.
-FROM ghcr.io/arcanite24/playmat-server@sha256:9bd49de1eacf7664d5f29640c90e664e858da7d2225fe2036a62812d9699aa14 AS cards
 FROM maven:3.9-eclipse-temurin-17 AS engine
 WORKDIR /source
 ENV MAVEN_OPTS="-Xmx1500m -XX:+UseSerialGC"
 COPY . .
-COPY --from=cards /opt/xmage/lib/mage-sets-1.4.62.jar /tmp/mage-sets.jar
-RUN mvn -B -N install \
-    && mvn -B install:install-file -Dfile=/tmp/mage-sets.jar -DpomFile=Mage.Sets/pom.xml \
-    && mvn -B -pl 'Mage.Server,!Mage.Sets' -am install -DskipTests \
+RUN mvn -B -pl Mage.Server -am install -DskipTests \
     && mvn -B -f Mage.Server/pom.xml package assembly:single -DskipTests \
     && mkdir /engine && cd /engine && jar xf /source/Mage.Server/target/mage-server.zip \
     && cp config/config.xml config/config.template.xml \
     && rm -rf db saved \
     && date -u +%s > .build-id
-RUN sh ops/playtesting/package-snapshot-cards.sh /engine/lib \
-    && java -cp '/engine/lib/*' ops/playtesting/test/VerifyPackagedCardSnapshots.java
-COPY --from=cards /opt/xmage/cards-prebuilt/ /engine/cards-prebuilt/
+RUN java -cp '/engine/lib/*' ops/playtesting/test/VerifyPackagedCardSnapshots.java
+# Create both catalogs from the same executable cards bundled with the server.
+RUN cd /engine \
+    && java -Xmx1500m -XX:+UseSerialGC -Dxmage.exitAfterStartup=true -Dxmage.testMode=false \
+        -Dxmage.healthPort=0 -Dxmage.replays=false -Dxmage.catalog.export=catalog.sqlite -jar lib/mage-server-*.jar \
+    && java -Xmx512m -cp 'lib/*' /source/ops/playtesting/test/VerifyPackagedCardCatalog.java catalog.sqlite \
+    && java -cp 'lib/*' org.h2.tools.Shell -url 'jdbc:h2:file:./db/cards.h2' -user '' -password '' \
+        -sql 'SHUTDOWN DEFRAG' >/dev/null 2>&1 \
+    && test "$(stat -c %s db/cards.h2.mv.db)" -le 150000000 \
+    && mkdir cards-prebuilt \
+    && mv db/cards.h2.mv.db catalog.sqlite cards-prebuilt/ \
+    && rm -rf db saved extensions mageserver.log
 
 FROM node:22-bookworm-slim AS web
 WORKDIR /app
