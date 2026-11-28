@@ -7,7 +7,8 @@ const pass = { id: 'pass', type: 'pass' };
 const freePlay = { id: 'free-play', type: 'object' };
 const priority = (id, ...choices) => ({ id, kind: 'priority', choices: [pass, ...choices] });
 const evidence = { epoch: 'line-fixture', publicActions: { me: 0, opponent: 0 }, resolutions: {},
-  resolutionRevision: 0, combatDamage: [], combatRevision: 0, informationRevision: 0 };
+  resolutionRevision: 0, combatDamage: [], combatRevision: 0, informationRevision: 0,
+  spellCasts: { me: 0, opponent: 0 }, attackerDeclarations: { me: 0, opponent: 0 } };
 
 function game(t, transitions, initial) {
   const listeners = new Set();
@@ -371,14 +372,183 @@ for (const [name, source] of [
 });
 
 for (const [cause, transition, reason] of [
-  ['opponent action', { ...upkeep, sequenceEvidence: { ...evidence, publicActions: { me: 0, opponent: 1 } } }, 'opponent_action'],
+  ['opponent action', { ...upkeep, decision: priority('upkeep', freePlay),
+    sequenceEvidence: { ...evidence, publicActions: { me: 0, opponent: 1 } } }, 'opponent_action'],
   ['unseen mandatory choice', { step: 'CLEANUP', decision: { id: 'trigger-choice', kind: 'target', choices: [] } }, 'response_available'],
-  ['unplanned new information before the draw boundary', { ...upkeep, ownHand: [drawnCard], sequenceEvidence: draw.sequenceEvidence }, 'new_information'],
+  ['unplanned new information before the draw boundary', { ...upkeep, decision: priority('upkeep', freePlay),
+    ownHand: [drawnCard], sequenceEvidence: draw.sequenceEvidence }, 'new_information'],
 ]) test(`[PM-LINE-02] explicit decline still stops for ${cause}`, async (t) => {
   const table = game(t, { end: transition });
   const receipt = await table.submit([{ kind: 'pass_until', destination: 'my_draw', policy: 'decline_optional' }]);
   assert.equal(receipt.reason, reason);
   assert.deepEqual(table.applied.map(([id]) => id), ['end']);
+});
+
+const drawPass = { kind: 'pass_until', destination: 'my_draw' };
+
+test('[PM-LINE-02] a terminal pass crosses public action, stack and information changes when priority only allows passing or plain mana', async (t) => {
+  const plainMana = { id: 'plain-mana', type: 'manaAbility', plainMana: true };
+  const rivalCast = { ...evidence, publicActions: { me: 0, opponent: 1 }, spellCasts: { me: 0, opponent: 1 } };
+  const spell = { id: 'rival-spell', controllerId: 'opponent', name: 'Rival spell' };
+  const spellResolved = { ...rivalCast, resolutions: { [spell.id]: 1 }, resolutionRevision: 1, informationRevision: 1 };
+  const table = game(t, {
+    end: { decision: priority('respond'), stack: [spell], sequenceEvidence: rivalCast },
+    respond: { decision: priority('after-resolution', plainMana), stack: [], sequenceEvidence: spellResolved },
+    'after-resolution': upkeep,
+    upkeep: { ...draw, sequenceEvidence: { ...spellResolved, informationRevision: 2 } },
+  });
+  const receipt = await table.submit([drawPass]);
+  assert.equal(receipt.status, 'completed', receipt.reason);
+  assert.equal(receipt.lastDestination.step, 'DRAW');
+  assert.equal(table.seat.snapshot().decision.id, 'draw');
+  assert.deepEqual(table.applied.map(([id, choice]) => [id, choice]), [
+    ['end', 'pass'], ['respond', 'pass'], ['after-resolution', 'pass'], ['upkeep', 'pass'],
+  ]);
+});
+
+test('[PM-LINE-02] an earlier extra draw cannot satisfy a skipped turn-based draw', async (t) => {
+  const base = { ...evidence, lastDrawTurn: 1 };
+  const extraDraw = { ...base, informationRevision: 1 };
+  const table = game(t, {
+    end: { decision: priority('extra-draw'), sequenceEvidence: extraDraw, ownHand: [drawnCard] },
+    'extra-draw': { ...upkeep, sequenceEvidence: extraDraw, ownHand: [drawnCard] },
+    upkeep: { ...draw, step: 'PRECOMBAT_MAIN', ownHand: [drawnCard], sequenceEvidence: extraDraw },
+  }, { sequenceEvidence: base });
+  const result = await table.submit([{ ...drawPass, policy: 'decline_optional', stopOn: [] }]);
+  assert.equal(result.reason, 'destination_skipped');
+  assert.equal(result.lastDestination.step, 'PRECOMBAT_MAIN');
+  assert.equal(table.seat.snapshot().decision.id, 'draw');
+  assert.deepEqual(table.applied.map(([id]) => id), ['end', 'extra-draw', 'upkeep']);
+});
+
+test('[PM-LINE-02] a draw replacement prompt remains mandatory before a draw is witnessed', async (t) => {
+  const base = { ...evidence, lastDrawTurn: 1 };
+  const replacement = { id: 'replacement', kind: 'question', choices: [{ id: 'yes' }, { id: 'no' }] };
+  const table = game(t, {
+    end: { ...upkeep, sequenceEvidence: base },
+    upkeep: { ...draw, decision: replacement, sequenceEvidence: base, ownHand: [] },
+  }, { sequenceEvidence: base });
+  const result = await table.submit([{ ...drawPass, policy: 'decline_optional', stopOn: [] }]);
+  assert.equal(result.reason, 'response_available');
+  assert.equal(table.seat.snapshot().decision.id, replacement.id);
+  assert.deepEqual(table.applied.map(([id]) => id), ['end', 'upkeep']);
+});
+
+test('[PM-LINE-02] new_information detects a newly revealed visible card without counting an already known card', async (t) => {
+  const knownCard = { id: 'known', name: 'Forest' };
+  const table = game(t, {
+    end: { decision: priority('known'), revealed: [{ cards: [knownCard] }] },
+    known: { decision: priority('unknown'), revealed: [{ cards: [drawnCard] }] },
+  }, { ownHand: [knownCard] });
+  const result = await table.submit([{ ...drawPass, stopOn: ['new_information'] }]);
+  assert.equal(result.reason, 'new_information');
+  assert.equal(table.seat.snapshot().decision.id, 'unknown');
+  assert.deepEqual(table.applied.map(([id]) => id), ['end', 'known']);
+});
+
+test('[PM-LINE-02] an explicit event filter fails closed when the engine omits that evidence', async (t) => {
+  const { spellCasts: _unsupported, ...legacyEvidence } = evidence;
+  const table = game(t, {}, { sequenceEvidence: legacyEvidence });
+  const result = await table.submit([{ ...drawPass, stopOn: ['new_spell'] }]);
+  assert.equal(result.reason, 'evidence_unavailable');
+  assert.deepEqual(table.applied, []);
+});
+
+for (const [event, after, evidenceChange] of [
+  ['new_spell', 'land', { spellCasts: { me: 0, opponent: 1 } }],
+  ['attackers_declared', 'begin-combat', { attackerDeclarations: { me: 0, opponent: 1 } }],
+  ['new_information', 'ordinary', { informationRevision: 1 }],
+]) test(`[PM-LINE-02] stopOn ${event} interrupts even when the response only allows a pass`, async (t) => {
+  const pastAction = { ...evidence, publicActions: { me: 0, opponent: 1 } };
+  const table = game(t, {
+    end: { phase: 'COMBAT', step: 'BEGIN_COMBAT', decision: priority(after), sequenceEvidence: pastAction },
+    [after]: (publish) => {
+      publish({ priority: 'opponent', decision: null });
+      publish({ priority: 'self', step: 'DECLARE_ATTACKERS', decision: priority('event'),
+        sequenceEvidence: { ...pastAction, publicActions: { me: 0, opponent: 2 }, ...evidenceChange } });
+    },
+  });
+  const result = await table.submit([{ ...drawPass, stopOn: [event] }]);
+  assert.equal(result.status, 'interrupted');
+  assert.equal(result.reason, event);
+  assert.equal(table.seat.snapshot().decision.id, 'event');
+  assert.deepEqual(table.applied.map(([id]) => id), ['end', after]);
+});
+
+test('[PM-LINE-02] a past declaration and a subsequent attack trigger do not stop a new pass', async (t) => {
+  const afterAttack = { ...evidence, attackerDeclarations: { me: 0, opponent: 1 } };
+  const trigger = { id: 'attack-trigger', controllerId: 'opponent', abilityType: 'TRIGGERED_NONMANA' };
+  const table = game(t, {
+    end: { step: 'DECLARE_ATTACKERS', decision: priority('trigger'), stack: [trigger], sequenceEvidence: afterAttack },
+    trigger: { ...upkeep, stack: [], sequenceEvidence: { ...afterAttack, resolutions: { [trigger.id]: 1 }, resolutionRevision: 1 } },
+    upkeep: { ...draw, sequenceEvidence: { ...afterAttack, resolutions: { [trigger.id]: 1 },
+      resolutionRevision: 1, informationRevision: 1 } },
+  }, { sequenceEvidence: afterAttack });
+  const result = await table.submit([{ ...drawPass, stopOn: ['attackers_declared', 'new_spell', 'new_information'] }]);
+  assert.equal(result.status, 'completed', result.reason);
+  assert.equal(result.lastDestination.step, 'DRAW');
+  assert.deepEqual(table.applied.map(([id]) => id), ['end', 'trigger', 'upkeep']);
+});
+
+for (const policy of ['if_no_play', 'decline_optional']) {
+  test(`[PM-LINE-02] an empty stopOn keeps ${policy} and leaves the requested draw untouched`, async (t) => {
+    const priorEvent = { ...evidence, publicActions: { me: 0, opponent: 1 }, informationRevision: 1,
+      spellCasts: { me: 0, opponent: 1 }, attackerDeclarations: { me: 0, opponent: 1 } };
+    const table = game(t, {
+      end: { decision: priority('offer', freePlay), sequenceEvidence: priorEvent },
+      offer: upkeep,
+      upkeep: { ...draw, sequenceEvidence: { ...priorEvent, informationRevision: 2 } },
+    });
+    const result = await table.submit([{ ...drawPass, policy, stopOn: [] }]);
+    if (policy === 'if_no_play') {
+      assert.equal(result.reason, 'response_available');
+      assert.deepEqual(table.applied.map(([id]) => id), ['end']);
+    } else {
+      assert.equal(result.status, 'completed', result.reason);
+      assert.equal(result.lastDestination.step, 'DRAW');
+      assert.deepEqual(table.applied.map(([id]) => id), ['end', 'offer', 'upkeep']);
+    }
+  });
+}
+
+test('[PM-LINE-02] empty stopOn and deliberate decline still leave a required choice unanswered', async (t) => {
+  const target = { id: 'target', kind: 'target', choices: [{ id: 'only-target', type: 'object' }] };
+  const table = game(t, { end: { step: 'PRECOMBAT_MAIN', decision: target,
+    sequenceEvidence: { ...evidence, publicActions: { me: 0, opponent: 1 } } } });
+  const result = await table.submit([{ ...drawPass, policy: 'decline_optional', stopOn: [] }]);
+  assert.equal(result.reason, 'response_available');
+  assert.equal(table.seat.snapshot().decision.id, 'target');
+  assert.deepEqual(table.applied.map(([id]) => id), ['end']);
+});
+
+test('[PM-LINE-02] stopOn is terminal-only', async (t) => {
+  const table = game(t, {});
+  await assert.rejects(table.submit([
+    { kind: 'pass_until', destination: 'current_turn', step: 'BEGIN_COMBAT', priority: 'self', stopOn: [] },
+    { kind: 'attack', attackers: [] },
+  ]), { code: 'bad_sequence', actionIndex: 0 });
+  assert.deepEqual(table.applied, []);
+});
+
+test('[PM-LINE-02] a required choice at the destination is left for the pilot', async (t) => {
+  const target = { id: 'target', kind: 'target', choices: [{ id: 'only-target', type: 'object' }] };
+  const table = game(t, { end: { ...upkeep, decision: target } });
+  const receipt = await table.submit([{ ...drawPass, destination: 'my_upkeep', policy: 'decline_optional', stopOn: [] }]);
+  assert.equal(receipt.status, 'completed', receipt.reason);
+  assert.equal(receipt.lastDestination.step, 'UPKEEP');
+  assert.equal(table.seat.snapshot().decision.id, 'target');
+  assert.deepEqual(table.applied.map(([id]) => id), ['end']);
+});
+
+test('[PM-LINE-FLOW-6] an explicit stop list with optional decline can cross a pre-draw trigger warning', async (t) => {
+  const source = { id: 'draw-source', controllerId: 'me', rules: ['Whenever you draw a card, you gain 2 life.'] };
+  const table = game(t, { end: { ...upkeep, decision: priority('upkeep', freePlay) }, upkeep: draw }, {
+    players: [{ id: 'me', yourSeat: true, battlefield: [source] }, { id: 'opponent' }],
+  });
+  const receipt = await table.submit([{ ...drawPass, policy: 'decline_optional', stopOn: [] }]);
+  assert.equal(receipt.status, 'completed', receipt.reason);
+  assert.equal(receipt.lastDestination.step, 'DRAW');
+  assert.deepEqual(table.applied.map(([id]) => id), ['end', 'upkeep']);
 });
 
 test('[PM-LINE-02] passing to the current end step does not consume the decision there', async (t) => {
@@ -861,7 +1031,7 @@ for (const [step, kind, actor, intent] of [
   });
 
 // Sheoldred's lifegain and an emblem's drain trigger on the rival's own draw (judge review, 24 Nov 2026).
-function rivalDrawTriggers(t, { gain = {}, drain = {}, initialPlayers, drawChoices = [] } = {}) {
+function rivalDrawTriggers(t, { gain = {}, drain = {}, initialPlayers, drawChoices = [], gainChoices = [], drainChoices = [] } = {}) {
   const sheoldred = { id: 'sheoldred', cardId: 'sheoldred', controllerId: 'opponent', name: 'Sheoldred, the Apocalypse',
     types: ['CREATURE'], rules: ['Whenever you draw a card, you gain 2 life.'] };
   const emblem = { id: 'emblem', name: 'Emblem Fel', rules: ['Whenever you gain life, target opponent loses that much life.'] };
@@ -873,8 +1043,8 @@ function rivalDrawTriggers(t, { gain = {}, drain = {}, initialPlayers, drawChoic
     { id: 'opponent', life: opponentLife, battlefield: [sheoldred], command: [emblem] }];
   const theirDraw = { turn: 8, activePlayer: 'Opponent', activePlayerId: 'opponent', step: 'DRAW' };
   const table = game(t, {
-    draw: { stack: [gainTrigger], decision: priority('gain', ...drawChoices) },
-    gain: { stack: [drainTrigger], players: players(20, 22), decision: priority('drain', ...drawChoices),
+    draw: { stack: [gainTrigger], decision: priority('gain', ...gainChoices) },
+    gain: { stack: [drainTrigger], players: players(20, 22), decision: priority('drain', ...drainChoices),
       sequenceEvidence: { ...evidence, resolutions: { [gainTrigger.id]: 1 }, resolutionRevision: 1 } },
     drain: { stack: [], players: players(18, 22), step: 'END_TURN', decision: priority('their-end'),
       sequenceEvidence: { ...evidence, resolutions: { [gainTrigger.id]: 1, [drainTrigger.id]: 2 }, resolutionRevision: 2 } },
@@ -893,10 +1063,12 @@ for (const policy of ['decline_optional', 'if_no_play']) {
 }
 
 for (const [name, options, reason] of [
-  ['targets a permanent', { drain: { targets: ['my-creature'] } }, 'state_changed'],
-  ['reveals information', { gain: { abilityText: 'Whenever you draw a card, reveal it.', rules: ['Whenever you draw a card, reveal it.'] } }, 'state_changed'],
+  ['targets a permanent while a response is available', { drain: { targets: ['my-creature'] }, drainChoices: [freePlay] }, 'state_changed'],
+  ['can reveal information while a response is available', { gain: { abilityText: 'Whenever you draw a card, reveal it.', rules: ['Whenever you draw a card, reveal it.'] },
+    gainChoices: [freePlay] }, 'state_changed'],
   ['comes from a source that was not public when the line began', {
-    initialPlayers: [{ id: 'me', yourSeat: true, life: 20, battlefield: [] }, { id: 'opponent', life: 20, battlefield: [] }] }, 'state_changed'],
+    gainChoices: [freePlay], initialPlayers: [{ id: 'me', yourSeat: true, life: 20, battlefield: [] },
+      { id: 'opponent', life: 20, battlefield: [] }] }, 'state_changed'],
   ['meets a legal response under if_no_play', { drawChoices: [freePlay] }, 'response_available'],
 ]) test(`[PM-LINE-FLOW-4] a pass still stops when a rival trigger ${name}`, async (t) => {
   const { table } = rivalDrawTriggers(t, options);

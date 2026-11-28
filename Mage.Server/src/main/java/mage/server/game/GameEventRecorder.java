@@ -6,6 +6,7 @@ import mage.abilities.common.ValiantTriggeredAbility;
 import mage.abilities.effects.common.ExileTopXMayPlayUntilEffect;
 import mage.cards.Card;
 import mage.constants.WatcherScope;
+import mage.constants.PhaseStep;
 import mage.constants.Zone;
 import mage.game.Game;
 import mage.game.events.DamagedEvent;
@@ -51,12 +52,18 @@ public class GameEventRecorder extends Watcher {
         // Committed public rules actions, not private selections or attempts.
         switch (event.getType()) {
             case SPELL_CAST:
+                feed.spellCast(event.getPlayerId());
+                ReplayRecorder.onRulesEvent(game, event);
+                break;
             case LAND_PLAYED:
             case ACTIVATED_ABILITY:
             case ATTACKER_DECLARED:
             case BLOCKER_DECLARED:
                 feed.publicAction(event.getPlayerId());
                 ReplayRecorder.onRulesEvent(game, event);
+                break;
+            case DECLARED_ATTACKERS:
+                if (event.getAmount() > 0) feed.attackersDeclared(event.getPlayerId());
                 break;
             case TAKEN_SPECIAL_ACTION:
             case TAKEN_SPECIAL_MANA_PAYMENT:
@@ -117,7 +124,10 @@ public class GameEventRecorder extends Watcher {
                 break;
             case DREW_CARD:
                 ReplayRecorder.onRulesEvent(game, event);
-                feed.newInformation(event.getPlayerId());
+                UUID drawerId = event.getPlayerId();
+                boolean normalDraw = drawerId != null && event.getSourceId() == null
+                        && game.getTurnStepType() == PhaseStep.DRAW && drawerId.equals(game.getActivePlayerId());
+                feed.drewCard(drawerId, normalDraw ? game.getTurnNum() : 0);
                 feed.add(view(feed, GameEventKind.DRAW, game, event).player(event.getPlayerId()).zones(Zone.LIBRARY.name(), Zone.HAND.name()), event.getPlayerId());
                 break;
             case CREATED_TOKEN:

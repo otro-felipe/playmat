@@ -222,6 +222,8 @@ Both seats use the same actions. With the observed game ID and cursor, a call fo
 {"gameId":"11111111-1111-4111-8111-111111111111","cursor":42,"commandId":"line-1","actions":[{"kind":"pass_until","destination":"my_draw","policy":"if_no_play"}]}
 ```
 
+This pass advances while the seat can only pass or make plain mana. To deliberately give up every ordinary response until the draw, use `policy:"decline_optional",stopOn:[]` on the final action. Required choices still return control. To yield once, use `{"kind":"pass_priority"}`.
+
 For the Human Player, add `"humanTableId":"22222222-2222-4222-8222-222222222222"` once at the top level of that same `play_line` call. Use the actual table ID again in a follow-up wait. The browser observes that seat, including when its controlling agent disconnects.
 
 For an unlisted match against a friend, use `create_human_match({"mode":"friend","format":"Pioneer","name":"Friday Pioneer","deckId":"<personal-deck-id>","humanMcpAllowed":false})`. Give the invited friend the link and start the table once they join. For solo practice use `"mode":"practice"`, or use `"mode":"bot"` to play against the engine. Both start immediately. A bot mirrors the registered deck by default and accepts an inline `botDeck` as an alternative. Set `winsNeeded` to 2 for best of three.

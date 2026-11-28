@@ -61,6 +61,10 @@ function sequenceEvidence(view: GameSessionState['view'] | undefined, playerId?:
     } } : {}),
     epoch: evidence.epoch,
     publicActions: evidence.publicActions ? { ...evidence.publicActions } : undefined,
+    ...(evidence.spellCasts ? { spellCasts: { ...evidence.spellCasts } } : {}),
+    ...(evidence.attackerDeclarations ? { attackerDeclarations: { ...evidence.attackerDeclarations } } : {}),
+    ...(playerId && playerId === view?.myPlayerId && evidence.lastDrawTurn != null
+      ? { lastDrawTurn: evidence.lastDrawTurn } : {}),
     resolutions: evidence.resolutions ? { ...evidence.resolutions } : undefined,
     resolutionRevision: evidence.resolutionRevision,
     combatRevision: evidence.combatRevision,

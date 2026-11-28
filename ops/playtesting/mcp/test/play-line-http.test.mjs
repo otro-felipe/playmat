@@ -89,6 +89,23 @@ test('[PM-LINE-MCP-1] a cross-field schema rejection returns the failing action 
   assert.deepEqual(f.applied, []);
 });
 
+test('[PM-LINE-02] the native MCP schema accepts unique stop events and rejects invalid lists before playing', async (t) => {
+  const f = await fixture(t, { first: readyToPass('main') });
+  const pass = { kind: 'pass_until', destination: 'current_turn', step: 'PRECOMBAT_MAIN', priority: 'self' };
+  for (const stopOn of [['new_spell', 'new_spell'], ['opponent_action']]) {
+    const { result } = await f.call('play_line', { ...f.request, actions: [{ ...pass, stopOn }] });
+    assert.equal(result.code, 'invalid_line_arguments');
+    assert.equal(result.stage, 'schema');
+    assert.equal(result.appliedDecisions, 0);
+    assert.equal(result.issues[0].path[2], 'stopOn');
+  }
+  const { result } = await f.call('play_line', { ...f.request, actions: [{ ...pass, stopOn: [] }] });
+  assert.equal(result.status, 'completed');
+  assert.equal(result.lastDestination.step, 'PRECOMBAT_MAIN');
+  assert.equal(result.state.decision.id, 'main');
+  assert.deepEqual(f.applied, []);
+});
+
 test('a target role alone rejects the whole line and identifies both supported target guards', async (t) => {
   const f = await fixture(t);
   const { result } = await f.call('play_line', { ...f.request, actions: [...f.request.actions, {
@@ -273,10 +290,13 @@ test('[PM-LINE-WAIT-1] published command waits and skipped opening draw run thro
   const pending = f.call('wait_for_decision', wait);
   f.update({ sequenceEvidence: { epoch: 'fixture', resolutionRevision: 0, resolutions: {},
     publicActions: { pilot: 0, rival: 1 }, informationRevision: 0, combatRevision: 0, combatDamage: [] } });
+  const response = readyToPass('rival-response');
+  response.choices.push({ id: 'response', type: 'object' });
+  f.update({ priority: 'self', decision: response });
   const { result: stopped } = await pending;
   assert.equal(stopped.sequenceId, first.sequenceId);
   assert.equal(stopped.reason, 'opponent_action');
-  assert.equal(stopped.needsAgent, false);
+  assert.equal(stopped.needsAgent, true);
   const cursorWait = examples.find(args => args.afterCursor === 982);
   f.update({ priority: 'self', decision: readyToPass('fresh') });
   const { result: fresh } = await f.call('wait_for_decision', { ...cursorWait, afterCursor: stopped.state.cursor });

@@ -102,21 +102,23 @@ At a subsequent `payMana` panel, button and object options use `choiceId` alone 
  "actions":[{"kind":"pass_until","destination":"my_upkeep","policy":"decline_optional"}]}
 ```
 
-**Pass to your next turn.** `my_upkeep` stops before your draw; `my_draw` stops after it. `policy:"if_no_play"` (default) returns at any legal non-mana play; `decline_optional` deliberately skips them, land drops included.
+**Pass to your next draw.** Use `my_upkeep` to stop before drawing or `my_draw` to stop afterward. A line consisting only of a pass continues through pass-only and plain-mana priority, including after rival actions. The default `if_no_play` preserves legal plays. Use this explicit deliberate pass when you want to give up every ordinary response until you draw, including a land drop if offered:
 
 ```json
 {"gameId":"00000000-0000-4000-8000-000000000001","cursor":3826,"commandId":"pass-001","view":"compact",
- "actions":[{"kind":"pass_until","destination":"my_draw","policy":"decline_optional"}]}
+ "actions":[{"kind":"pass_until","destination":"my_draw","policy":"decline_optional","stopOn":[]}]}
 ```
 
-During an automatic pass, a rival triggered ability from a source that was already public when the line began resolves without a stop: Sheoldred's lifegain or an emblem's drain, for example. The line still stops when such a trigger targets a permanent or spell, reveals information or asks you to choose, and under `if_no_play` when you hold a legal response.
+In a final pass, `stopOn` can name `new_spell`, `attackers_declared`, or `new_information` to return at the next decision after that event. Required choices and table stops still return control. Use `pass_priority` to yield once. Read `turn-planning` for complete examples and the difference between an intermediate pass and a final pass.
 
 ## After a stop
 
 | `reason` or `code` | What happened | Next call |
 | --- | --- | --- |
 | `completed` status | The line reached its destination. | Plan from `state`. |
-| `opponent_action` | The rival cast a spell or activated an ability. | Read `state.stack`. Respond, or pass with its ID in top-level `expectedStackIds`. |
+| `opponent_action` | The rival took a public action during a guarded line. | Inspect the decision and board. For a visible stack, respond or pass with its IDs in top-level `expectedStackIds`. |
+| `new_spell` | A final pass stopped after the rival cast a spell. | Read `state.stack` and the current decision. |
+| `attackers_declared` | A final pass stopped after the rival declared attackers. | Read the declared attackers and your current decision. |
 | `state_changed` | An unplanned object reached the stack, or a planned prompt changed. | Read `state.stack` and `state.decision`; adopt objects with `expectedStackIds` or answer the open prompt. |
 | `opponent_state_changed` | Public rival state changed without a verified planned cause. | Re-read the board and replan. |
 | `new_information` | You drew, revealed, looked at or searched. | Replan with the new card; never pre-decide an unseen card. |

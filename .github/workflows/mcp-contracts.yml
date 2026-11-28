@@ -6,6 +6,7 @@ on:
     paths: &mcp-paths
       - "ops/playtesting/mcp/**"
       - "ops/playtesting/product/sequence.local.mjs"
+      - "ops/playtesting/product/terminal-pass.local.mjs"
       - "ops/playtesting/product/fixture-mcp-fetch*.mjs"
       - "ops/playtesting/product/fixture-game-clock*.mjs"
       - "ops/playtesting/product/human-match.local.mjs"

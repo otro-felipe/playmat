@@ -158,12 +158,16 @@ const Turn = { explanation: PublicExplanation, gameId: Uuid, cursor: Cursor, act
 const LinePassUntilShape = z.object({
   kind: z.literal('pass_until'),
   destination: z.enum(['my_upkeep', 'my_draw', 'end_step', 'current_turn']).describe('Next own upkeep, forthcoming own draw (including this turn from upkeep), this turn’s end step, or an explicit current-turn condition. For example, current_turn with step BEGIN_COMBAT or POSTCOMBAT_MAIN and priority self returns your decision there.'),
-  policy: z.enum(['if_no_play', 'decline_optional']).default('if_no_play').describe('Decline optional plays only when explicitly intended, for example to bluff a response. Both policies stop on an opponent action, new information or an unplanned required choice.'),
+  policy: z.enum(['if_no_play', 'decline_optional']).default('if_no_play').describe('Preserve legal optional plays with if_no_play, or deliberately decline them with decline_optional. Required decisions always stop.'),
+  stopOn: z.array(z.enum(['new_information', 'new_spell', 'attackers_declared'])).max(3).optional()
+    .describe('Final action only. Stop for the listed events before the destination. An empty list with decline_optional yields all ordinary priority up to the destination. Omit to keep guarded stops when you can act.'),
   declineFromDecisionId: StringId.optional().describe('With decline_optional on the first action, decline only options visible at this exact ordinary priority; later actions may follow. Stop for a different option, even on the same source.'),
   ...GameCondition,
 }).strict();
 const LinePassUntil = LinePassUntilShape.refine((value) => (value.destination === 'current_turn') === hasDestination(value),
-  'Use phase, step or priority only with current_turn. At least one condition is required for current_turn.');
+  'Use phase, step or priority only with current_turn. At least one condition is required for current_turn.')
+  .refine(({ stopOn }) => stopOn === undefined || new Set(stopOn).size === stopOn.length,
+    { path: ['stopOn'], message: 'Name each stop event once.' });
 const LinePassPriority = z.object({ kind: z.literal('pass_priority') }).strict()
   .describe('Deliberately pass once and return at the next actionable boundary.');
 const LineActions = z.array(z.discriminatedUnion('kind', [TurnPlay, TurnActivation, TurnChoose, TurnAttack, TurnBlock, Pace, LinePassUntil, LinePassPriority])).min(1).max(32);
@@ -460,7 +464,7 @@ function registerTools(mcp, { contextFor, invitationOrigin, onResponseWritten })
   tool('advance_to_own_turn', 'Pass only when the current engine offers no non-mana optional play, stopping before your next turn or any useful legal play, mandatory decision, public opponent action or missing causal evidence. Zero mana is never evidence that no action exists.', { gameId: Uuid, cursor: Cursor },
     'play', ({ gameId, cursor }) => getSeat().startSequence({ gameId, cursor, steps: [{ kind: 'advance_to_own_turn' }] }, current().reauthorize));
   const playSequence = (args) => getSeat().startSequence(args, current().reauthorize);
-  tool('play_line', 'Submit the longest justified line of plays, activations, choices, attacks and passes from the current cursor, on either turn. Ordinary handoffs are automatic. The line stops on new information, rival actions or a required choice it cannot answer. Returns applied progress and seat-visible game state. Check status, code and recovery when a line is rejected. Copy ordered payWith entries from the chosen sources’ payWithOptions. At a payment prompt or other discrete choice, an option’s playLineAction contains its exact current decisionId and choiceId. Read the turn-planning guide for complete JSON examples, including two targets, Ward, activation, combat and command recovery.', Line, 'play', async (args, signal) => {
+  tool('play_line', 'Submit the longest justified line of plays, activations, choices, attacks and passes from the current cursor, on either turn. Ordinary handoffs are automatic. Tactical steps stop on new information, rival actions or an unplanned required choice. A final pass_until can continue through pass-only priority and use stopOn for selected events. Returns applied progress and seat-visible game state. Check status, code and recovery when a line is rejected. Copy ordered payWith entries from the chosen sources’ payWithOptions. At a payment prompt or other discrete choice, an option’s playLineAction contains its exact current decisionId and choiceId. Read the turn-planning guide for complete JSON examples, including two targets, Ward, activation, combat and command recovery.', Line, 'play', async (args, signal) => {
     if (args.explanation && args.reasoning) throw new ToolError('invalid_input', 'Supply either explanation or legacy reasoning.');
     const actions = LineActions.safeParse(args.actions);
     const seat = getSeat();

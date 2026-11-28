@@ -74,7 +74,7 @@ for (const mode of ['initial-wait', 'receipt-and-wait']) {
   });
 }
 
-test('[PM-LINE-WAIT-1] command wait reports a witnessed interruption before the next own prompt', async t => {
+test('[PM-LINE-WAIT-1] a terminal pass keeps command ownership after a rival action until the seat can act', async t => {
   const f = clockFixture(t, { priority: 'opponent', decision: null });
   const first = await f.start([{ kind: 'pass_until', destination: 'end_step' }], 0);
   assert.equal(first.waitingFor, 'opponent');
@@ -83,11 +83,12 @@ test('[PM-LINE-WAIT-1] command wait reports a witnessed interruption before the 
   await f.advance(400);
   f.update({ sequenceEvidence: { ...evidence, publicActions: { [rival.id]: 1 } } });
   await nextTurn();
-  assert.ok(result, 'The stopped command must wake its own waiter even before another legal prompt');
+  assert.equal(result, undefined, 'The pass keeps waiting without reopening the decision loop');
+  f.update({ priority: 'self', decision: priority('rival-response', { id: 'response', type: 'object' }) });
   await wait;
   assert.equal(result.reason, 'opponent_action');
   assert.equal(result.waitingFor, null);
-  assert.equal(result.needsAgent, false);
+  assert.equal(result.needsAgent, true);
   assert.equal(result.planOwnsExecution, false);
   assert.deepEqual(f.applied, []);
 });

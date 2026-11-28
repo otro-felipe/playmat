@@ -2632,6 +2632,8 @@ export type Zone = "HAND" | "GRAVEYARD" | "LIBRARY" | "BATTLEFIELD" | "STACK" | 
 export interface SequenceEvidenceView extends Serializable {
     epoch?: string;
     publicActions?: { [index: string]: number };
+    spellCasts?: { [index: string]: number };
+    attackerDeclarations?: { [index: string]: number };
     resolutions?: { [index: string]: number };
     resolutionRevision?: number;
     combatRevision?: number;
@@ -2639,6 +2641,7 @@ export interface SequenceEvidenceView extends Serializable {
     combatExileReplacements?: { [index: string]: number };
     ownImpulseExile?: SequenceImpulseExileView;
     informationRevision?: number;
+    lastDrawTurn?: number;
 }
 
 export interface SequenceImpulseExileView extends Serializable {

@@ -415,6 +415,9 @@ try {
     await verifyTypedManaTalent({ startFixture, ownPlayer, answer, waitNextOwn, playLineWithPeer, call, gameClock })
   } else if (scenarios === 'causal') {
     await verifyCausalBurn()
+  } else if (scenarios === 'terminal-pass') {
+    const { verifyTerminalPass } = await import('./terminal-pass.local.mjs')
+    await verifyTerminalPass(fixture)
   } else throw Error('Select a real-engine family using verify-sequence-image.sh')
 
 } finally { browser?.close(); await client?.close() }

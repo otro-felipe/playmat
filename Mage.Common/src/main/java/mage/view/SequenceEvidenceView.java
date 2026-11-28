@@ -8,11 +8,12 @@ import java.util.List;
 import java.util.ArrayList;
 import java.util.Collections;
 
-/** Public counters plus optional owner-scoped attribution for one already face-up exiled card. */
+/** Public counters plus private evidence scoped to the current viewer. */
 public final class SequenceEvidenceView implements Serializable {
     private static final long serialVersionUID = 1L;
     private final String epoch;
     private final Map<UUID, Long> publicActions;
+    private final Map<UUID, Long> spellCasts, attackerDeclarations;
     private final Map<UUID, Long> resolutions;
     private final long resolutionRevision;
     private final long combatRevision, informationRevision;
@@ -20,6 +21,7 @@ public final class SequenceEvidenceView implements Serializable {
     private final Map<UUID, Long> combatExileReplacements;
 
     private final SequenceImpulseExileView ownImpulseExile;
+    private final Integer lastDrawTurn;
 
     public SequenceEvidenceView(String epoch, Map<UUID, Long> publicActions,
             Map<UUID, Long> resolutions, long resolutionRevision) {
@@ -41,10 +43,21 @@ public final class SequenceEvidenceView implements Serializable {
     public SequenceEvidenceView(String epoch, Map<UUID, Long> publicActions, Map<UUID, Long> resolutions,
             long resolutionRevision, List<SequenceCombatDamageView> combatDamage, long combatRevision, long informationRevision,
             Map<UUID, Long> combatExileReplacements, SequenceImpulseExileView ownImpulseExile) {
+        this(epoch, publicActions, resolutions, resolutionRevision, combatDamage, combatRevision, informationRevision,
+                combatExileReplacements, ownImpulseExile, null, null, null);
+    }
+
+    public SequenceEvidenceView(String epoch, Map<UUID, Long> publicActions, Map<UUID, Long> resolutions,
+            long resolutionRevision, List<SequenceCombatDamageView> combatDamage, long combatRevision, long informationRevision,
+            Map<UUID, Long> combatExileReplacements, SequenceImpulseExileView ownImpulseExile,
+            Map<UUID, Long> spellCasts, Map<UUID, Long> attackerDeclarations, Integer lastDrawTurn) {
         this.ownImpulseExile = ownImpulseExile;
+        this.lastDrawTurn = lastDrawTurn;
         this.combatExileReplacements = new LinkedHashMap<>(combatExileReplacements);
         this.epoch = epoch;
         this.publicActions = new LinkedHashMap<>(publicActions);
+        this.spellCasts = spellCasts == null ? null : new LinkedHashMap<>(spellCasts);
+        this.attackerDeclarations = attackerDeclarations == null ? null : new LinkedHashMap<>(attackerDeclarations);
         this.resolutions = new LinkedHashMap<>(resolutions);
         this.resolutionRevision = resolutionRevision;
         this.combatDamage = new ArrayList<>(combatDamage);
@@ -53,11 +66,14 @@ public final class SequenceEvidenceView implements Serializable {
     }
     public String getEpoch() { return epoch; }
     public Map<UUID, Long> getPublicActions() { return publicActions; }
+    public Map<UUID, Long> getSpellCasts() { return spellCasts; }
+    public Map<UUID, Long> getAttackerDeclarations() { return attackerDeclarations; }
     public Map<UUID, Long> getResolutions() { return resolutions; }
     public long getResolutionRevision() { return resolutionRevision; }
     public List<SequenceCombatDamageView> getCombatDamage() { return combatDamage; }
     public long getCombatRevision() { return combatRevision; }
     public Map<UUID, Long> getCombatExileReplacements() { return combatExileReplacements; }
     public SequenceImpulseExileView getOwnImpulseExile() { return ownImpulseExile; }
+    public Integer getLastDrawTurn() { return lastDrawTurn; }
     public long getInformationRevision() { return informationRevision; }
 }

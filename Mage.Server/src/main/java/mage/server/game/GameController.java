@@ -159,6 +159,8 @@ public class GameController implements GameCallback {
                                 updateGame();
                                 break;
                             case ROLLBACK_COMMITTED:
+                                GameEventFeed feed = GameEventFeed.of(game.getId());
+                                if (feed != null) feed.rollbackTo(game.getTurnNum());
                                 ReplayRecorder.onRollbackCommitted(game);
                                 getGameSessions().forEach(session -> session.rollbackCommitted(game.getTurnNum()));
                                 getGameSessionWatchers().forEach(session -> session.rollbackCommitted(game.getTurnNum()));

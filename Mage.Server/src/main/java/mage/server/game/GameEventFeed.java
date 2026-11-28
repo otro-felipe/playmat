@@ -32,6 +32,8 @@ public final class GameEventFeed {
     private final String evidenceEpoch = UUID.randomUUID().toString();
     private final UUID gameId;
     private final Map<UUID, Long> publicActions = new LinkedHashMap<>();
+    private final Map<UUID, Long> spellCasts = new LinkedHashMap<>();
+    private final Map<UUID, Long> attackerDeclarations = new LinkedHashMap<>();
     private final Map<UUID, Long> resolutions = new LinkedHashMap<>();
     private long resolutionRevision;
     private long combatRevision;
@@ -39,6 +41,7 @@ public final class GameEventFeed {
     private final Map<UUID, Long> pendingPermanentHits = new LinkedHashMap<>();
     private final Map<UUID, Long> combatExileReplacements = new LinkedHashMap<>();
     private final Map<UUID, Long> newInformation = new LinkedHashMap<>();
+    private final Map<UUID, Integer> lastDrawTurns = new LinkedHashMap<>();
     private long publicInformationRevision;
     private final Map<UUID, SequenceImpulseExileView> ownImpulseExiles = new LinkedHashMap<>();
     static final int RESOLUTION_CAPACITY = 32;
@@ -52,6 +55,16 @@ public final class GameEventFeed {
     /** Only committed, already-public rules actions; never clicks, hidden prompts or passes. */
     public synchronized void publicAction(UUID playerId) {
         if (playerId != null) publicActions.merge(playerId, 1L, Long::sum);
+    }
+
+    public synchronized void spellCast(UUID playerId) {
+        if (playerId == null) return;
+        publicAction(playerId);
+        spellCasts.merge(playerId, 1L, Long::sum);
+    }
+
+    public synchronized void attackersDeclared(UUID playerId) {
+        if (playerId != null) attackerDeclarations.merge(playerId, 1L, Long::sum);
     }
 
     /** Only IDs of objects already announced on the public stack are admitted. */
@@ -94,6 +107,17 @@ public final class GameEventFeed {
         else if (player != null) newInformation.merge(player, 1L, Long::sum);
     }
 
+    public synchronized void drewCard(UUID player, int normalDrawTurn) {
+        if (player == null) return;
+        newInformation(player);
+        if (normalDrawTurn > 0) lastDrawTurns.put(player, normalDrawTurn);
+    }
+
+    public synchronized void rollbackTo(int turn) {
+        // Replay starts before the restored turn's draw. The event counters remain monotonic.
+        lastDrawTurns.values().removeIf(drawTurn -> drawTurn >= turn);
+    }
+
     public synchronized void objectMoved(UUID objectId) {
         ownImpulseExiles.values().removeIf(event -> event.getSourceId().equals(objectId) || event.getCardId().equals(objectId));
     }
@@ -111,7 +135,8 @@ public final class GameEventFeed {
         if (!PublicActionObservations.isObserved(gameId)) return null;
         return new SequenceEvidenceView(evidenceEpoch, publicActions, resolutions, resolutionRevision,
                 new ArrayList<>(combatDamage), combatRevision, publicInformationRevision + (viewerId == null ? 0 : newInformation.getOrDefault(viewerId, 0L)),
-                combatExileReplacements, ownImpulseExiles.get(viewerId));
+                combatExileReplacements, ownImpulseExiles.get(viewerId), spellCasts, attackerDeclarations,
+                viewerId == null ? null : lastDrawTurns.getOrDefault(viewerId, 0));
     }
 
     private static final class Entry {

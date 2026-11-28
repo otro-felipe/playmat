@@ -21,6 +21,16 @@ const DISCRETE_PROMPTS = new Set(['startingPlayer', 'mulligan', 'mulliganBottom'
 const DISCRETE_CHOICES = new Set(['button', 'object', 'option', 'pile']);
 const WINDOW_ACTIONS = new Set(['play', 'activate', 'choose', 'attack', 'block']);
 const DECLARATION_STEP = { attack: 'DECLARE_ATTACKERS', block: 'DECLARE_BLOCKERS' };
+const PASS_CONTEXT_CHANGES = new Set(['opponent_action', 'opponent_state_changed', 'state_changed', 'new_information']);
+const PASS_EVENT_COUNTERS = {
+  new_spell: 'spellCasts',
+  attackers_declared: 'attackerDeclarations',
+};
+const PASS_EVENT_MESSAGES = {
+  new_information: 'New information became visible before the requested destination.',
+  new_spell: 'The opponent cast a spell before the requested destination.',
+  attackers_declared: 'The opponent declared attackers before the requested destination.',
+};
 function intermediateWindow(action, next) {
   const declaration = DECLARATION_STEP[next?.kind];
   return action?.kind === 'pass_until' && action.destination === 'current_turn' && action.priority === 'self'
@@ -92,6 +102,23 @@ function checkPaymentSources(state, payWith, actionIndex) {
 
 function visibleDecision(state) {
   return state.decision?.kind === 'waiting' ? null : state.decision;
+}
+
+function faceUpCardIds(cards) {
+  return cards.filter(card => !card.faceDown).map(card => card.cardId ?? card.id).filter(Boolean);
+}
+
+function revealedCardIds(state) {
+  const groups = [...(state.revealed ?? []), ...(state.lookedAt ?? [])];
+  return faceUpCardIds([...groups.flatMap(({ cards }) => cards ?? []),
+    ...(state.players ?? []).flatMap(({ topCard }) => topCard ? [topCard] : [])]);
+}
+
+function rememberPassCards(knownCards, state, revealed) {
+  const publicCards = (state.players ?? []).flatMap(player => [
+    ...(player.battlefield ?? []), ...(player.exile ?? []), ...(player.graveyard ?? []), ...(player.command ?? []),
+  ]);
+  for (const id of [...revealed, ...faceUpCardIds([...(state.ownHand ?? []), ...state.stack, ...publicCards])]) knownCards.add(id);
 }
 
 function stackIdentity(stack) {
@@ -351,7 +378,7 @@ export class GameSeat {
       respondNow: 'Priority is still open. Inspect all visible legal plays, including free spells and useful abilities. Choose a response if you want one.',
       passOnce: { kind: 'pass_priority' },
       declineKnown: { ...stop.boundary, policy: 'decline_optional', declineFromDecisionId: stop.decisionId },
-      instructions: 'To pass once, copy passOnce. If you decide to decline these same visible options until the requested boundary, copy the entire declineKnown action, including declineFromDecisionId, as the first action of a fresh play_line from this cursor; the rest of your line may follow it. Omitting that field also declines newly legal options.',
+      instructions: 'To pass once, copy passOnce. To decline these same visible options until the requested boundary, copy declineKnown with declineFromDecisionId as the first action of a fresh play_line from this cursor. An action with stopOn must also be last. Omitting declineFromDecisionId also declines newly legal options.',
     };
   }
 
@@ -592,9 +619,12 @@ export class GameSeat {
       } else if (action.kind === 'pass_priority') {
         steps.push({ kind: 'yield_priority', allowTurnBoundary: true });
       } else if (action.kind === 'pass_until') {
-        const { destination, phase, step, priority } = action;
+        const { destination, phase, step, priority, stopOn } = action;
         if (destination === 'current_turn' && phase === undefined && step === undefined && priority === undefined) {
           throw new ToolError('bad_sequence', 'Choose a phase, step or priority for a current-turn destination.', { actionIndex });
+        }
+        if (stopOn !== undefined && tail.length) {
+          throw new ToolError('bad_sequence', 'Use stopOn only on the final pass_until action.', { actionIndex, field: 'stopOn' });
         }
         let knownOptions;
         if (action.declineFromDecisionId !== undefined) {
@@ -607,7 +637,7 @@ export class GameSeat {
           knownOptions = structuredClone(optionalPlays(decision).map(stableOption));
         }
         steps.push({ kind: 'pass_to_boundary', destination, phase, step, priority, intermediate: tail.length > 0,
-          skipOptionalResponses: action.policy === 'decline_optional', knownOptions });
+          skipOptionalResponses: action.policy === 'decline_optional', knownOptions, stopOn });
       } else steps.push(action);
       // A target or trigger of a card just cast by this line depends on that
       // exact spell entering the battlefield and staying there through the choice.
@@ -772,6 +802,7 @@ export class GameSeat {
     let advancingOwnTurn = false;
     let crossingTurnBoundary = false;
     let requestedPassBoundary;
+    let terminalPass;
     const validEvidence = (evidence) => evidence && typeof evidence.epoch === 'string'
       && Number.isSafeInteger(evidence.resolutionRevision) && evidence.resolutionRevision >= 0
       && evidence.publicActions && evidence.resolutions
@@ -1147,6 +1178,7 @@ export class GameSeat {
       if (state.gameId !== sequence.gameId || state.status !== 'active' || state.epoch !== initial.epoch) {
         throw new ToolError('invalidated', 'The game state changed.');
       }
+      if (state.rollbackRequest) throw new ToolError('rollback_pending', 'Review the pending rollback before passing.');
       if (waitingForOpeningTurn && (state.turn == null || state.turn === 0 || state.turn === 1)) {
         if (!state.step) return true;
         if (state.turn === 1 && ownPlayerId && state.activePlayerId === ownPlayerId) {
@@ -1163,10 +1195,53 @@ export class GameSeat {
       }
       return false;
     };
+    const observePassEvidence = (pass, state) => {
+      const evidence = state.sequenceEvidence;
+      const previous = pass.evidence;
+      if (!validEvidence(evidence) || !validEvidence(previous) || evidence.epoch !== previous.epoch
+        || !Number.isSafeInteger(evidence.informationRevision) || !Number.isSafeInteger(previous.informationRevision)
+        || evidence.informationRevision < previous.informationRevision || evidence.resolutionRevision < previous.resolutionRevision) {
+        throw new ToolError('evidence_unavailable', 'Passing requires current evidence from the same game timeline.');
+      }
+      for (const event of pass.stopOn ?? []) {
+        let witnessed;
+        if (event === 'new_information') {
+          const revealed = revealedCardIds(state);
+          witnessed = evidence.informationRevision > previous.informationRevision
+            || state.decision?.informationBoundary && state.decision.id !== pass.decisionId
+            || revealed.some(id => !pass.knownCards.has(id));
+          rememberPassCards(pass.knownCards, state, revealed);
+        } else {
+          const before = previous[PASS_EVENT_COUNTERS[event]];
+          const after = evidence[PASS_EVENT_COUNTERS[event]];
+          if (!before || !after || Object.keys(before).some(id => (after[id] ?? 0) < before[id])
+            || Object.values(after).some(count => !Number.isSafeInteger(count) || count < 0)) {
+            throw new ToolError('evidence_unavailable', 'The engine cannot verify the selected pass stop event on this timeline.');
+          }
+          witnessed = Object.entries(after).some(([id, count]) => id !== ownPlayerId && count > (before[id] ?? 0));
+        }
+        if (witnessed) pass.event ??= event;
+      }
+      pass.evidence = evidence;
+    };
+    const checkProgress = (state) => {
+      const opening = checkGame(state);
+      if (!terminalPass || pendingIntention()) return checkStack(state, opening);
+      observePassEvidence(terminalPass, state);
+      if (terminalPass.stopOn !== undefined || terminalPass.interruption) return;
+      try {
+        checkStack(state, opening);
+      } catch (error) {
+        if (!PASS_CONTEXT_CHANGES.has(error.code)) throw error;
+        // A final pass has no subsequent action that depends on this context.
+        // Keep the reason for a real decision, while the engine can still
+        // yield an ordinary priority at which it offers no response.
+        terminalPass.interruption = error;
+      }
+    };
     const unwatch = this.engine.subscribe(() => {
       try {
-        const state = this.snapshot();
-        checkStack(state, checkGame(state));
+        checkProgress(this.snapshot());
       } catch (error) {
         sequence.controller.abort(error);
       }
@@ -1180,7 +1255,7 @@ export class GameSeat {
       if (!await authorize()) throw new ToolError('authorization_expired', 'The seat authorization expired.');
       signal.throwIfAborted();
       const state = this.snapshot();
-      checkStack(state, checkGame(state));
+      checkProgress(state);
       this.#manaAbilities.observe(state);
       return state;
     };
@@ -1403,7 +1478,21 @@ export class GameSeat {
         sequence.actionIndex = step.actionIndex ?? null;
         requestedPassBoundary = step.kind === 'pass_to_boundary' ? step.destination : undefined;
         if (requestedPassBoundary) sequence.requestedDestination = requestedPassBoundary;
-        const boundaryAnchor = requestedPassBoundary === 'my_draw' && sequence.completedSteps > 0 ? this.snapshot() : initial;
+        const boundaryAnchor = requestedPassBoundary && sequence.completedSteps > 0 ? this.snapshot() : initial;
+        // Without an explicit event policy, preserve the evidence guards of a
+        // line settling an announced action, stack, combat, or scoped decline.
+        const independentPass = sequence.completedSteps === 0 && !expectedStackIds.length && !initial.combat?.length
+          && !step.knownOptions && !impulse;
+        terminalPass = undefined;
+        if (requestedPassBoundary && !step.intermediate && (step.stopOn !== undefined || independentPass)) {
+          terminalPass = {
+            stopOn: step.stopOn, evidence: boundaryAnchor.sequenceEvidence, decisionId: boundaryAnchor.decision?.id,
+          };
+          if (step.stopOn?.includes('new_information')) {
+            terminalPass.knownCards = new Set();
+            rememberPassCards(terminalPass.knownCards, boundaryAnchor, revealedCardIds(boundaryAnchor));
+          }
+        }
         targetsThisDraw = requestedPassBoundary === 'my_draw'
           && boundaryAnchor.activePlayerId === ownPlayerId && beforeDraw(boundaryAnchor);
         advancingOwnTurn = step.kind === 'advance_to_own_turn' || ['my_upkeep', 'my_draw'].includes(requestedPassBoundary);
@@ -1860,9 +1949,11 @@ export class GameSeat {
           if (advancingOwnTurn && (!initialEvidenceValid || !ownPlayerId || !activeTurnPlayerId || !Number.isSafeInteger(turn))) {
             throw new ToolError('evidence_unavailable', 'Advancing across turns requires current public action evidence and exact player IDs.');
           }
-          const handBeforePass = new Set((state.ownHand ?? []).map((card) => card.id ?? card.cardId));
-          const observedDraw = (view) => view.sequenceEvidence?.informationRevision > informationRevision
-            && view.ownHand?.some((card) => {
+          const handBeforePass = new Set((boundaryAnchor.ownHand ?? []).map((card) => card.id ?? card.cardId));
+          const observedDraw = (view) => view.sequenceEvidence?.lastDrawTurn !== undefined
+            ? view.sequenceEvidence.lastDrawTurn === view.turn
+            : view.sequenceEvidence?.informationRevision > boundaryAnchor.sequenceEvidence?.informationRevision
+              && view.ownHand?.some((card) => {
               const id = card.id ?? card.cardId;
               return id && !handBeforePass.has(id);
             });
@@ -1883,7 +1974,13 @@ export class GameSeat {
             }
             if (step.destination === 'my_upkeep' && nextOwnTurn(view) && view.step === 'UPKEEP') return 'reached';
             if (step.destination === 'my_draw' && targetsThisDraw && view.turn !== turn) return 'skipped';
-            if (atOrAfterOwnDraw(view)) return step.destination === 'my_draw' && observedDraw(view) ? 'reached' : 'skipped';
+            if (atOrAfterOwnDraw(view)) {
+              if (step.destination === 'my_draw' && observedDraw(view)) return 'reached';
+              const decision = visibleDecision(view);
+              // A replacement can ask a question in DRAW before any card moves.
+              if (step.destination === 'my_draw' && view.step === 'DRAW' && decision && decision.kind !== 'priority') return null;
+              return 'skipped';
+            }
             return null;
           };
           const readyEndpoint = (view) => {
@@ -1908,20 +2005,28 @@ export class GameSeat {
               }
               continue;
             }
-            if (sequence.observedNewInformation) throw new ToolError('new_information', 'New information is available. Inspect the current decision before continuing.');
             if (await answerTokenDefender(state)) continue;
-            requireBeforeInformation(state, step);
-            requireBeforeDrawTrigger(state);
+            const decision = state.decision;
+            if (terminalPass?.event) throw new ToolError(terminalPass.event, PASS_EVENT_MESSAGES[terminalPass.event]);
+            const options = optionalPlays(decision).filter(choice => !impulse?.declines(choice));
+            const canAct = decision.kind !== 'priority' || options.length > 0;
+            if (!terminalPass || canAct || pendingIntention()) {
+              if (terminalPass?.interruption) throw terminalPass.interruption;
+              if (sequence.observedNewInformation) throw new ToolError('new_information', 'New information is available. Inspect the current decision before continuing.');
+              if (terminalPass?.stopOn === undefined) {
+                requireBeforeInformation(state, step);
+                requireBeforeDrawTrigger(state);
+              }
+            }
             const choice = state.decision.choices.find((item) => item.type === 'pass');
             if (state.decision.kind !== 'priority' || state.priority !== 'self' || !choice || pendingIntention() || state.stop) {
               throw new ToolError('response_available', 'A mandatory choice or pending action needs your decision before advancing.');
             }
-            const options = optionalPlays(state.decision).filter(choice => !impulse?.declines(choice));
             if (options.length && !step.skipOptionalResponses) {
               if (step.kind === 'pass_to_boundary') {
                 const { destination, phase, step: targetStep, priority } = step;
                 sequence.optionalPassStop = { cursor: state.cursor, epoch: state.epoch, decisionId: state.decision.id,
-                  boundary: { kind: 'pass_until', destination, phase, step: targetStep, priority } };
+                  boundary: { kind: 'pass_until', destination, phase, step: targetStep, priority, stopOn: step.stopOn } };
               }
               throw new ToolError('response_available', 'A currently legal play needs your decision before advancing.');
             }

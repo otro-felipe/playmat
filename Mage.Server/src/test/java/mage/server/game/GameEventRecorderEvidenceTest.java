@@ -1,14 +1,17 @@
 package mage.server.game;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonObject;
 import mage.abilities.Ability;
 import mage.cards.Card;
 import mage.cards.CardSetInfo;
 import mage.cards.m.MonasterySwiftspear;
 import mage.constants.Rarity;
+import mage.constants.PhaseStep;
 import mage.constants.Zone;
 import mage.game.Game;
 import mage.game.GameImpl;
+import mage.game.combat.CombatGroup;
 import mage.game.match.MatchType;
 import mage.game.mulligan.LondonMulligan;
 import mage.constants.MultiplayerAttackOption;
@@ -18,7 +21,9 @@ import mage.game.events.GameEvent;
 import mage.game.events.ZoneChangeEvent;
 import mage.game.events.DamagedPermanentEvent;
 import mage.game.events.DamagedPlayerEvent;
+import mage.game.events.DrewCardEvent;
 import mage.game.permanent.Permanent;
+import mage.game.permanent.PermanentCard;
 import mage.game.events.PublicActionObservations;
 import mage.game.stack.SpellStack;
 import mage.game.stack.Spell;
@@ -92,6 +97,84 @@ public class GameEventRecorderEvidenceTest {
         assertTrue(feed.sequenceEvidence().getResolutions().isEmpty());
         assertEquals("The drawing player's private witness changes even if that card ID was already known", 1, feed.sequenceEvidence(rival).getInformationRevision());
         assertEquals("Other players cannot observe a private draw counter", 0, feed.sequenceEvidence(own).getInformationRevision());
+    }
+
+    @Test public void onlyCommittedCastsAdvanceTheCastingPlayersPublicCounter() {
+        UUID spellId = UUID.randomUUID();
+        SequenceEvidenceView before = feed.sequenceEvidence(own);
+        recorder.watch(event(GameEvent.EventType.CAST_SPELL, spellId, rival), game);
+        recorder.watch(event(GameEvent.EventType.LAND_PLAYED, UUID.randomUUID(), rival), game);
+        recorder.watch(event(GameEvent.EventType.ACTIVATED_ABILITY, UUID.randomUUID(), rival), game);
+        recorder.watch(event(GameEvent.EventType.SPELL_CAST, spellId, rival), game);
+        recorder.watch(event(GameEvent.EventType.SPELL_CAST, UUID.randomUUID(), rival), game);
+        recorder.watch(event(GameEvent.EventType.SPELL_CAST, UUID.randomUUID(), own), game);
+
+        Gson gson = new Gson();
+        JsonObject rivalProjection = gson.toJsonTree(feed.sequenceEvidence(rival)).getAsJsonObject();
+        JsonObject observerProjection = gson.toJsonTree(feed.sequenceEvidence(own)).getAsJsonObject();
+        JsonObject spellCasts = observerProjection.getAsJsonObject("spellCasts");
+        assertEquals(2, spellCasts.get(rival.toString()).getAsInt());
+        assertEquals(1, spellCasts.get(own.toString()).getAsInt());
+        assertEquals(spellCasts, rivalProjection.getAsJsonObject("spellCasts"));
+        assertFalse(observerProjection.toString().contains(spellId.toString()));
+        assertEquals(Long.valueOf(4), feed.sequenceEvidence(own).getPublicActions().get(rival));
+        assertTrue(gson.toJsonTree(before).getAsJsonObject().getAsJsonObject("spellCasts").isEmpty());
+    }
+
+    @Test public void combatPublishesOneWitnessOnlyAfterACompletedNonemptyDeclaration() {
+        ResolvingGame live = new ResolvingGame(false);
+        GameEventFeed liveFeed = GameEventFeed.open(live.getId());
+        try {
+            live.getState().addWatcher(new GameEventRecorder(live.getId()));
+            live.getCombat().setAttacker(rival);
+            live.getCombat().resumeSelectAttackers(live);
+            live.getState().handleSimultaneousEvent(live);
+            Gson gson = new Gson();
+            assertTrue(gson.toJsonTree(liveFeed.sequenceEvidence(own)).getAsJsonObject()
+                    .getAsJsonObject("attackerDeclarations").isEmpty());
+
+            CombatGroup group = new CombatGroup(own, false, own);
+            live.getCombat().getGroups().add(group);
+            for (int i = 0; i < 2; i++) {
+                Card card = new MonasterySwiftspear(rival, new CardSetInfo("Monastery Swiftspear", "KTK", "118", Rarity.UNCOMMON));
+                Permanent permanent = new PermanentCard(card, rival, live);
+                live.getState().getBattlefield().addPermanent(permanent);
+                group.getAttackers().add(permanent.getId());
+            }
+            live.getCombat().resumeSelectAttackers(live);
+            assertTrue(gson.toJsonTree(liveFeed.sequenceEvidence(own)).getAsJsonObject()
+                    .getAsJsonObject("attackerDeclarations").isEmpty());
+            live.getState().handleSimultaneousEvent(live);
+            JsonObject committed = gson.toJsonTree(liveFeed.sequenceEvidence(own)).getAsJsonObject();
+            assertEquals(1, committed.getAsJsonObject("attackerDeclarations").get(rival.toString()).getAsInt());
+            assertEquals(Long.valueOf(2), liveFeed.sequenceEvidence(own).getPublicActions().get(rival));
+        } finally {
+            GameEventFeed.close(live.getId());
+        }
+    }
+
+    @Test public void ordinaryDrawWitnessBelongsToTheActiveDrawingSeatAndIsClearedByRollback() {
+        Gson gson = new Gson();
+        UUID drawnCard = UUID.randomUUID();
+        Game drawStep = stub(Game.class, values("getId", gameId, "isSimulation", false,
+                "getTurnStepType", PhaseStep.DRAW, "getActivePlayerId", own, "getTurnNum", 5));
+        recorder.watch(event(GameEvent.EventType.DREW_CARD, drawnCard, own), game);
+        recorder.watch(event(GameEvent.EventType.DREW_CARD, drawnCard, rival), drawStep);
+        Ability source = stub(Ability.class, values("getSourceId", UUID.randomUUID()));
+        recorder.watch(new DrewCardEvent(drawnCard, own, source, null), drawStep);
+        assertEquals(0, gson.toJsonTree(feed.sequenceEvidence(own)).getAsJsonObject().get("lastDrawTurn").getAsInt());
+        recorder.watch(event(GameEvent.EventType.DREW_CARD, drawnCard, own), drawStep);
+        JsonObject ownProjection = gson.toJsonTree(feed.sequenceEvidence(own)).getAsJsonObject();
+        assertEquals(5, ownProjection.get("lastDrawTurn").getAsInt());
+        assertFalse(ownProjection.toString().contains(drawnCard.toString()));
+        assertEquals(0, gson.toJsonTree(feed.sequenceEvidence(rival)).getAsJsonObject().get("lastDrawTurn").getAsInt());
+        assertFalse(gson.toJsonTree(feed.sequenceEvidence()).getAsJsonObject().has("lastDrawTurn"));
+
+        feed.rollbackTo(6);
+        assertEquals(5, gson.toJsonTree(feed.sequenceEvidence(own)).getAsJsonObject().get("lastDrawTurn").getAsInt());
+        feed.rollbackTo(5);
+        assertEquals(0, gson.toJsonTree(feed.sequenceEvidence(own)).getAsJsonObject().get("lastDrawTurn").getAsInt());
+        assertEquals(3, feed.sequenceEvidence(own).getInformationRevision());
     }
     @Test public void abilityEventsCannotInventAnotherStackResolution() {
         resolvingOwn();

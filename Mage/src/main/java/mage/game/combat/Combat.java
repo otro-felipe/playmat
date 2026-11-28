@@ -382,7 +382,9 @@ public class Combat implements Serializable, Copyable<Combat> {
         attackersTappedByAttack.clear();
 
         DefenderAttackedEvent.makeAddEvents(morSetMap, attackingPlayerId, game);
-        game.addSimultaneousEvent(GameEvent.getEvent(GameEvent.EventType.DECLARED_ATTACKERS, attackingPlayerId, attackingPlayerId));
+        int declaredAttackers = morSetMap.values().stream().mapToInt(Set::size).sum();
+        game.addSimultaneousEvent(GameEvent.getEvent(GameEvent.EventType.DECLARED_ATTACKERS,
+                attackingPlayerId, null, attackingPlayerId, declaredAttackers));
         if (!game.isSimulation()) {
             Player player = game.getPlayer(attackingPlayerId);
             if (player != null) {
