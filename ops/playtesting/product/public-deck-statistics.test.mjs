@@ -75,6 +75,54 @@ async function fixture(t) {
 }
 const record = (row) => [row.n, row.wins, row.draws, row.losses]
 
+test('[PM-TOUR-VOID-AC-002] voided physical and legacy match links leave public aggregates without altering archives', { skip: !url }, async t => {
+  const { db, owner, composition, match } = await fixture(t)
+  const red = await composition(null, ['R'])
+  const blue = await composition(null, ['U'])
+  const sides = [[red, 'Red Deck Wins'], [blue, 'UR Aggro']]
+  const createCup = async name => {
+    const id = randomUUID(), a = randomUUID(), b = randomUUID()
+    await db.query(`INSERT INTO tournaments(id,name,format,organizer_id,template,cut,capacity,swiss_best_of,playoff_best_of,
+      max_agents_per_owner,coaching,break_minutes,created_at,status,stage)
+      VALUES($1,$2,'Pioneer',$3,'attendance','none',8,3,3,8,false,5,0,'finished','swiss')`, [id,name,owner])
+    await db.query(`INSERT INTO tournament_entries(id,tournament_id,owner_id,name,owner_name,engine_name,deck_id,deck_revision,
+      deck_name,opening_composition_id,opening_archetype) VALUES($1,$3,$4,'Alice','Private owner','Alice','a',1,'Fixture A',$5,'Red Deck Wins'),
+      ($2,$3,$4,'Bob','Private owner','Bob','b',1,'Fixture B',$6,'UR Aggro')`, [a,b,id,owner,red,blue])
+    const pair = async (number, { table = null, original = null, matchId = null }) => {
+      await db.query(`INSERT INTO tournament_pairings(tournament_id,round_number,stage,number,best_of,entry_a,entry_b,winner_entry,
+        table_id,original_engine_table_id,match_id,opened_at,completed,result_reason)
+        VALUES($1,$2,'swiss',1,3,$3,$4,$3,$5,$6,$7,0,true,'played')`, [id,number,a,b,table,original,matchId])
+    }
+    return { id, pair }
+  }
+  const excluded = await createCup('Fixture void')
+  const remaining = await createCup('Fixture remaining')
+  const restored = await match(sides)
+  await excluded.pair(1, { table: randomUUID(), original: restored.table })
+  const legacy = await match(sides)
+  await excluded.pair(2, { matchId: legacy.id })
+  const control = await match(sides)
+  await remaining.pair(1, { table: control.table, matchId: control.id })
+  const friendly = await match(sides)
+  await db.query("UPDATE games SET good_quality=true,winner='Alice' WHERE id=ANY($1)", [[restored.game,legacy.game,control.game,friendly.game]])
+
+  const before = await publicDeckStatistics(db, { tournamentId: excluded.id, goodQuality: true })
+  assert.deepEqual([before.matches, before.games], [2, 2])
+  await db.query('UPDATE tournaments SET voided_at=$2,void_request_id=$3 WHERE id=$1', [excluded.id,1,randomUUID()])
+  const voidReport = await publicDeckStatistics(db, { tournamentId: excluded.id })
+  assert.deepEqual([voidReport.tournamentName, voidReport.matches, voidReport.games, voidReport.rows],
+    ['Fixture void', 0, 0, []])
+  for (const goodQuality of [false,true]) {
+    const aggregate = await publicDeckStatistics(db, { goodQuality, group: 'deck', selected: red })
+    assert.deepEqual([aggregate.matches, aggregate.games, aggregate.selected.matchups[0].games], [2, 2, 2])
+    const other = await publicDeckStatistics(db, { tournamentId: remaining.id, goodQuality })
+    assert.deepEqual([other.matches, other.games], [1, 1])
+  }
+  const { rows } = await db.query('SELECT m.id,g.good_quality FROM matches m JOIN games g ON g.match_id=m.id WHERE m.id=ANY($1)', [[restored.id,legacy.id]])
+  assert.equal(rows.length, 2)
+  assert.ok(rows.every(g => g.good_quality))
+})
+
 test('[PM-STATS-QUALITY-1] mixed series contribute each good game to rankings, matchup totals and hands', { skip: !url }, async t => {
   const { db, composition, match, exclude } = await fixture(t)
   const red = await composition(null, ['R'])

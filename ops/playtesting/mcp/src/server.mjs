@@ -265,10 +265,10 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
       humanTableId: Uuid.optional().describe('Supply the opted-in table ID on every call for the Human Player. Omit to use the MCP Player.') };
     const tournamentManagement = scope === 'tournaments:manage';
     const accountMutation = tournamentManagement || name === 'rename_player_slot';
-    const idempotent = ['create_tournament', 'start_tournament', 'stop_tournament', 'release_stale_tournament_reservation', 'rename_player_slot'].includes(name);
+    const idempotent = ['create_tournament', 'start_tournament', 'stop_tournament', 'void_tournament', 'release_stale_tournament_reservation', 'rename_player_slot'].includes(name);
     inputSchema = accountMutation ? z.strictObject(inputSchema) : { ...inputSchema, playerId: Uuid.optional().describe('Persistent Thoughtseize player ID from list_players. Supply it on each seat call when your connection controls named players. A profile-bound grant keeps its own player when omitted. Use game object IDs for targets inside actions.') };
     mcp.registerTool(name, { description, inputSchema, annotations: { readOnlyHint, ...(idempotent && { idempotentHint: true }),
-      ...(name === 'stop_tournament' && { destructiveHint: true }) },
+      ...(['stop_tournament', 'void_tournament'].includes(name) && { destructiveHint: true }) },
       _meta: { securitySchemes: scopes.map(value => ({ type: 'oauth2', scopes: [value] })) },
     }, async (args, extra) => {
       try {
@@ -488,6 +488,11 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
     requestId: Uuid.describe('A fresh UUID v4 for this stop, reused on retries.'),
     expectedRound: z.number().int().min(0).max(32).describe('The observed roundNumber from get_tournament, or zero during registration.'),
   }, 'tournaments:manage', args => fromProduct('stop_tournament', args));
+  tool('void_tournament', 'Annul the exact finished tournament you organized after an explicit request. Excludes its matches from ordinary history and statistics and retains the archive. Requires the administrator account connection with tournaments:manage. Use the original requestId for retries.', {
+    tournamentId: Uuid,
+    requestId: Uuid.describe('A fresh UUID v4 for this annulment, reused on retries.'),
+    expectedStatus: z.literal('finished').describe('Confirm the observed finished status with get_tournament.'),
+  }, 'tournaments:manage', args => fromProduct('void_tournament', args));
   tool('inspect_tournament_reservations', 'Inspect reservation availability for your own agent entrants in a tournament you organize. A stale row includes exact arguments for a separate release call. Uses your administrator account connection with tournaments:manage.', {
     tournamentId: Uuid,
   }, 'tournaments:manage', args => fromProduct('inspect_tournament_reservations', args), true);
@@ -507,7 +512,8 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
     limit: z.number().int().min(1).max(64).default(16),
   }, 'play', async ({ tournamentId, section, roundNumber, entryId, offset, limit }) => {
     const event = await fromProduct('get_tournament', { tournamentId });
-    const summary = { tournamentId, name:event.name, status:event.status, stage:event.stage, roundNumber:event.roundNumber, roundsTotal:event.roundsTotal, cutSize:event.cutSize, championId:event.championId };
+    const summary = { tournamentId, name:event.name, status:event.status, stage:event.stage, roundNumber:event.roundNumber, roundsTotal:event.roundsTotal, cutSize:event.cutSize, championId:event.championId,
+      ...(event.voidedAt != null && { voidedAt: event.voidedAt }) };
     if (section === 'deck') {
       if (!entryId) throw new ToolError('invalid_input', 'Supply an entryId from standings.');
       const deck = event.deckLists.find(item => item.entryId === entryId);

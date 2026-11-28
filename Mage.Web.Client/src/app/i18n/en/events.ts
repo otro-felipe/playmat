@@ -1,6 +1,11 @@
 /** English for the Events screen and its host dialog, which load with the screen. */
 export default {
   "cup.cancelled": "Cancelled",
+  "cup.voided": "Annulled",
+  "cup.voidTournament": "Annul tournament",
+  "cup.confirmVoidTitle": "Annul this tournament?",
+  "cup.confirmVoidDescription": "The matches will be omitted from history and statistics. Replays will be kept for audit.",
+  "cup.confirmVoid": "Confirm annulment",
   "cup.matchWinner": "Winner: {name}",
   "cup.absence": "Waiting for {names}",
   "cup.bracket": "Playoff bracket",

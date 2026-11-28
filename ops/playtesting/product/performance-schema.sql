@@ -47,6 +47,6 @@ CREATE TABLE IF NOT EXISTS match_statistics_exclusions (
 
 CREATE OR REPLACE VIEW statistically_eligible_matches AS
 SELECT m.* FROM matches m
-WHERE m.status='completed' AND NOT EXISTS (
+WHERE m.status='completed' AND NOT tournament_match_is_voided(m.table_id,m.id) AND NOT EXISTS (
   SELECT 1 FROM match_statistics_exclusions x WHERE x.match_id=m.id
 );

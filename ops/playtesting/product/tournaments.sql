@@ -17,6 +17,8 @@ ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS start_player_count integer;
 ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS start_requested_at bigint;
 ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS stop_request_id uuid;
 ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS stop_requested_at bigint;
+ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS void_request_id uuid;
+ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS voided_at bigint;
 CREATE UNIQUE INDEX IF NOT EXISTS tournament_creation_request ON tournaments(organizer_id,creation_request_id)
   WHERE creation_request_id IS NOT NULL;
 
@@ -58,7 +60,8 @@ CREATE INDEX IF NOT EXISTS tournament_pairings_match_id ON tournament_pairings(m
 -- even after an individual match has finished.
 CREATE OR REPLACE VIEW published_tournament_entries AS
 SELECT e.id AS entry_id FROM tournament_entries e JOIN tournaments t ON t.id=e.tournament_id
-WHERE e.state<>'absent' AND (t.status='finished' OR (t.stage='playoffs' AND e.qualified_seed IS NOT NULL));
+WHERE e.state<>'absent' AND (t.status='finished' OR t.voided_at IS NOT NULL
+  OR (t.stage='playoffs' AND e.qualified_seed IS NOT NULL));
 
 ALTER TABLE tournament_pairings ADD COLUMN IF NOT EXISTS original_engine_table_id uuid;
 
@@ -90,6 +93,15 @@ INSERT INTO tournament_pairing_tables(table_id,pairing_id)
   ON CONFLICT(table_id) DO NOTHING;
 CREATE OR REPLACE FUNCTION tournament_pairing_for_table(match_table uuid) RETURNS uuid LANGUAGE sql STABLE STRICT AS $$
   SELECT pairing_id FROM tournament_pairing_tables WHERE table_id=match_table
+$$;
+CREATE OR REPLACE FUNCTION tournament_match_is_voided(match_table uuid, archived_match uuid) RETURNS boolean LANGUAGE sql STABLE AS $$
+  SELECT COALESCE(
+    (SELECT t.voided_at IS NOT NULL FROM tournament_pairing_tables physical
+      JOIN tournament_pairings p ON p.id=physical.pairing_id JOIN tournaments t ON t.id=p.tournament_id
+      WHERE physical.table_id=match_table),
+    (SELECT bool_or(t.voided_at IS NOT NULL) FROM tournament_pairings p
+      JOIN tournaments t ON t.id=p.tournament_id WHERE p.match_id=archived_match),
+    false)
 $$;
 CREATE OR REPLACE FUNCTION match_deck_published(match_table uuid,seat_key text)
 RETURNS boolean LANGUAGE sql STABLE AS $$

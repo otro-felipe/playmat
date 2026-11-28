@@ -54,7 +54,8 @@ const eligibleMatches = `
     FROM attributed a JOIN tournaments t ON t.id=a.tournament_id
     JOIN tournament_entries ea ON ea.id=a.entry_a JOIN tournament_entries eb ON eb.id=a.entry_b
     JOIN published_tournament_entries pa ON pa.entry_id=ea.id JOIN published_tournament_entries pb ON pb.entry_id=eb.id
-    WHERE a.completed AND a.result_reason IN ('played','afk') AND ($1::uuid IS NULL OR t.id=$1)
+    WHERE t.voided_at IS NULL AND a.completed AND a.result_reason IN ('played','afk')
+      AND ($1::uuid IS NULL OR t.id=$1)
       AND (a.official_match IS NULL OR a.official_match=a.id)
       AND a.names @> ARRAY[lower(ea.engine_name),lower(eb.engine_name)]
       AND (a.winner_entry IS NULL OR a.winner_entry IN (ea.id,eb.id))

@@ -64,6 +64,7 @@ export function summary(t) {
     roundsTotal: t.rounds_total,
     cutSize: t.cut_size,
     championId: t.champion_id,
+    voidedAt: timestamp(t.voided_at),
     deadlineAt: timestamp(t.deadline_at),
     nextRoundAt: timestamp(t.next_round_at),
     nextSessionAt: timestamp(t.next_session_at),
@@ -119,6 +120,7 @@ export async function view(db, t, actor, now, onlineMs) {
     ...summary(t),
     viewer: {
       isAdmin: actor?.isAdmin === true && !actor.agent,
+      canVoid: actor?.isAdmin === true && !actor.agent && t.organizer_id === actor.accountId && t.status === 'finished' && t.voided_at === null,
       accountName: actor?.username ?? null,
       entryIds: players
         .filter((p) => p.ownerId === actor?.accountId && (!actor.agent || p.playerId === actor.playerId))

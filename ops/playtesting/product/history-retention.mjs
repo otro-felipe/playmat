@@ -1,6 +1,6 @@
 import { normalize, ProductError, transaction } from './decks.mjs'
 
-function lockRetention(db) {
+export function lockHistoryRetention(db) {
   return db.query("SELECT pg_advisory_xact_lock(hashtextextended(current_schema() || ':match-history-retention',0))")
 }
 
@@ -11,7 +11,7 @@ export function setUnlimitedMatchHistory(pool, usernames, unlimited) {
   }
   const names = [...new Set(usernames.map(normalize))].sort()
   return transaction(pool, async db => {
-    await lockRetention(db)
+    await lockHistoryRetention(db)
     const { rowCount } = await db.query('UPDATE accounts SET unlimited_match_history=$2 WHERE username_key=ANY($1::text[])',
       [names, unlimited])
     if (rowCount !== names.length) throw new ProductError(404, 'One or more history exemption accounts were not found')
@@ -24,14 +24,14 @@ export async function resetMatchHistory(pool, username, throughMs) {
     throw new ProductError(400, 'Supply an account and a history cutoff in the past')
   }
   return transaction(pool, async db => {
-    await lockRetention(db)
+    await lockHistoryRetention(db)
     const { rows: [account] } = await db.query('SELECT id FROM accounts WHERE username_key=$1 FOR UPDATE', [normalize(username)])
     if (!account) throw new ProductError(404, 'History account was not found')
     const { rows: [counts] } = await db.query(`SELECT
         count(*) FILTER (WHERE COALESCE(m.ended_at,m.started_at)<=$2)::int AS hidden,
         count(*) FILTER (WHERE COALESCE(m.ended_at,m.started_at)>$2)::int AS remaining
       FROM retained_match_history h JOIN matches m ON m.id=h.match_id
-      WHERE h.account_id=$1 AND m.status<>'active'`, [account.id, throughMs])
+      WHERE h.account_id=$1 AND m.status<>'active' AND NOT tournament_match_is_voided(m.table_id,m.id)`, [account.id, throughMs])
     await db.query('UPDATE accounts SET history_cleared_through_ms=GREATEST(history_cleared_through_ms,$2) WHERE id=$1',
       [account.id, throughMs])
     return { hidden: counts.hidden, remainingClosed: counts.remaining }
@@ -40,9 +40,10 @@ export async function resetMatchHistory(pool, username, throughMs) {
 
 export async function pruneMatchHistory(pool, protectedMatches) {
   await transaction(pool, async db => {
-    await lockRetention(db)
+    await lockHistoryRetention(db)
     const { rows } = await db.query(`SELECT m.id FROM matches m
       WHERE m.status<>'active' AND m.id<>ALL($1::uuid[])
+        AND NOT tournament_match_is_voided(m.table_id,m.id)
         AND NOT EXISTS(SELECT 1 FROM games g WHERE g.match_id=m.id AND g.status='active')
         AND NOT EXISTS(SELECT 1 FROM match_history_retention_window retained WHERE retained.match_id=m.id)
       ORDER BY m.started_at,m.id LIMIT 50 FOR UPDATE OF m SKIP LOCKED`, [[...protectedMatches]])

@@ -7,6 +7,11 @@ import type { Catalog } from './locales';
  */
 const es: Catalog = {
   "cup.cancelled": "Cancelado",
+  "cup.voided": "Anulado",
+  "cup.voidTournament": "Anular torneo",
+  "cup.confirmVoidTitle": "¿Anular este torneo?",
+  "cup.confirmVoidDescription": "Las partidas quedarán fuera del historial y las estadísticas. Los replays se conservarán para auditoría.",
+  "cup.confirmVoid": "Confirmar anulación",
   "cup.matchWinner": "Ganador: {name}",
   "cup.absence": "Esperando a {names}",
   "cup.bracket": "Llaves de eliminación",

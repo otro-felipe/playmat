@@ -1,8 +1,9 @@
-import { useState, type FormEvent, type ReactNode } from 'react';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { useT } from '../i18n';
 import { Button, ButtonLink } from '../ui/Button';
+import { Dialog } from '../ui/Dialog';
 import { Zone } from '../ui/Zone';
 import {
   request,
@@ -337,6 +338,45 @@ function RetryFailedStart({ cup, candidates, refresh }: { cup: Tournament; candi
   );
 }
 
+function VoidCompletedTournament({ cup, refresh }: { cup: Tournament; refresh(): void }) {
+  const t = useT();
+  const client = useQueryClient();
+  const trigger = useRef<HTMLButtonElement>(null);
+  const requestId = useRef<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const action = useMutation({
+    mutationFn: (id: string) => request(tournamentApi + '/' + encodeURIComponent(cup.id) + '/void', {
+      requestId: id,
+      expectedStatus: 'finished',
+    }),
+    onSuccess: () => {
+      setOpen(false);
+      refresh();
+      for (const queryKey of [['tournament-list'], ['tournament-owner'], ['playtesting-history'],
+        ['playtesting-performance'], ['replays'], ['finishedMatches'], ['/api/playtesting/statistics'],
+        [tournamentApi + '/' + encodeURIComponent(cup.id) + '/statistics']]) {
+        void client.invalidateQueries({ queryKey });
+      }
+    },
+  });
+  return <>
+    <Button ref={trigger} variant="danger" disabled={action.isSuccess} onClick={() => setOpen(true)}>
+      {t('cup.voidTournament')}
+    </Button>
+    <Dialog open={open} onOpenChange={setOpen} returnFocusRef={trigger} width="sm"
+      title={t('cup.confirmVoidTitle')} description={t('cup.confirmVoidDescription')}
+      dismissible={!action.isPending} footer={<>
+        <Button disabled={action.isPending} onClick={() => setOpen(false)}>{t('cup.cancel')}</Button>
+        <Button variant="danger" busy={action.isPending} onClick={() => {
+          requestId.current ??= crypto.randomUUID();
+          action.mutate(requestId.current);
+        }}>{t('cup.confirmVoid')}</Button>
+      </>}>
+      {action.error && <p role="alert" className={styles.error}>{action.error.message}</p>}
+    </Dialog>
+  </>;
+}
+
 export function AdminControls({ cup, refresh }: { cup: Tournament; refresh(): void }) {
   const t = useT();
   const [when, setWhen] = useState('');
@@ -355,7 +395,10 @@ export function AdminControls({ cup, refresh }: { cup: Tournament; refresh(): vo
   const candidates = cup.status === 'playing' ? cup.pairings.filter(
     (p) => p.roundNumber === cup.roundNumber && p.b && p.tableId && !p.completed && !p.matchId,
   ) : [];
-  if (cup.status === 'finished' || cup.status === 'cancelled' || (cup.status === 'playing' && !candidates.length)) {
+  if (cup.status === 'finished') {
+    return cup.viewer?.canVoid ? <Zone label={t('cup.admin')}><VoidCompletedTournament key={cup.id} cup={cup} refresh={refresh} /></Zone> : null;
+  }
+  if (cup.status === 'cancelled' || (cup.status === 'playing' && !candidates.length)) {
     return null;
   }
   return (

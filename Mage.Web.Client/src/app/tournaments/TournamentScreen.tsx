@@ -138,7 +138,7 @@ function TournamentState({ cup }: { cup: Tournament }) {
             </div>
           </div>
         ) : (
-          <strong className={styles.status}>{t(`cup.${cup.status}`)}</strong>
+          <strong className={styles.status}>{t(cup.voidedAt != null ? 'cup.voided' : `cup.${cup.status}`)}</strong>
         )}
         {cup.status === 'registration' || !cup.roundNumber ? (
           <p>{t('cup.count', { count: cup.participants.length, capacity: cup.capacity })}</p>

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { authorizeTournamentCreator, authorizeTournamentManagement, requireTournamentAdmin } from './tournament-access.mjs'
 import { ProductError, getDeck, isUuid, normalizeFormat, transaction } from './decks.mjs'
+import { lockHistoryRetention } from './history-retention.mjs'
 import { tournamentStructure } from './tournament-rules.mjs'
 import { declaredRuntime, readPlayerRuntime } from './player-runtime.mjs'
 import {
@@ -78,7 +79,8 @@ export function createTournamentService(
   }
   async function list() {
     const { rows } = await pool.query(`SELECT t.*,COUNT(e.id)::integer AS count FROM tournaments t
-      LEFT JOIN tournament_entries e ON e.tournament_id=t.id GROUP BY t.id ORDER BY t.created_at DESC,t.id`)
+      LEFT JOIN tournament_entries e ON e.tournament_id=t.id WHERE t.voided_at IS NULL
+      GROUP BY t.id ORDER BY t.created_at DESC,t.id`)
     return rows.map((t) => ({ ...summary(t), registeredCount: t.count }))
   }
   async function create(actor, input) {
@@ -321,6 +323,45 @@ export function createTournamentService(
       const { rows: [cleanup] } = await db.query(`SELECT count(*)::int AS count FROM tournament_pairings
         WHERE tournament_id=$1 AND NOT completed AND NOT cleanup_done`, [t.id])
       return { tournamentId: t.id, requestId, expectedRound, stopped: true, stoppedAt, pendingTables: cleanup.count }
+    })
+  }
+  async function voidTournament(id, actor, input) {
+    validId(id)
+    const { requestId: supplied, expectedStatus } = input
+    if (typeof supplied !== 'string' || !uuidV4.test(supplied) || expectedStatus !== 'finished'
+      || Object.keys(input).some(key => key !== 'requestId' && key !== 'expectedStatus')) {
+      throw new ProductError(400, 'Provide a UUID version 4 annulment request ID and expectedStatus finished')
+    }
+    const requestId = supplied.toLowerCase()
+    return transaction(pool, async db => {
+      await lockHistoryRetention(db)
+      if (actor?.agent) await authorizeTournamentManagement(db, actor)
+      else {
+        requireTournamentAdmin(actor)
+        if (!actor.browserSession) throw new ProductError(403, 'A signed-in administrator is required')
+        const { rowCount } = await db.query('SELECT id FROM accounts WHERE id=$1 AND enabled AND tournament_admin FOR SHARE', [actor.accountId])
+        if (!rowCount) throw new ProductError(403, 'Tournament administration is unavailable')
+      }
+      const t = await tournamentRow(db, id, 'FOR UPDATE')
+      if (t.organizer_id !== actor.accountId) throw new ProductError(404, 'Tournament not found')
+      let voidedAt = timestamp(t.voided_at)
+      if (t.void_request_id !== requestId) {
+        if (t.status !== expectedStatus || t.voided_at !== null) throw new ProductError(409, 'This tournament is not eligible for annulment')
+        // Fence late results and checkpoint restore before relying on the archived links.
+        await db.query('SELECT id FROM tournament_pairings WHERE tournament_id=$1 FOR UPDATE', [t.id])
+        const { rows: [{ unsettled }] } = await db.query(`WITH event_matches AS (
+          SELECT match_id AS id FROM tournament_pairings WHERE tournament_id=$1 AND match_id IS NOT NULL
+          UNION SELECT m.id FROM tournament_pairings p JOIN tournament_pairing_tables physical ON physical.pairing_id=p.id
+            JOIN matches m ON m.table_id=physical.table_id WHERE p.tournament_id=$1
+        ) SELECT EXISTS(SELECT 1 FROM tournament_pairings WHERE tournament_id=$1 AND NOT completed)
+          OR EXISTS(SELECT 1 FROM event_matches e JOIN matches m ON m.id=e.id WHERE m.status='active')
+          OR EXISTS(SELECT 1 FROM event_matches e JOIN games g ON g.match_id=e.id WHERE g.status='active') AS unsettled`, [t.id])
+        if (unsettled) throw new ProductError(409, 'This tournament still has unfinished pairings or active games')
+        voidedAt = clock()
+        await db.query(`UPDATE tournaments SET status='cancelled',champion_id=NULL,deadline_at=NULL,
+          next_round_at=NULL,next_session_at=NULL,void_request_id=$2,voided_at=$3 WHERE id=$1`, [t.id, requestId, voidedAt])
+      }
+      return { tournamentId: t.id, requestId, expectedStatus, status: 'cancelled', voidedAt }
     })
   }
   async function action(id, actor, input) {
@@ -636,7 +677,7 @@ export function createTournamentService(
       e.provider,e.model,e.reasoning_effort AS "reasoningEffort",
       CASE WHEN e.player_id IS NULL THEN 'human' ELSE 'agent' END AS kind,COALESCE(t.champion_id=e.id,false) AS champion
       FROM tournament_entries e JOIN tournaments t ON t.id=e.tournament_id
-      WHERE e.owner_id=$1 AND e.state<>'absent' ORDER BY t.created_at DESC,e.name`,
+      WHERE e.owner_id=$1 AND e.state<>'absent' AND t.voided_at IS NULL ORDER BY t.created_at DESC,e.name`,
       [owner.id],
     )
     return { owner: owner.username, agents:agents.map(withRuntime), participations:participations.map(withRuntime),
@@ -650,6 +691,7 @@ export function createTournamentService(
     wait,
     start,
     stop,
+    voidTournament,
     action,
     bindTable,
     acceptTable,

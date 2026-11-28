@@ -535,13 +535,14 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
     return { seats: viewerNames(actor), profiles }
   }
 
-  async function authorizedGame(actor, id) {
+  async function authorizedGame(actor, id, { includeVoided = true } = {}) {
     if (!isUuid(id)) throw new ProductError(404, 'Replay not found')
     const { seats, profiles } = await historySeats(actor)
     const { rows: [game] } = await pool.query(
       `${selectGame(4)} JOIN retained_match_history h ON h.match_id=m.id AND h.account_id=$3
-       WHERE g.id=$2 AND EXISTS(SELECT 1 FROM game_players p WHERE p.game_id=g.id AND ${viewerSeat(4)})`,
-      [seats, id, actor.accountId, profiles],
+       WHERE g.id=$2 AND ($5::boolean OR NOT tournament_match_is_voided(m.table_id,m.id))
+       AND EXISTS(SELECT 1 FROM game_players p WHERE p.game_id=g.id AND ${viewerSeat(4)})`,
+      [seats, id, actor.accountId, profiles, includeVoided],
     )
     if (!game) throw new ProductError(404, 'Replay not found')
     return game
@@ -585,7 +586,7 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
     return rows.length === 1 && rows[0].previousCompleted ? rows[0] : null
   }
 
-  async function matchList(actor, opts = {}) {
+  async function matchList(actor, opts = {}, { includeVoided = false } = {}) {
     const [older, earlierMatch] = parseCursor(opts.cursor)
     const format = historyFormatFilter(opts.format)
     const limit = Math.max(1, Math.min(100, Number.parseInt(opts.limit ?? '25', 10) || 25))
@@ -595,14 +596,16 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
     // Profile ownership extends completed score lookup and the replay viewer seat.
     const resultSeat = viewerSeat(3)
     const { rows } = await pool.query(
-      `SELECT m.*, x.reason, x.author, x.marked_at FROM matches m JOIN retained_match_history h ON h.match_id=m.id AND h.account_id=$2
+      `SELECT m.*, x.reason, x.author, x.marked_at, tournament_match_is_voided(m.table_id,m.id) AS tournament_voided
+       FROM matches m JOIN retained_match_history h ON h.match_id=m.id AND h.account_id=$2
        LEFT JOIN match_statistics_exclusions x ON x.match_id=m.id
        WHERE ($4::text IS NULL OR COALESCE(m.format,m.engine_format,'Unknown')=$4)
          AND ($5::bigint IS NULL OR (m.started_at,m.id)<($5,$6::uuid))
          AND ($8::uuid IS NULL OR m.id=$8)
+         AND ($9::boolean OR NOT tournament_match_is_voided(m.table_id,m.id))
          AND EXISTS(SELECT 1 FROM games g JOIN game_players p ON p.game_id=g.id WHERE g.match_id=m.id AND ${resultSeat})
        ORDER BY m.started_at DESC,m.id DESC LIMIT $7`,
-      [seats, actor.accountId, profileSeats, format, older, earlierMatch, limit + 1, matchId],
+      [seats, actor.accountId, profileSeats, format, older, earlierMatch, limit + 1, matchId, includeVoided && matchId !== null],
     )
     const page = rows.slice(0, limit)
     const { rows: games } = await pool.query(
@@ -614,7 +617,8 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
       matches: page.map(m => ({
         id: m.id, tableId: m.table_id, name: m.name, format: m.format ?? m.engine_format ?? 'Unknown', status: m.status, winner: m.winner,
         startedAt: Number(m.started_at), endedAt: m.ended_at ? Number(m.ended_at) : null,
-        statisticsExclusion: exclusionView(m), canExcludeFromStatistics: !actor.agent && m.status !== 'active' && !m.reason,
+        statisticsExclusion: exclusionView(m),
+        canExcludeFromStatistics: !actor.agent && m.status !== 'active' && !m.reason && !m.tournament_voided,
         ...(views => ({ endCause: matchEndCause(m, views), games: views }))(games.filter(g => g.match_id === m.id).map(gameView)),
       })),
       cursor: rows.length > limit ? cursorFrom(page.at(-1)) : null,
@@ -665,7 +669,7 @@ export function createArchive(pool, stage, backend, { purgeExpiredHistory = fals
     if (!Array.isArray(ids) || !ids.length || ids.length > maxEntries || ids.some(id => !isUuid(id))) {
       throw new ProductError(400, 'Select up to ' + maxEntries + ' valid replay game IDs')
     }
-    return Promise.all([...new Set(ids)].map(id => authorizedGame(actor, id)))
+    return Promise.all([...new Set(ids)].map(id => authorizedGame(actor, id, { includeVoided: false })))
   }
 
   async function exportReplays(actor, ids) {

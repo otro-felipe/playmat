@@ -1276,6 +1276,63 @@ test('[PM-AC-21] history retains twenty completed matches per account across its
   assert.equal((await list(exempt)).matches.length, 21)
 })
 
+test('[PM-TOUR-VOID-AC-002] voided matches leave ordinary history, export and private statistics while preserving exact authorized archives', { skip: !databaseUrl }, async t => {
+  const objects = new Map()
+  const f = await fixture(t, objects)
+  const own = await signIn(f, 'VoidOwner')
+  const outsider = await signIn(f, 'VoidOutsider')
+  const url = '/api/playtesting/'
+  const time = Date.now()
+  const voided = await historyMatch(f, ['VoidOwner', 'VoidOpponent'], time)
+  await f.product.archiveGames()
+  const handle = await f.path(url + 'exports', json('POST', own, { gameIds: voided.games, mode: 'handle' }))
+  assert.equal(handle.status, 201)
+  const { path: exportPath } = await handle.json()
+  const retained = []
+  for (let i = 0; i < 20; i++) retained.push(await historyMatch(f, ['VoidOwner', 'VoidOpponent'], time - 100 - i))
+  await f.product.archiveGames()
+
+  const list = async (query = '') => (await (await f.path(url + 'matches' + query, { headers: own })).json()).matches.map(m => m.id)
+  assert.deepEqual(await list(), [voided.id, ...retained.slice(0, 19).map(m => m.id)])
+  const cupId = await withTestDatabase(f, async db => {
+    const { rows: [{ id: owner }] } = await db.query("SELECT id FROM accounts WHERE username_key='voidowner'")
+    const cup = randomUUID(), a = randomUUID(), b = randomUUID()
+    await db.query(`INSERT INTO tournaments(id,name,format,organizer_id,template,cut,capacity,swiss_best_of,playoff_best_of,
+      max_agents_per_owner,coaching,break_minutes,created_at,status,stage)
+      VALUES($1,'Voided fixture','Pioneer',$2,'attendance','none',8,3,3,8,false,5,$3,'finished','swiss')`, [cup,owner,time])
+    await db.query(`INSERT INTO tournament_entries(id,tournament_id,owner_id,name,owner_name,engine_name,deck_id,deck_revision,deck_name)
+      VALUES($1,$3,$4,'VoidOwner','Fixture','VoidOwner','deck-a',1,'Fixture A'),
+      ($2,$3,$4,'VoidOpponent','Fixture','VoidOpponent','deck-b',1,'Fixture B')`, [a,b,cup,owner])
+    await db.query(`INSERT INTO tournament_pairings(tournament_id,round_number,stage,number,best_of,entry_a,entry_b,table_id,
+      match_id,opened_at,completed,result_reason) VALUES($1,1,'swiss',1,3,$2,$3,$4,$4,$5,true,'played')`, [cup,a,b,voided.id,time])
+    await db.query('UPDATE tournaments SET voided_at=$2,void_request_id=$3 WHERE id=$1', [cup,time,randomUUID()])
+    return cup
+  })
+  const normal = retained.map(m => m.id)
+  assert.deepEqual(await list(), normal, 'a voided match gives its ordinary history slot back')
+  assert.deepEqual(await list('?id=' + voided.id), [])
+  const legacy = await f.path('/internal/legacy', json('POST', { 'X-Playmat-Engine-User': 'VoidOwner' }, { method: 'replayList' }))
+  assert.equal(legacy.status, 200)
+  assert.deepEqual((await legacy.json()).map(g => g.gameId), retained.flatMap(m => m.games))
+  const statistics = await f.path(url + 'tournaments/' + cupId + '/statistics?goodQuality=true')
+  assert.equal(statistics.status, 200)
+  assert.equal(statistics.headers.get('cache-control'), 'no-store')
+  const { matches: cupMatches, games: cupGames } = await statistics.json()
+  assert.deepEqual([cupMatches, cupGames], [0, 0])
+  const { totals } = await (await f.path(url + 'stats', { headers: own })).json()
+  assert.deepEqual([totals.matches, totals.games], [20, 20])
+  const performance = await (await f.path(url + 'performance?scope=all', { headers: own })).json()
+  assert.deepEqual(new Set(performance.matchIds), new Set(normal))
+  for (const route of ['matches/' + voided.id, 'review/matches/' + voided.id + '?archiveOnly=true', 'replays/' + voided.games[0]]) {
+    assert.equal((await f.path(url + route, { headers: own })).status, 200, route)
+    assert.equal((await f.path(url + route, { headers: outsider })).status, 404, route)
+  }
+  assert.equal((await f.path(exportPath, { headers: own })).status, 404)
+  assert.equal((await f.path(url + 'exports', json('POST', own, { gameIds: voided.games }))).status, 404)
+  assert.equal((await f.path(url + 'exports', json('POST', own, { gameIds: retained[0].games }))).status, 200)
+  assert.equal(objects.size, 21)
+})
+
 test('a personal history reset hides closed matches across owned seats, preserves shared replays and counts new matches', { skip: !databaseUrl }, async t => {
   const f = await fixture(t, new Map(), { purgeExpiredHistory: true })
   const felipe = await signIn(f, 'Felipe')

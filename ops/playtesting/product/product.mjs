@@ -620,7 +620,7 @@ export async function createProduct({
       requireScope(actor, 'history')
       const id = endpoint.slice('matches/'.length)
       if (!isUuid(id)) throw new ProductError(404, 'Match not found')
-      const history = await archive.matchList(actor, { id, limit: 1 })
+      const history = await archive.matchList(actor, { id, limit: 1 }, { includeVoided: true })
       const { matches: [match] } = await review.withHistory(actor, history)
       return send(res, 200, rejectMissing(match, 'Match not found'))
     }

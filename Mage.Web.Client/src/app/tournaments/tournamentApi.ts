@@ -6,6 +6,7 @@ export const tournamentApi = '/api/playtesting/tournaments';
 export const tournamentPath = (id: string) => '/tournaments/' + encodeURIComponent(id);
 export interface Viewer {
   isAdmin: boolean;
+  canVoid?: boolean;
   accountName?: string;
   username?: string;
   entryIds?: string[];
@@ -68,6 +69,7 @@ export interface Summary {
   registeredCount: number;
   status: TournamentStatus;
   roundNumber: number;
+  voidedAt?: number | null;
 }
 export interface Tournament extends Summary {
   cut: 'auto' | 'none';

@@ -15,15 +15,20 @@ WITH account_seats AS (
   FROM account_seats s
   JOIN game_players p USING (engine_key)
   JOIN games g ON g.id=p.game_id
-), position AS (
-  SELECT p.account_id, p.match_id, m.status, (a.unlimited_match_history OR a.tournament_admin) AS unlimited_match_history,
-    row_number() OVER (PARTITION BY p.account_id, (m.status='active') ORDER BY m.started_at DESC, m.id DESC) AS recent
+), visibility AS (
+  SELECT p.account_id,p.match_id,m.status,m.started_at,
+    (a.unlimited_match_history OR a.tournament_admin) AS unlimited_match_history,
+    tournament_match_is_voided(m.table_id,m.id) AS voided
   FROM participation p
   JOIN matches m ON m.id=p.match_id
   JOIN accounts a ON a.id=p.account_id
+), position AS (
+  SELECT account_id,match_id,status,unlimited_match_history,voided,
+    row_number() OVER (PARTITION BY account_id,(status='active'),voided ORDER BY started_at DESC,match_id DESC) AS recent
+  FROM visibility
 )
 SELECT account_id, match_id FROM position
-WHERE status='active' OR unlimited_match_history OR recent<=20;
+WHERE voided OR status='active' OR unlimited_match_history OR recent<=20;
 
 -- Clearing a player's screen must not make a shared archive eligible for physical deletion.
 CREATE OR REPLACE VIEW retained_match_history AS

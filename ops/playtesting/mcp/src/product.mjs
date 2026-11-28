@@ -54,9 +54,10 @@ export function createProductClient(baseUrl, publicUrl) {
         path = root + '/tournaments/' + encode(args.tournamentId);
         break;
       case 'start_tournament':
-      case 'stop_tournament': {
+      case 'stop_tournament':
+      case 'void_tournament': {
         const { tournamentId, ...expected } = args;
-        const action = name === 'start_tournament' ? 'start' : 'stop';
+        const action = name.slice(0, -'_tournament'.length);
         path = root + '/tournaments/' + encode(tournamentId) + '/' + action;
         config = { method: 'POST', body: expected };
         break;
@@ -209,6 +210,9 @@ export function createProductClient(baseUrl, publicUrl) {
       }
       if (name === 'stop_tournament' && response.status === 409) {
         throw new ToolError('stop_conflict', 'The stop could not be applied. Verify the current round and reuse the original requestId and expectedRound for an accepted stop.');
+      }
+      if (name === 'void_tournament' && response.status === 409) {
+        throw new ToolError('void_conflict', 'Annulment requires a finished tournament with settled pairings and games. Use the original requestId to recover an accepted annulment receipt.');
       }
       if (name === 'release_stale_tournament_reservation' && response.status === 409) {
         throw new ToolError('reservation_conflict', 'This reservation could not be verified for release. Inspect the tournament reservations again.');

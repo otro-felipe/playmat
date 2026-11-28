@@ -307,6 +307,23 @@ test('[CUP-AC-008] a cancelled table shows its status and retains other table re
   expect(complete.getByRole('link', { name: 'Full replay' }).getAttribute('href')).toBe('/saved-replay');
 });
 
+test('[PM-TOUR-VOID-AC-001] a finished tournament owner confirms annulment from administration', async () => {
+  const { view, fetcher } = mount('/tournaments/cup/admin', {
+    ...cup, status: 'finished', viewer: { ...cup.viewer, canVoid: true },
+  });
+  const open = await view.findByRole('button', { name: 'Annul tournament' });
+  fireEvent.click(open);
+  const dialog = await view.findByRole('dialog', { name: 'Annul this tournament?' });
+  expect(fetcher.mock.calls.some(([path]) => path.endsWith('/void'))).toBe(false);
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm annulment' }));
+  await waitFor(() => {
+    const request = fetcher.mock.calls.find(([path, init]) => path === root + '/cup/void' && init?.method === 'POST');
+    expect(JSON.parse(String(request?.[1]?.body))).toMatchObject({
+      expectedStatus: 'finished', requestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+    });
+  });
+});
+
 test('a finished tournament opens on its result and statistics, then lists its decks with their archetypes', async () => {
   const { view, fetcher } = mount('/tournaments/cup', {
     ...cup,
