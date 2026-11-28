@@ -176,6 +176,15 @@ public final class PvpRecovery {
         instance.tables.remove(controller.getTable().getId());
     }
 
+    public static void stopTable(UUID table) throws IOException, SQLException {
+        if (!ENABLED) return;
+        PvpRecovery service = get();
+        synchronized (service) {
+            for (UUID match : service.store.stopTable(table)) service.waiting.remove(match);
+            service.tables.remove(table);
+        }
+    }
+
     public static boolean reserved(UUID table) { return instance != null && instance.tables.containsKey(table) && instance.tables.get(table).restored != null; }
     public static boolean mayJoin(UUID table, RecoveryPrincipal principal, PlayerType type) {
         Live live = instance == null ? null : instance.tables.get(table);
@@ -221,6 +230,10 @@ public final class PvpRecovery {
         view.turn="turn".equals(context.phase) ? captured.turn : 0; view.gameNumber=context.gameNumber;
         view.status="completed".equals(captured.status) ? "completed" : claim.status;
         view.link="/recover/"+id;
+        if ("cancelled".equals(view.status)) {
+            view.message = "The tournament organizer stopped this match.";
+            return view;
+        }
         if ("live".equals(view.status) && boot.equals(claim.bootId)) {
             view.tableId=claim.tableId; view.gameId="sideboard".equals(context.phase) ? null : claim.gameId;
         }

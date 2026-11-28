@@ -37,6 +37,7 @@ export interface Pairing {
   tableId?: string;
   matchId?: string;
   completed: boolean;
+  reason?: string | null;
   winsA: number;
   winsB: number;
   draws: number;

@@ -58,6 +58,7 @@ const es: Catalog = {
   "cup.break": "Entre rondas",
   "cup.paused": "Jornada cerrada",
   "cup.finished": "Finalizado",
+  "cup.tableCancelled": "Mesa cancelada",
   "cup.round": "Ronda {n} de {total}",
   "cup.stagePlayoffs": "Eliminatorias",
   "cup.roster": "Participantes",

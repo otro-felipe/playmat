@@ -12,6 +12,8 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import pg from 'pg'
 import { createProduct } from './product.mjs'
 import { createClientRegistry } from './oauth-clients.mjs'
+import { createTournamentService } from './tournaments.mjs'
+import { storeTournamentScore } from './tournament-table-bridge.mjs'
 
 const databaseUrl = process.env.PLAYMAT_TEST_DATABASE_URL
 const issuer = 'https://playmat-oauth-fixture.example'
@@ -2030,6 +2032,117 @@ test('[CUP-AC-005] an organizer can start exactly the expected connected players
   assert.deepEqual(data(await start(ownerClient)), receipt)
   await f.product.setTournamentAdmins([visitorId])
   await denied(ownerClient, 'forbidden')
+})
+
+test('[CUP-AC-008] an opted-in organizer stops only the observed round without awarding incomplete scores', {
+  skip: !databaseUrl || process.env.PLAYMAT_OAUTH_SDK_TEST !== '1',
+}, async t => {
+  const f = await fixture(t)
+  const owner = await f.login('StopOrganizer'), visitor = await f.login('StopVisitor')
+  const account = async session => (await (await f.request('/api/playtesting/me', session)).json()).accountId
+  const ownerId = await account(owner), visitorId = await account(visitor)
+  await f.product.setTournamentAdmins([ownerId, visitorId])
+  const management = await authorizePilot(f, owner, 'tournaments:manage', undefined, false, true)
+  const noConsent = await authorizePilot(f, owner, 'play')
+  const outsider = await authorizePilot(f, visitor, 'tournaments:manage', undefined, false, true)
+  const root = '/api/playtesting/tournaments'
+  const post = (path, headers, input) => f.request(path, { ...headers, 'Content-Type': 'application/json' }, input)
+  const create = await post(root, management, { name: 'Stop Swiss', format: 'Pioneer', cut: 'none', capacity: 6, requestId: randomUUID() })
+  assert.equal(create.status, 201)
+  const { id } = await create.json()
+  const db = new pg.Pool({ connectionString: databaseUrl, options: '-c search_path=' + f.schema })
+  t.after(() => db.end())
+  const entries = []
+  for (let i = 0; i < 6; i++) {
+    const name = 'Stop Pilot ' + i
+    const { playerId, engineName } = await (await post('/api/playtesting/players', owner, { displayName: name, mcpEnabled: true })).json()
+    const { rows } = await db.query(`INSERT INTO tournament_entries(tournament_id,owner_id,player_id,name,owner_name,
+      engine_name,deck_id,deck_revision,deck_name,last_seen) VALUES ($1,$2,$3,$4,'StopOrganizer',$5,'fixture-deck',1,'Fixture',$6) RETURNING id`,
+    [id, ownerId, playerId, name, engineName, Date.now()])
+    entries.push({ entryId: rows[0].id, playerId, engineName })
+  }
+  assert.equal((await post(`${root}/${id}/start`, management, { requestId: randomUUID(), expectedPlayers: 6 })).status, 200)
+  const publicState = async () => (await f.request(`${root}/${id}`)).json()
+  const [played, active, pendingScore] = (await publicState()).pairings
+  await db.query(`UPDATE tournament_pairings SET completed=true,wins_a=2,match_id=$2,winner_entry=entry_a,result_reason='played' WHERE id=$1`,
+    [played.id, randomUUID()])
+  const tableId = randomUUID()
+  await db.query(`UPDATE tournament_pairings SET table_id=$2,launched=true WHERE id=$1`, [active.id, tableId])
+  const scoredTable = randomUUID(), scoredMatch = randomUUID()
+  await db.query(`UPDATE tournament_pairings SET table_id=$2,launched=true WHERE id=$1`, [pendingScore.id, scoredTable])
+  const name = entry => entries.find(row => row.entryId === entry).engineName
+  const score = (pair, physicalTable, matchId) => ({ matchId, winner: name(pair.a), tournamentScore: {
+    pairingId: pair.id, tableId: physicalTable, seatA: name(pair.a), seatB: name(pair.b), winsA: 2, winsB: 0, draws: 0,
+  } })
+  await storeTournamentScore(db, score(pendingScore, scoredTable, scoredMatch))
+  const { createMcpServer } = await import('../mcp/src/server.mjs')
+  const { createProductClient } = await import('../mcp/src/product.mjs')
+  const requireMcp = createRequire(new URL('../mcp/package.json', import.meta.url))
+  const { Client } = requireMcp('@modelcontextprotocol/sdk/client/index.js')
+  const { StreamableHTTPClientTransport } = requireMcp('@modelcontextprotocol/sdk/client/streamableHttp.js')
+  const product = createProductClient(f.endpoint, issuer)
+  const server = createMcpServer({ authorize: product.authorize, product: product.operation })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const clients = []
+  t.after(async () => {
+    await Promise.all(clients.map(client => client.close()))
+    server.closeAllConnections()
+    server.close()
+  })
+  async function connect(headers) {
+    const client = new Client({ name: 'stop-tournament-test', version: '1' })
+    clients.push(client)
+    await client.connect(new StreamableHTTPClientTransport(new URL('http://127.0.0.1:' + server.address().port + '/mcp'), {
+      requestInit: { headers },
+    }))
+    return client
+  }
+  const organizer = await connect(management)
+  const tool = (await organizer.listTools()).tools.find(item => item.name === 'stop_tournament')
+  assert.equal(tool?.annotations?.idempotentHint, true)
+  assert.deepEqual(tool._meta.securitySchemes, [{ type: 'oauth2', scopes: ['tournaments:manage'] }])
+  const args = { tournamentId: id, requestId: randomUUID(), expectedRound: 1 }
+  const stop = (client, input = args) => client.callTool({ name: 'stop_tournament', arguments: input })
+  const data = result => JSON.parse(result.content[0].text)
+  for (const [client, input, code] of [[await connect(noConsent), args, 'forbidden'],
+    [await connect(outsider), args, 'not_found'], [organizer, { ...args, expectedRound: 0 }, 'stop_conflict']]) {
+    const result = await stop(client, input)
+    assert.equal(result.isError, true)
+    assert.equal(data(result).code, code)
+  }
+  assert.equal((await publicState()).status, 'playing')
+  const attempts = await Promise.all([stop(organizer), stop(organizer)])
+  for (const result of attempts) assert.equal(result.isError, false)
+  const receipt = data(attempts[0])
+  assert.deepEqual(data(attempts[1]), receipt)
+  assert.deepEqual(receipt, { ...args, stopped: true, stoppedAt: receipt.stoppedAt, pendingTables: 2 })
+  const stopped = await publicState()
+  assert.equal(stopped.status, 'cancelled')
+  assert.equal(stopped.championId, null)
+  assert.equal(stopped.standings.reduce((total, e) => total + e.points, 0), 3)
+  assert.equal(stopped.pairings[0].winsA, 2)
+  assert.ok(stopped.pairings[0].matchId)
+  assert.equal(stopped.pairings[1].reason, 'cancelled')
+  assert.equal(stopped.pairings[1].winner, null)
+  assert.equal(stopped.pairings[1].watchUrl, undefined)
+  await storeTournamentScore(db, score(active, tableId, randomUUID()))
+  assert.equal((await db.query('SELECT 1 FROM tournament_engine_results WHERE pairing_id=$1', [active.id])).rowCount, 0)
+  const service = createTournamentService(db)
+  const [settling] = await service.pendingTables()
+  assert.equal(settling.pairingId, pendingScore.id)
+  assert.equal(settling.stopped, true)
+  await service.report(id, pendingScore.id, { tableId: scoredTable, matchId: scoredMatch, winsA: 2, winsB: 0, draws: 0 })
+  const closed = await publicState()
+  assert.equal(closed.status, 'cancelled')
+  assert.equal(closed.roundNumber, 1)
+  assert.equal(closed.standings.reduce((total, e) => total + e.points, 0), 6)
+  assert.equal(closed.pairings[2].matchId, scoredMatch)
+  assert.equal(data(await stop(organizer)).pendingTables, 1)
+  const agent = await authorizePilot(f, owner, 'play', entries[0].playerId)
+  assert.equal((await (await post(`${root}/${id}/wait`, agent, {})).json()).state, 'cancelled')
+  await f.product.setTournamentAdmins([visitorId])
+  assert.equal(data(await stop(organizer)).code, 'forbidden')
 })
 
 test('[CUP-AC-004] an opted-in organizer can inspect and release only an exact closed tournament reservation over MCP', {

@@ -290,6 +290,39 @@ export function createTournamentService(
       return { tournamentId: t.id, requestId, started: true, playerCount, roundNumber: 1, startedAt }
     })
   }
+  async function stop(id, actor, input) {
+    validId(id)
+    if (typeof input.requestId !== 'string' || !uuidV4.test(input.requestId)
+      || Object.keys(input).some(key => key !== 'requestId' && key !== 'expectedRound')) {
+      throw new ProductError(400, 'Provide a UUID version 4 stop request ID and the expected round')
+    }
+    const requestId = input.requestId.toLowerCase()
+    const expectedRound = integral(input.expectedRound, 0, 32, 'expected round')
+    return transaction(pool, async (db) => {
+      await authorizeTournamentManagement(db, actor)
+      const t = await tournamentRow(db, id, 'FOR UPDATE')
+      if (t.organizer_id !== actor.accountId) throw new ProductError(404, 'Tournament not found')
+      if (t.round_number !== expectedRound) throw new ProductError(409, 'The tournament round changed')
+      let stoppedAt = timestamp(t.stop_requested_at)
+      if (t.stop_request_id !== requestId) {
+        if (['finished', 'cancelled'].includes(t.status)) throw new ProductError(409, 'This tournament is already closed')
+        stoppedAt = clock()
+        // Fence signed scores and restore before reading the final set of unfinished pairings.
+        await db.query('SELECT id FROM tournament_pairings WHERE tournament_id=$1 AND NOT completed FOR UPDATE', [t.id])
+        await db.query(`UPDATE tournament_pairings p SET result_reason='cancelled',deadline_at=NULL,
+          attendance_observed_at=NULL WHERE p.tournament_id=$1 AND NOT p.completed
+          AND NOT EXISTS (SELECT FROM tournament_engine_results r
+            JOIN tournament_entries a ON a.id=p.entry_a JOIN tournament_entries b ON b.id=p.entry_b
+            WHERE r.pairing_id=p.id AND r.seat_a=lower(a.engine_name) AND r.seat_b=lower(b.engine_name)
+            AND tournament_pairing_for_table(r.table_id)=p.id)`, [t.id])
+        await db.query(`UPDATE tournaments SET status='cancelled',deadline_at=NULL,next_round_at=NULL,next_session_at=NULL,
+          stop_request_id=$2,stop_requested_at=$3 WHERE id=$1`, [t.id, requestId, stoppedAt])
+      }
+      const { rows: [cleanup] } = await db.query(`SELECT count(*)::int AS count FROM tournament_pairings
+        WHERE tournament_id=$1 AND NOT completed AND NOT cleanup_done`, [t.id])
+      return { tournamentId: t.id, requestId, expectedRound, stopped: true, stoppedAt, pendingTables: cleanup.count }
+    })
+  }
   async function action(id, actor, input) {
     validId(id)
     requireTournamentAdmin(actor)
@@ -347,6 +380,7 @@ export function createTournamentService(
         deadline_at=CASE WHEN table_id IS NULL AND deadline_at IS NOT NULL AND EXISTS
           (SELECT FROM tournament_pairing_tables WHERE pairing_id=$2 AND failed_start_retried_at IS NOT NULL)
           THEN $4::bigint + $5::bigint ELSE deadline_at END,
+        cleanup_done=CASE WHEN result_reason='cancelled' AND table_id IS DISTINCT FROM $3 THEN false ELSE cleanup_done END,
         table_id=$3 WHERE tournament_id=$1 AND id=$2 AND (table_id=$3 OR (table_id IS NULL AND NOT completed))
         AND NOT EXISTS (SELECT FROM tournament_pairing_tables WHERE table_id=$3 AND failed_start_retried_at IS NOT NULL)`,
         [id, pairingId, tableId, clock(), roundDurationMs],
@@ -363,6 +397,7 @@ export function createTournamentService(
       } = await db.query('SELECT * FROM tournament_pairings WHERE id=$1 AND tournament_id=$2 FOR UPDATE', [pairingId, id])
       if (!m || !m.entry_b || !m.table_id || m.table_id !== result.tableId)
         throw new ProductError(409, 'Tournament table does not match')
+      if (m.result_reason === 'cancelled') return { recorded: false }
       const a = integral(result.winsA, 0, Math.ceil(m.best_of / 2), 'game wins'),
         b = integral(result.winsB, 0, Math.ceil(m.best_of / 2), 'game wins')
       const draws = integral(result.draws ?? 0, 0, 10000, 'game draws')
@@ -439,6 +474,7 @@ export function createTournamentService(
         THEN $4::bigint + $5::bigint ELSE deadline_at END,
         launch_requested_at=COALESCE(launch_requested_at,$4::bigint)
        WHERE tournament_id=$1 AND id=$2 AND table_id=$3 AND NOT launched AND NOT completed
+         AND result_reason IS DISTINCT FROM 'cancelled'
          AND ack_a IS NOT NULL AND ack_b IS NOT NULL RETURNING deadline_at AS "deadlineAt"`,
       [id, pairingId, tableId, clock(), roundDurationMs],
     )
@@ -480,26 +516,37 @@ export function createTournamentService(
   async function closedTables() {
     const { rows } =
       await pool.query(`SELECT tournament_id AS "tournamentId",id AS "pairingId",table_id AS "tableId",result_reason AS reason
-      FROM tournament_pairings WHERE completed AND NOT cleanup_done AND table_id IS NOT NULL
-      AND result_reason IN ('double_forfeit','no_show') ORDER BY opened_at`)
+      FROM tournament_pairings WHERE NOT cleanup_done AND (result_reason='cancelled'
+      OR (completed AND table_id IS NOT NULL AND result_reason IN ('double_forfeit','no_show'))) ORDER BY opened_at`)
     return rows
   }
   async function cleanedTable(id, pairingId, tableId) {
-    await pool.query(
-      'UPDATE tournament_pairings SET cleanup_done=true WHERE tournament_id=$1 AND id=$2 AND table_id=$3 AND completed',
-      [id, pairingId, tableId],
-    )
+    await transaction(pool, async db => {
+      const { rows: [pair] } = await db.query(`UPDATE tournament_pairings SET cleanup_done=true
+        WHERE tournament_id=$1 AND id=$2 AND table_id IS NOT DISTINCT FROM $3
+        AND (completed OR result_reason='cancelled') RETURNING entry_a,entry_b,result_reason`, [id, pairingId, tableId])
+      if (!pair || !tableId) return
+      await db.query(`DELETE FROM player_table_reservations WHERE table_id=$1 AND player_id IN
+        (SELECT player_id FROM tournament_entries WHERE id IN ($2,$3))`, [tableId, pair.entry_a, pair.entry_b])
+      if (pair.result_reason === 'cancelled') {
+        await db.query(`UPDATE games g SET status='interrupted',archive_state='partial' FROM matches m
+          WHERE g.match_id=m.id AND m.table_id=$1 AND g.status='active'`, [tableId])
+        await db.query(`UPDATE matches SET status='interrupted' WHERE table_id=$1 AND status='active'`, [tableId])
+      }
+    })
   }
   async function pendingTables() {
     const { rows } =
       await pool.query(`SELECT m.id AS "pairingId",m.tournament_id AS "tournamentId",t.format,t.template,m.stage,m.best_of AS "bestOf",
+      t.status='cancelled' AS stopped,
       m.table_id AS "tableId",m.deadline_at AS "deadlineAt",a.id AS aid,b.id AS bid,
       a.engine_name AS an,b.engine_name AS bn,a.owner_id AS ao,b.owner_id AS bo,a.player_id AS ap,b.player_id AS bp,
       a.deck_id AS ad,b.deck_id AS bd,a.deck_revision AS ar,b.deck_revision AS br,
       CASE WHEN m.stage='playoffs' THEN CASE WHEN a.qualified_seed<b.qualified_seed THEN a.engine_name ELSE b.engine_name END END AS "playDrawChooser"
       FROM tournament_pairings m JOIN tournaments t ON t.id=m.tournament_id
       JOIN tournament_entries a ON a.id=m.entry_a JOIN tournament_entries b ON b.id=m.entry_b
-      WHERE NOT m.completed AND t.status='playing' ORDER BY t.created_at,m.number`)
+      WHERE NOT m.completed AND (t.status='playing' OR (t.status='cancelled' AND m.result_reason IS NULL
+        AND EXISTS (SELECT FROM tournament_engine_results r WHERE r.pairing_id=m.id))) ORDER BY t.created_at,m.number`)
     function seat(row, prefix) {
       return {
         entryId: row[prefix + 'id'],
@@ -513,6 +560,7 @@ export function createTournamentService(
     return rows.map((r) => ({
       tournamentId: r.tournamentId,
       pairingId: r.pairingId,
+      stopped: r.stopped,
       format: r.format,
       template: r.template,
       stage: r.stage,
@@ -601,6 +649,7 @@ export function createTournamentService(
     join,
     wait,
     start,
+    stop,
     action,
     bindTable,
     acceptTable,

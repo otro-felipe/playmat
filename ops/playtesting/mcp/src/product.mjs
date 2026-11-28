@@ -53,9 +53,11 @@ export function createProductClient(baseUrl, publicUrl) {
       case 'get_tournament':
         path = root + '/tournaments/' + encode(args.tournamentId);
         break;
-      case 'start_tournament': {
+      case 'start_tournament':
+      case 'stop_tournament': {
         const { tournamentId, ...expected } = args;
-        path = root + '/tournaments/' + encode(tournamentId) + '/start';
+        const action = name === 'start_tournament' ? 'start' : 'stop';
+        path = root + '/tournaments/' + encode(tournamentId) + '/' + action;
         config = { method: 'POST', body: expected };
         break;
       }
@@ -200,6 +202,9 @@ export function createProductClient(baseUrl, publicUrl) {
           throw new ToolError('attendance_changed', 'The connected player count did not match expectedPlayers. Read the current tournament standings before retrying.');
         }
         throw new ToolError('start_conflict', 'The start could not be applied. Read the tournament status and reuse the original requestId and expectedPlayers to recover its receipt.');
+      }
+      if (name === 'stop_tournament' && response.status === 409) {
+        throw new ToolError('stop_conflict', 'The stop could not be applied. Verify the current round and reuse the original requestId and expectedRound for an accepted stop.');
       }
       if (name === 'release_stale_tournament_reservation' && response.status === 409) {
         throw new ToolError('reservation_conflict', 'This reservation could not be verified for release. Inspect the tournament reservations again.');

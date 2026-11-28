@@ -36,7 +36,7 @@ export function createTournamentRoutes({
     const human = actor && !actor.agent && detail.participants.find(
       (entry) => entry.kind === 'human' && detail.viewer.entryIds.includes(entry.id),
     )
-    const seat = human && detail.pairings.find((p) => !p.completed && p.tableId && [p.a, p.b].includes(human.id))
+    const seat = human && detail.pairings.find((p) => !p.completed && p.reason !== 'cancelled' && p.tableId && [p.a, p.b].includes(human.id))
     const { rows: [game] } = seat
       ? await pool.query(
           `SELECT g.id FROM games g JOIN matches m ON m.id=g.match_id
@@ -50,7 +50,7 @@ export function createTournamentRoutes({
       const href = page + id + '/pairings/' + p.id
       return {
         ...p,
-        ...(!p.completed && { watchUrl: href + '/watch' }),
+        ...(!p.completed && p.reason !== 'cancelled' && { watchUrl: href + '/watch' }),
         ...((p.completed || actor?.isAdmin) && { replayUrl: href + '/replay' }),
         ...(p.id === seat?.id && { playUrl: game ? '/game/' + game.id : '/' }),
       }
@@ -139,10 +139,10 @@ export function createTournamentRoutes({
     const read = req.method === 'GET'
     const inspectReservations = read && operation === 'reservations' && segments.length === 2
     const releaseReservation = req.method === 'POST' && operation === 'reservations' && pairId === 'release' && segments.length === 3
-    const delegatedStart = req.method === 'POST' && operation === 'start' && segments.length === 2
+    const delegated = req.method === 'POST' && ['start', 'stop'].includes(operation) && segments.length === 2
     if (!read && !actor) throw new ProductError(401, 'Sign in to register or manage a tournament')
     if (!read && req.method !== 'POST') throw new ProductError(405, 'Use POST')
-    if (!read && !releaseReservation) requireScope(actor, delegatedStart || (!id && actor.agent) ? 'tournaments:manage' : 'play')
+    if (!read && !releaseReservation) requireScope(actor, delegated || (!id && actor.agent) ? 'tournaments:manage' : 'play')
     if (!id) {
       if (read)
         send(res, 200, {
@@ -167,7 +167,7 @@ export function createTournamentRoutes({
       )
       send(res, 200, table ?? null)
     } else if (!isUuid(id)) throw missing()
-    else if (delegatedStart) send(res, 200, await tournaments.start(id, actor, await inputObject(req)))
+    else if (delegated) send(res, 200, await tournaments[operation](id, actor, await inputObject(req)))
     else if (inspectReservations) {
       if (!actor) throw new ProductError(401, 'Sign in to manage tournament reservations')
       send(res, 200, await inspectTournamentReservations(pool, actor, id))

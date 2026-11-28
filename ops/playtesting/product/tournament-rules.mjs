@@ -47,7 +47,7 @@ export function rankStandings(players, history) {
     else p.byes++
   }
   for (const match of history) {
-    if (!match.completed || match.stage !== 'swiss') continue
+    if (!match.completed || match.stage !== 'swiss' || match.reason === 'cancelled') continue
     if (match.reason === 'double_forfeit') {
       for (const [id, opponent] of [
         [match.a, match.b],

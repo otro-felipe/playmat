@@ -21,19 +21,28 @@ import mage.server.websocket.rpc.JsonCodec;
 import java.io.IOException;
 import java.nio.file.Paths;
 import java.sql.SQLException;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /** Real XMage tables for product tournaments; no client can choose a rival's seat or registered deck. */
 public final class ChampionshipTables {
     private final ManagerFactory managers;
+    // A request already in flight must not reopen a pairing this engine just stopped.
+    private final Set<UUID> stoppedPairings = new HashSet<>();
 
     public ChampionshipTables(ManagerFactory managers) { this.managers = managers; }
 
     public synchronized JsonObject execute(JsonObject command) throws Exception {
         UUID pairing = UUID.fromString(command.get("pairingId").getAsString());
         String action = command.get("action").getAsString();
+        if ("abort".equals(action)) {
+            UUID tableId = command.get("tableId").isJsonNull() ? null : UUID.fromString(command.get("tableId").getAsString());
+            return abort(tableId, pairing);
+        }
+        if (stoppedPairings.contains(pairing) && ("prepare".equals(action) || "launch".equals(action) || "attach".equals(action))) return null;
         if ("inspectFailedStart".equals(action)) {
             return inspectFailedStart(UUID.fromString(command.get("tableId").getAsString()), pairing);
         }
@@ -83,6 +92,27 @@ public final class ChampionshipTables {
         view.addProperty("seatBOnline",online(rules.seatB) != null);
         addGameStatus(view, table, registeredTable, managers.gameManager().getGameController());
         return view;
+    }
+
+    private JsonObject abort(UUID tableId, UUID pairing) throws IOException, SQLException {
+        TableController controller = tableId == null ? managers.tableManager().getControllers().stream()
+                .filter(c -> c.getOptions() != null && c.getOptions().championship != null
+                        && pairing.equals(c.getOptions().championship.pairingId))
+                .findFirst().orElse(null) : managers.tableManager().getController(tableId).orElse(null);
+        if (controller != null && (controller.getOptions() == null || controller.getOptions().championship == null
+                || !pairing.equals(controller.getOptions().championship.pairingId))) return null;
+        stoppedPairings.add(pairing);
+        UUID physical = controller == null ? tableId : controller.getTable().getId();
+        if (physical != null) mage.server.recovery.PvpRecovery.stopTable(physical);
+        if (controller != null) controller.abortChampionship();
+        boolean remaining = physical != null && (managers.tableManager().getController(physical).isPresent()
+                || managers.gameManager().getGameController().values().stream().anyMatch(g -> physical.equals(g.getTableId())));
+        if (remaining) return null;
+        JsonObject result = new JsonObject();
+        result.addProperty("tableId", tableId == null ? null : tableId.toString());
+        result.addProperty("pairingId", pairing.toString());
+        result.addProperty("state", "UNAVAILABLE");
+        return result;
     }
 
     static void addGameStatus(JsonObject view, Table table, boolean registeredTable, Map<UUID, GameController> activeGames) {

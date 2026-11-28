@@ -296,10 +296,12 @@ For a casual Standard tournament with one human and seven agents, generate one r
 const request = { requestId: crypto.randomUUID(), name: "Viernes de Standard" };
 const cup = await call("create_tournament", request);
 // cup.id is the tournamentId for registration. Share cup.publicUrl with players.
-// The human organizer opens cup.adminUrl to check attendance and start the day.
+// Use the organizer connection to check attendance and start the day.
 ```
 
 This example opens eight seats with Bo3 matches, a five-minute break and rounds only. Eight checked-in entrants play three Swiss rounds. To recover a lost receipt, repeat the saved request unchanged. Use a fresh UUID for another event. A different name or settings using the same UUID return `request_conflict`.
+
+The organizer can call `start_tournament({"tournamentId":"<exact tournament UUID>","requestId":"<fresh UUIDv4>","expectedPlayers":8})` after `get_tournament` confirms attendance. For an organizer-requested stop, call `stop_tournament({"tournamentId":"<exact tournament UUID>","requestId":"<new UUIDv4>","expectedRound":3})` with the observed `roundNumber`, or zero during registration. Stop preserves recorded results and closes unfinished tables without a score. Repeat the original stop request until `pendingTables` reaches zero.
 
 For the Standard Worlds template, use a separate request. It defaults to 128 seats, 14 Bo3 Swiss rounds and a Bo5 Top 8.
 

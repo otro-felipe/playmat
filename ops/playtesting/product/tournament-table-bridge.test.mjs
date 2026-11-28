@@ -22,6 +22,33 @@ const assignment = {
   playerB: { engineName: 'Sol' },
 }
 
+test('[CUP-AC-008] a stopped pairing keeps its lease until the engine confirms neutral closure', async (t) => {
+  const closed = { tournamentId: randomUUID(), pairingId: randomUUID(), tableId: randomUUID(), reason: 'cancelled' }
+  let state = 'DUELING', queue = [closed]
+  const calls = [], cleaned = []
+  const server = createServer(async (req, res) => {
+    let input = ''
+    for await (const chunk of req) input += chunk
+    calls.push(JSON.parse(input))
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ tableId: closed.tableId, pairingId: closed.pairingId, state }))
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => new Promise(resolve => server.close(resolve)))
+  const bridge = createTournamentTableBridge({ query: () => assert.fail('cleanup must use the exact pairing') }, {
+    closedTables: async () => queue,
+    pendingTables: async () => [],
+    cleanedTable: async (...ids) => { cleaned.push(ids); queue = [] },
+  }, { engineUrl: 'http://127.0.0.1:' + server.address().port })
+  await bridge.tick()
+  assert.deepEqual(cleaned, [])
+  state = 'UNAVAILABLE'
+  await bridge.tick()
+  await bridge.tick()
+  assert.deepEqual(calls, Array(2).fill({ action: 'abort', tableId: closed.tableId, pairingId: closed.pairingId }))
+  assert.deepEqual(cleaned, [[closed.tournamentId, closed.pairingId, closed.tableId]])
+})
+
 test('only a native waiting table with both presence bits advances presentation time', async (t) => {
   const tableId = randomUUID()
   let code = 200
@@ -105,10 +132,10 @@ test(
     const db = await pool.connect()
     try {
       await db.query(
-        'CREATE TEMP TABLE tournament_pairings(table_id uuid,original_engine_table_id uuid,completed boolean)',
+        'CREATE TEMP TABLE tournament_pairings(table_id uuid,original_engine_table_id uuid,completed boolean,result_reason text)',
       )
       const [original, second, third] = [randomUUID(), randomUUID(), randomUUID()]
-      await db.query('INSERT INTO tournament_pairings VALUES($1,NULL,false)', [original])
+      await db.query('INSERT INTO tournament_pairings VALUES($1,NULL,false,NULL)', [original])
       await restoreTournamentTable(db, original, second)
       await restoreTournamentTable(db, original, third)
       await db.query('UPDATE tournament_pairings SET completed=true')
@@ -116,7 +143,9 @@ test(
       const {
         rows: [row],
       } = await db.query('SELECT * FROM tournament_pairings')
-      assert.deepEqual(row, { table_id: third, original_engine_table_id: original, completed: true })
+      assert.deepEqual(row, { table_id: third, original_engine_table_id: original, completed: true, result_reason: null })
+      await db.query("UPDATE tournament_pairings SET completed=false,result_reason='cancelled'")
+      await assert.rejects(restoreTournamentTable(db, original, randomUUID()), /pairing was stopped/)
     } finally {
       db.release()
       await pool.end()

@@ -7,6 +7,7 @@ import { isUuid, ProductError, transaction } from './decks.mjs'
 // both pilots before XMage can emit the first start-game callback.
 export async function reconcileTournamentTable(assignment, ops) {
   if (!assignment.tableId) {
+    if (assignment.stopped) return
     const table = await ops.prepare()
     if (table?.tableId) await ops.bind(table.tableId)
     return
@@ -16,7 +17,7 @@ export async function reconcileTournamentTable(assignment, ops) {
     await ops.report({ tableId: assignment.tableId, ...result })
     return
   }
-  if (await ops.ready()) await ops.launch(assignment.tableId)
+  if (!assignment.stopped && await ops.ready()) await ops.launch(assignment.tableId)
 }
 
 export async function storeTournamentScore(pool, marker) {
@@ -34,12 +35,13 @@ export async function storeTournamentScore(pool, marker) {
     // Serialize native scores with retirement. An unexpected marker for a
     // retired table stays in archive staging for inspection and cannot claim
     // the replacement's unique result slot.
-    const { rowCount } = await db.query(
-      `SELECT table_id FROM tournament_pairing_tables WHERE pairing_id=$1 AND table_id=$2
-       AND failed_start_retried_at IS NULL FOR SHARE`,
+    const { rows: [physical] } = await db.query(
+      `SELECT p.result_reason FROM tournament_pairing_tables x JOIN tournament_pairings p ON p.id=x.pairing_id
+       WHERE x.pairing_id=$1 AND x.table_id=$2 AND x.failed_start_retried_at IS NULL FOR SHARE OF p,x`,
       [score.pairingId, score.tableId],
     )
-    if (!rowCount) throw new Error('Tournament score belongs to an unbound or retired table')
+    if (!physical) throw new Error('Tournament score belongs to an unbound or retired table')
+    if (physical.result_reason === 'cancelled') return
     await db.query(
       `INSERT INTO tournament_engine_results(pairing_id,table_id,seat_a,seat_b,wins_a,wins_b,draws,disqualified,winner_engine_name,match_id)
       VALUES($1,$2,lower($3),lower($4),$5,$6,$7,$8,$9,$10) ON CONFLICT(pairing_id) DO NOTHING`,
@@ -63,9 +65,12 @@ export async function storeTournamentScore(pool, marker) {
 export async function restoreTournamentTable(db, original, replacement) {
   if (!isUuid(original) || !isUuid(replacement) || original === replacement)
     throw new ProductError(400, 'Invalid restored table')
+  const { rows } = await db.query(`SELECT result_reason FROM tournament_pairings
+    WHERE table_id=$1 OR original_engine_table_id=$1 FOR UPDATE`, [original])
+  if (rows.some(row => row.result_reason === 'cancelled')) throw new ProductError(409, 'The tournament pairing was stopped')
   await db.query(
     `UPDATE tournament_pairings SET table_id=$2,original_engine_table_id=COALESCE(original_engine_table_id,$1)
-    WHERE NOT completed AND (table_id=$1 OR original_engine_table_id=$1)`,
+    WHERE NOT completed AND result_reason IS DISTINCT FROM 'cancelled' AND (table_id=$1 OR original_engine_table_id=$1)`,
     [original, replacement],
   )
 }
@@ -187,8 +192,9 @@ export function createTournamentTableBridge(
     if (running) return running
     running = (async () => {
       for (const closed of await tournaments.closedTables()) {
-        await request({ action: 'cancel', tableId: closed.tableId, pairingId: closed.pairingId })
-        await pool.query('DELETE FROM player_table_reservations WHERE table_id=$1', [closed.tableId])
+        const stopped = closed.reason === 'cancelled'
+        const native = await request({ action: stopped ? 'abort' : 'cancel', tableId: closed.tableId, pairingId: closed.pairingId })
+        if (stopped && (native?.state !== 'UNAVAILABLE' || (native.tableId ?? null) !== closed.tableId || native.pairingId !== closed.pairingId)) continue
         await tournaments.cleanedTable(closed.tournamentId, closed.pairingId, closed.tableId)
       }
       const pairs = await tournaments.pendingTables()
@@ -209,7 +215,7 @@ export function createTournamentTableBridge(
       const { rowCount: entitled } = await db.query(
         `SELECT p.id FROM tournament_pairings p JOIN tournament_entries e
         ON e.id IN(p.entry_a,p.entry_b) JOIN playable_oauth_seats s ON s.player_id=e.player_id AND s.account_id=e.owner_id
-        WHERE p.id=$1 AND p.tournament_id=$2 AND p.table_id=$3 AND NOT p.completed
+        WHERE p.id=$1 AND p.tournament_id=$2 AND p.table_id=$3 AND NOT p.completed AND p.result_reason IS DISTINCT FROM 'cancelled'
           AND NOT EXISTS (SELECT 1 FROM tournament_engine_results r
             JOIN tournament_entries a ON a.id=p.entry_a JOIN tournament_entries b ON b.id=p.entry_b
             WHERE r.pairing_id=p.id AND r.seat_a=lower(a.engine_name) AND r.seat_b=lower(b.engine_name)
