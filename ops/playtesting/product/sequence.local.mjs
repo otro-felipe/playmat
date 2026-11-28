@@ -250,7 +250,7 @@ async function playPreparedTurnDecisionByDecision(state, { hangoutId, actId, att
 }
 
 async function verifyPreparedModeLine(mode, verifyArchive = false) {
-  let state = await startFixture('Isolated prepare and modal acceptance: ' + mode, prepareDeck, 77)
+  let state = await startFixture('Isolated prepare and modal acceptance: ' + mode, prepareDeck, 3)
   const battlemage = state => ownPlayer(state).battlefield.find(card => card.name === 'Pompous Battlemage')
   const hangout = state => state.ownHand.find(card => card.name === "Heroes' Hangout")
   const prepared = state => ownPlayer(state).exile.find(card => card.name === 'Improvised Act')
@@ -266,11 +266,15 @@ async function verifyPreparedModeLine(mode, verifyArchive = false) {
       && state.ownHand.some(card => card.id === choice.card.id))
     const creature = ownMain && battlemageCastTurn === undefined && freeLands(state).length
       && decision.choices.find(choice => choice.card?.name === 'Pompous Battlemage')
+    // XMage opens the standard spell picker for the physical Prepare card.
+    const creatureSpell = decision.kind === 'panel' && decision.choices.find(choice =>
+      choice.abilityType === 'SPELL' && choice.spellName === 'Pompous Battlemage')
     const mana = decision.kind === 'payMana' && decision.choices.find(choice => freeLands(state).some(card => card.id === choice.card?.id))
-    const choice = land || creature || mana || cleanupMountain(state)
+    const choice = land || creature || creatureSpell || mana || cleanupMountain(state)
       || decision.choices.find(item => /^Keep\b|^Play first\b/.test(item.label))
       || decision.choices.find(item => item.type === 'pass') || decision.choices.find(item => item.type === 'button')
-    assert.ok(choice, 'Unexpected prepare setup prompt ' + decision.kind)
+    assert.ok(choice && (decision.kind !== 'panel' || creatureSpell),
+      'Unexpected prepare setup prompt ' + decision.kind + ': ' + (decision.instruction ?? ''))
     if (!land && creature) battlemageCastTurn = state.turn
     await answer(state, choice)
     state = await waitNextOwn(decision.id)
