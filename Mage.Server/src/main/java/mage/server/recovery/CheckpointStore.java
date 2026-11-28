@@ -274,9 +274,21 @@ public final class CheckpointStore implements AutoCloseable {
 
     synchronized void finish(UUID id, String status) throws SQLException {
         if (!java.util.Arrays.asList("completed", "failed").contains(status)) throw new IllegalArgumentException();
-        try (PreparedStatement s = db.prepareStatement("UPDATE recovery_claims SET status=? WHERE match_id=? AND status<>'completed'")) {
+        try (PreparedStatement s = db.prepareStatement("UPDATE recovery_claims SET status=? WHERE match_id=? AND status NOT IN ('completed','cancelled')")) {
             s.setString(1, status); s.setString(2, id.toString()); s.executeUpdate();
         }
+    }
+
+    synchronized java.util.List<UUID> stopTable(UUID table) throws SQLException {
+        java.util.List<UUID> matches = new java.util.ArrayList<>();
+        String sql = "UPDATE recovery_claims SET status='cancelled',claim=NULL WHERE status IN ('live','waiting','restoring')"
+                + " AND (table_id=? OR match_id IN (SELECT match_id FROM checkpoints WHERE table_id=?"
+                + " UNION SELECT match_id FROM recovery_mappings WHERE table_id=? OR original_table_id=?)) RETURNING match_id";
+        try (PreparedStatement s = db.prepareStatement(sql)) {
+            for (int i=1; i<=4; i++) s.setString(i, table.toString());
+            try (ResultSet r = s.executeQuery()) { while (r.next()) matches.add(UUID.fromString(r.getString(1))); }
+        }
+        return matches;
     }
 
     synchronized Claim claim(UUID id) throws SQLException {

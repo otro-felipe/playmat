@@ -13,31 +13,34 @@ import tableStyles from './TournamentPairings.module.css';
 function PairingRow({ pair, entries, cup }: { pair: Pairing; entries: Map<string, Entry>; cup: Tournament }) {
   const t = useT();
   const labelId = useId();
-  const tiebreakWinner = pair.completed && pair.winsA === pair.winsB && pair.winner ? entries.get(pair.winner) : null;
+  const stopped = pair.reason === 'cancelled';
+  const tiebreakWinner = !stopped && pair.completed && pair.winsA === pair.winsB && pair.winner ? entries.get(pair.winner) : null;
   const a = entries.get(pair.a);
   const b = pair.b && entries.get(pair.b);
-  const live = pair.completed ? undefined : pair.watchUrl;
-  const play = !pair.completed && pair.playUrl;
-  const status = pair.completed ? pair.winsA + ' – ' + pair.winsB : t(pair.tableId ? 'cup.active' : 'cup.pending');
+  const active = !stopped && !pair.completed;
+  const live = active && pair.watchUrl;
+  const play = active && pair.playUrl;
+  const status = stopped ? t('cup.tableCancelled')
+    : pair.completed ? pair.winsA + ' – ' + pair.winsB : t(pair.tableId ? 'cup.active' : 'cup.pending');
   return (
     <li className={tableStyles.card} aria-labelledby={labelId}>
       <div className={tableStyles.heading}>
         <h4 id={labelId} className={tableStyles.tableName}>{t('cup.table', { n: pair.number })}</h4>
         {pair.b && (
-          <span className={pair.tableId && !pair.completed ? tableStyles.liveStatus : tableStyles.status}>{status}</span>
+          <span className={active && pair.tableId ? tableStyles.liveStatus : tableStyles.status}>{status}</span>
         )}
       </div>
       <div className={tableStyles.entrants}>
         {a && <Identity entry={a} />}
         {b ? <Identity entry={b} /> : <span className={styles.muted}>{t('cup.bye')}</span>}
       </div>
-      {!pair.completed && pair.tableId && pair.deadlineAt && pair.deadlineAt !== cup.deadlineAt && (
+      {active && pair.tableId && pair.deadlineAt && pair.deadlineAt !== cup.deadlineAt && (
         <p className={tableStyles.note}>
           {t('cup.tableClock')} · <Countdown at={pair.deadlineAt} expired={t('cup.extraTurns')} />
         </p>
       )}
       {tiebreakWinner && <p className={tableStyles.note}>{t('cup.matchWinner', { name: tiebreakWinner.name })}</p>}
-      {!!pair.absentWarningIds?.length && (
+      {active && !!pair.absentWarningIds?.length && (
         <p className={styles.error}>
           {t('cup.absence', {
             names: pair.absentWarningIds

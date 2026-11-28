@@ -287,6 +287,26 @@ test.each(['playing', 'finished', 'cancelled'])('[CUP-AC-002] administration hid
   expect(view.getByRole('heading', { name: 'Round tables' })).toBeTruthy();
 });
 
+test('[CUP-AC-008] a cancelled table shows its status and retains other table results', async () => {
+  const pair = { id: 'pair1', tableId: 'table1', roundNumber: 1, stage: 'swiss', number: 1, a: 'e1', b: 'e2', winsA: 0, winsB: 0, draws: 0 };
+  const { view } = mount('/tournaments/cup?tab=bracket', {
+    ...cup,
+    status: 'cancelled',
+    participants: [entrant, { ...entrant, id: 'e2', name: 'Sol' }],
+    pairings: [
+      { ...pair, reason: 'cancelled', completed: false, watchUrl: '/stale-watch' },
+      { ...pair, id: 'pair2', number: 2, winsA: 2, winsB: 1, completed: true, replayUrl: '/saved-replay' },
+    ],
+  });
+  await view.findByText('Cancelled');
+  const stopped = within(await view.findByRole('listitem', { name: 'Table 1' }));
+  expect(stopped.getByText('Table cancelled')).toBeTruthy();
+  expect(stopped.queryByRole('link', { name: 'Watch live' })).toBeNull();
+  const complete = within(view.getByRole('listitem', { name: 'Table 2' }));
+  expect(complete.getByText('2 – 1')).toBeTruthy();
+  expect(complete.getByRole('link', { name: 'Full replay' }).getAttribute('href')).toBe('/saved-replay');
+});
+
 test('a finished tournament opens on its result and statistics, then lists its decks with their archetypes', async () => {
   const { view, fetcher } = mount('/tournaments/cup', {
     ...cup,

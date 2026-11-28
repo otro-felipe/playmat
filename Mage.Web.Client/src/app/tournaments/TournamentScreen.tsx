@@ -154,7 +154,7 @@ function TournamentState({ cup }: { cup: Tournament }) {
           </p>
         )}
       </div>
-      {pairs.length > 0 && (
+      {pairs.length > 0 && cup.status !== 'cancelled' && (
         <div>
           <p>{t('cup.tablesDone', { count: finished, total: pairs.length })}</p>
           <progress aria-label={t('cup.tables')} className={styles.progress} value={finished} max={pairs.length} />

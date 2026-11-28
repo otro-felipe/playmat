@@ -265,9 +265,10 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
       humanTableId: Uuid.optional().describe('Supply the opted-in table ID on every call for the Human Player. Omit to use the MCP Player.') };
     const tournamentManagement = scope === 'tournaments:manage';
     const accountMutation = tournamentManagement || name === 'rename_player_slot';
-    const idempotent = ['create_tournament', 'start_tournament', 'release_stale_tournament_reservation', 'rename_player_slot'].includes(name);
+    const idempotent = ['create_tournament', 'start_tournament', 'stop_tournament', 'release_stale_tournament_reservation', 'rename_player_slot'].includes(name);
     inputSchema = accountMutation ? z.strictObject(inputSchema) : { ...inputSchema, playerId: Uuid.optional().describe('Persistent Thoughtseize player ID from list_players. Supply it on each seat call when your connection controls named players. A profile-bound grant keeps its own player when omitted. Use game object IDs for targets inside actions.') };
-    mcp.registerTool(name, { description, inputSchema, annotations: { readOnlyHint, ...(idempotent && { idempotentHint: true }) },
+    mcp.registerTool(name, { description, inputSchema, annotations: { readOnlyHint, ...(idempotent && { idempotentHint: true }),
+      ...(name === 'stop_tournament' && { destructiveHint: true }) },
       _meta: { securitySchemes: scopes.map(value => ({ type: 'oauth2', scopes: [value] })) },
     }, async (args, extra) => {
       try {
@@ -482,6 +483,11 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
     requestId: Uuid.describe('A fresh UUID v4 for this start, kept across retries.'),
     expectedPlayers: z.number().int().min(2).max(512).describe('The exact number of entrants who must be connected when the first round opens.'),
   }, 'tournaments:manage', args => fromProduct('start_tournament', args));
+  tool('stop_tournament', 'Stop the exact tournament you organize and close unfinished tables without awarding scores. Completed results and replays are retained. Requires your administrator account connection with tournaments:manage and explicit organizer intent. Reuse the same requestId and expectedRound to check pendingTables until it reaches zero.', {
+    tournamentId: Uuid,
+    requestId: Uuid.describe('A fresh UUID v4 for this stop, reused on retries.'),
+    expectedRound: z.number().int().min(0).max(32).describe('The observed roundNumber from get_tournament, or zero during registration.'),
+  }, 'tournaments:manage', args => fromProduct('stop_tournament', args));
   tool('inspect_tournament_reservations', 'Inspect reservation availability for your own agent entrants in a tournament you organize. A stale row includes exact arguments for a separate release call. Uses your administrator account connection with tournaments:manage.', {
     tournamentId: Uuid,
   }, 'tournaments:manage', args => fromProduct('inspect_tournament_reservations', args), true);

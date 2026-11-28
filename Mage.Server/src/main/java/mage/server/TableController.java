@@ -61,6 +61,7 @@ public class TableController {
     private Match match;
     private MatchOptions options;
     private Tournament tournament;
+    private volatile boolean championshipAborted;
 
     private ScheduledFuture<?> futureTimeout;
     protected final ScheduledExecutorService timeoutExecutor;
@@ -789,10 +790,23 @@ public class TableController {
         }
     }
 
+    public synchronized void abortChampionship() {
+        if (options == null || options.championship == null) throw new IllegalStateException("Not a championship table");
+        championshipAborted = true;
+        cancelTimeout();
+        synchronized (match) {
+            match.getPlayers().forEach(player -> player.setQuit(true));
+            match.notifyAll();
+        }
+        // LeaveTableAll concedes running games. Direct removal preserves a partial recording without a winner.
+        managerFactory.tableManager().removeTable(table.getId());
+    }
+
     /**
      * @return false when the game could not start (the table is removed)
      */
-    private boolean startGame(UUID choosingPlayerId) throws GameException {
+    private synchronized boolean startGame(UUID choosingPlayerId) throws GameException {
+        if (championshipAborted) return false;
         try {
             mage.server.recovery.PvpRecovery.beforeGame(this, managerFactory);
             match.startGame();
@@ -980,10 +994,11 @@ public class TableController {
      * @return true if table can be closed
      */
     public boolean endGameAndStartNextGame() {
+        if (championshipAborted) return false;
         // get player that chooses who goes first
         Game game = match.getGame();
         if (game == null) {
-            return true;
+            return !championshipAborted;
         }
         ThreadUtils.setGameThreadStatus(game.getId(), ThreadUtils.THREAD_GAME_STATUS_AFTER_GAME);
         UUID choosingPlayerId = match.getChooser();
@@ -1018,7 +1033,7 @@ public class TableController {
         } catch (GameException ex) {
             logger.fatal(null, ex);
         }
-        return match.hasEnded();
+        return !championshipAborted && match.hasEnded();
     }
 
     /**
@@ -1171,11 +1186,13 @@ public class TableController {
             String oldName = Thread.currentThread().getName();
             Thread.currentThread().setName(ThreadUtils.THREAD_PREFIX_GAME + " recovery-sideboard " + table.getId());
             try {
+                if (championshipAborted) return;
                 if (options.championship == null || (options.championship.allowsSideboard(match.getNumGames())
                         && !options.championship.timeCalled(System.currentTimeMillis()))) sideboard();
+                if (championshipAborted) return;
                 match.finishTournamentAtTime();
                 if (!match.hasEnded()) {
-                    if (!startGame(chooser)) throw new IllegalStateException("Recovered next game did not start");
+                    if (!startGame(chooser) && !championshipAborted) throw new IllegalStateException("Recovered next game did not start");
                 }
                 else closeTable();
             } catch (Exception e) {
@@ -1190,7 +1207,8 @@ public class TableController {
      * Tables of normal matches or tournament sub tables are no longer needed,
      * if the match ends.
      */
-    private void closeTable() {
+    private synchronized void closeTable() {
+        if (championshipAborted) return;
         this.matchEnd();
         mage.server.replay.ReplayRecorder.onMatchEnded(table);
         table.closeTable();

@@ -41,6 +41,32 @@ public class CheckpointStoreTest {
     static final UUID GAME = UUID.fromString("00000000-0000-0000-0000-000000000003");
 
     @Test
+    void stoppedTournamentCheckpointRetainsDataWithoutBecomingRecoverableAgain() throws Exception {
+        Path path = dir.resolve("checkpoint.db");
+        try (CheckpointStore store = new CheckpointStore(path)) {
+            store.commit(MATCH, TABLE, GAME, 1, 1, ENGINE, new byte[]{1}, new byte[]{2});
+            try (Connection db = DriverManager.getConnection("jdbc:sqlite:" + path);
+                 PreparedStatement claim = db.prepareStatement(
+                         "INSERT INTO recovery_claims(match_id,status,boot_id,table_id) VALUES (?,'live','old',?)")) {
+                claim.setString(1, MATCH.toString());
+                claim.setString(2, TABLE.toString());
+                assertEquals(1, claim.executeUpdate());
+            }
+            assertEquals("live", store.claim(MATCH).status);
+            assertTrue(store.stopTable(UUID.randomUUID()).isEmpty());
+            assertEquals(Collections.singletonList(MATCH), store.stopTable(TABLE));
+            assertTrue(store.stopTable(TABLE).isEmpty());
+            store.finish(MATCH, "failed");
+            assertEquals("cancelled", store.claim(MATCH).status);
+        }
+        try (CheckpointStore reopened = new CheckpointStore(path)) {
+            reopened.boot("new");
+            assertEquals("cancelled", reopened.claim(MATCH).status);
+            assertNotNull(reopened.inspect(MATCH, ENGINE));
+        }
+    }
+
+    @Test
     void completedCheckpointsStillProtectTablesFromRelaunch() throws Exception {
         try (CheckpointStore store = new CheckpointStore(dir.resolve("checkpoint.db"))) {
             assertFalse(CheckpointStore.hasTableHistory(dir.resolve("checkpoint.db"), TABLE));

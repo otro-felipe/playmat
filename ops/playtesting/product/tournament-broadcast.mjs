@@ -63,6 +63,7 @@ export function createTournamentBroadcast(pool, archive, engine = readSpectatorE
   async function live(id, pairId, actor, hands) {
     if (hands && !actor?.isAdmin) throw new ProductError(403, 'Administrator access required')
     const match = await pairing(id, pairId)
+    if (match.result_reason === 'cancelled') throw missing()
     const found = await engine(match.table_id, hands)
     const snapshot = found?.snapshot
     if (snapshot && snapshot.tableId !== match.table_id) throw missing()

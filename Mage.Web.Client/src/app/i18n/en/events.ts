@@ -52,6 +52,7 @@ export default {
   "cup.break": "Between rounds",
   "cup.paused": "Day closed",
   "cup.finished": "Finished",
+  "cup.tableCancelled": "Table cancelled",
   "cup.round": "Round {n} of {total}",
   "cup.stagePlayoffs": "Playoffs",
   "cup.roster": "Participants",

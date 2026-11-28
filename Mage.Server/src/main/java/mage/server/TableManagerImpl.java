@@ -322,8 +322,9 @@ public class TableManagerImpl implements TableManager {
 
     @Override
     public void endGame(UUID tableId) {
-        if (controllers.containsKey(tableId)) {
-            if (controllers.get(tableId).endGameAndStartNextGame()) {
+        TableController controller = controllers.get(tableId);
+        if (controller != null) {
+            if (controller.endGameAndStartNextGame()) {
                 removeTable(tableId);
             }
         }
@@ -379,18 +380,18 @@ public class TableManagerImpl implements TableManager {
     @Override
     public void removeTable(UUID tableId) {
         mage.server.career.CareerService.get().forget(tableId);
-        TableController tableController = controllers.get(tableId);
+        Lock w = controllersLock.writeLock();
+        TableController tableController;
+        w.lock();
+        try {
+            tableController = controllers.remove(tableId);
+        } finally {
+            w.unlock();
+        }
         if (tableController != null) {
-            Lock w = controllersLock.writeLock();
-            w.lock();
-            try {
-                controllers.remove(tableId);
-            } finally {
-                w.unlock();
-            }
             tableController.cleanUp();  // deletes the table chat and references to users
 
-            Table table = tables.get(tableId);
+            Table table = tableController.getTable();
             w = tablesLock.writeLock();
             w.lock();
             try {
