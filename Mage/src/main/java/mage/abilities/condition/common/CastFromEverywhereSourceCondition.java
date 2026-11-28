@@ -22,14 +22,13 @@ public enum CastFromEverywhereSourceCondition implements Condition {
             permanent = game.getPermanentOrLKIBattlefield(source.getSourceId()); // can be already again removed from battlefield so also check LKI
             zccDiff = -1;
         }
-        if (permanent != null) {
-            Spell spell = game.getSpellOrLKIStack(permanent);
-            if (spell == null || spell.getZoneChangeCounter(game) != permanent.getZoneChangeCounter(game) + zccDiff) {
-                return false;
-            }
-            return true;
+        if (permanent == null) {
+            return false;
         }
-        return false;
+        Spell spell = game.getSpellOrLKIStack(permanent);
+        return spell != null
+                && spell.getZoneChangeCounter(game) == permanent.getZoneChangeCounter(game) + zccDiff
+                && spell.wasCastBy(source.getControllerId());
     }
 
     @Override

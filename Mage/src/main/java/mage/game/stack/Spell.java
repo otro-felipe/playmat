@@ -57,6 +57,7 @@ public class Spell extends StackObjectImpl implements Card {
     protected int zoneChangeCounter; // spell's ZCC must be synced with card's on stack or another copied spell
 
     private UUID controllerId;
+    private UUID casterId; // Set only after the player completes casting this spell.
     private boolean copy;
     private MageObject copyFrom; // copied card INFO (used to call original adjusters)
     private boolean faceDown;
@@ -150,6 +151,7 @@ public class Spell extends StackObjectImpl implements Card {
         this.frameStyle = spell.frameStyle;
 
         this.controllerId = spell.controllerId;
+        this.casterId = spell.casterId;
         this.copy = spell.copy;
         this.copyFrom = (spell.copyFrom != null ? spell.copyFrom.copy() : null);
         this.faceDown = spell.faceDown;
@@ -761,6 +763,14 @@ public class Spell extends StackObjectImpl implements Card {
     @Override
     public SpellAbility getSpellAbility() {
         return ability;
+    }
+
+    public void markCastBy(UUID playerId) {
+        this.casterId = playerId;
+    }
+
+    public boolean wasCastBy(UUID playerId) {
+        return casterId != null && casterId.equals(playerId);
     }
 
     public void setControllerId(UUID controllerId) {
