@@ -1,4 +1,5 @@
 import { act, fireEvent, render, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
 import { SpectatorCommentary, SpectatorCommentaryProvider, SpectatorChatBubble } from './SpectatorCommentary';
 import { spectatorFeed } from './spectatorFeed';
@@ -68,4 +69,27 @@ test('public and both-hands links accept only audience-public explanations, pres
     expect(spectatorFeed('game', [note, { ...modern, lineId: 'new' }, { ...modern, lineId: 'private', audience: undefined }], [],visibility).map(e=>e.text)).toEqual(['Explicit audience text']);
   }
   expect(spectatorFeed('game',[note])[0].text).toBe(note.reasoning);
+});
+
+test('[PM-LINE-REPLAY-2] opens formatted commentary with an accessible card preview', async () => {
+  const user = userEvent.setup();
+  const feed = spectatorFeed('game', [{
+    ...note,
+    audience: 'public',
+    explanation: '### Attack now\n\n- **Chosen:** attack with the flyer.\n- **Alternative:** hold [Llanowar Elves](card://Llanowar%20Elves) back.',
+  }], [], 'public-board');
+  const page = render(<SpectatorCommentaryProvider gameId="game" players={players} events={feed}>
+    <SpectatorCommentary />
+  </SpectatorCommentaryProvider>);
+
+  await user.click(page.getByRole('button', { name: 'Chat' }));
+  await user.click(page.getByRole('button', { name: 'Pilot commentary' }));
+  const commentary = within(page.getByRole('dialog'));
+  expect(commentary.getByRole('heading', { name: 'Attack now' })).toBeTruthy();
+  expect(commentary.getAllByRole('listitem')).toHaveLength(2);
+  expect(commentary.getByText('Chosen:').tagName).toBe('STRONG');
+  const preview = commentary.getByRole('button', { name: /Llanowar Elves/ });
+  act(() => { preview.focus(); });
+  await user.keyboard('{Enter}');
+  expect(preview.getAttribute('aria-expanded')).toBe('true');
 });

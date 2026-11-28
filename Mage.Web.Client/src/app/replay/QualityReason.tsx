@@ -1,28 +1,7 @@
 import { useId } from 'react';
 import { useT } from '../i18n';
+import { markdownBlocks } from '../ui/markdownBlocks';
 import styles from './ReplayReviewPanel.module.css';
-
-type Block = { kind: 'p' | 'ul' | 'ol'; lines: string[]; start?: number };
-
-function markdownBlocks(reason: string) {
-  const blocks: Block[] = [];
-  let current: Block | undefined;
-  for (const raw of reason.split('\n')) {
-    const line = raw.trim();
-    if (!line) {
-      current = undefined;
-      continue;
-    }
-    const item = /^(?:[-+*]|(\d{1,9})[.)])\s+(.+)$/.exec(line);
-    const kind = item ? item[1] ? 'ol' : 'ul' : 'p';
-    if (current?.kind !== kind) {
-      current = { kind, lines: [], ...(item?.[1] ? { start: Number(item[1]) } : {}) };
-      blocks.push(current);
-    }
-    current.lines.push(item?.[2] ?? line);
-  }
-  return blocks;
-}
 
 export function QualityReason({ good, reason }: { good: boolean; reason: string }) {
   const t = useT();

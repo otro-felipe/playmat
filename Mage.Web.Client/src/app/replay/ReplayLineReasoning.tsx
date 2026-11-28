@@ -2,7 +2,7 @@ import { Brain, X } from 'lucide-react';
 import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { useT } from '../i18n';
-import { CardMarkdown } from '../ui/CardMarkdown';
+import { LineExplanationMarkdown } from '../ui/LineExplanationMarkdown';
 import { usePlayerNames } from '../ui/usePlayerIdentity';
 import { decisionPresentation, replayName } from './decisionPresentation';
 import { ReviewRating } from './ReplayDecision';
@@ -91,22 +91,25 @@ export function LineReasoning({ lines, onPlay }: { lines: readonly ShownLine[]; 
           </header>
           {lines.map((line) => (
             <section key={line.cursor} className={styles.line}>
-              <p><CardMarkdown text={line.text} /></p>
+              <LineExplanationMarkdown text={line.text} />
               {!!line.plays?.length && (
                 <>
                   <h4>{t('replay.linePlays')}</h4>
                   <ol className={styles.plays}>
-                    {line.plays.map((play) => (
-                      <li key={play.cursor}>
-                        <button type="button" data-replay-step-focus onClick={() => {
-                          setPosition(null);
-                          onPlay(play);
-                        }}>
-                          {play.category && <ReviewRating category={play.category} />}
-                          <span>{decisionPresentation(play, t, formatName).fullTitle}</span>
-                        </button>
-                      </li>
-                    ))}
+                    {line.plays.map((play) => {
+                      const title = decisionPresentation(play, t, formatName).fullTitle;
+                      return (
+                        <li key={play.cursor}>
+                          <button type="button" data-replay-step-focus onClick={() => {
+                            setPosition(null);
+                            onPlay(play);
+                          }}>
+                            {play.category && <ReviewRating category={play.category} />}
+                            <span>{title}</span>
+                          </button>
+                        </li>
+                      );
+                    })}
                   </ol>
                 </>
               )}

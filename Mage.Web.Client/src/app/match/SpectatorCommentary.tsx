@@ -4,7 +4,7 @@ import type { PlayerView } from '../../protocol/generated/views';
 import { useT } from '../i18n';
 import './matchMessages';
 import { Dialog } from '../ui/Dialog';
-import { CardMarkdown } from '../ui/CardMarkdown';
+import { LineExplanationMarkdown } from '../ui/LineExplanationMarkdown';
 import { seatAlias, type SeatDisplayNames } from './seatDisplayNames';
 import logStyles from './GameLog.module.css';
 import styles from './SpectatorCommentary.module.css';
@@ -96,7 +96,7 @@ export function SpectatorCommentary() {
       </ol>
     </aside>}
     <Dialog open={!!selected} onOpenChange={next => { if (!next) setSelected(null); }} returnFocusRef={opener} title={t('spectate.lineSent')}>
-      {selected && <div className={styles.multiline}><CardMarkdown text={selected.text} /></div>}
+      {selected && <LineExplanationMarkdown text={selected.text} />}
     </Dialog>
   </>;
 }

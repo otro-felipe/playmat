@@ -86,13 +86,18 @@ Receipt recovery is process-local. A completed line can outlive the short HTTP r
 
 ### PM-LINE-REPLAY-1 · Player-authored line explanations
 
-An authorized pilot may omit commentary or supply an authored `explanation` on either `play_line` or `play_turn`. Accept 1–4,000 Unicode code points after trimming. On a material play the pilot states the intended objective, one or two relevant alternatives and the tradeoff that decided it, using contemporaneous public facts. Report resolution only after the receipt and public board support it. Follow the host's chat mode and answer pending engine decisions before writing commentary. A short comment suffices for a routine play. For example, “I attack with the flyer and leave the ground creature back. It can trade with the opposing attacker if we race. Sending both gains one damage but leaves us exposed to the return attack.”
+An authorized pilot may omit commentary or supply an authored `explanation` on either `play_line` or `play_turn`. Accept 1–4,000 Unicode code points after trimming. For material plays, the MCP guide uses Markdown bullets for the chosen line and intended objective, one or two credible alternatives and their costs, and the contemporaneous public fact that decides the comparison. Report resolution only after the receipt and public board support it. Follow the host's chat mode and answer pending engine decisions before writing commentary. A short comment suffices for a routine play. The native MCP schema and worked Markdown example are covered by `[PM-LINE-MCP-2] the turn guide examples pass the published native MCP input contracts` in `ops/playtesting/mcp/test/play-line-http.test.mjs`.
 
 The first dispatched decision records one `kind:"line"` event at the current replay frame with the authenticated player, timestamp, command ID, `audience:"public"` and `explanation`. A turn uses its sequence ID. A rejected line without a dispatch creates no entry. Receipt recovery cannot publish the line again. Changing its text under the same command ID conflicts.
 
 Public spectator frames and public, seat and full replay frames may include explicitly published explanations. Project only the text and presentation metadata. A bounded live feed and the archived feed identify the same event; identical command IDs from different seats identify different events. Table talk remains a separate event. Spectator explanations do not produce a table-chat message, unread notification or chat cursor.
 
 The existing `play_line.reasoning` accepts 1–600 characters as before. Callers may supply one commentary field per line. Delegated broadcasts may show legacy entries. Seat replays retain their own legacy notes and authorized full replays retain notes from both players. Missing publication markers on existing records never grant public access. Older archives require no migration.
+
+**PM-LINE-REPLAY-2 · Markdown presentation.** Live spectator and replay commentary render Markdown headings, paragraphs, emphasis and lists. Existing prose remains readable. A `card://` link continues to open the card preview through pointer, keyboard and touch interaction. Renderer input cannot introduce raw HTML elements, remote media requests or navigable outside links.
+
+- `Mage.Web.Client/src/app/match/SpectatorCommentary.test.tsx` covers `[PM-LINE-REPLAY-2] opens formatted commentary with an accessible card preview`.
+- `Mage.Web.Client/src/app/replay/ReplayLineReasoning.test.tsx` covers `[PM-LINE-REPLAY-2] renders archived Markdown without activating untrusted content`.
 
 
 ### PM-LINE-WAIT-1 · Command delivery and destination

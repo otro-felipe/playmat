@@ -192,6 +192,11 @@ test('[PM-LINE-MCP-2] the turn guide examples pass the published native MCP inpu
     assert.ok(commandIds.has(id), `Missing guide example ${id}`);
   }
   const explained = lines.find(line => line.commandId === 'shock-to-combat-001');
+  assert.match(explained.explanation, /^- \*\*Chosen line\*\*.+\n- \*\*Alternative\*\*.+\n- \*\*Why\*\*/);
+  const { tools } = await f.listTools();
+  const { explanation, reasoning } = tools.find(tool => tool.name === 'play_line').inputSchema.properties;
+  assert.match(explanation.description, /Markdown/);
+  assert.match(reasoning.description, /Markdown/);
   assert.match(explained.explanation, /before combat/i);
   assert.match(explained.explanation, /if they respond/i);
   assert.match(explained.explanation, /waiting could/i);

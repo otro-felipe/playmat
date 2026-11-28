@@ -76,12 +76,11 @@
   border-top: 1px dashed var(--ink-faint);
 }
 
-.line p {
-  margin: var(--space-2) 0 0;
-  white-space: pre-line;
+.line {
+  margin-top: var(--space-2);
 }
 
-.line h4 {
+.line > h4 {
   margin: var(--space-3) 0 var(--space-1);
   font-size: var(--text-xs);
   letter-spacing: var(--tracking-print);

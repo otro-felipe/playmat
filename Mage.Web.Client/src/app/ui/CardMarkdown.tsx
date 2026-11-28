@@ -3,6 +3,7 @@ import { Fragment, useState, type ReactNode } from 'react';
 import type { CardFace as Face } from '../../core/images/imageLinks';
 import { useT } from '../i18n';
 import { CardFace } from './CardFace';
+import { cardTarget } from './cardPreviewTarget';
 import styles from './CardMarkdown.module.css';
 
 export interface PreviewCard {
@@ -11,8 +12,8 @@ export interface PreviewCard {
   cardNumber?: string;
 }
 
-export function CardPreviewName({ card, label = card.name, face = 'front' }: {
-  card: PreviewCard; label?: string; face?: Face;
+export function CardPreviewName({ card, label = card.name, face = 'front', children }: {
+  card: PreviewCard; label?: string; face?: Face; children?: ReactNode;
 }) {
   const t = useT();
   const [open, setOpen] = useState(false);
@@ -20,7 +21,7 @@ export function CardPreviewName({ card, label = card.name, face = 'front' }: {
     <Tooltip.Root open={open} onOpenChange={setOpen}>
       <Tooltip.Trigger asChild>
         <button type="button" className={styles.cardName} aria-label={t('ui.showCard', { name: label })}
-          aria-expanded={open} onClick={(event) => { event.preventDefault(); setOpen(true); }}>{label}</button>
+          aria-expanded={open} onClick={(event) => { event.preventDefault(); setOpen(true); }}>{children ?? label}</button>
       </Tooltip.Trigger>
       <Tooltip.Portal>
         <Tooltip.Content className={styles.preview} side="left" align="center" sideOffset={8} collisionPadding={12}
@@ -30,18 +31,6 @@ export function CardPreviewName({ card, label = card.name, face = 'front' }: {
       </Tooltip.Portal>
     </Tooltip.Root>
   </Tooltip.Provider>;
-}
-
-function cardTarget(target: string) {
-  if (!target.startsWith('card://')) return;
-  const address = target.slice(7);
-  const suffix = /:(front|back)$/.exec(address);
-  try {
-    const name = decodeURIComponent(suffix ? address.slice(0, suffix.index) : address).trim();
-    if (name && !/[\p{Cc}]/u.test(name)) return { name, face: suffix?.[1] === 'back' ? 'back' as const : 'front' as const };
-  } catch {
-    // Retain malformed legacy authoring verbatim.
-  }
 }
 
 /** Render the app's inline card links and identifiable names in older prose as accessible previews. */

@@ -151,7 +151,7 @@ const TurnBlockShape = z.object({ kind: z.literal('block'),
 }).strict();
 const TurnBlock = TurnBlockShape.refine(({ assignments }) => new Set(assignments.map(({ blockerId }) => blockerId)).size === assignments.length,
   'Name each blocker once. Use the live engine decision for a creature that can block multiple attackers.');
-const PublicExplanation = z.string().trim().min(1).max(publicExplanationLimit).optional().describe('Publish a spectator explanation when the first action is submitted. For a material play, describe your intent, one or two relevant alternatives and the deciding tradeoff from public information. Describe a resolution only after the receipt and public board support it. Keep hidden cards, credentials and private deliberation out of this audience text. Use send_chat for table conversation.');
+const PublicExplanation = z.string().trim().min(1).max(publicExplanationLimit).optional().describe('Publish a spectator explanation in Markdown when the first action is submitted. For a material play, use bullets for the chosen line, credible alternatives, and why the public board favors the choice. Explain why you passed on each alternative and what public response would change the plan when relevant. Describe a resolution only after the receipt and public board support it. Keep hidden cards, credentials and private deliberation out of this audience text. Use send_chat for table conversation.');
 const Turn = { explanation: PublicExplanation, gameId: Uuid, cursor: Cursor, actions: z.array(z.union([TurnPlay, TurnActivation, TurnChoose, TurnAttack, TurnBlock, Pace])).max(32),
   expectedStackIds: z.array(StringId).max(16).optional(), finish: z.enum(['next_turn', 'end_step', 'none']).default('next_turn') };
 const LinePassUntilShape = z.object({
@@ -169,7 +169,7 @@ const LineActions = z.array(z.discriminatedUnion('kind', [TurnPlay, TurnActivati
 const Line = {
   gameId: Uuid, cursor: Cursor, commandId: StringId.describe('Choose a unique ID for this line. For an uncertain result, reuse this ID with the same game, cursor and actions.'),
   explanation: PublicExplanation,
-  reasoning: z.string().trim().min(1).max(600).optional().describe('Legacy comment for delegated broadcasts and previously authorized replay perspectives. Supply this or explanation.'),
+  reasoning: z.string().trim().min(1).max(600).optional().describe('Legacy Markdown decision summary for delegated broadcasts and previously authorized replay perspectives. Supply this or explanation. Use explanation for tournament spectator commentary.'),
   actions: z.array(z.union([TurnPlayShape, TurnActivation, TurnChooseShape, TurnAttackShape, TurnBlockShape, Pace, LinePassUntilShape, LinePassPriority])).min(1).max(32)
     .describe('Plan as far as current information justifies. Use exact choices for visible engine prompts. A current_turn step or phase with priority:self may precede a planned action in that window. Before attack or block, request BEGIN_COMBAT or its exact declaration step. Use at most one terminal pass (pass_priority or pass_until) and put it last.'),
   declineExiledCard: z.object({ sourceId: StringId, abilityText: z.string().min(1).max(2000), stackId: StringId.optional() }).strict().optional()

@@ -1,0 +1,29 @@
+.commentary {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.commentary > * {
+  margin-block: 0;
+}
+
+.commentary > * + * {
+  margin-block-start: var(--space-2);
+}
+
+.commentary :is(h1, h2, h3, h4, h5, h6) {
+  color: var(--ink-strong);
+  font-size: 1em;
+}
+
+.commentary :is(ol, ul) {
+  padding-inline-start: 1.5em;
+}
+
+.commentary p {
+  white-space: pre-line;
+}
+
+.commentary pre {
+  white-space: pre-wrap;
+}
