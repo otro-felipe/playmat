@@ -25,3 +25,16 @@ opponent's choice. `NullSummonerTest` covers the linked exile and threshold for
 casting and spending mana. `LootTheAnomalyTest` covers negative power in combat
 and threshold at activation. Upstream's `JacesMachinationsTest`,
 `SanctumLurkerTest`, and `UldarosTheorixTest` cover their respective rules.
+
+## PM-CATALOG-AC-02
+
+During an isolated Pioneer match, the pilot casting Null Summoner can choose
+an eligible nonland card revealed from its opponent's hand and verify that it
+moves to exile. With Extrapolate the Impossible, the pilot can reveal two
+different cards from its sideboard. The opponent receives those two choices
+through their own bridge connection. Only the selected card enters the
+spell controller's hand.
+
+Run the [real-engine fixture](../../../ops/playtesting/product/fra-cross-seat.local.mjs)
+through [verify-sequence-image.sh](../../../ops/playtesting/test/verify-sequence-image.sh)
+with `PLAYMAT_SEQUENCE_SCENARIOS=fra-cross-seat`.

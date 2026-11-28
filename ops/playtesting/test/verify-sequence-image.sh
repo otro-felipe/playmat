@@ -40,7 +40,7 @@ pioneer_combat=(combat saga-entry impulse-exile exile ward)
 modal=(whole-turn date-night improvised-yes low-level-control)
 # Three independent CI workers build this revision. The default local run uses
 # exactly the same families, and the groupings keep partial retries bounded.
-capture_group=("${review[@]}" date-night typed human-matches human-sideboarding player-identities rival-invitations)
+capture_group=("${review[@]}" fra-cross-seat date-night typed human-matches human-sideboarding player-identities rival-invitations)
 priority_group=("${pioneer_costs[@]}" improvised-yes)
 combat_group=("${pioneer_combat[@]}" whole-turn low-level-control causal)
 case "$selection" in
@@ -51,7 +51,7 @@ case "$selection" in
  pioneer) families=("${pioneer_costs[@]}" "${pioneer_combat[@]}") ;;
  turn-lines) families=("${modal[@]}" typed causal) ;;
  modal) families=("${modal[@]}") ;;
- rival-invitations|spectator-visibility|player-identities|human-sideboarding|human-matches|review|discard-capture|review-prepared|mulligan|line-waits|card-to-step|casting|labeled-questions|order|activation|visible-response|combat|saga-entry|impulse-exile|exile|ward|whole-turn|date-night|improvised-yes|low-level-control|typed|causal) families=("$selection") ;;
+ rival-invitations|spectator-visibility|player-identities|human-sideboarding|human-matches|review|discard-capture|review-prepared|fra-cross-seat|mulligan|line-waits|card-to-step|casting|labeled-questions|order|activation|visible-response|combat|saga-entry|impulse-exile|exile|ward|whole-turn|date-night|improvised-yes|low-level-control|typed|causal) families=("$selection") ;;
  *) echo 'Unknown isolated real-engine scenario' >&2; exit 2 ;;
 esac
 if (( ${#families[@]} > 1 )); then

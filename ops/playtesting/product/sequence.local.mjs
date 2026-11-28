@@ -369,6 +369,7 @@ try {
     playLineWithPeer, drivePeerDuring, call, gameClock, setRivalSetup }
   const pioneerScenarios = [
     ['mulligan', './london-mulligan.local.mjs', 'verifyLondonMulligan'],
+    ['fra-cross-seat', './fra-cross-seat.local.mjs', 'verifyFraCrossSeat'],
     ['line-waits', './london-mulligan.local.mjs', 'verifyLineWaits'],
     ['casting', './casting-and-order.local.mjs', 'verifyCastingCosts'],
     ['labeled-questions', './casting-and-order.local.mjs', 'verifyLabeledQuestions'],
