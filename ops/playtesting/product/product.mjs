@@ -12,7 +12,7 @@ import pg from 'pg'
 import { archetypesFor } from './deck-performance-identity.mjs'
 import { libraryArchetypeCoverage, migrateDeckLists, refineMigratedDeckLists, refineTournamentArchetypes } from './deck-list-migration.mjs'
 import { excludeAsParticipant } from './match-statistics.mjs'
-import { listPlayers, createPlayer, createPlayerSlot, updatePlayer, retirePlayer } from './players.mjs'
+import { listPlayers, createPlayer, createPlayerSlot, renamePlayerSlot, updatePlayer, retirePlayer } from './players.mjs'
 import { changeReservation, restorePlayerReservations } from './player-reservations.mjs'
 import { ownedPlayer, readTournamentDeck, setTournamentAdmins, tournamentActor, validateTournamentDeck as engineDeckCheck } from './tournament-access.mjs'
 import { createTournamentRoutes } from './tournament-routes.mjs'
@@ -477,6 +477,10 @@ export async function createProduct({
     await gateAccount(res, group, actor, releases)
     const endpoint = path.slice('/api/playtesting/'.length)
     if (endpoint === 'player-slots' && req.method === 'POST') return send(res,201,await createPlayerSlot(pool,actor,await body(req,'json',2048)))
+    if (/^player-slots\/[^/]+$/.test(endpoint) && req.method === 'PATCH') {
+      const targetPlayerId = endpoint.slice('player-slots/'.length)
+      return send(res,200,await renamePlayerSlot(pool,actor,targetPlayerId,await body(req,'json',2048)))
+    }
     if (endpoint === 'players') {
       if (req.method === 'GET') return send(res,200,await listPlayers(pool,actor,url.searchParams.get('availableOnly')==='true'))
       if (req.method === 'POST') return send(res,201,await createPlayer(pool,actor,await body(req,'json',2048)))

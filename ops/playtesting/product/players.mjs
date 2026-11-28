@@ -82,20 +82,22 @@ export async function createPlayerSlot(pool,actor,input) {
   return insertPlayer(pool,actor,fields({...settings,mcpEnabled:true},{},false),requestId)
 }
 
+async function requireLivePlayerManagement(db, actor) {
+  const {rowCount}=await db.query(`SELECT 1 FROM oauth_connections c
+    JOIN accounts a ON a.id=c.account_id AND a.enabled
+    JOIN agent_grants g ON g.engine_key=c.engine_key AND g.account_id=a.id
+    WHERE c.id=$1 AND c.account_id=$2 AND c.expires_at>now() AND c.revoked_at IS NULL
+      AND g.oauth_managed AND g.player_id IS NULL AND g.revoked_at IS NULL AND g.engine_key='mcp_' || a.username_key
+      AND 'players:manage'=ANY(c.scopes_approved) AND 'players:manage'=ANY(g.scopes) FOR SHARE OF c,g,a`,[actor.connectionId,actor.accountId])
+  if (!rowCount) throw new ProductError(403,'Player management consent is inactive')
+}
+
 async function insertPlayer(pool,actor,{name,flag,enabled,provider,model,reasoningEffort},requestId=null) {
   // Preserve the original fingerprint for requests made before runtime metadata was supported.
   const settings = provider || model || reasoningEffort ? [name,flag,provider,model,reasoningEffort] : [name,flag]
   const signature=requestId ? createHash('sha256').update(JSON.stringify(settings)).digest('hex') : null
   return transaction(pool, async db => {
-    if (requestId) {
-      const {rowCount}=await db.query(`SELECT 1 FROM oauth_connections c
-        JOIN accounts a ON a.id=c.account_id AND a.enabled
-        JOIN agent_grants g ON g.engine_key=c.engine_key AND g.account_id=a.id
-        WHERE c.id=$1 AND c.account_id=$2 AND c.expires_at>now() AND c.revoked_at IS NULL
-          AND g.oauth_managed AND g.player_id IS NULL AND g.revoked_at IS NULL AND g.engine_key='mcp_' || a.username_key
-          AND 'players:manage'=ANY(c.scopes_approved) AND 'players:manage'=ANY(g.scopes) FOR SHARE OF c,g,a`,[actor.connectionId,actor.accountId])
-      if (!rowCount) throw new ProductError(403,'Player management consent is inactive')
-    }
+    if (requestId) await requireLivePlayerManagement(db,actor)
     const id = randomUUID()
     const engine = 'mcp_p' + id.replaceAll('-','').slice(0,18)
     const inserted=await db.query(`INSERT INTO player_profiles(id,account_id,display_name,flag,mcp_enabled,creation_request,creation_signature,provider,model,reasoning_effort)
@@ -114,7 +116,6 @@ async function insertPlayer(pool,actor,{name,flag,enabled,provider,model,reasoni
 }
 
 async function lockOwnedPlayer(db, actor, id) {
-  owner(actor)
   if (!isUuid(id)) throw new ProductError(404,'Player not found')
   const {rows:[current]} = await db.query(profileQuery+' WHERE p.id=$1 AND p.account_id=$2 AND p.retired_at IS NULL FOR UPDATE OF p,g',[id,actor.accountId])
   if (!current) throw new ProductError(404,'Player not found')
@@ -128,6 +129,7 @@ async function revokePlayer(db, engineName) {
 }
 
 export async function updatePlayer(pool, actor, id, input) {
+  owner(actor)
   return transaction(pool,async db => {
     const current = await lockOwnedPlayer(db,actor,id)
     const {name,flag,enabled,provider,model,reasoningEffort} = fields(input,current)
@@ -141,7 +143,21 @@ export async function updatePlayer(pool, actor, id, input) {
   })
 }
 
+export async function renamePlayerSlot(pool, actor, id, input) {
+  if (!canonicalAccountScope(actor,'players:manage') || actor.playerId) throw new ProductError(403,'Account consent to manage player slots is required')
+  if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => key !== 'displayName'))
+    throw new ProductError(400,'Provide only a display name')
+  const { name } = fields(input)
+  return transaction(pool,async db => {
+    await requireLivePlayerManagement(db,actor)
+    const current = await lockOwnedPlayer(db,actor,id)
+    if (current.displayName !== name) await db.query('UPDATE player_profiles SET display_name=$2 WHERE id=$1',[id,name])
+    return view((await db.query(profileQuery+' WHERE p.id=$1',[id])).rows[0],actor)
+  })
+}
+
 export async function retirePlayer(pool, actor, id) {
+  owner(actor)
   return transaction(pool,async db => {
     const current = await lockOwnedPlayer(db,actor,id)
     // Take a fresh snapshot after acquiring the same profile lock as reserve.

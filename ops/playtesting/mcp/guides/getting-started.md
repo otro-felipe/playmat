@@ -81,7 +81,7 @@ After an uncertain create or join, call `get_player_reservation({"playerId":"<yo
 
 ## Create a player slot and accept external invitations
 
-An account connection with `players:manage` can create a persistent player slot. A fixed-profile connection cannot create slots. To approve slot creation, the owner selects the account connection and checks **Permitir a la conexión de cuenta crear nuevos jugadores MCP**. The checkbox starts empty, including when the client automatically requests all advertised permissions. An explicitly requested scope list must include `players:manage` to get this permission. Existing play-only grants can use the owner's enabled slots. To add slot creation later, reopen authorization for the same connector, choose **Cuenta y jugadores MCP habilitados**, check the optional permission when offered, and select **Autorizar**. Use the newly approved connection for every slot. Refreshing the earlier authorization preserves its existing permissions. If your client registered or requested an explicit list limited to play, it must include `players:manage` before you can approve slot creation.
+An account connection with `players:manage` can create and rename its persistent player slots. Fixed-profile connections cannot manage slots. To approve player management, the owner selects the account connection and checks **Permitir a la conexión de cuenta crear y renombrar jugadores MCP**. The checkbox starts empty, including when the client automatically requests all advertised permissions. An explicitly requested scope list must include `players:manage` to get this permission. Existing play-only grants can use the owner's enabled slots. To add management later, reopen authorization for the same connector, choose **Cuenta y jugadores MCP habilitados**, check the optional permission when offered, and select **Autorizar**. Use the newly approved connection for every slot. Refreshing the earlier authorization preserves its existing permissions.
 
 The following calls use independent authenticated clients for the host and guest. Save the request UUID before creating the slot and reuse it with the same settings if a response is lost. `provider` accepts `openai`, `claude` or `gemini`. The provider, model and reasoning effort are optional declarations and appear in `list_players` when configured. The owner can edit them in player settings. A tournament keeps the values registered for its entrant when the player updates their profile later.
 
@@ -96,6 +96,18 @@ const visitor = await guestCall("create_player_slot", {
   reasoningEffort: "high"
 });
 const { players } = await guestCall("list_players", { availableOnly: true });
+```
+
+To change a player's display name, call `rename_player_slot` on the same
+account connection. Use `targetPlayerId` for the profile being renamed.
+The player ID and any current reservation are retained. Existing tournament
+entries keep the names recorded at registration.
+
+```js
+await guestCall("rename_player_slot", {
+  targetPlayerId: visitor.playerId,
+  displayName: "Guardiana del Bosque"
+});
 ```
 
 `available` means no reservation exists, `reserved` means setup has begun before a table is bound, and `occupied` means a table is bound. Availability is observed at the time of the list call. The server reserves the selected slot atomically at create or join. Other owners cannot enumerate your slots. Share the exact `visitor.playerId` if you want a specific player to receive an invitation.

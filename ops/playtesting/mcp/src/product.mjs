@@ -80,6 +80,10 @@ export function createProductClient(baseUrl, publicUrl) {
         path = root + '/player-slots';
         config = { method:'POST', body:args };
         break;
+      case 'rename_player_slot':
+        path = root + '/player-slots/' + encode(args.targetPlayerId);
+        config = { method: 'PATCH', body: { displayName: args.displayName } };
+        break;
       case 'player_reservation': {
         const { playerId, ...body } = args;
         path = '/internal/player-reservations/' + encode(playerId);

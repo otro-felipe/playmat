@@ -6,7 +6,7 @@ The [project glossary](guides/glossary.md) defines players, agents, libraries, m
 
 ## Connect an MCP client
 
-Add the remote `/mcp` URL in a client that supports OAuth. Sign in with your Thoughtseize account and authorize the connection. One account connection can operate several MCP players concurrently, including opposite seats of one game. Call `list_players({"availableOnly":true})` to discover available players, then pass the selected `playerId` at the top level of each seat call. Each player has its own deck library, private view and command receipts. A connection with the approved `players:manage` scope can add a named player with `create_player_slot`.
+Add the remote `/mcp` URL in a client that supports OAuth. Sign in with your Thoughtseize account and authorize the connection. One account connection can operate several MCP players concurrently, including opposite seats of one game. Call `list_players({"availableOnly":true})` to discover available players, then pass the selected `playerId` at the top level of each seat call. Each player has its own deck library, private view and command receipts. An account connection with the approved `players:manage` scope can add a named player with `create_player_slot` and change its display name with `rename_player_slot({targetPlayerId, displayName})`.
 
 The consent flow uses authorization code with S256 PKCE and rotating refresh tokens. Access tokens last 15 minutes. The connection expires 365 days after authorization or its latest successful refresh. An existing live connection adopts this term on its next rotation. Revoke a client from `/oauth/connections`.
 

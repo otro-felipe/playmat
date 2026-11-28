@@ -264,8 +264,9 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
     if (gameTool || ['create_game','join_game'].includes(name)) inputSchema = { ...inputSchema,
       humanTableId: Uuid.optional().describe('Supply the opted-in table ID on every call for the Human Player. Omit to use the MCP Player.') };
     const tournamentManagement = scope === 'tournaments:manage';
-    const idempotent = ['create_tournament', 'start_tournament', 'release_stale_tournament_reservation'].includes(name);
-    inputSchema = tournamentManagement ? z.strictObject(inputSchema) : { ...inputSchema, playerId: Uuid.optional().describe('Persistent Thoughtseize player ID from list_players. Supply it on each seat call when your connection controls named players. A profile-bound grant keeps its own player when omitted. Use game object IDs for targets inside actions.') };
+    const accountMutation = tournamentManagement || name === 'rename_player_slot';
+    const idempotent = ['create_tournament', 'start_tournament', 'release_stale_tournament_reservation', 'rename_player_slot'].includes(name);
+    inputSchema = accountMutation ? z.strictObject(inputSchema) : { ...inputSchema, playerId: Uuid.optional().describe('Persistent Thoughtseize player ID from list_players. Supply it on each seat call when your connection controls named players. A profile-bound grant keeps its own player when omitted. Use game object IDs for targets inside actions.') };
     mcp.registerTool(name, { description, inputSchema, annotations: { readOnlyHint, ...(idempotent && { idempotentHint: true }) },
       _meta: { securitySchemes: scopes.map(value => ({ type: 'oauth2', scopes: [value] })) },
     }, async (args, extra) => {
@@ -276,7 +277,7 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
         if (scope === 'history' && actor.playerId) {
           throw new ToolError('history_account_only', 'Review and history tools read the account archive. Use the account connection; a player-bound connection cannot read history. There, playerId optionally chooses an owned player\'s perspective.');
         }
-        if (!actor.scopes.includes(scope) || (tournamentManagement && (!actor.accountAgent || !actor.connectionId || actor.playerId))) {
+        if (!actor.scopes.includes(scope) || (accountMutation && (!actor.accountAgent || !actor.connectionId || actor.playerId))) {
           throw new ToolError('forbidden', tournamentManagement
             ? 'An administrator must authorize the account connection with the optional tournaments:manage permission.'
             : 'This credential lacks the required scope.');
@@ -447,6 +448,10 @@ function registerTools(mcp, { contextFor, invitationOrigin }) {
   tool('create_player_slot', 'Create one enabled persistent player in your own account. Requires explicit account consent to manage slots. Reuse the requestId when retrying.', {
     requestId:Uuid, displayName:z.string().trim().min(1).max(40), flag:z.string().regex(/^[A-Za-z]{2}$/).optional(), ...agentRuntime,
   }, 'players:manage', args => fromProduct('create_player_slot',args));
+  tool('rename_player_slot', 'Rename one persistent player in your own account. Requires canonical account consent to manage slots. Existing tournament entries keep their registered names.', {
+    targetPlayerId: Uuid.describe('Persistent player to rename. Omit any acting seat selector.'),
+    displayName: z.string().trim().min(1).refine(name => [...name].length <= 40, 'Use at most 40 characters.'),
+  }, 'players:manage', args => fromProduct('rename_player_slot',args));
   tool('list_players', 'List your authorized persistent players. Availability distinguishes available, reserved before binding, and occupied at a table.', {availableOnly:z.boolean().optional()}, 'play', async args => {
     const { players } = await fromProduct('list_players', args);
     return { players: players.map(({ playerId, displayName, flag, engineName, mcpEnabled, activeTableId, availability, provider, model, reasoningEffort }) =>

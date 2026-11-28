@@ -121,7 +121,7 @@ export function createOAuth(pool, publicUrl, { body, clients = [], clientOptions
       <ul>${permissions}</ul>
       ${request.scopes.includes('play') ? '<p>Con acceso a la cuenta, una misma conexión puede jugar con cada jugador que habilites en Administrar jugadores. También puede controlar tu asiento humano en las mesas donde permitas ese acceso.</p>' : ''}
       <form method="post" action="/oauth/authorize"><input type="hidden" name="request" value="${id}">${selectPlayer}
-      ${request.allowOptionalManagement ? '<label><input type="checkbox" name="manageSlots" value="yes">Permitir a la conexión de cuenta crear nuevos jugadores MCP</label>' : ''}
+      ${request.allowOptionalManagement ? '<label><input type="checkbox" name="manageSlots" value="yes">Permitir a la conexión de cuenta crear y renombrar jugadores MCP</label>' : ''}
       ${canOfferTournaments ? '<label><input type="checkbox" name="manageTournaments" value="yes">Permitir a la conexión de cuenta crear y comenzar tus torneos y liberar reservas obsoletas de tus propios jugadores</label>' : ''}
       <button name="decision" value="allow">Autorizar</button>
       <button name="decision" value="deny">Cancelar</button></form>`, new URL(request.client.redirectUri).origin)

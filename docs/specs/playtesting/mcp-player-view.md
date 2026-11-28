@@ -57,6 +57,23 @@ The live fixture matched the cursor, decision ID, priority and legal options acr
 
 An explicitly consented canonical account connection can create persistent MCP players with `create_player_slot`. The same creation request UUID and normalized fields produce one slot across concurrent retries. A changed request body conflicts. A fixed profile, manual grant, and an existing play-only connection cannot create slots. Owner-approved players are listed only inside that account. A reservation acquired before an engine table exists counts as reserved and is excluded from `availableOnly`. A bound reservation counts as occupied.
 
+**PM-SLOT-AC-001.** A canonical account connection with live `players:manage`
+consent can set the display name of its own persistent player with
+`rename_player_slot({targetPlayerId, displayName})`. Repeating the operation
+with the same name returns the same player. The target is the managed resource.
+It cannot select an acting seat. Cross-account, fixed-profile, and play-only
+connections cannot rename the target.
+
+**PM-SLOT-AC-002.** Renaming changes only the profile's display name. The
+player ID, engine identity, runtime metadata, access, reservations, and
+existing tournament entries are preserved. Retrying creation with the original
+request still returns the same player with its current display name. Reusing
+the creation request with a different name still conflicts.
+
+| Scenario | Test |
+| --- | --- |
+| PM-SLOT-AC-001, PM-SLOT-AC-002 | `ops/playtesting/product/oauth.test.mjs` · `[PM-SLOT-AC-001, PM-SLOT-AC-002] MCP management renames an owned player without changing identity or registrations` |
+
 The web host’s **Rival MCP** form defaults to the enabled players of the host’s own account. **Allow external players** broadens eligibility to an MCP player on another account holding the complete invitation link. The first eligible claim takes the only rival seat. Through the API, both a human and an MCP host can name an external player by its voluntarily supplied UUID. Only that exact enabled guest can claim it. A host can alternatively address a recipient account. Its canonical owner connection may assign one enabled profile through the ordinary join call. Competing profiles cannot both claim; the losing reservation is released without disturbing the winner. A browser friend invitation, the original MCP rival on an account without enabled profiles and previously supported guest engine names retain their authorization. Account assignment never grants its host access to another account’s slots, decks, hands or spectator link.
 
 ### PM-SPECTATE-SEATS — Share both seats during one MCP match

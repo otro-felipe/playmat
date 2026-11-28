@@ -1527,7 +1527,7 @@ test('owners create persistent slots by explicit consent and assign foreign invi
   const request={requestId:randomUUID(),displayName:'Guest',flag:'CL'}
   assert.equal((await write(slots,sharedB,request)).status,403)
   const optional=await f.request(authPath(),b)
-  assert.match(await optional.text(),/type="checkbox" name="manageSlots" value="yes"/)
+  assert.match(await optional.text(),/type="checkbox" name="manageSlots" value="yes">Permitir a la conexión de cuenta crear y renombrar jugadores MCP/)
   const limited=await f.request(authPath({scope:'play'}),b)
   assert.doesNotMatch(await limited.text(),/name="manageSlots"/)
   const forged=await authorizePilot(f,b,'play',undefined,true)
@@ -1629,6 +1629,100 @@ test('owners create persistent slots by explicit consent and assign foreign invi
   const foreign=await create(a,randomUUID(),{guestPlayerId:randomUUID()})
   assert.equal(foreign.status,400)
   assert.equal((await create(a,randomUUID(),{guestPlayerId:guest.playerId,guestAccountName:'GuestAccount'})).status,400)
+})
+
+test('[PM-SLOT-AC-001, PM-SLOT-AC-002] MCP management renames an owned player without changing identity or registrations', {
+  skip: !databaseUrl || process.env.PLAYMAT_OAUTH_SDK_TEST !== '1',
+}, async t => {
+  const f = await fixture(t)
+  const owner = await f.login('RenameOwner'), outsider = await f.login('RenameOutsider')
+  const ownerId = (await (await f.request('/api/playtesting/me', owner)).json()).accountId
+  await f.product.setTournamentAdmins([ownerId])
+  const manage = await authorizePilot(f, owner, 'play players:manage tournaments:manage', undefined, true, true)
+  const crossAccount = await authorizePilot(f, outsider, 'play players:manage', undefined, true)
+  const playOnly = await authorizePilot(f, owner, 'play')
+  const write = (path, headers, data, method = 'POST') => f.request(path, { ...headers, 'Content-Type': 'application/json' }, data, method)
+  const slots = '/api/playtesting/player-slots', cups = '/api/playtesting/tournaments'
+  const createdWith = { requestId: randomUUID(), displayName: 'Original Pilot', flag: 'CL',
+    provider: 'claude', model: 'claude-opus-5-5', reasoningEffort: 'high' }
+  const player = await write(slots, manage, createdWith).then(response => response.json())
+  const fixed = await authorizePilot(f, owner, 'play players:manage', player.playerId, true)
+  const selected = { ...playOnly, 'X-Playmat-Player-Id': player.playerId }
+  const lease = randomUUID(), tableId = randomUUID()
+  const reservation = '/internal/player-reservations/' + player.playerId
+  assert.equal((await write(reservation, selected, { operation: 'reserve', reservationId: lease })).status, 200)
+  assert.equal((await write(reservation, selected, { operation: 'bind', reservationId: lease, tableId })).status, 200)
+  const created = await write(cups, manage, { requestId: randomUUID(), name: 'Rename Fixture', format: 'Pioneer' })
+  assert.equal(created.status, 201)
+  const { id: tournamentId } = await created.json()
+  const db = new pg.Client({ connectionString: databaseUrl, options: '-c search_path=' + f.schema })
+  await db.connect()
+  t.after(() => db.end())
+  await db.query(`INSERT INTO tournament_entries(tournament_id,owner_id,player_id,name,owner_name,engine_name,
+    deck_id,deck_revision,deck_name) VALUES($1,$2,$3,$4,'RenameOwner',$5,'fixture-deck',1,'Fixture')`,
+  [tournamentId, ownerId, player.playerId, player.displayName, player.engineName])
+
+  const { createMcpServer } = await import('../mcp/src/server.mjs')
+  const { createProductClient } = await import('../mcp/src/product.mjs')
+  const requireMcp = createRequire(new URL('../mcp/package.json', import.meta.url))
+  const { Client } = requireMcp('@modelcontextprotocol/sdk/client/index.js')
+  const { StreamableHTTPClientTransport } = requireMcp('@modelcontextprotocol/sdk/client/streamableHttp.js')
+  const product = createProductClient(f.endpoint, issuer)
+  const server = createMcpServer({ authorize: product.authorize, product: product.operation })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const clients = []
+  t.after(async () => {
+    await Promise.all(clients.map(client => client.close()))
+    server.closeAllConnections()
+    server.close()
+  })
+  async function connect(headers) {
+    const client = new Client({ name: 'player-rename-fixture', version: '1' })
+    clients.push(client)
+    await client.connect(new StreamableHTTPClientTransport(new URL('http://127.0.0.1:' + server.address().port + '/mcp'), { requestInit: { headers } }))
+    return client
+  }
+  const manager = await connect(manage)
+  const tool = (await manager.listTools()).tools.find(item => item.name === 'rename_player_slot')
+  assert.ok(tool, 'player rename is advertised')
+  assert.deepEqual(tool._meta.securitySchemes, [{ type: 'oauth2', scopes: ['players:manage'] }])
+  assert.equal(tool.annotations.idempotentHint, true)
+  assert.deepEqual(Object.keys(tool.inputSchema.properties).sort(), ['displayName', 'targetPlayerId'])
+  const args = { targetPlayerId: player.playerId, displayName: '  Nueva Piloto  ' }
+  const rename = (client, input = args) => client.callTool({ name: 'rename_player_slot', arguments: input })
+  const denial = async (client, expected) => {
+    const result = await rename(client)
+    assert.equal(result.isError, true)
+    assert.equal(JSON.parse(result.content[0].text).code, expected)
+  }
+  await denial(await connect(crossAccount), 'not_found')
+  await denial(await connect(playOnly), 'forbidden')
+  await denial(await connect(fixed), 'forbidden')
+  for (const extra of [{ playerId: player.playerId }, { model: 'other' }, { mcpEnabled: false }]) {
+    assert.equal((await rename(manager, { ...args, ...extra })).isError, true)
+  }
+  const renamePath = slots + '/' + player.playerId
+  assert.equal((await write(renamePath, owner, { displayName: 'Browser' }, 'PATCH')).status, 403)
+  assert.equal((await write(renamePath, manage, { displayName: 'Invalid', reason: 'extra' }, 'PATCH')).status, 400)
+  const renamed = { ...player, displayName: 'Nueva Piloto', availability: 'occupied', activeTableId: tableId }
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const result = await rename(manager)
+    assert.equal(result.isError, false)
+    assert.deepEqual(JSON.parse(result.content[0].text), renamed)
+  }
+  const stored = await write(slots, manage, createdWith)
+  assert.equal(stored.status, 201)
+  assert.deepEqual(await stored.json(), renamed)
+  assert.equal((await write(slots, manage, { ...createdWith, displayName: 'Nueva Piloto' })).status, 409)
+  const tournament = await (await f.request(cups + '/' + tournamentId)).json()
+  assert.equal(tournament.participants.find(entry => entry.playerId === player.playerId)?.name, player.displayName)
+  const { rows } = await db.query('SELECT reservation_id,table_id FROM player_table_reservations WHERE player_id=$1', [player.playerId])
+  assert.deepEqual(rows, [{ reservation_id: lease, table_id: tableId }])
+  const { connectionId } = await (await f.request('/internal/verify', manage)).json()
+  assert.ok(connectionId)
+  await db.query('UPDATE oauth_connections SET revoked_at=now() WHERE id=$1', [connectionId])
+  assert.equal((await write(renamePath, manage, { displayName: 'Revoked' }, 'PATCH')).status, 401)
 })
 
 test('[PM-SPECTATE-SEATS] opt-in is immutable, authorized per guest and capability, and ends before archives', {skip:!databaseUrl}, async t=>{
